@@ -1,7 +1,7 @@
 {
   "name": "macro-helper",
   "title": "Macro Helper",
-  "description": "",
+  "description": "Adds convienent macro helpers to Foundry class items as well as the global scope.",
   "version": "9.000",
   "author": "kekilla",
   "authors": [
