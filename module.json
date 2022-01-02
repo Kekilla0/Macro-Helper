@@ -1,0 +1,30 @@
+{
+  "name": "macro-helper",
+  "title": "Macro Helper",
+  "description": "",
+  "version": "9.000",
+  "author": "kekilla",
+  "authors": [
+    {
+        "name": "kekilla",
+        "url": "https://github.com/kekilla0"
+    }
+  ],
+  "esmodules": [
+      "/scripts/hooks.js"
+  ],
+  "languages": [
+    {
+      "lang": "en",
+      "name": "English",
+      "path": "lang/en.json"
+    }
+  ],
+  "styles": [] ,
+  "socket": true,
+  "url": "",
+  "manifest": "",
+  "download": "",
+  "minimumCoreVersion": "9",
+  "compatibleCoreVersion": "9"
+}
