@@ -1,4 +1,24 @@
 {
-  "settings.token-distance.name" : "",
-  "settings.token-distance.hint" : ""
+  "setting.debug.name" : "Debug",
+  "setting.debug.hint" : "",
+
+  "setting.token.distance.name" : "distance",
+  "setting.token.distance.hint" : "Measure distance between token and specified placeable.",
+
+  "setting.actor.tempHP.name" : "addTempHP",
+  "setting.actor.tempHP.hint" : "Set temp HP of actor to value supplied, default overrides existing temp HP.",
+  "setting.actor.resource.name" : "consumeResource",
+  "setting.actor.resource.hint" : "Reduces resource of supplied name of actor, default removes 1",
+  "setting.actor.hasEffect.name" : "hasEffect",
+  "setting.actor.hasEffect.hint" : "Check to see if the actor has an effect by a specified name",
+  "setting.actor.removeEffect.name" : "removeEffect",
+  "setting.actor.removeEffect.hint" : "Remove an effect off of the actor by a specified name",
+  "setting.actor.toggleEffect.name" : "toggleEffect",
+  "setting.actor.toggleEffect.hint" : "Toggle an effects status on the actor by a specified name",
+
+  "setting.compendium.getItem.name" : "getItem",
+  "setting.compendium.getItem.hint" : "Searchs pack for specified item and returns it or undefined",
+
+  "setting.array.random.name" : "random",
+  "setting.array.random.hint" : "allows for a random value from an array to be returned, uses foundry roll system."
 }

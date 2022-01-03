@@ -19,7 +19,18 @@ export class actor extends dcl{
   static settings(){
     const config = false;
     const settingsData = {
-
+      ["actor.resource"] : {
+        scope : "world", config, group : NAME, default : true, type : Boolean,
+      },
+      ["actor.toggleEffect"] : {
+        scope : "world", config, group : NAME, default : true, type : Boolean,
+      },      
+      ["actor.hasEffect"] : {
+        scope : "world", config, group : NAME, default : true, type : Boolean,
+      },
+      ["actor.removeEffect"] : {
+        scope : "world", config, group : NAME, default : true, type : Boolean,
+      },
     }
 
     module.applySettings(settingsData);
@@ -28,6 +39,35 @@ export class actor extends dcl{
   static patch(){
     const cl = Actor;
 
-    
+    if(module.setting("actor.resource"))
+      cl.prototype.consumeResource = async function(name = "", value = 1){
+        if(name === "") return this;
+
+        let resources = this.toObject().data.resources;
+        let [key, obj] = Object.entries(resources).find(([key, object]) => key === name || object.label === name);
+
+        obj.value = Math.clamped(obj.value - value, 0, obj.max ?? 999999999999);
+
+        resources[key] = obj;
+
+        return await this.update({"data.resources" : resources});
+      }
+
+    if(module.setting("actor.hasEffect"))
+      cl.prototype.hasEffect = function(name){
+        return Boolean(this.effects.find(effect => effect.data.label.toLowerCase() === name.toLowerCase()));
+      }
+
+    if(module.setting("actor.removeEffect"))
+      cl.prototype.removeEffect = async function(name){
+        const effect = this.effects.find(effect => effect.data.label.toLowerCase() === name.toLowerCase());
+        if(effect) return await effect.delete();
+      }
+
+    if(module.setting("actor.toggleEffect"))
+      cl.prototype.toggleEffect = async function(name){
+        const effect = this.effects.find(effect => effect.data.label.toLowerCase() === name.toLowerCase());
+        if(effect) return await effect.update({ disabled : !effect.data.disabled });
+      }
   }
 }

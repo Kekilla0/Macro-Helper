@@ -6,7 +6,7 @@ export class MacroHelperConfig extends SettingsConfig{
       title : module.data.title,
       id : `${module.data.name}-settings`,
       template : `${module.data.path}/templates/MacroHelpersConfig.html`,
-      width : 600,
+      width : 5 * 150,
       height : "auto",
       tabs : [
         {navSelector: ".tabs", contentSelector: ".content", initial: "general"}
@@ -20,9 +20,11 @@ export class MacroHelperConfig extends SettingsConfig{
 
     const data = {
       tabs : [
-        {name: "actor", i18nName:"Actor Helpers", class: "fas fa-theater-masks", menus : [], settings : []},
-        {name: "token", i18nName:"Token Helpers", class: "fas fa-compass", menus: [], settings: []},
-        {name: "item", i18nName:"Item Helpers", class: "fas fa-drumstick-bite", menus : [], settings : []},
+        {name: "actor", i18nName:"Actor Helpers", class: "fas fa-theater-masks", menus : [], settings : [],},
+        {name: "token", i18nName:"Token Helpers", class: "fas fa-compass", menus: [], settings: [],},
+        {name: "item", i18nName:"Item Helpers", class: "fas fa-drumstick-bite", menus : [], settings : [],},
+        {name: "compendium", i18nName:"Comendium Pack Helpers", class: "", menus : [], settings: [],},
+        {name: "array", i18nName:"Array Helpers", class: "", menus : [], settings : [],},
       ],
     };
 

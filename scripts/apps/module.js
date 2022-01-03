@@ -88,7 +88,7 @@ export class logger {
   }
 
   static settings(){
-    const config = false;
+    const config = true;
     const settingsData = {
       debug : {
         scope: "world", config, default: false, type: Boolean,

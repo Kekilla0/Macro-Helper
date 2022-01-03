@@ -5,9 +5,12 @@ import { module, logger } from './apps/module.js';
 import { token } from './modules/token.js';
 import { actor } from './modules/actor.js';
 import { item } from './modules/item.js';
+import { activeeffect } from './modules/activeeffect.js';
+import { compendium } from './modules/compendium.js';
+import { array } from './modules/array.js';
 
 const SUB_MODULES = {
-  module, logger, token, actor, item, 
+  module, logger, token, actor, item, activeeffect, compendium, array, 
 }
 
 /* Initialize Module */

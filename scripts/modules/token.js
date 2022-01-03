@@ -20,7 +20,7 @@ export class token extends dcl{
     const config = false;
     const settingsData = {
       /* DISTANCE = MEASURES THE LENGTH BETWEEN THE TOKEN AND A PLACEABLE */
-      ["token-distance"] : {
+      ["token.distance"] : {
         scope : "world", config, group : NAME, default : true, type : Boolean,
       },
     }
@@ -32,7 +32,7 @@ export class token extends dcl{
     const cl = Token;
 
     /* Distance */
-    if(module.setting("token-distance"))
+    if(module.setting("token.distance"))
       cl.prototype.distance = function(placeable){
         if(!(placeable instanceof PlaceableObject)) return logger.error("Placeable Argument Error");
 
