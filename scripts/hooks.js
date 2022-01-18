@@ -8,9 +8,10 @@ import { item } from './modules/item.js';
 import { activeeffect } from './modules/activeeffect.js';
 import { compendium } from './modules/compendium.js';
 import { array } from './modules/array.js';
+import { table } from './modules/table.js';
 
 const SUB_MODULES = {
-  module, logger, token, actor, item, activeeffect, compendium, array, 
+  module, logger, token, actor, item, activeeffect, compendium, array, table,
 }
 
 /* Initialize Module */

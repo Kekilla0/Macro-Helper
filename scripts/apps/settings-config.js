@@ -23,8 +23,9 @@ export class MacroHelperConfig extends SettingsConfig{
         {name: "actor", i18nName:"Actor Helpers", class: "fas fa-theater-masks", menus : [], settings : [],},
         {name: "token", i18nName:"Token Helpers", class: "fas fa-compass", menus: [], settings: [],},
         {name: "item", i18nName:"Item Helpers", class: "fas fa-drumstick-bite", menus : [], settings : [],},
-        {name: "compendium", i18nName:"Comendium Pack Helpers", class: "", menus : [], settings: [],},
-        {name: "array", i18nName:"Array Helpers", class: "", menus : [], settings : [],},
+        {name: "table", i18nName:"Table Helpers", class: "fas fa-align-justify", menus : [], settings : [],},
+        {name: "compendium", i18nName:"Comendium Pack Helpers", class: "fas fa-book", menus : [], settings: [],},
+        {name: "array", i18nName:"Array Helpers", class: "fas fa-amilia", menus : [], settings : [],},
       ],
     };
 

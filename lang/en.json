@@ -15,10 +15,21 @@
   "setting.actor.removeEffect.hint" : "Remove an effect off of the actor by a specified name",
   "setting.actor.toggleEffect.name" : "toggleEffect",
   "setting.actor.toggleEffect.hint" : "Toggle an effects status on the actor by a specified name",
+  "setting.actor.applyDamage.name" : "applyDamage",
+  "setting.actor.applyDamage.hint" : "Overrides default 5e applyDamage function, adds resistance and immunity detection.",
+
+  "setting.table.getResult.name" : "getResult",
+  "setting.table.getResult.hint" : "Returns a random result from a table syncronously without a chatmessage display.",
 
   "setting.compendium.getItem.name" : "getItem",
   "setting.compendium.getItem.hint" : "Searchs pack for specified item and returns it or undefined",
 
   "setting.array.random.name" : "random",
-  "setting.array.random.hint" : "allows for a random value from an array to be returned, uses foundry roll system."
+  "setting.array.random.hint" : "allows for a random value from an array to be returned, uses foundry roll system.",
+  "setting.array.shuffle.name" : "shuffle",
+  "setting.array.shuffle.hint" : "shuffles array using Math.random using the Fisher-Yates Shuffle.",
+  "setting.array.shuffleSort.name" : "shuffleSort",
+  "setting.array.shuffleSort.hint" : "shuffles an array using Math.random and the array sort function.",
+  "setting.array.weight.name" : "weight",
+  "setting.array.weight.hint" : "returns a new array filled with weighted values of the original arrays contents, accepts a key (for the weight value eg obj.w -> fn('w'))"
 }

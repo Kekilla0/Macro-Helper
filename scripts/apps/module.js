@@ -84,7 +84,7 @@ export class logger {
   }
 
   static register(){
-    this.settings()
+    this.settings();
   }
 
   static settings(){

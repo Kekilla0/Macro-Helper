@@ -22,6 +22,15 @@ export class array extends dcl{
       ["array.random"] : {
         scope : "world", config, group : NAME, default : true, type : Boolean,
       },
+      ["array.shuffle"] : {
+        scope : "world", config, group : NAME, default : true, type : Boolean,
+      },
+      ["array.shuffleSort"] : {
+        scope : "world", config, group : NAME, default : true, type : Boolean,
+      },
+      ["array.weight"] : {
+        scope : "world", config, group : NAME, default : true, type : Boolean,
+      },
     }
 
     module.applySettings(settingsData);
@@ -38,6 +47,30 @@ export class array extends dcl{
 
         return this[roll.total];
       }
-    
+    if(module.setting("array.shuffle"))
+      cl.prototype.shuffle = function() {
+        var t, r;
+        for(let i = this.length; i > 0;){
+          r = Math.floor(Math.random() * i); 
+          i-=1;
+          t = this[i]; 
+          this[i] = this[r]; 
+          this[r] = t;
+        }
+        return this;
+      }
+    if(module.setting("array.shuffleSort"))
+      cl.prototype.shuffleSort = function(){
+        return this.sort(()=> (0.5 - Math.random()));
+      }
+    if(module.setting("array.weight"))
+      cl.prototype.weight = function(key){
+        if(key == undefined) return this;
+        return this.reduce((acc, ele)=> {
+          for(let i=0; i < ele[key]; i++)
+            acc.push(ele);
+          return acc;
+        }, []);
+      }
   }
 }
