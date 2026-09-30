@@ -1,0 +1,80 @@
+{{!-- dnd5e usage-card.hbs, with the damage-card.hbs roll + tray added below the card face --}}
+{{#if content}}
+{{{ content }}}
+{{else}}
+{{> "dnd5e.card-face" }}
+{{/if}}
+
+{{!-- Damage, already rolled, one box per damage type --}}
+{{#with damage}}{{> "macro-helper.damage-rows" }}{{/with}}
+
+{{!-- Utility roll formula, already rolled, its name underneath --}}
+{{#with formula}}
+<section class="icon-row macro-helper-damage-type">
+    <i class="fa-fw fa-solid fa-dice" aria-label="{{ label }}"></i>
+    <div class="damage-type-box">
+        {{{ html }}}
+        <span class="damage-type-label">{{ label }}</span>
+    </div>
+</section>
+{{/with}}
+
+{{!-- Several instances (Magic Missile darts) : target, damage, apply for each --}}
+{{#each rays}}
+<div class="macro-helper-ray">
+    <section class="icon-row ray-header">
+        <i class="fa-fw fa-solid fa-hashtag" inert></i>
+        <span class="roboto-upper">{{ localize "rollItem.instance" number=number }}</span>
+        {{#if canReroll}}
+        <ul class="unlist">
+            <li>
+                <button type="button" class="icon" data-action="rerollRay" data-ray="{{ index }}" data-tooltip
+                        aria-label="{{ localize "rollItem.reroll.instance" }}">
+                    <i class="fa-solid fa-rotate" inert></i>
+                </button>
+            </li>
+        </ul>
+        {{/if}}
+    </section>
+
+    {{#with target}}
+    <section class="icon-row">
+        <i class="fa-fw fa-solid fa-bullseye" aria-label="{{ localize "DND5E.CHATMESSAGE.Row.Targets" }}"></i>
+        <ul class="unlist targets pills">
+            <li>
+                <target-pill>
+                    <label>{{ name }}</label>
+                    <datalist>
+                        <option value="{{ token }}">{{ name }}</option>
+                    </datalist>
+                </target-pill>
+            </li>
+        </ul>
+    </section>
+    {{/with}}
+
+    {{#with damage}}{{> "macro-helper.damage-rows" }}{{/with}}
+
+    {{#if showTray}}
+    <macro-helper-damage class="dnd5e2" data-ray="{{ index }}" data-part="base"></macro-helper-damage>
+    {{/if}}
+</div>
+{{/each}}
+
+{{!-- Save results (dnd5e "Chat Card Summary" setting) --}}
+{{#each summaries}}
+<div class="card-summary" data-message-id="{{ id }}" data-target-uuid="{{ token.uuid }}">{{{ html }}}</div>
+{{/each}}
+
+{{!-- Apply damage, halves/negates for targets that saved --}}
+{{#if damage.showTray}}
+<damage-application class="dnd5e2"></damage-application>
+{{/if}}
+
+{{#if effects.length}}
+<effect-application class="dnd5e2">
+    {{#each effects}}
+    <option value="{{ uuid }}"></option>
+    {{/each}}
+</effect-application>
+{{/if}}

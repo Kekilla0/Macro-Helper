@@ -1,0 +1,191 @@
+{{!-- dnd5e attack-card.hbs, with the damage-card.hbs roll + tray appended --}}
+<div class="chat-card">
+    {{> "dnd5e.card-header" }}
+
+    {{#if mastery}}
+    <p class="supplement">
+        <strong>{{ localize "DND5E.WEAPON.Mastery.Flavor" }}</strong>
+        {{#if mastery.reference}}
+        <a class="content-link" draggable="true" data-link data-uuid="{{ mastery.reference }}"
+           data-tooltip="{{ mastery.label }}">{{ mastery.label }}</a>
+        {{else}}
+        {{ mastery.label }}
+        {{/if}}
+    </p>
+    {{/if}}
+
+    {{> "dnd5e.card-rows" }}
+
+    {{#if rays}}
+    <p class="supplement"><strong>{{ localize "rollItem.rays" }}</strong> {{ rays.length }}</p>
+    {{/if}}
+</div>
+
+{{!-- Reroll buttons, same markup as dnd5e's card-buttons partial --}}
+{{#if (or buttons applyHits)}}
+<section class="icon-row">
+    <i class="fa-solid fa-fw fa-circle-play" aria-label="{{ localize "DND5E.CHATMESSAGE.Row.Actions" }}"></i>
+    <ul class="unlist">
+        {{#if buttons}}
+        <li>
+            <button type="button" class="icon" data-action="rerollAttack" data-tooltip
+                    aria-label="{{ localize "rollItem.reroll.attack" }}">
+                <i class="fa-solid fa-sword" inert></i>
+            </button>
+        </li>
+        {{#if buttons.damage}}
+        <li>
+            <button type="button" class="icon" data-action="rerollDamage" data-tooltip
+                    aria-label="{{ localize "rollItem.reroll.damage" }}">
+                <i class="fa-solid fa-burst" inert></i>
+            </button>
+        </li>
+        {{/if}}
+        {{#if buttons.rider}}
+        <li>
+            <button type="button" class="icon" data-action="rerollRiderDamage" data-tooltip
+                    aria-label="{{ localize "rollItem.reroll.rider" }}">
+                <i class="fa-solid fa-droplet" inert></i>
+            </button>
+        </li>
+        {{/if}}
+        {{/if}}
+        {{#if applyHits}}
+        <li>
+            <button type="button" class="icon" data-action="applyHits" data-tooltip
+                    aria-label="{{ localize "rollItem.apply.hits" }}">
+                <i class="fa-solid fa-heart-crack" inert></i>
+            </button>
+        </li>
+        {{/if}}
+    </ul>
+</section>
+{{/if}}
+
+{{#if targets.length}}
+<section class="icon-row">
+    <i class="fa-fw fa-solid fa-bullseye" aria-label="{{ localize "DND5E.CHATMESSAGE.Row.Targets" }}"></i>
+    <ul class="unlist targets pills">
+        {{#each targets}}
+        <li>
+            <target-pill {{#if showResult}}{{ ifThen isMiss "data-miss" "data-hit" }}{{/if}}
+                {{#if showAC}}data-value="{{ ifThen hasAC ac "∞" }}"{{/if}}>
+                <label>{{ name }}</label>
+                <datalist>
+                    <option value="{{ token }}">{{ name }}</option>
+                </datalist>
+            </target-pill>
+        </li>
+        {{/each}}
+    </ul>
+</section>
+{{/if}}
+
+{{!-- Attack --}}
+{{> "dnd5e.card-rolls" }}
+
+{{!-- Multiple attacks : each one laid out like a single attack card (target, attack, damage, apply) --}}
+{{#each rays}}
+<div class="macro-helper-ray{{#unless hit}} miss{{/unless}}">
+    <section class="icon-row ray-header">
+        <i class="fa-fw fa-solid fa-hashtag" inert></i>
+        <span class="roboto-upper">{{ localize "rollItem.ray" number=number }}</span>
+        {{#if canReroll}}
+        <ul class="unlist">
+            <li>
+                <button type="button" class="icon" data-action="rerollRay" data-ray="{{ index }}" data-tooltip
+                        aria-label="{{ localize "rollItem.reroll.ray" }}">
+                    <i class="fa-solid fa-rotate" inert></i>
+                </button>
+            </li>
+        </ul>
+        {{/if}}
+    </section>
+
+    {{#with target}}
+    <section class="icon-row">
+        <i class="fa-fw fa-solid fa-bullseye" aria-label="{{ localize "DND5E.CHATMESSAGE.Row.Targets" }}"></i>
+        <ul class="unlist targets pills">
+            <li>
+                <target-pill {{#if showResult}}{{ ifThen isMiss "data-miss" "data-hit" }}{{/if}}
+                    {{#if showAC}}data-value="{{ ifThen hasAC ac "∞" }}"{{/if}}>
+                    <label>{{ name }}</label>
+                    <datalist>
+                        <option value="{{ token }}">{{ name }}</option>
+                    </datalist>
+                </target-pill>
+            </li>
+        </ul>
+    </section>
+    {{/with}}
+
+    <section class="icon-row">
+        <i class="fa-fw fa-solid fa-dice" aria-label="{{ localize "DND5E.CHATMESSAGE.Row.Roll" }}"></i>
+        {{{ attack }}}
+    </section>
+
+    {{#with damage}}{{> "macro-helper.damage-rows" }}{{/with}}
+
+    {{#if showTray}}
+    <macro-helper-damage class="dnd5e2" data-ray="{{ index }}" data-part="base"></macro-helper-damage>
+    {{/if}}
+</div>
+{{/each}}
+
+{{!-- Damage, one box per damage type --}}
+{{#with damage}}
+{{> "macro-helper.damage-rows" }}
+
+{{#if showTray}}
+<macro-helper-damage class="dnd5e2" data-part="base"></macro-helper-damage>
+{{/if}}
+{{/with}}
+
+{{!-- Effects the attack applies (Guiding Bolt, Ray of Frost) --}}
+{{#if effects.length}}
+<effect-application class="dnd5e2">
+    {{#each effects}}
+    <option value="{{ uuid }}"></option>
+    {{/each}}
+</effect-application>
+{{/if}}
+
+{{!-- On-hit save (Giant Spider's poison) : save button, its own damage + tray (halved for those who saved), effects --}}
+{{#with rider}}
+<div class="macro-helper-rider{{#if miss}} miss{{/if}}">
+    <section class="icon-row ray-header">
+        <i class="fa-fw fa-solid fa-shield-heart" inert></i>
+        <span class="roboto-upper">{{ name }}</span>
+    </section>
+
+    <section class="icon-row">
+        <i class="fa-fw fa-solid fa-circle-play" aria-label="{{ localize "DND5E.CHATMESSAGE.Row.Actions" }}"></i>
+        <ul class="unlist pills">
+            <li class="pill transparent"><span class="label">{{ label }}</span></li>
+            <li>
+                <button type="button" class="icon" data-action="rollRiderSave" data-tooltip aria-label="{{ label }}">
+                    <i class="fa-solid fa-shield-heart" inert></i>
+                </button>
+            </li>
+        </ul>
+    </section>
+
+    {{#with damage}}{{> "macro-helper.damage-rows" }}{{/with}}
+
+    {{#each summaries}}
+    <div class="card-summary" data-message-id="{{ id }}" data-target-uuid="{{ token.uuid }}">{{{ html }}}</div>
+    {{/each}}
+
+    {{#if damage.showTray}}
+    <macro-helper-damage class="dnd5e2" data-part="save"></macro-helper-damage>
+    {{/if}}
+
+    {{#if effects.length}}
+    <effect-application class="dnd5e2">
+        {{#each effects}}
+        <option value="{{ uuid }}"></option>
+        {{/each}}
+    </effect-application>
+    {{/if}}
+</div>
+{{/with}}

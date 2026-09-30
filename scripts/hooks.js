@@ -1,26 +1,31 @@
-/* Organizational Tools */
-import { module, logger } from './apps/module.js';
+import { module } from './module.js';
+import { settings } from './settings.js';
+import { logger } from './log.js';
+import { itemMacro } from './item-macro/item-macro.js';
+import { api } from './api.js';
+import { rollItem } from './roll-item/roll-item.js';
+const log = logger.for(import.meta.url);
 
-/* Sub Modules */
-import { token } from './modules/token.js';
-import { actor } from './modules/actor.js';
-import { item } from './modules/item.js';
-import { activeeffect } from './modules/activeeffect.js';
-import { compendium } from './modules/compendium.js';
-import { array } from './modules/array.js';
-import { table } from './modules/table.js';
+Hooks.once("init", ()=> {
+  log.info("Initializing module.");
+  settings.register();
+  api.register();
+  rollItem.register();
+});
 
-const SUB_MODULES = {
-  module, logger, token, actor, item, activeeffect, compendium, array, table,
-}
+/* System classes and CONFIG are in place by setup */
+Hooks.once("setup", ()=> {
+  itemMacro.register();
+});
 
-/* Initialize Module */
-Hooks.on(`ready`, () => {
-  module.build();
+Hooks.once("ready", ()=> {
+  log.info("Module ready.");
+  log.debug("Module data", module.data);
+});
 
-  Object.values(SUB_MODULES).forEach(cl => cl.register());
-
-  //global testing
-  Object.entries(SUB_MODULES).forEach(([key, cl])=> window[key] = cl);
-})
-
+/**
+ * TODO
+ *
+ * COMPLETED
+ *
+ */
