@@ -1,0 +1,19 @@
+{{!-- One damage box per damage type, context from message.js damageContext : { isPrivate, types : [{ label, icon, total, parts }] } --}}
+{{#each types}}
+<section class="icon-row macro-helper-damage-type" {{#if type}}data-damage-type="{{ type }}"{{/if}}>
+    {{#if icon}}
+    <img class="damage-type-icon" src="{{ icon }}" alt="{{ label }}" data-tooltip="{{ label }}">
+    {{else}}
+    <i class="fa-fw fa-solid fa-burst" aria-label="{{ localize "DND5E.Damage" }}"></i>
+    {{/if}}
+    <div class="damage-type-box">
+        <button type="button" class="dice-roll" {{ disabled isPrivate }}>
+            <span class="result"><strong class="total">{{ total }}</strong></span>
+        </button>
+        {{#unless isPrivate}}
+        <div class="roll-breakdown" popover>{{> "dnd5e.damage-breakdown" }}</div>
+        {{/unless}}
+        {{#if label}}<span class="damage-type-label">{{ label }}</span>{{/if}}
+    </div>
+</section>
+{{/each}}

@@ -1,0 +1,42 @@
+/* Roll Item : multiple attacks / on-hit save, each block is dnd5e's own card styling, this only separates them */
+.chat-message .macro-helper-ray,
+.chat-message .macro-helper-rider {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-block-start: 6px;
+  padding-block-start: 6px;
+  border-block-start: 1px solid var(--dnd5e-color-gold, var(--color-border));
+}
+/* One damage box per damage type : type icon, then the box with the type name underneath */
+.chat-message .macro-helper-damage-type .damage-type-icon {
+  flex: 0 0 var(--fa-width, 1.25em);
+  width: 16px;
+  height: 16px;
+  border: none;
+  object-fit: contain;
+}
+.chat-message .macro-helper-damage-type .damage-type-box {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.chat-message .macro-helper-damage-type .damage-type-box > button.dice-roll {
+  flex: none;
+}
+.chat-message .macro-helper-damage-type .damage-type-label {
+  text-align: center;
+  font-size: var(--font-size-10);
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+.chat-message .ray-header > span {
+  font-size: var(--font-size-12);
+}
+.chat-message .macro-helper-ray.miss .macro-helper-damage-type button.dice-roll,
+.chat-message .macro-helper-rider.miss {
+  opacity: 0.5;
+}
