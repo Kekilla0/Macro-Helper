@@ -1,3 +1,64 @@
+/* Item Macro : title bar button, highlighted when the item / activity has a macro */
+.window-header .macro-helper-item-macro.has-macro {
+  color: var(--dnd5e-color-gold, var(--color-warm-2, #ffae00));
+}
+
+/* Hook Macros : collapsible section in the macro config (starts collapsed) */
+.macro-config .macro-helper-hooks {
+  flex: none;
+  border: 1px solid var(--color-border, #7a7971);
+  border-radius: 4px;
+  padding: 0.25rem 0.5rem;
+}
+.macro-config .macro-helper-hooks > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: var(--cursor-pointer, pointer);
+  font-weight: bold;
+}
+.macro-config .macro-helper-hooks > summary .count {
+  font-weight: normal;
+  color: var(--color-text-secondary);
+}
+.macro-config .macro-helper-hooks-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-block-start: 0.5rem;
+}
+
+/* Helpers : target chooser */
+.macro-helper-target-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.macro-helper-target-list label.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.macro-helper-target-list img {
+  width: 32px;
+  height: 32px;
+  border: none;
+  cursor: var(--cursor-pointer, pointer);
+}
+.macro-helper-target-list .name {
+  flex: 1;
+}
+.macro-helper-target-list .distance {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-11);
+}
+.macro-helper-target-status {
+  min-height: 1.2em;
+  color: var(--color-level-error, #c62828);
+}
+
 /* Roll Item : multiple attacks / on-hit save, each block is dnd5e's own card styling, this only separates them */
 .chat-message .macro-helper-ray,
 .chat-message .macro-helper-rider {

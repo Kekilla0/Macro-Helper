@@ -44,12 +44,6 @@ MacroHelper.rollItem(item);                 // first attack, save, damage, heal 
 MacroHelper.rollItem(item, { count: 3 });   // force the number of attack rolls
 ```
 
-## Releasing (maintainers)
-
-1. Merge into `main` and push.
-2. On GitHub, **Releases → Draft a new release**, tag it e.g. `v14.0.1`, and publish.
-3. The **Release** workflow stamps the version into `module.json`, zips the module and attaches `module.json` and `module.zip` to the release. Foundry picks it up as an update through the manifest URL.
-
 ## License
 
 MIT, see [LICENSE](LICENSE).

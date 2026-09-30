@@ -84,16 +84,60 @@ export class itemMacro{
     this.wrapActivities();
   }
 
+  static canEdit(app){
+    return app.isEditable && game.user.can("MACRO_SCRIPT");
+  }
+
+  /* Entry in the sheet's ⋯ header menu */
   static control(app){
     return {
       icon : "fa-solid fa-code",
       label : "itemMacro.control",
-      visible : ()=> app.isEditable && game.user.can("MACRO_SCRIPT"),
+      visible : ()=> this.canEdit(app),
       onClick : ()=> MacroEditor.open(app.document),
     };
   }
 
+  /**
+   * Button in the sheet's title bar, next to the close button, styled like Foundry's own frame buttons.
+   * The frame is built once per window, so it is added on the first render and its "has a macro" state refreshed after.
+   */
+  static titleBarButton(app){
+    const header = app.window?.header;
+    const close = app.window?.close;
+    if(!header || !close) return;
+
+    let button = header.querySelector(`.${module.id}-item-macro`);
+    if(!this.canEdit(app)) return button?.remove();
+
+    if(!button){
+      button = document.createElement("button");
+      button.type = "button";
+      button.className = `header-control icon fa-solid fa-code ${module.id}-item-macro`;
+      button.dataset.tooltip = "";
+      button.ariaLabel = module.i18n("itemMacro.control");
+      /* Own listener, not data-action : the sheet's action handler doesn't know this button */
+      button.addEventListener("click", event => {
+        event.preventDefault();
+        event.stopPropagation();
+        MacroEditor.open(app.document);
+      });
+      close.before(button);
+    }
+    button.classList.toggle("has-macro", !!this.get(app.document));
+  }
+
   static registerSheets(){
+    const titleBar = settings.value("itemMacroTitleBar");
+
+    if(titleBar){
+      Hooks.on("renderDocumentSheetV2", app => {
+        if(app.document?.documentName === "Item") this.titleBarButton(app);
+      });
+      Hooks.on("renderActivitySheet", app => this.titleBarButton(app));
+      return;
+    }
+
     Hooks.on("getHeaderControlsDocumentSheetV2", (app, controls)=> {
       if(app.document?.documentName === "Item") controls.push(this.control(app));
     });
