@@ -11,6 +11,8 @@
   "settings.rollItemHeals.hint" : "Using a heal activity (Cure Wounds, Healing Word, potions...) rolls the healing straight onto the card with its apply tray. Uses, spell slots and potion quantity are still handled by dnd5e.",
   "settings.rollItemDamage.title" : "Roll Item for Damage",
   "settings.rollItemDamage.hint" : "Using a damage-only activity (Magic Missile...) rolls the damage straight onto the card with its apply tray. Magic Missile rolls one dart per level (3 at 1st), each with its own target and tray.",
+  "settings.rollItemUtility.title" : "Roll Item for Utility",
+  "settings.rollItemUtility.hint" : "Using a utility activity that has a roll formula rolls it straight onto the card, instead of a separate Roll button. Utility activities without a formula are left to dnd5e.",
   "settings.rollItemHotkeys.title" : "Roll Item Advantage Keys",
   "settings.rollItemHotkeys.hint" : "MacroHelper.rollItem reads dnd5e's advantage/disadvantage keys (Configure Controls, default Alt / Ctrl) while rolling.",
   "settings.debug.title" : "Debug",
@@ -32,6 +34,7 @@
   "rollItem.reroll.rider" : "Reroll save damage",
   "rollItem.reroll.healing" : "Reroll Healing",
   "rollItem.reroll.instance" : "Reroll this damage",
+  "rollItem.reroll.formula" : "Reroll",
   "rollItem.instance" : "Damage {number}",
   "rollItem.apply.all" : "Apply each to its target",
   "rollItem.rays" : "Attacks",
@@ -46,6 +49,6 @@
   "rollItem.count.invalid" : "\"{formula}\" is not a valid formula.",
   "rollItem.count.saved" : "{name} will roll {count} attack(s).",
   "rollItem.warn.disabled" : "Macro Helper: Roll Item is disabled in the module settings.",
-  "rollItem.warn.noAttack" : "{name} has no attack, save, damage or heal activity to roll.",
+  "rollItem.warn.noAttack" : "{name} has nothing for Roll Item to roll (attack, save, damage, heal, or utility with a formula).",
   "rollItem.error.type" : "Macro Helper: the roll card message type is not registered. Fully restart Foundry (not just the world) after updating the module."
 }

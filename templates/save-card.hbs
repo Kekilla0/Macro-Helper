@@ -8,6 +8,17 @@
 {{!-- Damage, already rolled, one box per damage type --}}
 {{#with damage}}{{> "macro-helper.damage-rows" }}{{/with}}
 
+{{!-- Utility roll formula, already rolled, its name underneath --}}
+{{#with formula}}
+<section class="icon-row macro-helper-damage-type">
+    <i class="fa-fw fa-solid fa-dice" aria-label="{{ label }}"></i>
+    <div class="damage-type-box">
+        {{{ html }}}
+        <span class="damage-type-label">{{ label }}</span>
+    </div>
+</section>
+{{/with}}
+
 {{!-- Several instances (Magic Missile darts) : target, damage, apply for each --}}
 {{#each rays}}
 <div class="macro-helper-ray">

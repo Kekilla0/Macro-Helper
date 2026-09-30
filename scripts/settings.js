@@ -33,6 +33,9 @@ export class settings{
       rollItemDamage : {
         scope : "world", config : true, default : false, type : Boolean,
       },
+      rollItemUtility : {
+        scope : "world", config : true, default : false, type : Boolean,
+      },
       rollItemHotkeys : {
         scope : "client", config : true, default : true, type : Boolean,
       },

@@ -1,6 +1,7 @@
 import { module } from '../module.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
+import { patch } from '../patch.js';
 import { TYPES, registerMessages } from './message.js';
 const log = logger.for(import.meta.url);
 
@@ -69,9 +70,23 @@ export class rollItem{
    * which is how dnd5e builds on-hit riders : Giant Spider Bite, Giant Poisonous Snake Bite, Wolf Bite, Ghoul Claws.
    */
   static findRider(activity){
-    return activity?.item?.system.activities?.find(a =>
-      (a.type === "save") && (a.id !== activity.id) && (a.activation?.type === "special")
-    ) ?? null;
+    const saves = activity?.item?.system.activities?.getByType("save").filter(a => a.id !== activity.id) ?? [];
+    /* 2014 monsters mark the rider "special", 2024 ones (Ghoul Claw) leave it as an action : any save on the attack's item rides it */
+    return saves.find(a => a.activation?.type === "special") ?? saves[0] ?? null;
+  }
+
+  /**
+   * An item whose only usable activities are one attack + its save rider(s) (Giant Spider Bite, Ghoul Claw)
+   * goes straight to the attack instead of dnd5e's "which activity?" prompt : the rider is on the attack's card anyway.
+   * @returns {Activity|null}  the attack to use, or null to let dnd5e prompt as normal
+   */
+  static fastForward(item, config = {}){
+    if(config.chooseActivity) return null;
+    if(!settings.value("rollItem") || !settings.value("rollItemDefault")) return null;
+    const usable = item?.system?.activities?.filter(a => a.canUse) ?? [];
+    const attacks = usable.filter(a => a.type === "attack");
+    if(attacks.length !== 1 || usable.length < 2) return null;
+    return usable.every(a => a === attacks[0] || a.type === "save") ? attacks[0] : null;
   }
 
   /* ---------- Multiple attack rolls (Scorching Ray, Eldritch Blast...) ---------- */
@@ -200,9 +215,12 @@ export class rollItem{
     save : "rollItemSaves",
     heal : "rollItemHeals",
     damage : "rollItemDamage",
+    utility : "rollItemUtility",
   };
 
   static modeFor(activity, usage){
+    /* Utility activities only have something to roll when they define a formula */
+    if(activity?.type === "utility" && !activity.roll?.formula) return null;
     let mode = usage?.[module.id]?.mode;
     const setting = this.DEFAULT_MODES[activity?.type];
     if(!mode && setting && settings.value(setting)) mode = activity.type;
@@ -226,6 +244,7 @@ export class rollItem{
       case "save" :
       case "heal" :
       case "damage" :
+      case "utility" :
         return void rollItem.usageCard(activity, results.message);
     }
   }
@@ -236,6 +255,12 @@ export class rollItem{
   static async rollAttack(activity, event, config = {}){
     const [roll] = await activity.rollAttack({ ...config, event : this.keyEvent(event) }, { configure : false }, { create : false }) ?? [];
     return roll ?? null;
+  }
+
+  /* A utility activity's own roll formula (dnd5e's "Roll" button), no dialog, no message */
+  static async rollFormula(activity){
+    if(!activity?.roll?.formula) return [];
+    return await activity.rollFormula({}, { configure : false }, { create : false }) ?? [];
   }
 
   /* Heal activities keep their formula in `healing`, everything else in `damage.parts` */
@@ -270,7 +295,8 @@ export class rollItem{
   static getActivity(item, id){
     const activities = item?.system?.activities;
     if(!activities) return null;
-    const usable = ["attack", "save", "damage", "heal"].flatMap(type => activities.getByType(type));
+    const usable = ["attack", "save", "damage", "heal", "utility"].flatMap(type => activities.getByType(type))
+      .filter(a => (a.type !== "utility") || a.roll?.formula);
     if(!id) return usable[0] ?? null;
     return usable.find(a => a.id === id || a.name === id) ?? null;
   }
@@ -298,6 +324,14 @@ export class rollItem{
     registerMessages();
     Hooks.on("dnd5e.preUseActivity", rollItem.onPreUse);
     Hooks.on("dnd5e.postUseActivity", rollItem.onPostUse);
+
+    /* Attack + save rider items skip dnd5e's activity choice (sheet, hotbar, anything calling item.use) */
+    patch.wrap("CONFIG.Item.documentClass.prototype.use", async function(wrapped, config = {}, dialog = {}, message = {}){
+      const attack = rollItem.fastForward(this, config);
+      if(!attack) return wrapped(config, dialog, message);
+      const { chooseActivity, ...usage } = config;
+      return attack.use(usage, dialog, message);
+    });
 
     Hooks.on("getHeaderControlsActivitySheet", (app, controls)=> {
       if(!["attack", "damage"].includes(app.document?.type)) return;
@@ -362,10 +396,19 @@ export class rollItem{
     }
     else damage.push(...await this.rollDamage(activity, null));
 
+    /* Utility : its roll formula (dnd5e's "Roll" button) */
+    const formula = await this.rollFormula(activity);
+    for(const roll of formula) roll.options[module.id] = { part : "formula" };
+
     data.type = TYPES.save;
-    data.rolls = [...(data.rolls ?? []), ...damage];
+    data.rolls = [...(data.rolls ?? []), ...damage, ...formula];
     data.system.onSave = activity.damage?.onSave ?? null;
-    data.system.buttons = (data.system.buttons ?? []).filter(b => !["rollDamage", "rollHealing"].includes(b.action));
+    data.system.buttons = (data.system.buttons ?? []).filter(b => !["rollDamage", "rollHealing", "rollFormula"].includes(b.action));
+    if(formula.length) data.system.buttons.push({
+      action : "rerollFormula",
+      icon : "fa-solid fa-dice",
+      label : { value : "rollItem.reroll.formula" },
+    });
     if(damage.length) data.system.buttons.push({
       action : "rerollDamage",
       icon : isHeal ? "systems/dnd5e/icons/svg/damage/healing.svg" : "fa-solid fa-burst",

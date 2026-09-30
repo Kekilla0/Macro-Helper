@@ -141,6 +141,15 @@
 {{/if}}
 {{/with}}
 
+{{!-- Effects the attack applies (Guiding Bolt, Ray of Frost) --}}
+{{#if effects.length}}
+<effect-application class="dnd5e2">
+    {{#each effects}}
+    <option value="{{ uuid }}"></option>
+    {{/each}}
+</effect-application>
+{{/if}}
+
 {{!-- On-hit save (Giant Spider's poison) : save button, its own damage + tray (halved for those who saved), effects --}}
 {{#with rider}}
 <div class="macro-helper-rider{{#if miss}} miss{{/if}}">

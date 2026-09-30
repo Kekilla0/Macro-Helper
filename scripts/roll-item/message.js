@@ -62,6 +62,20 @@ export function registerMessages(){
   const tagOf = roll => ({ ray : 0, part : "base", ...(roll.options?.[module.id] ?? {}) });
   const tag = (rolls, data) => { for(const roll of rolls) roll.options[module.id] = { ...tagOf(roll), ...data }; return rolls; };
 
+  /**
+   * The ActiveEffects an activity applies, for dnd5e's <effect-application> tray (which wants full uuids).
+   * Activity effect links hold a uuid only for external effects, item effects are referenced by _id.
+   */
+  const effectDocs = activity => (activity?.applicableEffects ?? [])
+    .map(e => e.uuid ? fromUuidSync(e.uuid, { strict : false }) : activity.item?.effects.get(e._id))
+    .filter(Boolean);
+
+  /* Same permission dnd5e uses for its effect tray */
+  const canApplyEffects = message => message.isContentVisible && (game.user.isGM || dnd5e.settings.allowPlayerEffectsTray);
+
+  /* dnd5e's compact roll box, used for non-damage rolls (utility formulas) */
+  const ROLL_TEMPLATE = "systems/dnd5e/templates/chat/parts/roll-compact.hbs";
+
   /* Who damage lands on : the stored target, or the selected tokens if there was none. Only actors the user owns. */
   const targetActors = descriptor => {
     const actors = descriptor
@@ -284,6 +298,14 @@ export function registerMessages(){
       const canReroll = this.parent.isOwner && this.parent.isContentVisible && !!activity;
       context.buttons = canReroll ? { damage : !!activity.damage?.parts?.length } : null;
 
+      /* Effects the attack applies (Guiding Bolt, Ray of Frost), normally on dnd5e's usage card which we replace.
+         Effects the rider also carries (2024 Ghoul's Paralyzed) only apply on a failed save, they show in the save section. */
+      context.effects = [];
+      if(canApplyEffects(this.parent)){
+        const riderEffects = new Set(effectDocs(this.riderActivity).map(e => e.id));
+        context.effects = effectDocs(this.parent.getAssociatedActivity({ scaled : true })).filter(e => !riderEffects.has(e.id));
+      }
+
       if(this.isMulti){
         /* dnd5e's target pills judge every target against the first roll, the rows show each ray's own target instead */
         context.targets = [];
@@ -353,8 +375,6 @@ export function registerMessages(){
           .filter(s => s.html);
       }
 
-      const canEffects = visible && (game.user.isGM || dnd5e.settings.allowPlayerEffectsTray);
-
       return {
         name : save?.name || game.i18n.localize("DND5E.SavingThrow"),
         label,
@@ -363,7 +383,7 @@ export function registerMessages(){
         hasDamage : rolls.length > 0,
         damage : rolls.length ? { ...damageContext(this.parent, rolls), showTray : this.canApply } : null,
         summaries,
-        effects : canEffects ? (save?.applicableEffects ?? []) : [],
+        effects : canApplyEffects(this.parent) ? effectDocs(save) : [],
       };
     }
 
@@ -511,6 +531,7 @@ export function registerMessages(){
         rerollDamage : RollItemSaveData.#rerollDamage,
         rerollRay : RollItemSaveData.#rerollRay,
         applyRays : RollItemSaveData.#applyRays,
+        rerollFormula : RollItemSaveData.#rerollFormula,
       },
     }, { inplace : false }));
 
@@ -550,6 +571,21 @@ export function registerMessages(){
       return this.damageRolls.filter(r => tagOf(r).ray === index);
     }
 
+    /* A utility activity's roll formula, rolled onto the card */
+    get formulaRolls(){
+      return this.parent.rolls.filter(r => tagOf(r).part === "formula");
+    }
+
+    async _prepareFormulaContext(){
+      const [roll] = this.formulaRolls;
+      if(!roll) return null;
+      const activity = this.parent.getAssociatedActivity();
+      return {
+        label : activity?.roll?.name || game.i18n.localize("DND5E.Roll"),
+        html : await roll.render({ template : ROLL_TEMPLATE, isPrivate : !this.parent.isContentVisible }),
+      };
+    }
+
     rayTarget(index){
       const uuid = this.rays[index]?.target;
       return uuid ? this.targets.find(t => t.token === uuid) ?? null : null;
@@ -558,6 +594,8 @@ export function registerMessages(){
     async _prepareContext(options){
       const context = await super._prepareContext(options);
       if(context.content) return context;
+
+      context.formula = await this._prepareFormulaContext();
 
       if(this.isMulti){
         const visible = this.parent.isContentVisible;
@@ -614,6 +652,18 @@ export function registerMessages(){
       if(!damage.length) return target.disabled = false;
       const rolls = this.parent.rolls.filter(r => !(r instanceof DamageRoll) || tagOf(r).ray !== index);
       await replaceRolls(this.parent, { rolls : [...rolls, ...damage], shown : damage });
+    }
+
+    /** @this {RollItemSaveData} */
+    static async #rerollFormula(event, target){
+      const activity = this.parent.getAssociatedActivity({ scaled : true });
+      if(!activity) return;
+      target.disabled = true;
+
+      const rolls = tag(await rollItem.rollFormula(activity), { part : "formula" });
+      if(!rolls.length) return target.disabled = false;
+      const keep = this.parent.rolls.filter(r => tagOf(r).part !== "formula");
+      await replaceRolls(this.parent, { rolls : [...keep, ...rolls], shown : rolls });
     }
 
     /* Each instance onto its own target, instances without a target go to the selected tokens */
