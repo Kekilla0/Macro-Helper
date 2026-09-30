@@ -1,7 +1,7 @@
 {
   "id": "macro-helper",
   "title": "Macro Helper",
-  "description": "Item macros and one-click dnd5e roll cards (attacks, saves, heals, damage) for Foundry VTT.",
+  "description": "Reusable macro helpers, item macros, hook macros and one-click dnd5e roll cards for Foundry VTT.",
   "version": "14.0.0",
   "authors": [
     {
