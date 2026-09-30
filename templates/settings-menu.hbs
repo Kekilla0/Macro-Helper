@@ -1,0 +1,19 @@
+{{!-- One feature's settings, context from settings-menu.js : settings [{ key, id, name, hint, value, isBoolean, world, disabled }] --}}
+<section class="macro-helper-settings-list">
+    {{#each settings}}
+    <div class="form-group">
+        <label for="{{ id }}">{{ localize name }}</label>
+        <div class="form-fields">
+            {{#if isBoolean}}
+            <input type="checkbox" id="{{ id }}" name="{{ key }}" {{ checked value }} {{ disabled disabled }}>
+            {{else}}
+            <input type="text" id="{{ id }}" name="{{ key }}" value="{{ value }}" {{ disabled disabled }}>
+            {{/if}}
+        </div>
+        <p class="hint">
+            {{ localize hint }}
+            {{#unless world}}<em>{{ localize "settings.menu.client" }}</em>{{/unless}}
+        </p>
+    </div>
+    {{/each}}
+</section>

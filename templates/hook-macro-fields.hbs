@@ -1,0 +1,42 @@
+{{!-- Hook Macros : added under the Type line of a world macro's config (GM only), saved as the macro's flags.
+      Starts collapsed, the summary shows how many hooks are set. --}}
+<details class="macro-helper-hooks">
+    <summary>
+        <i class="fa-solid fa-link" inert></i>
+        <span>{{ localize "hookMacros.legend" }}</span>
+        {{#if count}}<span class="count">({{ count }})</span>{{/if}}
+    </summary>
+
+    <div class="macro-helper-hooks-body">
+        <div class="form-group">
+            <label>{{ localize "hookMacros.fields.hooks" }}</label>
+            <div class="form-fields">
+                <multi-select name="{{ flag }}.hooks">
+                    {{#each groups}}
+                    <optgroup label="{{ label }}">
+                        {{#each options}}
+                        <option value="{{ value }}" {{#if selected}}selected{{/if}}>{{ label }}</option>
+                        {{/each}}
+                    </optgroup>
+                    {{/each}}
+                </multi-select>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>{{ localize "hookMacros.fields.custom" }}</label>
+            <div class="form-fields">
+                <string-tags name="{{ flag }}.customHooks" value="{{ custom }}"></string-tags>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>{{ localize "hookMacros.fields.runAs" }}</label>
+            <div class="form-fields">
+                <select name="{{ flag }}.runAs">
+                    {{ selectOptions runAsChoices selected=runAs localize=true }}
+                </select>
+            </div>
+        </div>
+    </div>
+</details>
