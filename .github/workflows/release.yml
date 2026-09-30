@@ -1,0 +1,46 @@
+name: Release
+
+# Publishing a GitHub release tagged vX.Y.Z (or X.Y.Z) builds the module and attaches
+# module.json + module.zip to that release. The repo's module.json manifest points at
+# releases/latest, so Foundry sees each new release as an update.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stamp version and release links into module.json
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          REPO: https://github.com/${{ github.repository }}
+        run: |
+          VERSION="${TAG#v}"
+          jq --arg version "$VERSION" \
+             --arg url "$REPO" \
+             --arg manifest "$REPO/releases/latest/download/module.json" \
+             --arg download "$REPO/releases/download/$TAG/module.zip" \
+             '.version = $version | .url = $url | .manifest = $manifest | .download = $download' \
+             module.json > module.tmp.json
+          mv module.tmp.json module.json
+          cat module.json
+
+      - name: Zip the module
+        run: zip -r module.zip module.json LICENSE README.md lang scripts styles templates
+
+      - name: Attach module.json and module.zip to the release
+        uses: ncipollo/release-action@v1
+        with:
+          allowUpdates: true
+          omitNameDuringUpdate: true
+          omitBodyDuringUpdate: true
+          artifacts: "module.json,module.zip"
+          tag: ${{ github.event.release.tag_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
