@@ -14,9 +14,10 @@ export class api{
 
       /* Helpers, see scripts/helpers */
       ...tokens,    // tokenOf, actorOf, cells, distanceBetween, getRange, getTokensWithin, highlightRange
-      ...targets,   // isEnemy, isAlly, getEnemiesWithinRange, isValidGroup, selectTargets (async), setTargets
-      ...actors,    // getSize, stepSize, setStatus, setDefeated, splitToken
-      ...items,     // updateItem, setBaseDamage
+      ...targets,   // isEnemy, isAlly, isThreatened, getThreats, getEnemiesWithinRange, pickTargets, isValidGroup, selectTargets, setTargets
+      ...actors,    // damage, heal, tempHP, dropsToZero, isKilledOutright, preventDropToZero, findItem, setStatus, setDefeated, getSize, stepSize, splitToken
+      ...items,     // pickAndAttack, pickAttack, attackModeFor, isLongRange, isRangedItem, isRangedAttack, canThrow, getAmmunition,
+                  // getUses, hasUses, spendUses, useActivity, getMultiattack, getMultiattackPlan, multiattack, getHealing, updateItem, setBaseDamage
       ...utils,     // wait, waitFor
     };
 

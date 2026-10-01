@@ -13,6 +13,9 @@ export const GROUPS = {
     icon : "fa-solid fa-toolbox",
     settings : {
       helperMethods : { scope : "world", default : true, type : Boolean, requiresReload : true },
+      rangeShape : { scope : "world", default : "circle", type : String,
+        choices : { circle : "settings.rangeShape.circle", square : "settings.rangeShape.square" } },
+      conditionAttacks : { scope : "world", default : true, type : Boolean },
     },
   },
   itemMacro : {
@@ -37,6 +40,9 @@ export const GROUPS = {
       rollItemHeals : { scope : "world", default : false, type : Boolean },
       rollItemDamage : { scope : "world", default : false, type : Boolean },
       rollItemUtility : { scope : "world", default : false, type : Boolean },
+      rollItemPick : { scope : "client", default : "off", type : String,
+        choices : { off : "settings.rollItemPick.off", empty : "settings.rollItemPick.empty", always : "settings.rollItemPick.always" } },
+      rollItemMultiattack : { scope : "world", default : false, type : Boolean },
       rollItemHotkeys : { scope : "client", default : true, type : Boolean },
     },
   },

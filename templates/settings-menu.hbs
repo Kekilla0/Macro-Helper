@@ -1,4 +1,4 @@
-{{!-- One feature's settings, context from settings-menu.js : settings [{ key, id, name, hint, value, isBoolean, world, disabled }] --}}
+{{!-- One feature's settings, context from settings-menu.js : settings [{ key, id, name, hint, value, isBoolean, choices, world, disabled }] --}}
 <section class="macro-helper-settings-list">
     {{#each settings}}
     <div class="form-group">
@@ -6,6 +6,10 @@
         <div class="form-fields">
             {{#if isBoolean}}
             <input type="checkbox" id="{{ id }}" name="{{ key }}" {{ checked value }} {{ disabled disabled }}>
+            {{else if choices}}
+            <select id="{{ id }}" name="{{ key }}" {{ disabled disabled }}>
+                {{ selectOptions choices selected=value localize=true }}
+            </select>
             {{else}}
             <input type="text" id="{{ id }}" name="{{ key }}" value="{{ value }}" {{ disabled disabled }}>
             {{/if}}

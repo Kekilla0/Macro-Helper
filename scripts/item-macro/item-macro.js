@@ -3,6 +3,7 @@ import { settings } from '../settings.js';
 import { patch } from '../patch.js';
 import { logger } from '../log.js';
 import { MacroEditor } from './editor.js';
+import { itemHooks } from './item-hooks.js';
 const log = logger.for(import.meta.url);
 
 /* What happens when an item/activity with a macro is used */
@@ -34,13 +35,14 @@ export class itemMacro{
     return target?.documentName === "Activity";
   }
 
-  /* Variables available inside the macro, on top of Foundry's speaker/actor/token/character/scope */
+  /* Variables available inside the macro, on top of Foundry's speaker/actor/token/character/scope.
+     hook / args are set when it runs from a hook (see item-hooks.js), null / [] when the item is used */
   static scope(target, extra = {}){
     const activity = this.isActivity(target) ? target : null;
     const item = activity ? target.item : target;
     const actor = item?.actor ?? null;
     const token = actor?.token?.object ?? actor?.getActiveTokens()[0] ?? null;
-    return { actor, token, item, activity, ...extra };
+    return { actor, token, item, activity, hook : null, args : [], ...extra };
   }
 
   static async execute(target, scope = this.scope(target)){
@@ -82,6 +84,7 @@ export class itemMacro{
     this.registerSheets();
     this.wrapItems();
     this.wrapActivities();
+    itemHooks.register();
   }
 
   static canEdit(app){

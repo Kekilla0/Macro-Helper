@@ -37,6 +37,17 @@
                     {{ selectOptions runAsChoices selected=runAs localize=true }}
                 </select>
             </div>
+            {{#if runAsHint}}<p class="hint">{{ localize runAsHint }}</p>{{/if}}
         </div>
+
+        {{#if showSelf}}
+        <div class="form-group">
+            <label for="{{ flag }}-self">{{ localize "itemMacro.hooks.self" }}</label>
+            <div class="form-fields">
+                <input type="checkbox" id="{{ flag }}-self" name="{{ flag }}.self" {{ checked self }}>
+            </div>
+            <p class="hint">{{ localize "itemMacro.hooks.selfHint" }}</p>
+        </div>
+        {{/if}}
     </div>
 </details>

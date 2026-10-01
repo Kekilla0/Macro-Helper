@@ -181,14 +181,19 @@ export function registerMessages(){
     }, { inplace : false }));
 
     static defineSchema(){
-      const { ArrayField, NumberField, SchemaField, StringField } = foundry.data.fields;
+      const { ArrayField, BooleanField, NumberField, SchemaField, StringField } = foundry.data.fields;
       return {
         ...super.defineSchema(),
         /* Upcast levels, dnd5e's getAssociatedActivity({ scaled : true }) reads message.system.scaling */
         scaling : new NumberField({ integer : true, min : 0, initial : 0 }),
-        /* One entry per attack roll when rolling more than one (Scorching Ray), target is a token uuid */
+        /* Single attack made with disadvantage (long range...), so a reroll keeps it */
+        disadvantage : new BooleanField({ initial : false }),
+        /* One entry per attack roll when rolling more than one (Scorching Ray, cleave...) :
+           target is a token uuid, mode the dnd5e attack mode ("thrown"...) and disadvantage it was made with, so rerolls match */
         rays : new ArrayField(new SchemaField({
           target : new StringField({ blank : true, initial : "" }),
+          mode : new StringField({ blank : true, initial : "" }),
+          disadvantage : new BooleanField({ initial : false }),
         })),
         /* On-hit save from the same item (Giant Spider's poison), captured when rolled */
         rider : new SchemaField({
@@ -399,14 +404,18 @@ export function registerMessages(){
       if(this.isMulti){
         const replaced = new Map();
         for(const i of this.rays.keys()){
-          const ray = await rollItem.rollRay(activity, event, i, this.rayTarget(i));
+          const ray = await rollItem.rollRay(activity, event, i, this.rayTarget(i), { attackMode : this.rays[i].mode || undefined, disadvantage : this.rays[i].disadvantage });
           if(!ray) return target.disabled = false;
           replaced.set(i, ray);
         }
         return replaceRolls(this.parent, { rolls : this.withRays(replaced), shown : [...replaced.values()].flat() });
       }
 
-      const attack = await rollItem.rollAttack(activity, event, { ability : this.ability ?? undefined, attackMode : this.mode ?? undefined });
+      const attack = await rollItem.rollAttack(activity, event, {
+        ability : this.ability ?? undefined,
+        attackMode : this.mode ?? undefined,
+        ...(this.disadvantage ? { disadvantage : true } : {}),
+      });
       if(!attack) return target.disabled = false;
 
       const { ability, ammunition, attackMode, mastery } = attack.options;
@@ -496,7 +505,7 @@ export function registerMessages(){
       if(!activity || !this.rays[index]) return;
       target.disabled = true;
 
-      const ray = await rollItem.rollRay(activity, event, index, this.rayTarget(index));
+      const ray = await rollItem.rollRay(activity, event, index, this.rayTarget(index), { attackMode : this.rays[index].mode || undefined, disadvantage : this.rays[index].disadvantage });
       if(!ray) return target.disabled = false;
       await replaceRolls(this.parent, { rolls : this.withRays(new Map([[index, ray]])), shown : ray });
     }

@@ -6,6 +6,7 @@ import { api } from './api.js';
 import { rollItem } from './roll-item/roll-item.js';
 import { hookMacros } from './hook-macros/hook-macros.js';
 import { methods } from './helpers/methods.js';
+import { conditions } from './conditions.js';
 const log = logger.for(import.meta.url);
 
 Hooks.once("init", ()=> {
@@ -13,6 +14,7 @@ Hooks.once("init", ()=> {
   settings.register();
   api.register();
   rollItem.register();
+  conditions.register();
 });
 
 /* System classes and CONFIG are in place by setup */

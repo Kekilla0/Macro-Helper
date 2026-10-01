@@ -1,13 +1,21 @@
 import { module } from '../module.js';
 import { itemMacro, MODES } from './item-macro.js';
+import { hookMacros } from '../hook-macros/hook-macros.js';
 
 const { MacroConfig } = foundry.applications.sheets;
 
 /**
  * Foundry's macro editor, backed by an unsaved Macro.
  * Saving writes to the item/activity flag instead of creating a Macro document.
+ * GMs also get "Run on Hooks" for items (item-hooks.js) : the macro runs on those hooks while the creature is on the scene.
  */
 export class MacroEditor extends MacroConfig{
+  /* Form field prefix of the hook fields, kept out of the Macro's own data */
+  static HOOKS = "itemHooks";
+
+  /* The hook fields from the last form read, saved with the macro */
+  #hookData = null;
+
   static DEFAULT_OPTIONS = {
     classes : ["macro-helper-editor"],
     actions : { execute : MacroEditor.#onExecute },
@@ -71,11 +79,51 @@ export class MacroEditor extends MacroConfig{
     return context;
   }
 
-  /* mode is not a Macro field, keep it out of Macro validation */
+  /* Items only (not activities) and GMs only : only GM-saved macros run from hooks */
+  get showHooks(){
+    return game.user.isGM && !itemMacro.isActivity(this.target) && game.settings.get(module.id, "itemMacro");
+  }
+
+  async _onRender(context, options){
+    await super._onRender(context, options);
+    if(!this.showHooks || this.element.querySelector(`.${module.id}-hooks`)) return;
+
+    const mode = this.element.querySelector("[name=mode]")?.closest(".form-group");
+    if(!mode) return;
+    const data = itemMacro.data(this.target) ?? {};
+    const html = await hookMacros.renderHookFields(MacroEditor.HOOKS, data, {
+      runAs : data.runAs ?? "owner",
+      runAsChoices : { owner : "itemMacro.hooks.runAs.owner", gm : "itemMacro.hooks.runAs.gm" },
+      runAsHint : "itemMacro.hooks.runAsHint",
+      showSelf : true,
+      self : data.self ?? true,
+      count : [...(data.hooks ?? []), ...(data.customHooks ?? [])].length,
+    });
+    mode.insertAdjacentHTML("afterend", html);
+
+    const section = mode.nextElementSibling;
+    hookMacros.fitWindow(this, section);
+    section.addEventListener("toggle", ()=> hookMacros.fitWindow(this, section));
+  }
+
+  /* mode and the hook fields are not Macro fields, keep them out of Macro validation */
   _processFormData(event, form, formData){
     const data = super._processFormData(event, form, formData);
     delete data.mode;
+    if(MacroEditor.HOOKS in data){
+      this.#hookData = data[MacroEditor.HOOKS];
+      delete data[MacroEditor.HOOKS];
+    }
     return data;
+  }
+
+  /* { hooks, customHooks, runAs, self } from the form, or what the item already had */
+  hookFields(){
+    const current = itemMacro.data(this.target) ?? {};
+    const form = this.#hookData;
+    if(!form) return { hooks : current.hooks ?? [], customHooks : current.customHooks ?? [], runAs : current.runAs ?? "owner", self : current.self ?? true };
+    const list = value => (Array.isArray(value) ? value : String(value ?? "").split(",")).map(h => String(h).trim()).filter(Boolean);
+    return { hooks : list(form.hooks), customHooks : list(form.customHooks), runAs : form.runAs || "owner", self : !!form.self };
   }
 
   async _processSubmitData(event, form, submitData, options){
@@ -86,7 +134,9 @@ export class MacroEditor extends MacroConfig{
     const { name, type, command, img } = this.document._source;
     const mode = form.elements.mode?.value ?? "macro";
 
-    await itemMacro.set(this.target, { name, type, command, img, mode });
+    /* author : only macros saved by a GM run from hooks */
+    const hooks = itemMacro.isActivity(this.target) ? {} : { ...this.hookFields(), author : game.user.id };
+    await itemMacro.set(this.target, { name, type, command, img, mode, ...hooks });
     return {};
   }
 
