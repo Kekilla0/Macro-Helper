@@ -1,0 +1,14 @@
+# Editors
+.vscode/
+.idea/
+*.code-workspace
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Tooling / builds
+node_modules/
+*.zip
+*.log

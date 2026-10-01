@@ -10,6 +10,8 @@ const log = logger.for(import.meta.url);
  *
  * Stored on the macro : flags[module.id] = { hooks : [...], customHooks : [...], runAs : "gm" | "all" }
  * The macro gets `hook` (the hook's name) and `args` (the hook's arguments) as variables.
+ * Macros run straight away, inside the hook : until its first `await` a macro can still change what the hook
+ * passed (dnd5e.preApplyDamage's updates...). Returning false doesn't cancel the hook.
  */
 
 /* The hooks offered in the dropdown, by group. Any other hook can be typed in as a custom hook. */
@@ -20,7 +22,7 @@ export const CATALOG = {
   actors : ["updateActor", "createItem", "deleteItem", "createActiveEffect", "deleteActiveEffect"],
   chat : ["createChatMessage"],
   game : ["pauseGame", "updateWorldTime"],
-  dnd5e : ["dnd5e.rollAttack", "dnd5e.rollDamage", "dnd5e.applyDamage", "dnd5e.rollInitiative",
+  dnd5e : ["dnd5e.rollAttack", "dnd5e.rollDamage", "dnd5e.preApplyDamage", "dnd5e.applyDamage", "dnd5e.rollInitiative",
     "dnd5e.restCompleted", "dnd5e.beginConcentrating", "dnd5e.endConcentration"],
 };
 
@@ -88,9 +90,9 @@ export class hookMacros{
     for(const macro of game.macros){
       if(!this.hooksOf(macro).includes(hook) || !this.shouldRun(macro)) continue;
       log.debug("Running", macro.name, "for", hook);
-      Promise.resolve()
-        .then(()=> macro.execute({ hook, args }))
-        .catch(err => log.error(`Hook macro "${macro.name}" failed on ${hook}`, err));
+      const failed = err => log.error(`Hook macro "${macro.name}" failed on ${hook}`, err);
+      try { Promise.resolve(macro.execute({ hook, args })).catch(failed); }
+      catch(err){ failed(err); }
     }
   }
 
@@ -105,19 +107,7 @@ export class hookMacros{
 
     const macro = app.document;
     const data = foundry.utils.getProperty(macro, this.flag) ?? {};
-    const chosen = new Set(data.hooks ?? []);
-    const known = new Set(Object.values(CATALOG).flat());
-
-    const html = await foundry.applications.handlebars.renderTemplate(`${module.path}/templates/hook-macro-fields.hbs`, {
-      flag : this.flag,
-      groups : Object.entries(CATALOG)
-        .filter(([group]) => (group !== "dnd5e") || (game.system.id === "dnd5e"))
-        .map(([group, hooks]) => ({
-          label : module.i18n(`hookMacros.groups.${group}`),
-          options : hooks.map(hook => ({ value : hook, label : `${module.i18n(`hookMacros.hooks.${hook}`)} (${hook})`, selected : chosen.has(hook) })),
-        })),
-      /* Hooks set some other way that aren't in the catalog show up as custom */
-      custom : [...(data.customHooks ?? []), ...[...chosen].filter(h => !known.has(h))].join(","),
+    const html = await this.renderHookFields(this.flag, data, {
       runAs : this.runAsOf(macro),
       runAsChoices : { gm : "hookMacros.runAs.gm", all : "hookMacros.runAs.all" },
       count : this.hooksOf(macro).length,
@@ -127,6 +117,29 @@ export class hookMacros{
     const section = typeGroup.nextElementSibling;
     this.fitWindow(app, section);
     section.addEventListener("toggle", ()=> this.fitWindow(app, section));
+  }
+
+  /**
+   * The collapsible "Run on Hooks" fields, also used by the item macro editor (item hooks).
+   * @param {string} flag     form name prefix the fields save under
+   * @param {object} data     { hooks, customHooks }
+   * @param {object} extra    runAs, runAsChoices, count, and for items self / showSelf
+   */
+  static async renderHookFields(flag, data, extra){
+    const chosen = new Set(data.hooks ?? []);
+    const known = new Set(Object.values(CATALOG).flat());
+    return foundry.applications.handlebars.renderTemplate(`${module.path}/templates/hook-macro-fields.hbs`, {
+      flag,
+      groups : Object.entries(CATALOG)
+        .filter(([group]) => (group !== "dnd5e") || (game.system.id === "dnd5e"))
+        .map(([group, hooks]) => ({
+          label : module.i18n(`hookMacros.groups.${group}`),
+          options : hooks.map(hook => ({ value : hook, label : `${module.i18n(`hookMacros.hooks.${hook}`)} (${hook})`, selected : chosen.has(hook) })),
+        })),
+      /* Hooks set some other way that aren't in the catalog show up as custom */
+      custom : [...(data.customHooks ?? []), ...[...chosen].filter(h => !known.has(h))].join(","),
+      ...extra,
+    });
   }
 
   /* Height this module has added to each macro window, so re-renders (which rebuild the section) only apply the difference */

@@ -11,6 +11,40 @@ export function isAlly(a, b){
   return (tokenOf(a)?.document.disposition * tokenOf(b)?.document.disposition) > 0;
 }
 
+/* dnd5e conditions that stop a creature threatening anyone (all of them include Incapacitated) */
+const INCAPACITATED = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
+
+/**
+ * Enemies (opposite disposition) within `range` feet of a token, nearest first : who is threatening it.
+ * By default incapacitated (unconscious, paralyzed...), dead / 0 HP and GM-hidden enemies don't count.
+ * @param {Token|TokenDocument|Actor} thing
+ * @param {object} [options]
+ * @param {number} [options.range=5]                   feet
+ * @param {boolean} [options.includeIncapacitated=false]
+ * @param {boolean} [options.includeHidden=false]      GM-hidden tokens (counting them would give them away to players)
+ * @returns {Token[]}
+ */
+export function getThreats(thing, { range = 5, includeIncapacitated = false, includeHidden = false } = {}){
+  const token = tokenOf(thing);
+  if(!token) return [];
+  return getTokensWithin(token, range, {
+    disposition : "enemy",
+    includeHidden,
+    filter : t => includeIncapacitated || !INCAPACITATED.some(status => t.actor.statuses?.has(status)),
+  });
+}
+
+/**
+ * Is a token threatened : an enemy (opposite disposition) within 5 feet that isn't incapacitated ?
+ * 5e : ranged attacks made while threatened have disadvantage.
+ * @param {Token|TokenDocument|Actor} thing
+ * @param {object} [options]  see getThreats
+ * @returns {boolean}
+ */
+export function isThreatened(thing, options = {}){
+  return getThreats(thing, options).length > 0;
+}
+
 /**
  * Enemies within an item's range of its owner's token (a melee weapon's reach, a bow's range...) : your current
  * targets in range first (in the order you targeted them), then every other enemy in range, nearest first.
@@ -126,7 +160,7 @@ async function promptTargets(candidates, { numberAllowed, within, origin, range 
         <input type="checkbox" name="target" value="${t.id}">
         <img src="${esc(t.document.texture.src)}" alt="" data-pan="${t.id}" data-tooltip="${esc(module.i18n("helpers.targets.pan"))}">
         <span class="name">${esc(t.name)}</span>
-        <span class="distance">${from ? `${distanceBetween(from, t)} ${esc(canvas.scene.grid.units)}` : ""}</span>
+        <span class="distance">${from ? `${Math.round(distanceBetween(from, t))} ${esc(canvas.scene.grid.units)}` : ""}</span>
       </label>
     </li>`).join("");
 
@@ -183,4 +217,156 @@ async function promptTargets(candidates, { numberAllowed, within, origin, range 
  */
 export function setTargets(tokens){
   canvas.tokens.setTargets((tokens ?? []).map(t => tokenOf(t)?.id).filter(Boolean));
+}
+
+/**
+ * Pick targets by clicking them on the map :
+ *   the origin's range, the candidates and the picks are shown on the map (only on your screen),
+ *   left click a candidate to pick / unpick it (clicks don't select tokens meanwhile),
+ *   Enter to confirm, Esc to cancel. With confirm "auto" it finishes as soon as the most allowed are picked.
+ *   With `repeat`, the same token can be picked more than once (Multiattack at one foe) : left click adds a pick,
+ *   right click takes one away. The picks come back once per pick, in order ([A, A, B]).
+ * If you already have targets in range, those are used and nothing is asked (with `repeat`, spread over `count` : A A B B).
+ *
+ * @param {Item|Token|TokenDocument|Actor} origin   an item (its owner + its range) or a token / actor (give a range)
+ * @param {object} [options]
+ * @param {number} [options.count=1]                 most targets
+ * @param {number} [options.range]                   feet, defaults to the item's range (see getRange), else anywhere
+ * @param {number} [options.normalRange]             feet : beyond it (up to range) is shown red, long range (disadvantage)
+ * @param {string} [options.notice]                  an extra line in the banner (e.g. why attacks have disadvantage)
+ * @param {"enemy"|"ally"|"any"} [options.disposition="enemy"]
+ * @param {number|Function} [options.numberAllowed]  extra limit, a number or (picks) => number (size rules...)
+ * @param {number} [options.within]                  picks must be within this many feet of each other
+ * @param {"auto"|"enter"} [options.confirm="auto"]  finish at the limit, or always wait for Enter
+ * @param {boolean} [options.setTargets=true]        make the picks your targets
+ * @param {boolean} [options.useTargets=true]        use the targets you already have in range instead of asking;
+ *                                                   false clears your targets first and always asks
+ * @param {boolean} [options.repeat=false]          the same token can be picked more than once
+ * @param {boolean} [options.long] [options.thrown]  passed to getRange
+ * @returns {Promise<Token[]>}  the picks, empty if cancelled or nothing in range
+ */
+export async function pickTargets(origin, { count = 1, range, disposition = "enemy", numberAllowed = Infinity, within = Infinity,
+  confirm = "auto", setTargets : target = true, useTargets = true, repeat = false, long = false, thrown = false, normalRange, notice = "" } = {}){
+  const from = tokenOf(origin);
+  if(!from) return warn(module.i18n("helpers.pick.noToken"));
+  if(!useTargets) canvas.tokens.setTargets([]);
+
+  const isItem = (origin?.documentName === "Item") || !!origin?.item;
+  const feet = range ?? (isItem ? getRange(origin, { long, thrown }) : Infinity);
+  const candidates = getTokensWithin(from, feet, { disposition });
+  if(!candidates.length) return warn(module.i18n("helpers.pick.none"));
+
+  /* Your own targets in range win, nothing to ask */
+  const targeted = useTargets ? [...game.user.targets].filter(t => (t !== from) && (distanceBetween(from, t) <= feet)) : [];
+  if(targeted.length){
+    if(!repeat || (targeted.length >= count)) return targeted.slice(0, count);
+    return Array.from({ length : count }, (_, i) => targeted[Math.floor(i * targeted.length / count)]);
+  }
+
+  const picks = await pickOnMap(from, feet, candidates, { count, numberAllowed, within, confirm, repeat, normalRange, notice });
+  if(target && picks.length) setTargets(picks);
+  return picks;
+}
+
+function warn(message){
+  ui.notifications.warn(message);
+  return [];
+}
+
+/* The clicking itself : overlay, banner, click + key listeners, all removed at the end */
+function pickOnMap(from, feet, candidates, { count, numberAllowed, within, confirm, repeat = false, normalRange, notice = "" }){
+  const allowed = picks => Math.min(count, typeof numberAllowed === "function" ? numberAllowed(picks) : numberAllowed);
+  const highlight = highlightRange(from, feet, { tokens : candidates, normal : normalRange });
+  const hasLong = Number.isFinite(normalRange) && (normalRange < feet);
+  const view = canvas.app.view;
+  const picks = [];
+
+  const banner = document.createElement("div");
+  banner.className = `${module.id}-pick-banner`;
+  document.body.append(banner);
+
+  return new Promise(resolve => {
+    const status = message => {
+      const limit = allowed(picks.length ? picks : candidates.slice(0, 1));
+      banner.innerHTML = `<strong>${module.format("helpers.pick.banner", { picked : picks.length, limit })}</strong>`
+        + (picks.length ? `<span class="picks">${Handlebars.escapeExpression(listPicks(picks))}</span>` : "")
+        + `<span>${module.i18n(repeat ? "helpers.pick.keysRepeat" : "helpers.pick.keys")}</span>`
+        + `<span class="legend">${module.i18n(hasLong ? "helpers.pick.legendLong" : "helpers.pick.legend")}</span>`
+        + (notice ? `<span class="notice">${Handlebars.escapeExpression(notice)}</span>` : "")
+        + (message ? `<span class="warning">${message}</span>` : "");
+    };
+
+    const finish = result => {
+      window.removeEventListener("pointerdown", onPointer, true);
+      window.removeEventListener("contextmenu", onMenu, true);
+      window.removeEventListener("keydown", onKey, true);
+      highlight.clear();
+      banner.remove();
+      resolve(result);
+    };
+
+    /* Enter / auto : only with a valid group (the rules count each token once, however many times it's picked) */
+    const tryConfirm = () => {
+      if(!picks.length) return status(module.i18n("helpers.targets.none"));
+      const { valid, reason } = isValidGroup([...new Set(picks)], { numberAllowed : allowed(picks), within });
+      if(!valid) return status(reason);
+      finish([...picks]);
+    };
+
+    const onPointer = event => {
+      const remove = repeat && (event.button === 2);
+      if((event.target !== view) || ((event.button !== 0) && !remove)) return;
+      const point = canvas.canvasCoordinatesFromClient({ x : event.clientX, y : event.clientY });
+      const token = candidates.find(t => t.bounds.contains(point.x, point.y));
+      /* Right clicks elsewhere still pan the map */
+      if(remove && !token) return;
+
+      /* Left clicks on the map (and right clicks on a candidate when repeating) are for picking : Foundry doesn't see them */
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      if(!token) return;
+
+      const index = picks.lastIndexOf(token);
+      if(remove || (!repeat && (index >= 0))){
+        if(index < 0) return;
+        picks.splice(index, 1);
+      }
+      else {
+        if(picks.length >= allowed([...picks, token])) return status(module.format("helpers.targets.tooMany", { allowed : allowed([...picks, token]) }));
+        picks.push(token);
+      }
+      highlight.select(picks);
+      canvas.tokens.setTargets(picks.map(t => t.id));
+      status();
+
+      if((confirm === "auto") && picks.length && (picks.length >= allowed(picks))) tryConfirm();
+    };
+
+    const onKey = event => {
+      if(event.key === "Enter"){ event.preventDefault(); event.stopPropagation(); tryConfirm(); }
+      else if(event.key === "Escape"){
+        event.preventDefault(); event.stopPropagation();
+        canvas.tokens.setTargets([]);
+        finish([]);
+      }
+    };
+
+    /* Repeating : right click takes a pick away, so no token HUD / context menu meanwhile */
+    const onMenu = event => {
+      if(repeat && (event.target === view)){ event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation(); }
+    };
+
+    window.addEventListener("pointerdown", onPointer, true);
+    window.addEventListener("contextmenu", onMenu, true);
+    window.addEventListener("keydown", onKey, true);
+    status();
+  });
+}
+
+/* "Lucian ×2, Randal" */
+function listPicks(picks){
+  const counts = new Map();
+  for(const t of picks) counts.set(t, (counts.get(t) ?? 0) + 1);
+  return [...counts].map(([t, n]) => (n > 1) ? `${t.name} ×${n}` : t.name).join(", ");
 }

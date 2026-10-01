@@ -3,6 +3,8 @@ import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { patch } from '../patch.js';
 import { TYPES, registerMessages } from './message.js';
+import { tokenOf } from '../helpers/tokens.js';
+import { pickAttack, getMultiattackPlan, multiattack } from '../helpers/items.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -19,15 +21,36 @@ export class rollItem{
    * @param {string} [options.activity]  id or name of the activity, defaults to the first attack, then save, then heal
    * @param {Event}  [options.event]     triggering event, read for advantage/disadvantage keys
    * @param {number} [options.count]     number of attack rolls, overrides the activity's Attack Count formula
+   * @param {string|Function} [options.attackMode]  dnd5e attack mode ("thrown", "twoHanded"...), or (targetToken) => mode
+   *                                     per attack. Thrown attacks use up the weapon, like dnd5e's own thrown attacks.
+   * @param {boolean|Function} [options.disadvantage]  roll with disadvantage, or (targetToken) => boolean per attack
+   *                                     (long range...). Combines with the advantage keys like dnd5e : both = a normal roll.
+   * @param {Token[]} [options.targets]  attack these, one attack each in order (the same token twice = two attacks at it),
+   *                                     instead of spreading `count` over your targets. `count` defaults to their number.
    */
-  static async roll(item, { activity, event, count } = {}){
+  static async roll(item, { activity, event, count, attackMode, disadvantage, targets } = {}){
     const target = this.getActivity(item, activity);
     if(!target) return ui.notifications.warn(module.format("rollItem.warn.noAttack", { name : item?.name ?? "" }));
 
     /* Saves / heals go through dnd5e's use workflow (spell slots, uses, templates, effects), flagged so we take over the card */
     if(target.type !== "attack") return target.use({ event, [module.id] : { mode : target.type } });
 
-    return this.rollActivity(target, { event, count });
+    return this.rollActivity(target, { event, count, attackMode, disadvantage, targets });
+  }
+
+  /* A per-attack option for one target : a fixed value, or chosen per target by a function */
+  static perTarget(value, target){
+    if(typeof value === "function") return value(target) ?? undefined;
+    return value ?? undefined;
+  }
+
+  /* dnd5e attack roll config for one target : attack mode and disadvantage */
+  static attackConfig({ attackMode, disadvantage } = {}, target){
+    const config = {};
+    const mode = this.perTarget(attackMode, target);
+    if(mode) config.attackMode = mode;
+    if(this.perTarget(disadvantage, target)) config.disadvantage = true;
+    return config;
   }
 
   /**
@@ -37,14 +60,19 @@ export class rollItem{
    * @param {Event}  [options.event]
    * @param {number} [options.scaling]  upcast levels, stored so rerolls keep them
    * @param {number} [options.count]    number of attack rolls, defaults to the activity's Attack Count formula
+   * @param {string|Function} [options.attackMode]    see roll()
+   * @param {boolean|Function} [options.disadvantage]  see roll()
+   * @param {Token[]} [options.targets]                 see roll()
    */
-  static async rollActivity(activity, { event, scaling = 0, count } = {}){
+  static async rollActivity(activity, { event, scaling = 0, count, attackMode, disadvantage, targets } = {}){
     if(!this.ready("attack")) return;
 
-    const rays = this.countFor(activity, count);
-    if(rays > 1) return this.rollRays(activity, rays, { event, scaling });
+    const rays = this.countFor(activity, count ?? targets?.length);
+    if(rays > 1) return this.rollRays(activity, rays, { event, scaling, attackMode, disadvantage, targets });
 
-    const roll = await this.rollAttack(activity, event);
+    const target = targets?.[0] ?? game.user.targets.first() ?? null;
+    const config = this.attackConfig({ attackMode, disadvantage }, target);
+    const roll = await this.rollAttack(activity, event, config);
     if(!roll) return;
     const damage = await this.rollDamage(activity, roll);
 
@@ -59,7 +87,7 @@ export class rollItem{
       onSave : save.damage?.onSave ?? null,
     } : null;
 
-    const message = await this.attackCard(activity, [roll, ...damage, ...riderDamage], { scaling, rider });
+    const message = await this.attackCard(activity, [roll, ...damage, ...riderDamage], { scaling, rider, disadvantage : !!config.disadvantage });
     log.debug("Rolled", activity.item.name, { roll, damage, rider, riderDamage });
 
     return { attack : roll, damage, riderDamage, isCritical : roll.isCritical, isFumble : roll.isFumble, message };
@@ -117,10 +145,11 @@ export class rollItem{
     return Math.max(1, Math.floor(value) || 1);
   }
 
-  /* Spread rays over the current targets in order : 4 rays, 2 targets -> A A B B */
-  static assignTargets(count){
+  /* Spread rays over the targets in order (your current targets unless given) : 4 rays, 2 targets -> A A B B.
+     Given tokens keep their repeats : [A, A] -> both rays at A */
+  static assignTargets(count, tokens){
     const { TargetsField } = dnd5e.dataModels.chatMessage.fields;
-    const targets = TargetsField.getDescriptors();
+    const targets = tokens?.length ? tokens.flatMap(t => TargetsField.getDescriptors([t])) : TargetsField.getDescriptors();
     return Array.from({ length : count }, (_, i) => targets.length ? targets[Math.floor(i * targets.length / count)] : null);
   }
 
@@ -136,26 +165,39 @@ export class rollItem{
   /**
    * One ray : attack against its target's AC plus its damage, rolled either way so the GM can still apply a "miss".
    * Rolls are tagged with the ray index.
+   * @param {object} [options]
+   * @param {string} [options.attackMode]     dnd5e attack mode for this attack ("thrown" uses up the weapon)
+   * @param {boolean} [options.disadvantage]  roll this attack with disadvantage (long range...)
    * @returns {Promise<Roll[]|null>}  null if the attack was cancelled
    */
-  static async rollRay(activity, event, index, target){
-    const attack = await this.rollAttack(activity, event, Number.isFinite(target?.ac) ? { target : target.ac } : {});
+  static async rollRay(activity, event, index, target, { attackMode, disadvantage } = {}){
+    const config = {};
+    if(Number.isFinite(target?.ac)) config.target = target.ac;
+    if(attackMode) config.attackMode = attackMode;
+    if(disadvantage) config.disadvantage = true;
+    const attack = await this.rollAttack(activity, event, config);
     if(!attack) return null;
     const damage = await this.rollDamage(activity, attack);
     for(const roll of [attack, ...damage]) roll.options[module.id] = { ray : index };
     return [attack, ...damage];
   }
 
-  static async rollRays(activity, count, { event, scaling = 0 } = {}){
-    const targets = this.assignTargets(count);
-    const rolls = [];
+  static async rollRays(activity, count, { event, scaling = 0, attackMode, disadvantage, targets : tokens } = {}){
+    const { TargetsField } = dnd5e.dataModels.chatMessage.fields;
+    const targets = this.assignTargets(count, tokens);
+    const rolls = [], rays = [];
     for(const [index, target] of targets.entries()){
-      const ray = await this.rollRay(activity, event, index, target);
+      const config = this.attackConfig({ attackMode, disadvantage }, target ? TargetsField.resolve(target).token : null);
+      const ray = await this.rollRay(activity, event, index, target, config);
       if(!ray) return;
       rolls.push(...ray);
+      /* Each ray keeps its target, attack mode and disadvantage, so rerolls throw / shoot the same way */
+      rays.push({
+        target : target?.token ?? "",
+        mode : ray[0].options.attackMode ?? config.attackMode ?? "",
+        disadvantage : !!config.disadvantage,
+      });
     }
-
-    const rays = targets.map(t => ({ target : t?.token ?? "" }));
     const message = await this.attackCard(activity, rolls, { scaling, rays });
     log.debug("Rolled rays", activity.item.name, { rolls, rays });
 
@@ -240,13 +282,48 @@ export class rollItem{
   static onPostUse(activity, usage, results){
     switch(usage[module.id]?.mode){
       case "attack" :
-        return void rollItem.rollActivity(activity, { event : usage.event, scaling : activity.item.getFlag("dnd5e", "scaling") ?? 0 });
+        return void rollItem.attackAfterUse(activity, usage);
       case "save" :
       case "heal" :
       case "damage" :
       case "utility" :
         return void rollItem.usageCard(activity, results.message);
     }
+  }
+
+  /**
+   * An attack used through dnd5e (sheet, hotbar...), after its use (so the cast level, and the ray count, are known).
+   * With the Pick Targets setting you pick on the map first, the same as pickAndAttack : range shown, thrown beyond reach,
+   * disadvantage at long range or for ranged attacks while threatened. Several rays / attacks can pick a target again.
+   * Without a token on the scene being viewed there's nothing to pick from, so it rolls against your targets as usual.
+   */
+  static async attackAfterUse(activity, usage){
+    const event = usage.event;
+    const scaling = activity.item.getFlag("dnd5e", "scaling") ?? 0;
+    const pick = settings.value("rollItemPick");
+    const attacker = tokenOf(activity.item);
+    if((pick === "off") || !canvas.ready || !attacker || (attacker.document.parent !== canvas.scene)){
+      return this.rollActivity(activity, { event, scaling });
+    }
+
+    const count = this.countFor(activity);
+    const picked = await pickAttack(activity.item, { activity, count, repeat : count > 1, clearTargets : pick === "always", used : true });
+    if(!picked) return;
+    const { targets, attackMode, disadvantage } = picked;
+    /* Fewer picks than rays : the rays are spread over the picks (3 rays, A and B -> A A B) */
+    return this.rollActivity(activity, { event, scaling, count : Math.max(count, targets.length), targets, attackMode, disadvantage });
+  }
+
+  /**
+   * Using a Multiattack feature runs the whole Multiattack (MacroHelper.multiattack) with the Roll Item Multiattack
+   * setting on : a pick and a card per weapon, instead of dnd5e's card for the feature.
+   * @returns {boolean}
+   */
+  static isMultiattack(item, config = {}){
+    if(config.chooseActivity || !settings.value("rollItem") || !settings.value("rollItemMultiattack")) return false;
+    if(item?.type !== "feat") return false;
+    const named = (item.identifier ?? item.system.identifier) === "multiattack" || /^multiattack\b/i.test(item.name ?? "");
+    return named && getMultiattackPlan(item).length > 0;
   }
 
   /* ---------- Rolling ---------- */
@@ -327,6 +404,10 @@ export class rollItem{
 
     /* Attack + save rider items skip dnd5e's activity choice (sheet, hotbar, anything calling item.use) */
     patch.wrap("CONFIG.Item.documentClass.prototype.use", async function(wrapped, config = {}, dialog = {}, message = {}){
+      /* Multiattack : the whole thing, your targets used as they are with Pick Targets "when you have none" */
+      if(rollItem.isMultiattack(this, config)){
+        return multiattack(this, { event : config.event, attack : { clearTargets : settings.value("rollItemPick") !== "empty" } });
+      }
       const attack = rollItem.fastForward(this, config);
       if(!attack) return wrapped(config, dialog, message);
       const { chooseActivity, ...usage } = config;
@@ -351,7 +432,7 @@ export class rollItem{
    * @param {Roll[]} rolls  attack roll(s) + damage rolls, multi-ray rolls tagged with options[module.id].ray
    * @param {object[]} [rays]  one { target : tokenUuid } per ray when rolling more than one attack
    */
-  static async attackCard(activity, rolls, { scaling = 0, rays = [], rider = null } = {}){
+  static async attackCard(activity, rolls, { scaling = 0, rays = [], rider = null, disadvantage = false } = {}){
     const attack = rolls.find(r => r instanceof CONFIG.Dice.D20Roll);
     const { ability, ammunition, attackMode, mastery } = attack?.options ?? {};
     const { TargetsField } = dnd5e.dataModels.chatMessage.fields;
@@ -363,7 +444,7 @@ export class rollItem{
       system : {
         ...activity.messageSources,
         targets : TargetsField.getDescriptors(),
-        ability, ammunition, mastery, scaling, rays, rider,
+        ability, ammunition, mastery, scaling, rays, rider, disadvantage,
         mode : attackMode,
       },
     };

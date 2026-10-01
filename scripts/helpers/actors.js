@@ -1,4 +1,179 @@
+import { module } from '../module.js';
 import { tokenOf, actorOf } from './tokens.js';
+
+/* ---------- Hit points ----------
+ * On dnd5e's own actor.applyDamage : the same path as the chat card APPLY trays, so resistances, immunities,
+ * vulnerabilities and damage modification apply per damage type, and temp HP soaks first.
+ * On an unlinked token they change that token only, on a linked actor the actor.
+ * Values can be numbers or dice formulas ("2d6 + 3"), rolled with the actor's roll data.
+ */
+
+/* A number, or a formula rolled with the actor's data */
+async function amountOf(value, actor){
+  if(Number.isNumeric(value)) return Number(value);
+  const roll = await new Roll(String(value), actor.getRollData()).evaluate();
+  return roll.total;
+}
+
+/* The actor, if it has hit points and the user may change them */
+function hpActor(thing){
+  const actor = actorOf(thing);
+  if(!actor?.system?.attributes?.hp) return null;
+  if(!actor.isOwner){
+    ui.notifications.warn(module.format("helpers.hp.notOwner", { name : actor.name }));
+    return null;
+  }
+  return actor;
+}
+
+/**
+ * Damage an actor / token.
+ * @param {Actor|Token|TokenDocument} thing
+ * @param {number|string|object[]} value   amount or formula, or several parts [{ value, type, properties }]
+ * @param {string} [type]                   damage type key ("fire", "slashing"...), none = untyped
+ * @param {object} [options]
+ * @param {string[]} [options.properties]   e.g. ["mgc"] (magical), for resistances that care
+ * @param {number} [options.multiplier=1]   e.g. 0.5 for half damage
+ * @param {boolean|object} [options.ignore] dnd5e : ignore resistances etc. (true, or { resistance : true }...)
+ * @returns {Promise<number>}  the damage asked for, before resistances
+ */
+export async function damage(thing, value, type, { properties = [], multiplier = 1, ignore } = {}){
+  const actor = hpActor(thing);
+  if(!actor) return 0;
+
+  const parts = Array.isArray(value) ? value : [{ value, type, properties }];
+  const damages = [];
+  for(const part of parts){
+    damages.push({
+      value : Math.max(0, await amountOf(part.value, actor)),
+      type : part.type ?? undefined,
+      properties : new Set(part.properties ?? []),
+    });
+  }
+
+  const options = { multiplier, isDelta : true };
+  if(ignore !== undefined) options.ignore = ignore;
+  await actor.applyDamage(damages, options);
+  return damages.reduce((total, d) => total + d.value, 0);
+}
+
+/**
+ * Heal an actor / token (up to its max HP).
+ * @param {Actor|Token|TokenDocument} thing
+ * @param {number|string} value  amount or formula
+ * @returns {Promise<number>}    the healing asked for
+ */
+export async function heal(thing, value){
+  const actor = hpActor(thing);
+  if(!actor) return 0;
+  const amount = Math.max(0, await amountOf(value, actor));
+  await actor.applyDamage([{ value : amount, type : "healing" }], { isDelta : true });
+  return amount;
+}
+
+/**
+ * Give temporary hit points. They don't stack (5e) : the higher of the current and new amount is kept.
+ * @param {Actor|Token|TokenDocument} thing
+ * @param {number|string} value   amount or formula
+ * @param {string|Document} [source]  where they came from ("False Life", or an item / actor : its name is used),
+ *                                    kept in actor.flags["macro-helper"].tempHP = { value, source } when applied
+ * @returns {Promise<boolean>}    true if the temp HP was applied (it beat the current amount)
+ */
+export async function tempHP(thing, value, source){
+  const actor = hpActor(thing);
+  if(!actor) return false;
+
+  const amount = Math.max(0, Math.floor(await amountOf(value, actor)));
+  const current = Number(actor.system.attributes.hp.temp) || 0;
+  if(amount <= current) return false;
+
+  const update = { "system.attributes.hp.temp" : amount };
+  if(source !== undefined) update[`flags.${module.id}.tempHP`] = { value : amount, source : source?.name ?? String(source) };
+  await actor.update(update);
+  return true;
+}
+
+/* ---------- Dropping to 0 HP ----------
+ * For "reduced to 0 hit points but not killed outright" features (Relentless Endurance, Undead Fortitude...).
+ * `amount` is the damage after resistances, as dnd5e's "dnd5e.preApplyDamage" hook gives it : temp HP soak first.
+ */
+
+/**
+ * Would this much damage drop a creature that is still up to 0 HP ?
+ * @param {Actor|Token|TokenDocument} thing
+ * @param {number} amount
+ * @returns {boolean}
+ */
+export function dropsToZero(thing, amount){
+  const hp = actorOf(thing)?.system?.attributes?.hp;
+  if(!hp || (hp.value <= 0)) return false;
+  return (amount - (Number(hp.temp) || 0)) >= hp.value;
+}
+
+/**
+ * Would this much damage kill a creature outright : 5e's massive damage, what's left after reaching 0 HP is at least its HP max ?
+ * @param {Actor|Token|TokenDocument} thing
+ * @param {number} amount
+ * @returns {boolean}
+ */
+export function isKilledOutright(thing, amount){
+  const hp = actorOf(thing)?.system?.attributes?.hp;
+  if(!hp || !dropsToZero(thing, amount)) return false;
+  const left = amount - (Number(hp.temp) || 0) - hp.value;
+  return left >= (hp.effectiveMax ?? hp.max);
+}
+
+/**
+ * Inside a "dnd5e.preApplyDamage" hook : leave the creature on `hp` instead of 0. Changes dnd5e's `updates` in place,
+ * so call it before any await. Nothing changes (false) if it isn't dropping to 0, is already down, or (unless
+ * massiveDamage is false) is killed outright.
+ * @param {Actor|Token|TokenDocument} thing
+ * @param {number} amount    the hook's amount
+ * @param {object} updates   the hook's updates
+ * @param {object} [options]
+ * @param {number} [options.hp=1]               HP to stay on
+ * @param {boolean} [options.massiveDamage=true] massive damage still kills (see isKilledOutright)
+ * @returns {boolean}  true if it kept them up
+ */
+export function preventDropToZero(thing, amount, updates, { hp = 1, massiveDamage = true } = {}){
+  const key = "system.attributes.hp.value";
+  if(!updates || !(key in updates) || (updates[key] > 0)) return false;
+  if(!dropsToZero(thing, amount)) return false;
+  if(massiveDamage && isKilledOutright(thing, amount)) return false;
+  updates[key] = Math.max(1, hp);
+  return true;
+}
+
+/* ---------- Items ---------- */
+
+/**
+ * Find one of an actor's items by id, uuid, identifier ("relentless-endurance") or name (any case).
+ * Several queries : the first that matches wins, so ["Relentless Endurance", "Relentless"] covers both wordings.
+ * @param {Actor|Token|TokenDocument|Item} thing
+ * @param {string|string[]|Function} query  name / identifier / id / uuid, several, or (item) => boolean
+ * @param {object} [options]
+ * @param {string} [options.type]           only items of this type ("feat", "weapon", "spell"...)
+ * @returns {Item|null}
+ */
+export function findItem(thing, query, { type } = {}){
+  const actor = actorOf(thing);
+  if(!actor?.items || (query === undefined) || (query === null)) return null;
+  const items = type ? actor.items.filter(i => i.type === type) : actor.items.contents;
+  if(typeof query === "function") return items.find(query) ?? null;
+
+  for(const q of [query].flat()){
+    const text = String(q).trim();
+    const lower = text.toLowerCase();
+    const slug = text.slugify({ strict : true });
+    const found = items.find(i => (i.id === text) || (i.uuid === text))
+      ?? items.find(i => i.name.toLowerCase() === lower)
+      ?? items.find(i => (i.identifier ?? i.system.identifier) === slug);
+    if(found) return found;
+  }
+  return null;
+}
+
+/* ---------- Conditions & combat ---------- */
 
 /**
  * Turn a status (condition) on or off, only if it isn't already : unlike toggleStatusEffect it never flips.

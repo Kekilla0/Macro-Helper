@@ -1,7 +1,28 @@
+import { module } from '../module.js';
+
 /**
  * Token / distance helpers. Distances are measured between token footprints on the grid :
  * adjacent squares (sides or diagonals) are 5 ft (one grid unit), whatever the token art looks like.
+ * Further out, the Helpers "Range Shape" setting decides :
+ *   circle (default) : true distance, so a range reaches its full length north / east / south / west and less on the diagonals
+ *   square (5e rules) : every diagonal step counts as 5 ft, so a range is a square
  */
+
+/* Round ranges (true distance) unless the Helpers setting asks for 5e's square ones */
+export function isCircular(){
+  try { return game.settings.get(module.id, "rangeShape") !== "square"; }
+  catch { return true; }
+}
+
+/**
+ * Distance in grid steps for a gap of gx columns and gy rows between two footprints (0, 0 = adjacent) : 1 = adjacent.
+ * @param {number} gx
+ * @param {number} gy
+ * @returns {number}
+ */
+export function gridSteps(gx, gy){
+  return (isCircular() ? Math.hypot(gx, gy) : Math.max(gx, gy)) + 1;
+}
 
 /**
  * The Token on the canvas for a token, token document, actor or item. Falls back to the first controlled token.
@@ -36,7 +57,8 @@ export function cells(token){
 }
 
 /**
- * Distance between two tokens' footprints, in scene units (feet). Adjacent = one grid unit (5 ft).
+ * Distance between two tokens' footprints, in scene units (feet). Adjacent (sides or diagonals) = one grid unit (5 ft).
+ * Beyond that it follows the Range Shape setting (see the top of this file). Not rounded : 2 squares diagonally is ~12.07 ft.
  * @param {Token|TokenDocument} a
  * @param {Token|TokenDocument} b
  * @returns {number}
@@ -45,7 +67,7 @@ export function distanceBetween(a, b){
   const ca = cells(tokenOf(a) ?? a), cb = cells(tokenOf(b) ?? b);
   const gapX = Math.max(0, cb.left - ca.right, ca.left - cb.right);
   const gapY = Math.max(0, cb.top - ca.bottom, ca.top - cb.bottom);
-  return (Math.max(gapX, gapY) + 1) * canvas.scene.grid.distance;
+  return gridSteps(gapX, gapY) * canvas.scene.grid.distance;
 }
 
 /**
@@ -90,21 +112,33 @@ export function getRange(thing, { long = false, thrown = false } = {}){
   return toScene(long ? (range.long || range.value || 0) : (range.value || 0));
 }
 
+/* Colours of the map highlights */
+export const HIGHLIGHT = {
+  normal : 0x33BBFF,     // blue   : normal range
+  long : 0xFF4444,       // red    : long range (disadvantage)
+  candidate : 0xFFAA00,  // orange : can be picked
+  picked : 0x33DD66,     // green  : picked
+};
+
 /**
  * Show an area on the map (only on this client) : the squares within range of an origin, candidate tokens,
  * and selected tokens, each in its own colour. Call the returned function to update the selection or clear it.
+ *   blue  = within `normal` range (or all of `feet` when there is no separate normal range)
+ *   red   = beyond `normal` but within `feet` : long range, where 5e attacks have disadvantage
  * @param {Token|TokenDocument|Actor|Item} origin
- * @param {number} feet                     range from the origin's footprint (Infinity / 0 = no range area)
+ * @param {number} feet                     furthest range from the origin's footprint (Infinity / 0 = no range area)
  * @param {object} [options]
+ * @param {number} [options.normal]          normal range : squares beyond it (up to `feet`) are shown as long range
  * @param {Token[]} [options.tokens=[]]      candidates, highlighted orange
- * @param {Token[]} [options.selected=[]]    selected, highlighted red with a border
+ * @param {Token[]} [options.selected=[]]    selected, highlighted green with a border
  * @param {string} [options.name]            highlight layer name
  * @returns {{ select : (selected : Token[]) => void, clear : () => void }}
  */
-export function highlightRange(origin, feet, { tokens = [], selected = [], name = "macro-helper-range" } = {}){
+export function highlightRange(origin, feet, { normal, tokens = [], selected = [], name = "macro-helper-range" } = {}){
   const layer = canvas.interface.grid;
-  layer.addHighlightLayer(name);
+  const graphics = layer.addHighlightLayer(name);
   const grid = canvas.grid.size;
+  const unit = canvas.scene.grid.distance;
   const from = tokenOf(origin);
 
   const fill = (token, color, alpha, border = null) => {
@@ -113,19 +147,48 @@ export function highlightRange(origin, feet, { tokens = [], selected = [], name 
       layer.highlightPosition(name, { x : i * grid, y : j * grid, color, alpha, border });
   };
 
+  const rect = (x0, y0, x1, y1, color, alpha) => {
+    if((x1 <= x0) || (y1 <= y0)) return;
+    graphics.beginFill(color, alpha).drawRect(x0, y0, x1 - x0, y1 - y0).endFill();
+  };
+
+  /**
+   * The squares of a row within `steps` grid steps of the footprint, as [first, last + 1) columns, or null.
+   * Same measure as distanceBetween, so every square shown in range is one a token could be picked in.
+   */
+  const span = (c, gy, steps) => {
+    const k = steps - 1;                                            // largest gap allowed (0 = adjacent only)
+    if((k < 0) || (gy > k)) return null;
+    const gx = isCircular() ? Math.floor(Math.sqrt((k * k) - (gy * gy)) + 1e-9) : k;
+    return [c.left - 1 - gx, c.right + gx + 1];
+  };
+
   const draw = picked => {
     layer.clearHighlightLayer(name);
-    /* Range area : every square whose distance to the origin's footprint is within range */
+
+    /* Range areas, one strip per row (a longbow's long range is thousands of squares) : normal in blue, long range in red */
     if(from && Number.isFinite(feet) && (feet > 0)){
       const c = cells(from);
-      const r = Math.floor(feet / canvas.scene.grid.distance) - 1;
-      for(let i = c.left - r - 1; i < c.right + r + 1; i++) for(let j = c.top - r - 1; j < c.bottom + r + 1; j++){
-        if(i >= c.left && i < c.right && j >= c.top && j < c.bottom) continue;
-        layer.highlightPosition(name, { x : i * grid, y : j * grid, color : 0x33BBFF, alpha : 0.15 });
+      const outer = Math.floor(feet / unit);
+      const inner = Number.isFinite(normal) ? Math.min(outer, Math.max(0, Math.floor(normal / unit))) : outer;
+      for(let j = c.top - outer; j < c.bottom + outer; j++){
+        const gy = (j < c.top) ? (c.top - 1 - j) : (j >= c.bottom) ? (j - c.bottom) : 0;
+        const inRow = (j >= c.top) && (j < c.bottom);
+        const long = span(c, gy, outer), near = span(c, gy, inner);
+        const y0 = j * grid, y1 = y0 + grid;
+        /* The footprint's own rows always count as normal range for the footprint itself */
+        const n = near ?? (inRow ? [c.left, c.right] : null);
+        if(n) rect(n[0] * grid, y0, n[1] * grid, y1, HIGHLIGHT.normal, 0.15);
+        if(!long) continue;
+        if(!n) rect(long[0] * grid, y0, long[1] * grid, y1, HIGHLIGHT.long, 0.12);
+        else {
+          rect(long[0] * grid, y0, n[0] * grid, y1, HIGHLIGHT.long, 0.12);
+          rect(n[1] * grid, y0, long[1] * grid, y1, HIGHLIGHT.long, 0.12);
+        }
       }
     }
-    for(const t of tokens) fill(tokenOf(t), 0xFFAA00, 0.3);
-    for(const t of picked) fill(tokenOf(t), 0xFF3333, 0.45, 0xFF3333);
+    for(const t of tokens) fill(tokenOf(t), HIGHLIGHT.candidate, 0.3);
+    for(const t of picked) fill(tokenOf(t), HIGHLIGHT.picked, 0.5, HIGHLIGHT.picked);
   };
 
   draw(selected);

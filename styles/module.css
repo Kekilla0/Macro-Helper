@@ -28,6 +28,35 @@
   padding-block-start: 0.5rem;
 }
 
+/* Helpers : pick targets on the map, banner at the top of the screen */
+.macro-helper-pick-banner {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 16px;
+  border: 1px solid var(--color-border-highlight, #ff6400);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.8);
+  color: #f0f0e0;
+  font-size: var(--font-size-14, 14px);
+  pointer-events: none;
+}
+.macro-helper-pick-banner .picks {
+  color: #33dd66;
+}
+.macro-helper-pick-banner .notice {
+  color: #ffb74d;
+}
+.macro-helper-pick-banner .warning {
+  color: #ff8a80;
+}
+
 /* Helpers : target chooser */
 .macro-helper-target-list {
   display: flex;

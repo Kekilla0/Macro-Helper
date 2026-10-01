@@ -54,6 +54,7 @@ export class SettingsMenu extends HandlebarsApplicationMixin(ApplicationV2){
         hint : config.hint,
         value : settings.value(key),
         isBoolean,
+        choices : config.choices ?? null,
         world : config.scope === "world",
         disabled : (config.scope === "world") && !game.user.isGM,
       };
