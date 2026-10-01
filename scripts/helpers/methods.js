@@ -1,8 +1,9 @@
 import { logger } from '../log.js';
 import { rollItem } from '../roll-item/roll-item.js';
-import { distanceBetween, getRange, getTokensWithin, highlightRange } from './tokens.js';
-import { isEnemy, isAlly, getThreats, isThreatened, getEnemiesWithinRange, pickTargets } from './targets.js';
-import { getSize, setStatus, setDefeated, splitToken, damage, heal, tempHP, dropsToZero, isKilledOutright, preventDropToZero, findItem } from './actors.js';
+import { distanceBetween, getRange, getTokensWithin, highlightRange, pushAway, pushDestination } from './tokens.js';
+import { isEnemy, isAlly, getThreats, isThreatened, getEnemiesWithinRange, pickTargets, getFlanker, isFlanking } from './targets.js';
+import { getSize, setStatus, setDefeated, splitToken, damage, heal, tempHP, dropsToZero, isKilledOutright, preventDropToZero, findItem,
+  rollSave, addTimedEffect, getSaveAdvantages } from './actors.js';
 import { setBaseDamage, updateItem, attackModeFor, isLongRange, isRangedItem, isRangedAttack, canThrow, getAmmunition, pickAndAttack,
   getUses, hasUses, spendUses, useActivity, getMultiattack, getMultiattackPlan, multiattack, getHealing, pickAttack } from './items.js';
 const log = logger.for(import.meta.url);
@@ -32,6 +33,11 @@ const creature = {
   isKilledOutright : call(isKilledOutright),                        // (amount) -> boolean, massive damage
   preventDropToZero : call(preventDropToZero),                      // (amount, updates, { hp, massiveDamage }) -> boolean, in dnd5e.preApplyDamage
   findItem : call(findItem),                                        // (name | identifier | id | [several] | fn, { type }) -> Item | null
+  getSaveAdvantages : call(getSaveAdvantages),                      // () -> Set of condition keys it has advantage on saves against
+  getFlanker : call(getFlanker),                                    // (target) -> the ally flanking it with this creature | null
+  isFlanking : call(isFlanking),                                    // (target) -> boolean
+  rollSave : call(rollSave),                                        // (ability, dc) -> { success, total, roll } | null
+  addTimedEffect : call(addTimedEffect),                            // (effectData, { of, until : "turnStart" | "turnEnd" }) -> ActiveEffect
   getMultiattackPlan : call(getMultiattackPlan),                    // ({ feature }) -> [{ items, count, choice }]
   multiattack : call(multiattack),                                  // ({ repeat, event, attack }) -> the whole Multiattack, one pick per weapon
 };
@@ -40,6 +46,8 @@ const token = {
   ...creature,
   distanceTo : call(distanceBetween),                               // (other) -> feet
   split : call(splitToken),                                         // ({ copies, hp, scale, stepSize, chat })
+  pushAway : call(pushAway),                                        // (from, feet = 10) -> Promise<number> feet moved, straight away, stops at walls
+  pushDestination : call(pushDestination),                          // (from, feet = 10) -> { x, y } | null
 };
 
 export const METHODS = {

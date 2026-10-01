@@ -1,0 +1,23 @@
+{{!-- Savage Attacker for one attack, context from message.js savageContext :
+      { label, ray, hasRay, button : true } before rolling, { label, ray, hasRay, damage, chosen } after --}}
+<div class="macro-helper-savage">
+    {{#if damage}}
+    <section class="icon-row ray-header">
+        <i class="fa-fw fa-solid fa-hand-fist" inert></i>
+        <span class="roboto-upper">{{ label }}{{#if chosen}} <i class="fa-solid fa-check" inert></i>{{/if}}</span>
+    </section>
+    {{#with damage}}{{> "macro-helper.damage-rows" }}{{/with}}
+    {{#if damage.showTray}}
+    <macro-helper-damage class="dnd5e2" data-part="savage" {{#if hasRay}}data-ray="{{ ray }}"{{/if}}></macro-helper-damage>
+    {{/if}}
+    {{/if}}
+
+    {{#if button}}
+    <div class="card-buttons">
+        <button type="button" data-action="rollSavage" data-ray="{{ ray }}">
+            <i class="fa-solid fa-hand-fist" inert></i>
+            <span>{{ label }}</span>
+        </button>
+    </div>
+    {{/if}}
+</div>

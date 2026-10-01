@@ -242,22 +242,25 @@ export function setTargets(tokens){
  * @param {boolean} [options.useTargets=true]        use the targets you already have in range instead of asking;
  *                                                   false clears your targets first and always asks
  * @param {boolean} [options.repeat=false]          the same token can be picked more than once
+ * @param {Function} [options.filter]              only tokens that pass (token) => boolean can be picked
  * @param {boolean} [options.long] [options.thrown]  passed to getRange
  * @returns {Promise<Token[]>}  the picks, empty if cancelled or nothing in range
  */
 export async function pickTargets(origin, { count = 1, range, disposition = "enemy", numberAllowed = Infinity, within = Infinity,
-  confirm = "auto", setTargets : target = true, useTargets = true, repeat = false, long = false, thrown = false, normalRange, notice = "" } = {}){
+  confirm = "auto", setTargets : target = true, useTargets = true, repeat = false, long = false, thrown = false, normalRange, notice = "", filter } = {}){
   const from = tokenOf(origin);
   if(!from) return warn(module.i18n("helpers.pick.noToken"));
   if(!useTargets) canvas.tokens.setTargets([]);
 
   const isItem = (origin?.documentName === "Item") || !!origin?.item;
   const feet = range ?? (isItem ? getRange(origin, { long, thrown }) : Infinity);
-  const candidates = getTokensWithin(from, feet, { disposition });
+  const candidates = getTokensWithin(from, feet, { disposition, filter });
   if(!candidates.length) return warn(module.i18n("helpers.pick.none"));
 
   /* Your own targets in range win, nothing to ask */
-  const targeted = useTargets ? [...game.user.targets].filter(t => (t !== from) && (distanceBetween(from, t) <= feet)) : [];
+  const targeted = useTargets
+    ? [...game.user.targets].filter(t => (t !== from) && (distanceBetween(from, t) <= feet) && (!filter || filter(t)))
+    : [];
   if(targeted.length){
     if(!repeat || (targeted.length >= count)) return targeted.slice(0, count);
     return Array.from({ length : count }, (_, i) => targeted[Math.floor(i * targeted.length / count)]);
@@ -369,4 +372,60 @@ function listPicks(picks){
   const counts = new Map();
   for(const t of picks) counts.set(t, (counts.get(t) ?? 0) + 1);
   return [...counts].map(([t, n]) => (n > 1) ? `${t.name} ×${n}` : t.name).join(", ");
+}
+
+/* ---------- Flanking (DMG optional rule) ---------- */
+
+/* Does the segment p -> q cross a vertical (x = X, y0..y1) or horizontal (y = Y, x0..x1) edge ? Corners count. */
+function crosses(p, q, { x, y0, y1 } = {}, { y, x0, x1 } = {}){
+  const eps = 1e-6;
+  if(x !== undefined){
+    if(Math.abs(q.x - p.x) < eps) return false;
+    const t = (x - p.x) / (q.x - p.x);
+    if((t < -eps) || (t > 1 + eps)) return false;
+    const at = p.y + (t * (q.y - p.y));
+    return (at >= y0 - eps) && (at <= y1 + eps);
+  }
+  if(Math.abs(q.y - p.y) < eps) return false;
+  const t = (y - p.y) / (q.y - p.y);
+  if((t < -eps) || (t > 1 + eps)) return false;
+  const at = p.x + (t * (q.x - p.x));
+  return (at >= x0 - eps) && (at <= x1 + eps);
+}
+
+/**
+ * Who flanks a target with the attacker (DMG optional rule) : an ally of the attacker, also next to the target,
+ * on the opposite side. A line between the two flankers' centers must pass through opposite sides or opposite
+ * corners of the target's space. Allies that are down or incapacitated don't count.
+ * @param {Token|TokenDocument|Actor} attacker
+ * @param {Token|TokenDocument|Actor} target
+ * @returns {Token|null}  the ally flanking with the attacker, null if the target isn't flanked
+ */
+export function getFlanker(attacker, target){
+  const a = tokenOf(attacker), t = tokenOf(target);
+  if(!a || !t || (a === t)) return null;
+  const reach = canvas.scene.grid.distance;
+  if(distanceBetween(a, t) > reach) return null;
+
+  const { x : x0, y : y0 } = t.document;
+  const x1 = x0 + t.w, y1 = y0 + t.h;
+  const opposite = (p, q) => (crosses(p, q, { x : x0, y0, y1 }) && crosses(p, q, { x : x1, y0, y1 }))
+    || (crosses(p, q, {}, { y : y0, x0, x1 }) && crosses(p, q, {}, { y : y1, x0, x1 }));
+
+  return canvas.tokens.placeables.find(ally => (ally !== a) && (ally !== t) && ally.actor
+    && isAlly(ally, a)
+    && ((ally.actor.system.attributes?.hp?.value ?? 1) > 0)
+    && !INCAPACITATED.some(status => ally.actor.statuses?.has(status))
+    && (distanceBetween(ally, t) <= reach)
+    && opposite(a.center, ally.center)) ?? null;
+}
+
+/**
+ * Is the attacker flanking the target with an ally (see getFlanker) ?
+ * @param {Token|TokenDocument|Actor} attacker
+ * @param {Token|TokenDocument|Actor} target
+ * @returns {boolean}
+ */
+export function isFlanking(attacker, target){
+  return !!getFlanker(attacker, target);
 }

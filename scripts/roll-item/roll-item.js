@@ -5,6 +5,7 @@ import { patch } from '../patch.js';
 import { TYPES, registerMessages } from './message.js';
 import { tokenOf } from '../helpers/tokens.js';
 import { pickAttack, getMultiattackPlan, multiattack } from '../helpers/items.js';
+import { masteries } from './masteries.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -27,15 +28,16 @@ export class rollItem{
    *                                     (long range...). Combines with the advantage keys like dnd5e : both = a normal roll.
    * @param {Token[]} [options.targets]  attack these, one attack each in order (the same token twice = two attacks at it),
    *                                     instead of spreading `count` over your targets. `count` defaults to their number.
+   * @param {boolean} [options.cleave]   the Cleave mastery's extra attack : its damage leaves out a positive ability modifier
    */
-  static async roll(item, { activity, event, count, attackMode, disadvantage, targets } = {}){
+  static async roll(item, { activity, event, count, attackMode, disadvantage, targets, cleave } = {}){
     const target = this.getActivity(item, activity);
     if(!target) return ui.notifications.warn(module.format("rollItem.warn.noAttack", { name : item?.name ?? "" }));
 
     /* Saves / heals go through dnd5e's use workflow (spell slots, uses, templates, effects), flagged so we take over the card */
     if(target.type !== "attack") return target.use({ event, [module.id] : { mode : target.type } });
 
-    return this.rollActivity(target, { event, count, attackMode, disadvantage, targets });
+    return this.rollActivity(target, { event, count, attackMode, disadvantage, targets, cleave });
   }
 
   /* A per-attack option for one target : a fixed value, or chosen per target by a function */
@@ -44,9 +46,11 @@ export class rollItem{
     return value ?? undefined;
   }
 
-  /* dnd5e attack roll config for one target : attack mode and disadvantage */
+  /* dnd5e attack roll config for one target : attack mode, disadvantage, and who it's aimed at (Vex) */
   static attackConfig({ attackMode, disadvantage } = {}, target){
     const config = {};
+    const uuid = target?.document?.uuid ?? target?.uuid;
+    if(uuid) config[module.id] = { target : uuid };
     const mode = this.perTarget(attackMode, target);
     if(mode) config.attackMode = mode;
     if(this.perTarget(disadvantage, target)) config.disadvantage = true;
@@ -63,18 +67,27 @@ export class rollItem{
    * @param {string|Function} [options.attackMode]    see roll()
    * @param {boolean|Function} [options.disadvantage]  see roll()
    * @param {Token[]} [options.targets]                 see roll()
+   * @param {boolean} [options.cleave]                  see roll()
    */
-  static async rollActivity(activity, { event, scaling = 0, count, attackMode, disadvantage, targets } = {}){
+  static async rollActivity(activity, { event, scaling = 0, count, attackMode, disadvantage, targets, cleave } = {}){
     if(!this.ready("attack")) return;
 
+    /* Advantage / disadvantage for the whole card : the keys held, or asked now (targets are already chosen) */
+    const mode = await this.chooseMode(activity, event);
+    if(!mode) return;
+
     const rays = this.countFor(activity, count ?? targets?.length);
-    if(rays > 1) return this.rollRays(activity, rays, { event, scaling, attackMode, disadvantage, targets });
+    if(rays > 1) return this.rollRays(activity, rays, { event, scaling, attackMode, disadvantage, targets, mode });
 
     const target = targets?.[0] ?? game.user.targets.first() ?? null;
     const config = this.attackConfig({ attackMode, disadvantage }, target);
-    const roll = await this.rollAttack(activity, event, config);
+    const roll = await this.rollAttack(activity, event, config, mode);
     if(!roll) return;
+    if(cleave) roll.options[module.id] = { ...(roll.options[module.id] ?? {}), noMod : true };
     const damage = await this.rollDamage(activity, roll);
+    /* Graze : its damage for a miss, the card shows it when the attack misses */
+    const graze = await masteries.grazeRolls(activity, roll, damage);
+    for(const r of graze) r.options[module.id] = { part : "graze" };
 
     /* On-hit save from the same item (Giant Spider's poison) : its damage is rolled now too, never crits */
     const save = this.findRider(activity);
@@ -87,7 +100,7 @@ export class rollItem{
       onSave : save.damage?.onSave ?? null,
     } : null;
 
-    const message = await this.attackCard(activity, [roll, ...damage, ...riderDamage], { scaling, rider, disadvantage : !!config.disadvantage });
+    const message = await this.attackCard(activity, [roll, ...damage, ...graze, ...riderDamage], { scaling, rider, disadvantage : !!config.disadvantage });
     log.debug("Rolled", activity.item.name, { roll, damage, rider, riderDamage });
 
     return { attack : roll, damage, riderDamage, isCritical : roll.isCritical, isFumble : roll.isFumble, message };
@@ -170,25 +183,28 @@ export class rollItem{
    * @param {boolean} [options.disadvantage]  roll this attack with disadvantage (long range...)
    * @returns {Promise<Roll[]|null>}  null if the attack was cancelled
    */
-  static async rollRay(activity, event, index, target, { attackMode, disadvantage } = {}){
+  static async rollRay(activity, event, index, target, { attackMode, disadvantage, mode } = {}){
     const config = {};
     if(Number.isFinite(target?.ac)) config.target = target.ac;
     if(attackMode) config.attackMode = attackMode;
     if(disadvantage) config.disadvantage = true;
-    const attack = await this.rollAttack(activity, event, config);
+    if(target?.token) config[module.id] = { target : target.token };
+    const attack = await this.rollAttack(activity, event, config, mode);
     if(!attack) return null;
     const damage = await this.rollDamage(activity, attack);
+    const graze = await masteries.grazeRolls(activity, attack, damage);
     for(const roll of [attack, ...damage]) roll.options[module.id] = { ray : index };
-    return [attack, ...damage];
+    for(const roll of graze) roll.options[module.id] = { ray : index, part : "graze" };
+    return [attack, ...damage, ...graze];
   }
 
-  static async rollRays(activity, count, { event, scaling = 0, attackMode, disadvantage, targets : tokens } = {}){
+  static async rollRays(activity, count, { event, scaling = 0, attackMode, disadvantage, targets : tokens, mode } = {}){
     const { TargetsField } = dnd5e.dataModels.chatMessage.fields;
     const targets = this.assignTargets(count, tokens);
     const rolls = [], rays = [];
     for(const [index, target] of targets.entries()){
       const config = this.attackConfig({ attackMode, disadvantage }, target ? TargetsField.resolve(target).token : null);
-      const ray = await this.rollRay(activity, event, index, target, config);
+      const ray = await this.rollRay(activity, event, index, target, { ...config, mode });
       if(!ray) return;
       rolls.push(...ray);
       /* Each ray keeps its target, attack mode and disadvantage, so rerolls throw / shoot the same way */
@@ -329,9 +345,38 @@ export class rollItem{
   /* ---------- Rolling ---------- */
 
   /* dnd5e attack roll, no dialog, no message */
-  static async rollAttack(activity, event, config = {}){
-    const [roll] = await activity.rollAttack({ ...config, event : this.keyEvent(event) }, { configure : false }, { create : false }) ?? [];
+  /* dnd5e attack roll, no dialog, no message. `mode` is the card's chosen advantage / disadvantage (chooseMode) :
+     dnd5e combines it with everything else (long range, Poisoned, Vex...), advantage and disadvantage cancel out */
+  static async rollAttack(activity, event, config = {}, mode = {}){
+    const rollConfig = { ...config, event : this.keyEvent(event) };
+    if(mode?.advantage) rollConfig.advantage = true;
+    if(mode?.disadvantage) rollConfig.disadvantage = true;
+    const [roll] = await activity.rollAttack(rollConfig, { configure : false }, { create : false }) ?? [];
     return roll ?? null;
+  }
+
+  /**
+   * The Advantage setting :
+   *   keys   : dnd5e's advantage / disadvantage keys held while rolling (Configure Controls, default Alt / Ctrl)
+   *   prompt : ask Advantage / Normal / Disadvantage before rolling (after targets are picked)
+   *   none   : neither, only what the rules give (long range, conditions, Vex...)
+   * @returns {Promise<{ advantage? : boolean, disadvantage? : boolean }|null>}  null if the prompt was closed
+   */
+  static async chooseMode(activity, event){
+    if(settings.value("rollItemAdvantage") !== "prompt") return {};
+    const choice = await foundry.applications.api.DialogV2.wait({
+      window : { title : activity?.item?.name ?? module.i18n("rollItem.mode.title"), icon : "fa-solid fa-dice-d20" },
+      content : `<p>${module.i18n("rollItem.mode.hint")}</p>`,
+      buttons : [
+        { action : "advantage", label : "DND5E.Advantage", icon : "fa-solid fa-angles-up" },
+        { action : "normal", label : "DND5E.Normal", icon : "fa-solid fa-dice-d20", default : true },
+        { action : "disadvantage", label : "DND5E.Disadvantage", icon : "fa-solid fa-angles-down" },
+      ],
+      position : { width : 400 },
+      rejectClose : false,
+    });
+    if(!choice) return null;
+    return { advantage : choice === "advantage", disadvantage : choice === "disadvantage" };
   }
 
   /* A utility activity's own roll formula (dnd5e's "Roll" button), no dialog, no message */
@@ -353,6 +398,8 @@ export class rollItem{
       ability, attackMode,
       ammunition : activity.actor?.items.get(ammunition),
       isCritical : attack?.isCritical ?? false,
+      /* Cleave's extra attack : masteries.onPreRollDamage takes a positive ability modifier off */
+      ...(attack?.options?.[module.id]?.noMod ? { [module.id] : { noMod : true } } : {}),
     }, { configure : false }, { create : false }) ?? [];
   }
 
@@ -383,7 +430,7 @@ export class rollItem{
    * Macros may not have an event, so fall back to what is held down right now.
    */
   static keyEvent(event){
-    if(!settings.value("rollItemHotkeys")) return undefined;
+    if(settings.value("rollItemAdvantage") !== "keys") return undefined;
     if(event) return event;
 
     const kb = game.keyboard;
@@ -399,6 +446,7 @@ export class rollItem{
   static register(){
     if(game.system.id !== "dnd5e") return;
     registerMessages();
+    masteries.register();
     Hooks.on("dnd5e.preUseActivity", rollItem.onPreUse);
     Hooks.on("dnd5e.postUseActivity", rollItem.onPostUse);
 
@@ -450,7 +498,39 @@ export class rollItem{
     };
     ChatMessage.implementation.applyMode(messageData, CONFIG.Dice.BasicRoll.getMessageMode());
 
-    return await ChatMessage.implementation.create(messageData);
+    /* Damage after the attack : everything is already rolled, this only staggers what is shown, so a natural 20
+       isn't given away by crit damage dice rolling alongside it. The card goes out with every roll but shows
+       "Rolling..." (flags.reveal 0), the attack dice play and the attack shows (1), then the damage dice and the
+       damage (2). Dice So Nice's own animation of the card is skipped : the dice are played here, in order. */
+    const { DamageRoll } = CONFIG.Dice;
+    const attacks = rolls.filter(r => !(r instanceof DamageRoll));
+    const damage = rolls.filter(r => r instanceof DamageRoll);
+    const staged = settings.value("rollItemStaged") && attacks.length && damage.length;
+    if(!staged) return await ChatMessage.implementation.create(messageData);
+
+    messageData.flags = { [module.id] : { reveal : 0 } };
+    if(game.dice3d) messageData.flags["dice-so-nice"] = { skip : true };
+    const message = await ChatMessage.implementation.create(messageData);
+    if(!message) return message;
+
+    try {
+      await this.showDice(attacks, message);
+      await message.setFlag(module.id, "reveal", 1);
+      await this.showDice(damage, message);
+    }
+    finally {
+      await message.setFlag(module.id, "reveal", 2);
+    }
+    return message;
+  }
+
+  /* How much of a staged attack card can be shown : 0 nothing yet, 1 the attack, 2 everything.
+     A card left half revealed (its roller disconnected) shows everything after 30 seconds. */
+  static revealOf(message){
+    const reveal = message?.getFlag(module.id, "reveal");
+    if(!Number.isInteger(reveal) || (reveal >= 2)) return 2;
+    if((Date.now() - (message.timestamp ?? 0)) > 30000) return 2;
+    return reveal;
   }
 
   /**
@@ -501,7 +581,23 @@ export class rollItem{
       label : { value : "rollItem.apply.all" },
     });
 
+    /* Healing that can only land on yourself (Second Wind) : applied straight away, no tray */
+    const selfHeal = isHeal && damage.length && (activity.target?.affects?.type === "self") && !!activity.actor;
+    if(selfHeal) foundry.utils.setProperty(data, `flags.${module.id}.selfHeal`, true);
+
     log.debug("Usage card", activity.item.name, { data, damage });
-    return await ChatMessage.implementation.create(data);
+    const message = await ChatMessage.implementation.create(data);
+    if(selfHeal && message) await this.applyToSelf(activity.actor, damage, message);
+    return message;
+  }
+
+  /* Same call dnd5e's tray makes, one entry per healing / damage type */
+  static async applyToSelf(actor, rolls, message){
+    const damages = dnd5e.dice.aggregateDamageRolls(rolls, { respectProperties : true }).map(roll => ({
+      properties : new Set(roll.options.properties ?? []),
+      type : roll.options.type,
+      value : Math.max(0, roll.total),
+    }));
+    await actor.applyDamage(damages, { isDelta : true, origin : message });
   }
 }

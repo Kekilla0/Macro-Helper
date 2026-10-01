@@ -1,5 +1,7 @@
 import { module } from '../module.js';
 import { rollItem } from './roll-item.js';
+import { masteries } from './masteries.js';
+import { features } from './features.js';
 
 /* Declared in module.json documentTypes.ChatMessage, Foundry prefixes them with the module id */
 export const TYPES = {
@@ -13,7 +15,19 @@ export function registerMessages(){
   const { DamageRoll, aggregateDamageRolls } = dnd5e.dice;
 
   /* Shared markup for damage boxes, one per damage type : {{> "macro-helper.damage-rows" damage }} */
-  foundry.applications.handlebars.loadTemplates({ [`${module.id}.damage-rows`] : `${module.path}/templates/damage-rows.hbs` });
+  foundry.applications.handlebars.loadTemplates({
+    [`${module.id}.damage-rows`] : `${module.path}/templates/damage-rows.hbs`,
+    [`${module.id}.mastery`] : `${module.path}/templates/mastery.hbs`,
+    [`${module.id}.savage`] : `${module.path}/templates/savage.hbs`,
+  });
+
+  /* Does an attack roll hit this AC : crits always, fumbles never, no AC known counts as a hit */
+  const hitsAC = (roll, ac) => {
+    if(!roll) return false;
+    if(roll.isCritical) return true;
+    if(roll.isFumble) return false;
+    return !Number.isFinite(ac) || (roll.total >= ac);
+  };
 
   /**
    * Damage for display, split by damage type (1d8 slashing + 1d6 fire = two boxes), since targets can resist one and not the other.
@@ -97,7 +111,8 @@ export function registerMessages(){
 
   /**
    * dnd5e's damage tray, limited to one part of the card (dnd5e's own applies every damage roll on the message).
-   *  data-part="base" | "save"  the attack's damage, or the on-hit save's damage (halved for targets that saved)
+   *  data-part="base" | "save" | "graze"  the attack's damage, the on-hit save's damage (halved for targets that saved),
+ *                             or the Graze mastery's damage for a miss
    *  data-ray="n"               one ray of a multi attack card
    * The parent fills `damages` and `chatMessage` when it connects; here `damages` always reads this part's rolls,
    * and for the save part `chatMessage.system` exposes the save's onSave + outcomes, which the parent uses for its save multiplier.
@@ -120,6 +135,17 @@ export function registerMessages(){
         get : ()=> this.#message && this.dataset.part === "save" ? this.#saveView(this.#message) : this.#message,
         set : message => this.#message = message ?? null,
       });
+    }
+
+    /* Savage Attacker : applying the first or the second roll keeps that one, the other goes away */
+    async _onApplyDamage(event){
+      await super._onApplyDamage(event);
+      const message = this.#message;
+      const part = this.dataset.part || "base";
+      if(!message?.isOwner || !["base", "savage"].includes(part) || !message.system?.savageRolls) return;
+      const ray = ("ray" in this.dataset) ? Number(this.dataset.ray) : null;
+      if(!message.system.savageRolls(ray).length) return;
+      await message.setFlag(module.id, `savage.${masteries.rayKey(ray)}`, part);
     }
 
     matches(roll){
@@ -177,6 +203,8 @@ export function registerMessages(){
         applyHits : RollItemMessageData.#applyHits,
         rollRiderSave : RollItemMessageData.#rollRiderSave,
         rerollRiderDamage : RollItemMessageData.#rerollRiderDamage,
+        useMastery : RollItemMessageData.#useMastery,
+        rollSavage : RollItemMessageData.#rollSavage,
       },
     }, { inplace : false }));
 
@@ -220,6 +248,100 @@ export function registerMessages(){
     /* The attack's own damage */
     get damageRolls(){
       return this.parent.rolls.filter(r => r instanceof DamageRoll && tagOf(r).part === "base");
+    }
+
+    /* Graze's damage for a miss (masteries.js) */
+    get grazeRolls(){
+      return this.parent.rolls.filter(r => r instanceof DamageRoll && tagOf(r).part === "graze");
+    }
+
+    /* ---------- Weapon mastery (masteries.js) : ray is the attack's index on a multi card, null for a single attack ---------- */
+
+    attackOf(ray){
+      return Number.isInteger(ray) ? this.rayAttack(ray) : this.attackRoll;
+    }
+
+    /* The mastery the attack used, as dnd5e chose it (only for actors who have mastered the weapon) */
+    masteryOf(ray){
+      return (Number.isInteger(ray) ? this.attackOf(ray)?.options?.mastery : this.mastery) || null;
+    }
+
+    targetsOf(ray){
+      return Number.isInteger(ray) ? [this.rayTarget(ray)].filter(Boolean) : this.targets;
+    }
+
+    /* Tokens the attack hit, from the card's targets */
+    hitTargets(ray){
+      const attack = this.attackOf(ray);
+      return this.targetsOf(ray).filter(t => hitsAC(attack, t.ac)).map(t => TargetsField.resolve(t).token).filter(Boolean);
+    }
+
+    masteryUsed(ray){
+      return !!this.parent.getFlag(module.id, `mastery.${masteries.rayKey(ray)}`);
+    }
+
+    /* The mastery part of the card for one attack : Graze's damage on a miss, or the button for a hit */
+    masteryContext(ray){
+      const key = this.masteryOf(ray);
+      if(!key || !masteries.enabled() || !this.parent.isContentVisible) return null;
+      const attack = this.attackOf(ray);
+      const targets = this.targetsOf(ray);
+      const hits = targets.filter(t => hitsAC(attack, t.ac));
+      const missed = targets.length > hits.length;
+
+      const grazeRolls = Number.isInteger(ray) ? this.rayDamage(ray, "graze") : this.grazeRolls;
+      const graze = (grazeRolls.length && (missed || !targets.length))
+        ? { ...damageContext(this.parent, grazeRolls), showTray : this.canApply, onMiss : !targets.length }
+        : null;
+
+      /* Cleave's own extra attack can't Cleave again (once per turn, even out of combat where turns aren't tracked) */
+      const isCleave = !!attack?.options?.[module.id]?.noMod;
+      const canUse = this.parent.isOwner && masteries.ACTIONS.includes(key) && !((key === "cleave") && isCleave);
+      const action = (canUse && hits.length) ? {
+        label : masteries.buttonLabel(key, this.parent.getAssociatedActor(), attack),
+        used : this.masteryUsed(ray),
+      } : null;
+      if(!graze && !action) return null;
+
+      return {
+        key, graze, action,
+        label : masteries.label(key),
+        icon : masteries.ICONS[key] ?? "fa-star",
+        ray : Number.isInteger(ray) ? ray : "",
+        hasRay : Number.isInteger(ray),
+      };
+    }
+
+    /* ---------- Savage Attacker (features.js) ---------- */
+
+    savageRolls(ray){
+      if(Number.isInteger(ray)) return this.rayDamage(ray, "savage");
+      return this.parent.rolls.filter(r => r instanceof DamageRoll && tagOf(r).part === "savage");
+    }
+
+    /* Which roll was applied : "base", "savage", or null while both are on offer */
+    savageChoice(ray){
+      return this.parent.getFlag(module.id, `savage.${masteries.rayKey(ray)}`) ?? null;
+    }
+
+    /* The second roll and its tray, or the button to roll it (on an attack that hit, for its roller) */
+    savageContext(ray){
+      if(!features.savageEnabled() || !this.parent.isContentVisible) return null;
+      const rolls = this.savageRolls(ray);
+      const choice = this.savageChoice(ray);
+      const base = { label : module.i18n("rollItem.savage.label"), ray : Number.isInteger(ray) ? ray : "", hasRay : Number.isInteger(ray) };
+
+      if(rolls.length){
+        if(choice === "base") return null;
+        return { ...base, damage : { ...damageContext(this.parent, rolls), showTray : this.canApply }, chosen : choice === "savage" };
+      }
+
+      const attack = this.attackOf(ray);
+      const targets = this.targetsOf(ray);
+      const hit = targets.length ? targets.some(t => hitsAC(attack, t.ac)) : rollItem.isHit(attack);
+      const hasDamage = Number.isInteger(ray) ? this.rayDamage(ray).length : this.damageRolls.length;
+      if(!hit || !hasDamage || !features.canSavage(this.parent, this.parent.getAssociatedActivity())) return null;
+      return { ...base, button : true };
     }
 
     /* ---------- Rider (on-hit save) ---------- */
@@ -276,8 +398,9 @@ export function registerMessages(){
       return this.rayRolls(index).find(r => !(r instanceof DamageRoll)) ?? null;
     }
 
-    rayDamage(index){
-      return this.rayRolls(index).filter(r => r instanceof DamageRoll);
+    /* A ray's own damage ("base"), or its Graze damage ("graze") */
+    rayDamage(index, part = "base"){
+      return this.rayRolls(index).filter(r => r instanceof DamageRoll && tagOf(r).part === part);
     }
 
     /* Who a ray's damage lands on : its target, or the selected tokens if it had none */
@@ -297,6 +420,7 @@ export function registerMessages(){
       const context = await super._prepareContext(options);
       const rolls = this.parent.rolls;
       const rendered = context.rolls;
+
 
       /* Only whoever can update the message (roller / GM) can reroll it */
       const activity = this.parent.getAssociatedActivity();
@@ -343,10 +467,14 @@ export function registerMessages(){
             } : null,
             damage : (damage.length || !visible) ? damageContext(this.parent, damage) : null,
             showTray : canApply && damage.length > 0,
+            mastery : this.masteryContext(i),
+            savage : this.savageContext(i),
           };
         });
-        context.applyHits = canApply && context.rays.some(r => r.hit && r.showTray);
-        return context;
+        /* Savage Attacker's second roll was the one applied : the first goes away */
+        for(const ray of context.rays) if(this.savageChoice(ray.index) === "savage"){ ray.damage = null; ray.showTray = false; }
+        context.applyHits = canApply && context.rays.some(r => (r.hit && r.showTray) || r.mastery?.graze);
+        return this._hideUnrevealed(context);
       }
 
       /* Single attack : super renders every roll as a compact box, keep only the attack there */
@@ -354,9 +482,41 @@ export function registerMessages(){
       const damage = this.damageRolls;
       if(damage.length) context.damage = { ...damageContext(this.parent, damage), showTray : this.canApply };
 
+      context.mastery = this.masteryContext(null);
+      context.savage = this.savageContext(null);
+      if(this.savageChoice(null) === "savage") context.damage = null;
+
       if(this.rider?.id) context.rider = await this._prepareRiderContext(options);
       if(context.buttons && context.rider) context.buttons.rider = context.rider.hasDamage;
 
+      return this._hideUnrevealed(context);
+    }
+
+    /**
+     * Damage after the attack (rollItem.attackCard) : leave out what hasn't been rolled on screen yet.
+     *   reveal 0 : nothing but "Rolling..." (no attack totals, no hit / miss on the targets)
+     *   reveal 1 : the attack(s), not the damage, masteries, rider or buttons
+     */
+    _hideUnrevealed(context){
+      const reveal = rollItem.revealOf(this.parent);
+      if(reveal >= 2) return context;
+
+      context.pending = true;
+      context.damage = null;
+      context.mastery = null;
+      context.savage = null;
+      context.rider = null;
+      context.applyHits = false;
+      context.buttons = null;
+      context.effects = [];
+      context.rays = (context.rays ?? []).map(ray => ({
+        ...ray, damage : null, showTray : false, mastery : null, savage : null, canReroll : false,
+        ...(reveal < 1 ? { attack : "", hit : true, target : ray.target ? { ...ray.target, showResult : false } : null } : {}),
+      }));
+      if(reveal < 1){
+        context.rolls = [];
+        context.targets = (context.targets ?? []).map(t => ({ ...t, showResult : false }));
+      }
       return context;
     }
 
@@ -400,11 +560,14 @@ export function registerMessages(){
       if(!activity) return;
       target.disabled = true;
 
+      const mode = await rollItem.chooseMode(activity, event);
+      if(!mode) return target.disabled = false;
+
       /* Multi : every ray again, damage follows the new hits */
       if(this.isMulti){
         const replaced = new Map();
         for(const i of this.rays.keys()){
-          const ray = await rollItem.rollRay(activity, event, i, this.rayTarget(i), { attackMode : this.rays[i].mode || undefined, disadvantage : this.rays[i].disadvantage });
+          const ray = await rollItem.rollRay(activity, event, i, this.rayTarget(i), { attackMode : this.rays[i].mode || undefined, disadvantage : this.rays[i].disadvantage, mode });
           if(!ray) return target.disabled = false;
           replaced.set(i, ray);
         }
@@ -415,12 +578,17 @@ export function registerMessages(){
         ability : this.ability ?? undefined,
         attackMode : this.mode ?? undefined,
         ...(this.disadvantage ? { disadvantage : true } : {}),
-      });
+        ...(this.targets.length === 1 ? { [module.id] : { target : this.targets[0].token } } : {}),
+      }, mode);
       if(!attack) return target.disabled = false;
+
+      /* Cleave's extra attack stays one, and Graze follows the new attack */
+      if(this.attackRoll?.options?.[module.id]?.noMod) attack.options[module.id] = { ...(attack.options[module.id] ?? {}), noMod : true };
+      const graze = tag(await masteries.grazeRolls(activity, attack, this.damageRolls), { part : "graze" });
 
       const { ability, ammunition, attackMode, mastery } = attack.options;
       await replaceRolls(this.parent, {
-        rolls : [attack, ...this.damageRolls, ...this.riderRolls],
+        rolls : [attack, ...this.damageRolls, ...graze, ...this.riderRolls],
         shown : [attack],
         system : { ability, ammunition, mastery, mode : attackMode },
       });
@@ -438,7 +606,7 @@ export function registerMessages(){
         for(const i of this.rays.keys()){
           const attack = this.rayAttack(i);
           const damage = tag(await rollItem.rollDamage(activity, attack), { ray : i });
-          replaced.set(i, [attack, ...damage]);
+          replaced.set(i, [attack, ...damage, ...this.rayDamage(i, "graze"), ...this.rayDamage(i, "savage")]);
           shown.push(...damage);
         }
         if(!shown.length) return target.disabled = false;
@@ -448,7 +616,7 @@ export function registerMessages(){
       const damage = await rollItem.rollDamage(activity, this.attackRoll);
       if(!damage.length) return target.disabled = false;
 
-      await replaceRolls(this.parent, { rolls : [this.attackRoll, ...damage, ...this.riderRolls], shown : damage });
+      await replaceRolls(this.parent, { rolls : [this.attackRoll, ...damage, ...this.grazeRolls, ...this.savageRolls(null), ...this.riderRolls], shown : damage });
     }
 
     /** @this {RollItemMessageData} */
@@ -459,7 +627,7 @@ export function registerMessages(){
 
       const damage = tag(await rollItem.rollDamage(save, null), { part : "save" });
       if(!damage.length) return target.disabled = false;
-      await replaceRolls(this.parent, { rolls : [this.attackRoll, ...this.damageRolls, ...damage], shown : damage });
+      await replaceRolls(this.parent, { rolls : [this.attackRoll, ...this.damageRolls, ...this.grazeRolls, ...this.savageRolls(null), ...damage], shown : damage });
     }
 
     /**
@@ -498,6 +666,32 @@ export function registerMessages(){
       }
     }
 
+    /* Savage Attacker's button : data-ray is the attack on a multi card, empty for a single attack */
+    /** @this {RollItemMessageData} */
+    static async #rollSavage(event, target){
+      const ray = (target.dataset.ray === "" || target.dataset.ray === undefined) ? null : Number(target.dataset.ray);
+      target.disabled = true;
+      try { await features.savage(this.parent, ray); }
+      catch(error){
+        console.error("Macro Helper | Savage Attacker", error);
+        ui.notifications.warn(error.message);
+        target.disabled = false;
+      }
+    }
+
+    /* The mastery button : data-ray is the attack on a multi card, empty for a single attack */
+    /** @this {RollItemMessageData} */
+    static async #useMastery(event, target){
+      const ray = (target.dataset.ray === "" || target.dataset.ray === undefined) ? null : Number(target.dataset.ray);
+      target.disabled = true;
+      try { await masteries.use(this.parent, ray, event); }
+      catch(error){
+        console.error("Macro Helper | mastery", error);
+        ui.notifications.warn(error.message);
+      }
+      finally { target.disabled = this.masteryUsed(ray); }
+    }
+
     /** @this {RollItemMessageData} */
     static async #rerollRay(event, target){
       const activity = this.parent.getAssociatedActivity({ scaled : true });
@@ -505,19 +699,33 @@ export function registerMessages(){
       if(!activity || !this.rays[index]) return;
       target.disabled = true;
 
-      const ray = await rollItem.rollRay(activity, event, index, this.rayTarget(index), { attackMode : this.rays[index].mode || undefined, disadvantage : this.rays[index].disadvantage });
+      const mode = await rollItem.chooseMode(activity, event);
+      if(!mode) return target.disabled = false;
+      const ray = await rollItem.rollRay(activity, event, index, this.rayTarget(index), { attackMode : this.rays[index].mode || undefined, disadvantage : this.rays[index].disadvantage, mode });
       if(!ray) return target.disabled = false;
       await replaceRolls(this.parent, { rolls : this.withRays(new Map([[index, ray]])), shown : ray });
     }
 
-    /* Every ray that hit onto its own target, rays without a target go to the selected tokens */
+    /* Every ray that hit onto its own target, rays without a target go to the selected tokens. Misses with Graze deal that. */
     /** @this {RollItemMessageData} */
     static async #applyHits(event, target){
       const byActor = new Map();
       for(const i of this.rays.keys()){
-        if(!rollItem.isHit(this.rayAttack(i))) continue;
+        const hit = rollItem.isHit(this.rayAttack(i));
+        let rolls = hit ? this.rayDamage(i) : (masteries.enabled() ? this.rayDamage(i, "graze") : []);
+        const savage = hit ? this.rayDamage(i, "savage") : [];
+        if(savage.length){
+          const total = list => list.reduce((sum, r) => sum + r.total, 0);
+          let choice = this.savageChoice(i);
+          if(!choice){
+            choice = (total(savage) > total(rolls)) ? "savage" : "base";
+            if(this.parent.isOwner) await this.parent.setFlag(module.id, `savage.${i}`, choice);
+          }
+          if(choice === "savage") rolls = savage;
+        }
+        if(!rolls.length) continue;
         for(const actor of this.rayActors(i)){
-          byActor.set(actor, [...(byActor.get(actor) ?? []), ...this.rayDamage(i)]);
+          byActor.set(actor, [...(byActor.get(actor) ?? []), ...rolls]);
         }
       }
       if(!byActor.size) return ui.notifications.warn("rollItem.apply.noTarget", { localize : true });
@@ -627,6 +835,12 @@ export function registerMessages(){
       const damage = this.damageRolls;
       if(damage.length) context.damage = damageContext(this.parent, damage);
 
+      /* Self-only healing (Second Wind) was applied when rolled : no tray, just who it went to */
+      if(context.damage && this.parent.getFlag(module.id, "selfHeal")){
+        context.damage.showTray = false;
+        context.selfApplied = this.parent.getAssociatedActor()?.name ?? "";
+      }
+
       return context;
     }
 
@@ -694,4 +908,12 @@ export function registerMessages(){
 
   CONFIG.ChatMessage.dataModels[TYPES.attack] = RollItemMessageData;
   CONFIG.ChatMessage.dataModels[TYPES.save] = RollItemSaveData;
+
+  /* Our cards grow after they're posted (damage after the attack, rerolls, save results) : keep the chat log at the
+     bottom if it was there, once the new card is in place. Someone scrolled up reading older messages stays put. */
+  const ours = new Set(Object.values(TYPES));
+  Hooks.on("renderChatMessageHTML", message => {
+    if(!ours.has(message.type) || !ui.chat?.isAtBottom) return;
+    requestAnimationFrame(()=> ui.chat.scrollBottom({ popout : true }));
+  });
 }

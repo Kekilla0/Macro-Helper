@@ -199,6 +199,58 @@ export function highlightRange(origin, feet, { normal, tokens = [], selected = [
 }
 
 /**
+ * Where a push would leave a token : straight away from `from`, up to `feet`, square by square, stopping at walls.
+ * Measured like everything else here (Range Shape) : with Square, a diagonal square is 5 ft, so 10 ft is 2 diagonal squares.
+ * @param {Token|TokenDocument|Actor} thing   who is pushed
+ * @param {Token|TokenDocument|Actor} from    who pushes
+ * @param {number} [feet=10]
+ * @returns {{ x : number, y : number, feet : number }|null}  the token's new top-left position and how far that is,
+ *          null if it can't move at all
+ */
+export function pushDestination(thing, from, feet = 10){
+  const token = tokenOf(thing), source = tokenOf(from);
+  if(!token || !source || (token === source)) return null;
+
+  const start = token.center;
+  let dx = start.x - source.center.x, dy = start.y - source.center.y;
+  const norm = isCircular() ? Math.hypot(dx, dy) : Math.max(Math.abs(dx), Math.abs(dy));
+  if(!norm) return null;
+  dx /= norm; dy /= norm;
+
+  const grid = canvas.grid.size;
+  const steps = Math.floor(feet / canvas.scene.grid.distance);
+  const { x : x0, y : y0 } = token.document;
+  let best = null;
+  for(let k = 1; k <= steps; k++){
+    let x = x0 + (dx * k * grid), y = y0 + (dy * k * grid);
+    if(!canvas.grid.isGridless){ x = Math.round(x / grid) * grid; y = Math.round(y / grid) * grid; }
+    const center = { x : x + (token.w / 2), y : y + (token.h / 2) };
+    let blocked = false;
+    try { blocked = !!CONFIG.Canvas.polygonBackends.move.testCollision(start, center, { type : "move", mode : "any" }); }
+    catch { blocked = false; }
+    if(blocked) break;
+    best = { x, y, feet : k * canvas.scene.grid.distance };
+  }
+  return (best && ((best.x !== x0) || (best.y !== y0))) ? best : null;
+}
+
+/**
+ * Push a token straight away from another (Shove, the Push mastery, Thunderwave...), see pushDestination.
+ * Needs permission to move the token (its owner or the GM).
+ * @param {Token|TokenDocument|Actor} thing
+ * @param {Token|TokenDocument|Actor} from
+ * @param {number} [feet=10]
+ * @returns {Promise<number>}  how far it moved, in feet : 0 if it couldn't move at all (a wall right behind it)
+ */
+export async function pushAway(thing, from, feet = 10){
+  const token = tokenOf(thing);
+  const destination = pushDestination(token, from, feet);
+  if(!destination || !token.document.canUserModify(game.user, "update")) return 0;
+  await token.document.update({ x : destination.x, y : destination.y });
+  return destination.feet;
+}
+
+/**
  * Tokens within a distance of an origin token, nearest first.
  * @param {Token|TokenDocument|Actor|Item} origin
  * @param {number} feet

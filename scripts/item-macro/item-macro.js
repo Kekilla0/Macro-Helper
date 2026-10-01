@@ -87,8 +87,14 @@ export class itemMacro{
     itemHooks.register();
   }
 
+  /* Editing needs the sheet to be editable and Foundry's script macro permission; players also need the GM's
+     "Players Can Edit Item Macros" setting. Running a macro when the item is used is never restricted by this. */
   static canEdit(app){
-    return app.isEditable && game.user.can("MACRO_SCRIPT");
+    return app.isEditable && game.user.can("MACRO_SCRIPT") && this.playersMayEdit();
+  }
+
+  static playersMayEdit(){
+    return game.user.isGM || settings.value("itemMacroPlayers");
   }
 
   /* Entry in the sheet's ⋯ header menu */

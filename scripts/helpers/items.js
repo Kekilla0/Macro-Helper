@@ -106,11 +106,12 @@ function attackFailed(item, message, error){
  * @param {boolean} [options.repeat=false]           the same target can be picked more than once (one attack per pick)
  * @param {string|Activity} [options.activity]       attack activity, or its id / name, default the first
  * @param {boolean} [options.used=false]             dnd5e has already used the activity : don't refuse it for having no uses left
+ * @param {Function} [options.filter]              only tokens that pass (token) => boolean can be picked (Cleave : next to the first)
  * @returns {Promise<{ attack : Activity, targets : Token[], attackMode : Function, disadvantage : Function }|null>}
  *          null if cancelled or refused (with a notification saying why)
  */
 export async function pickAttack(item, { count = 1, disposition = "enemy", within = Infinity, long = true, confirm = "auto",
-  clearTargets = true, strict = true, threatened : threatRule = true, repeat = false, activity, used = false } = {}){
+  clearTargets = true, strict = true, threatened : threatRule = true, repeat = false, activity, used = false, filter } = {}){
   const fail = (message, error) => attackFailed(item, message, error);
 
   try {
@@ -154,7 +155,7 @@ export async function pickAttack(item, { count = 1, disposition = "enemy", withi
     /* Pick */
     const targets = await pickTargets(item, {
       count : Math.max(1, Math.floor(count) || 1),
-      range, within, disposition, confirm, notice, repeat,
+      range, within, disposition, confirm, notice, repeat, filter,
       normalRange : shownNormal,
       useTargets : !clearTargets,
     });

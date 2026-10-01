@@ -84,6 +84,14 @@
 {{!-- Attack --}}
 {{> "dnd5e.card-rolls" }}
 
+{{!-- Damage after the attack : the dice are still rolling --}}
+{{#if pending}}
+<section class="icon-row macro-helper-pending">
+    <i class="fa-fw fa-solid fa-dice fa-beat-fade" inert></i>
+    <span class="roboto-upper">{{ localize "rollItem.rolling" }}</span>
+</section>
+{{/if}}
+
 {{!-- Multiple attacks : each one laid out like a single attack card (target, attack, damage, apply) --}}
 {{#each rays}}
 <div class="macro-helper-ray{{#unless hit}} miss{{/unless}}">
@@ -129,6 +137,9 @@
     {{#if showTray}}
     <macro-helper-damage class="dnd5e2" data-ray="{{ index }}" data-part="base"></macro-helper-damage>
     {{/if}}
+
+    {{#with savage}}{{> "macro-helper.savage" }}{{/with}}
+    {{#with mastery}}{{> "macro-helper.mastery" }}{{/with}}
 </div>
 {{/each}}
 
@@ -140,6 +151,12 @@
 <macro-helper-damage class="dnd5e2" data-part="base"></macro-helper-damage>
 {{/if}}
 {{/with}}
+
+{{!-- Savage Attacker : the second damage roll and its tray, or the button to roll it --}}
+{{#with savage}}{{> "macro-helper.savage" }}{{/with}}
+
+{{!-- Weapon mastery : Graze's damage on a miss, or the button for a hit (Topple, Push, Sap, Slow, Vex, Cleave) --}}
+{{#with mastery}}{{> "macro-helper.mastery" }}{{/with}}
 
 {{!-- Effects the attack applies (Guiding Bolt, Ray of Frost) --}}
 {{#if effects.length}}

@@ -34,8 +34,10 @@ export class SettingsMenu extends HandlebarsApplicationMixin(ApplicationV2){
     footer : { template : "templates/generic/form-footer.hbs" },
   };
 
+  /* GMs see every setting of the group, players only their own client settings */
   get keys(){
-    return Object.keys(GROUPS[this.constructor.GROUP]?.settings ?? {});
+    const all = Object.entries(GROUPS[this.constructor.GROUP]?.settings ?? {});
+    return all.filter(([, data]) => game.user.isGM || (data.scope === "client")).map(([key]) => key);
   }
 
   static config(key){

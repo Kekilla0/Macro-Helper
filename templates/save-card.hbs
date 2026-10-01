@@ -7,6 +7,11 @@
 
 {{!-- Damage, already rolled, one box per damage type --}}
 {{#with damage}}{{> "macro-helper.damage-rows" }}{{/with}}
+{{#if selfApplied}}
+<p class="supplement macro-helper-self-applied">
+    <i class="fa-solid fa-check" inert></i> {{ localize "rollItem.selfApplied" name=selfApplied }}
+</p>
+{{/if}}
 
 {{!-- Utility roll formula, already rolled, its name underneath --}}
 {{#with formula}}

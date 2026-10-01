@@ -1,5 +1,6 @@
 import { module } from '../module.js';
 import { tokenOf, actorOf } from './tokens.js';
+import { gm } from '../gm.js';
 
 /* ---------- Hit points ----------
  * On dnd5e's own actor.applyDamage : the same path as the chat card APPLY trays, so resistances, immunities,
@@ -142,6 +143,73 @@ export function preventDropToZero(thing, amount, updates, { hp = 1, massiveDamag
   if(massiveDamage && isKilledOutright(thing, amount)) return false;
   updates[key] = Math.max(1, hp);
   return true;
+}
+
+/* ---------- Saves & effects ---------- */
+
+/**
+ * Roll a saving throw for a creature against a DC, without dnd5e's dialog.
+ * @param {Actor|Token|TokenDocument} thing
+ * @param {string} ability   "con", "dex"...
+ * @param {number} dc
+ * @returns {Promise<{ success : boolean, total : number, roll : Roll }|null>}  null if it wasn't rolled
+ */
+export async function rollSave(thing, ability, dc){
+  const actor = actorOf(thing);
+  if(!actor?.rollSavingThrow || !actor.isOwner) return null;
+  const token = tokenOf(thing);
+  const speaker = ChatMessage.implementation.getSpeaker({ actor, token : token?.document });
+  const [roll] = await actor.rollSavingThrow({ ability, target : dc }, { configure : false }, { data : { speaker } }) ?? [];
+  if(!roll) return null;
+  return { success : roll.total >= dc, total : roll.total, roll };
+}
+
+/**
+ * Put an effect on a creature that lasts until the start or end of someone's next turn (a weapon mastery, a spell's
+ * "until the start of your next turn"). The active GM removes it then; out of combat it stays until removed or used up.
+ * Needs permission to change the creature (its owner or the GM).
+ * @param {Actor|Token|TokenDocument} thing   who gets the effect
+ * @param {object} data                       ActiveEffect data (name, img, system.changes, statuses, flags...)
+ * @param {object} [options]
+ * @param {Actor|Token} [options.of]                    whose turn it waits for (default : the creature itself)
+ * @param {"turnStart"|"turnEnd"} [options.until="turnStart"]
+ * @returns {Promise<ActiveEffect|null>}
+ */
+export async function addTimedEffect(thing, data, { of, until = "turnStart" } = {}){
+  const actor = actorOf(thing);
+  if(!actor?.isOwner) return null;
+  const expires = gm.stamp(actorOf(of) ?? actor, until);
+  const effect = foundry.utils.mergeObject({ flags : { [module.id] : { expires } } }, data, { inplace : false });
+  const [created] = await actor.createEmbeddedDocuments("ActiveEffect", [effect]);
+  return created ?? null;
+}
+
+/**
+ * The conditions a creature has advantage on saving throws against, read from its features' text :
+ *   Brave        "Advantage on saving throws you make to avoid or end the Frightened condition"  -> frightened
+ *   Fey Ancestry "...to avoid or end the Charmed condition"                                     -> charmed
+ *   Dwarven Resilience "...to avoid or end the Poisoned condition"                               -> poisoned
+ * @param {Actor|Token|TokenDocument} thing
+ * @returns {Set<string>}  condition keys ("frightened", "charmed"...)
+ */
+export function getSaveAdvantages(thing){
+  const actor = actorOf(thing);
+  const found = new Set();
+  if(!actor?.items) return found;
+
+  const conditions = Object.entries(CONFIG.DND5E.conditionTypes ?? {})
+    .map(([key, config]) => [key, game.i18n.localize(config.name ?? config.label ?? key).toLowerCase()]);
+  const parser = new DOMParser();
+  for(const item of actor.items){
+    if(!["feat", "race"].includes(item.type)) continue;
+    const html = item.system.description?.value;
+    if(!html || !/advantage/i.test(html)) continue;
+    const text = (parser.parseFromString(html, "text/html").body.textContent ?? "").toLowerCase();
+    for(const [, clause] of text.matchAll(/advantage on saving throws?([^.]*)/g)){
+      for(const [key, name] of conditions) if(clause.includes(name)) found.add(key);
+    }
+  }
+  return found;
 }
 
 /* ---------- Items ---------- */
