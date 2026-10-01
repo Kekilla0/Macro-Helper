@@ -2,6 +2,7 @@ import { module } from '../module.js';
 import { rollItem } from './roll-item.js';
 import { masteries } from './masteries.js';
 import { features } from './features.js';
+import { maneuvers } from './maneuvers.js';
 
 /* Declared in module.json documentTypes.ChatMessage, Foundry prefixes them with the module id */
 export const TYPES = {
@@ -749,6 +750,7 @@ export function registerMessages(){
         rerollRay : RollItemSaveData.#rerollRay,
         applyRays : RollItemSaveData.#applyRays,
         rerollFormula : RollItemSaveData.#rerollFormula,
+        shove : RollItemSaveData.#shove,
       },
     }, { inplace : false }));
 
@@ -835,6 +837,9 @@ export function registerMessages(){
       const damage = this.damageRolls;
       if(damage.length) context.damage = damageContext(this.parent, damage);
 
+      /* Shove : Prone or Push 5 ft for each target that failed its save */
+      context.shove = maneuvers.shoveContext(this.parent);
+
       /* Self-only healing (Second Wind) was applied when rolled : no tray, just who it went to */
       if(context.damage && this.parent.getFlag(module.id, "selfHeal")){
         context.damage.showTray = false;
@@ -887,6 +892,19 @@ export function registerMessages(){
       if(!rolls.length) return target.disabled = false;
       const keep = this.parent.rolls.filter(r => tagOf(r).part !== "formula");
       await replaceRolls(this.parent, { rolls : [...keep, ...rolls], shown : rolls });
+    }
+
+    /* Shove's choice for one target : data-target is its token uuid, data-choice "prone" or "push" */
+    /** @this {RollItemSaveData} */
+    static async #shove(event, target){
+      const { target : uuid, choice } = target.dataset;
+      target.disabled = true;
+      try { await maneuvers.shove(this.parent, uuid, choice); }
+      catch(error){
+        console.error("Macro Helper | Shove", error);
+        ui.notifications.warn(error.message);
+        target.disabled = false;
+      }
     }
 
     /* Each instance onto its own target, instances without a target go to the selected tokens */

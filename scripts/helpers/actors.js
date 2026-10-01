@@ -212,6 +212,96 @@ export function getSaveAdvantages(thing){
   return found;
 }
 
+/* ---------- Spell slots ---------- */
+
+/**
+ * Choose expended spell slots to get back, up to a combined level (Arcane Recovery, Natural Recovery).
+ * A dialog lists the spent slots up to `maxLevel` with the running total; the slots are restored on confirm.
+ * With `item`, it needs a use left, and one is spent once something is recovered.
+ * @param {Actor|Token|TokenDocument} thing
+ * @param {object} options
+ * @param {number} options.levels               combined slot levels allowed (Arcane Recovery : half the Wizard level, rounded up)
+ * @param {number} [options.maxLevel=5]          highest slot level that can come back (both features : 5th)
+ * @param {Item} [options.item]                  the feature, for its name and its use
+ * @param {boolean} [options.chat=true]          post what was recovered
+ * @returns {Promise<Record<number, number>|null>}  { slot level : slots recovered }, null if cancelled / nothing to do
+ */
+export async function recoverSpellSlots(thing, { levels, maxLevel = 5, item, chat = true } = {}){
+  const actor = actorOf(thing);
+  const name = item?.name ?? module.i18n("helpers.slots.title");
+  if(!actor?.system?.spells || !actor.isOwner) return null;
+  const uses = item?.system?.uses;
+  if(item && (Number(uses?.max) > 0) && !(Number(uses.value) > 0)){
+    ui.notifications.warn(module.format("helpers.uses.none", { name }));
+    return null;
+  }
+
+  /* Spent slots per level, up to maxLevel */
+  const spent = [];
+  for(let level = 1; level <= Math.min(maxLevel, 9); level++){
+    const slot = actor.system.spells[`spell${level}`];
+    const missing = (Number(slot?.max) || 0) - (Number(slot?.value) || 0);
+    if(missing > 0) spent.push({ level, missing, value : Number(slot.value) || 0 });
+  }
+  if(!spent.length){
+    ui.notifications.info(module.format("helpers.slots.none", { name : actor.name }));
+    return null;
+  }
+
+  const esc = Handlebars.escapeExpression;
+  const rows = spent.map(s => `
+    <div class="form-group">
+      <label>${esc(game.i18n.localize(CONFIG.DND5E.spellLevels[s.level] ?? `Level ${s.level}`))}</label>
+      <div class="form-fields">
+        <input type="number" name="slot${s.level}" data-level="${s.level}" value="0" min="0" max="${s.missing}" step="1">
+        <span class="hint">/ ${s.missing}</span>
+      </div>
+    </div>`).join("");
+  const read = form => Object.fromEntries(spent.map(s => [s.level, Math.max(0, Math.min(s.missing, Math.floor(Number(form.elements[`slot${s.level}`]?.value) || 0)))]));
+  const total = picks => Object.entries(picks).reduce((sum, [level, n]) => sum + (Number(level) * n), 0);
+
+  const picks = await foundry.applications.api.DialogV2.prompt({
+    window : { title : name, icon : "fa-solid fa-book-sparkles" },
+    content : `<p class="hint">${esc(module.format("helpers.slots.hint", { levels, maxLevel }))}</p>${rows}
+      <p class="${module.id}-slot-total"></p>`,
+    ok : { label : "helpers.slots.confirm", icon : "fa-solid fa-check", callback : (_event, button) => read(button.form) },
+    render : (_event, dialog) => {
+      const form = dialog.element.querySelector("form") ?? dialog.element;
+      const status = dialog.element.querySelector(`.${module.id}-slot-total`);
+      const confirm = dialog.element.querySelector("button[data-action=ok]");
+      const refresh = () => {
+        const sum = total(read(form));
+        status.textContent = module.format("helpers.slots.total", { sum, levels });
+        if(confirm) confirm.disabled = (sum === 0) || (sum > levels);
+      };
+      form.addEventListener("input", refresh);
+      refresh();
+    },
+    rejectClose : false,
+  });
+  if(!picks || !total(picks) || (total(picks) > levels)) return null;
+
+  const update = {};
+  for(const s of spent) if(picks[s.level]) update[`system.spells.spell${s.level}.value`] = s.value + picks[s.level];
+  await actor.update(update);
+  if(item && (Number(uses?.max) > 0)) await item.update({ "system.uses.spent" : (Number(uses.spent) || 0) + 1 });
+
+  const recovered = Object.fromEntries(Object.entries(picks).filter(([, n]) => n > 0));
+  /* A card in dnd5e's style : the feature's header and a "Recovery" list, like a rest card */
+  if(chat){
+    const content = await foundry.applications.handlebars.renderTemplate(`${module.path}/templates/recovery-card.hbs`, {
+      name, img : item?.img ?? "icons/svg/book.svg",
+      subtitle : actor.name,
+      rows : Object.entries(recovered).map(([level, n]) => ({
+        label : game.i18n.localize(CONFIG.DND5E.spellLevels[level] ?? level),
+        value : `+${n}`,
+      })),
+    });
+    await ChatMessage.create({ speaker : ChatMessage.implementation.getSpeaker({ actor }), content });
+  }
+  return recovered;
+}
+
 /* ---------- Items ---------- */
 
 /**

@@ -1,0 +1,24 @@
+{{!-- A recovery card in dnd5e's style (the feature's header, then a "Recovery" list like dnd5e's rest cards).
+      Context from actors.js recoverSpellSlots : { name, img, subtitle, rows : [{ label, value }] } --}}
+<div class="dnd5e2 chat-card rest-card">
+    <section class="card-header no-description">
+        <div class="item-icon">
+            <img class="gold-icon" src="{{ img }}" alt="{{ name }}">
+        </div>
+        <div class="name-stacked">
+            <span class="title">{{ name }}</span>
+            {{#if subtitle}}<span class="subtitle">{{ subtitle }}</span>{{/if}}
+        </div>
+    </section>
+    <section class="deltas">
+        <strong class="roboto-condensed-upper">{{ localize "DND5E.CHATMESSAGE.Deltas.Recovery" }}</strong>
+        <ul class="unlist">
+            {{#each rows}}
+            <li class="delta operation-update">
+                <span class="label">{{ label }}</span>
+                <span class="value">{{ value }}</span>
+            </li>
+            {{/each}}
+        </ul>
+    </section>
+</div>

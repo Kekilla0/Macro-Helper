@@ -243,23 +243,24 @@ export function setTargets(tokens){
  *                                                   false clears your targets first and always asks
  * @param {boolean} [options.repeat=false]          the same token can be picked more than once
  * @param {Function} [options.filter]              only tokens that pass (token) => boolean can be picked
+ * @param {boolean} [options.includeSelf=false]      the origin's own token can be picked too (Healing Hands, Mage Armor)
  * @param {boolean} [options.long] [options.thrown]  passed to getRange
  * @returns {Promise<Token[]>}  the picks, empty if cancelled or nothing in range
  */
 export async function pickTargets(origin, { count = 1, range, disposition = "enemy", numberAllowed = Infinity, within = Infinity,
-  confirm = "auto", setTargets : target = true, useTargets = true, repeat = false, long = false, thrown = false, normalRange, notice = "", filter } = {}){
+  confirm = "auto", setTargets : target = true, useTargets = true, repeat = false, long = false, thrown = false, normalRange, notice = "", filter, includeSelf = false } = {}){
   const from = tokenOf(origin);
   if(!from) return warn(module.i18n("helpers.pick.noToken"));
   if(!useTargets) canvas.tokens.setTargets([]);
 
   const isItem = (origin?.documentName === "Item") || !!origin?.item;
   const feet = range ?? (isItem ? getRange(origin, { long, thrown }) : Infinity);
-  const candidates = getTokensWithin(from, feet, { disposition, filter });
+  const candidates = getTokensWithin(from, feet, { disposition, filter, includeSelf });
   if(!candidates.length) return warn(module.i18n("helpers.pick.none"));
 
   /* Your own targets in range win, nothing to ask */
   const targeted = useTargets
-    ? [...game.user.targets].filter(t => (t !== from) && (distanceBetween(from, t) <= feet) && (!filter || filter(t)))
+    ? [...game.user.targets].filter(t => ((t !== from) || includeSelf) && (distanceBetween(from, t) <= feet) && (!filter || filter(t)))
     : [];
   if(targeted.length){
     if(!repeat || (targeted.length >= count)) return targeted.slice(0, count);

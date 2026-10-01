@@ -71,6 +71,28 @@
 <div class="card-summary" data-message-id="{{ id }}" data-target-uuid="{{ token.uuid }}">{{{ html }}}</div>
 {{/each}}
 
+{{!-- Shove : for each target that failed, the shover picks Prone or a 5 ft push --}}
+{{#if shove.length}}
+<div class="macro-helper-shove">
+    {{#each shove}}
+    <section class="icon-row">
+        <i class="fa-fw fa-solid fa-hand" inert></i>
+        <span class="name">{{ name }}</span>
+        <div class="card-buttons">
+            <button type="button" data-action="shove" data-target="{{ uuid }}" data-choice="prone" {{ disabled done }}>
+                <i class="fa-solid {{#if prone}}fa-check{{else}}fa-person-falling{{/if}}" inert></i>
+                <span>{{ localize "rollItem.maneuver.prone" }}</span>
+            </button>
+            <button type="button" data-action="shove" data-target="{{ uuid }}" data-choice="push" {{ disabled done }}>
+                <i class="fa-solid {{#if push}}fa-check{{else}}fa-arrow-right{{/if}}" inert></i>
+                <span>{{ localize "rollItem.maneuver.push" }}</span>
+            </button>
+        </div>
+    </section>
+    {{/each}}
+</div>
+{{/if}}
+
 {{!-- Apply damage, halves/negates for targets that saved --}}
 {{#if damage.showTray}}
 <damage-application class="dnd5e2"></damage-application>

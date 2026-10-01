@@ -1,9 +1,9 @@
 import { logger } from '../log.js';
 import { rollItem } from '../roll-item/roll-item.js';
-import { distanceBetween, getRange, getTokensWithin, highlightRange, pushAway, pushDestination } from './tokens.js';
+import { distanceBetween, getRange, getTokensWithin, highlightRange, pushAway, pushDestination, addLight, removeLight, hasLight } from './tokens.js';
 import { isEnemy, isAlly, getThreats, isThreatened, getEnemiesWithinRange, pickTargets, getFlanker, isFlanking } from './targets.js';
 import { getSize, setStatus, setDefeated, splitToken, damage, heal, tempHP, dropsToZero, isKilledOutright, preventDropToZero, findItem,
-  rollSave, addTimedEffect, getSaveAdvantages } from './actors.js';
+  rollSave, addTimedEffect, getSaveAdvantages, recoverSpellSlots } from './actors.js';
 import { setBaseDamage, updateItem, attackModeFor, isLongRange, isRangedItem, isRangedAttack, canThrow, getAmmunition, pickAndAttack,
   getUses, hasUses, spendUses, useActivity, getMultiattack, getMultiattackPlan, multiattack, getHealing, pickAttack } from './items.js';
 const log = logger.for(import.meta.url);
@@ -36,7 +36,8 @@ const creature = {
   getSaveAdvantages : call(getSaveAdvantages),                      // () -> Set of condition keys it has advantage on saves against
   getFlanker : call(getFlanker),                                    // (target) -> the ally flanking it with this creature | null
   isFlanking : call(isFlanking),                                    // (target) -> boolean
-  rollSave : call(rollSave),                                        // (ability, dc) -> { success, total, roll } | null
+  rollSave : call(rollSave),
+  recoverSpellSlots : call(recoverSpellSlots),                      // ({ levels, maxLevel, item, chat }) -> { level : recovered } | null                                        // (ability, dc) -> { success, total, roll } | null
   addTimedEffect : call(addTimedEffect),                            // (effectData, { of, until : "turnStart" | "turnEnd" }) -> ActiveEffect
   getMultiattackPlan : call(getMultiattackPlan),                    // ({ feature }) -> [{ items, count, choice }]
   multiattack : call(multiattack),                                  // ({ repeat, event, attack }) -> the whole Multiattack, one pick per weapon
@@ -48,6 +49,9 @@ const token = {
   split : call(splitToken),                                         // ({ copies, hp, scale, stepSize, chat })
   pushAway : call(pushAway),                                        // (from, feet = 10) -> Promise<number> feet moved, straight away, stops at walls
   pushDestination : call(pushDestination),                          // (from, feet = 10) -> { x, y } | null
+  addLight : call(addLight),                                        // (light, { key }) -> Promise<boolean>, remembers the light it had
+  removeLight : call(removeLight),                                  // ({ key }) -> Promise<boolean>, puts it back when the last source goes
+  hasLight : call(hasLight),                                        // (key) -> boolean
 };
 
 export const METHODS = {

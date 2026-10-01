@@ -3,9 +3,11 @@ import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { patch } from '../patch.js';
 import { TYPES, registerMessages } from './message.js';
-import { tokenOf } from '../helpers/tokens.js';
+import { tokenOf, getRange } from '../helpers/tokens.js';
+import { pickTargets } from '../helpers/targets.js';
 import { pickAttack, getMultiattackPlan, multiattack } from '../helpers/items.js';
 import { masteries } from './masteries.js';
+import { maneuvers } from './maneuvers.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -111,9 +113,11 @@ export class rollItem{
    * which is how dnd5e builds on-hit riders : Giant Spider Bite, Giant Poisonous Snake Bite, Wolf Bite, Ghoul Claws.
    */
   static findRider(activity){
-    const saves = activity?.item?.system.activities?.getByType("save").filter(a => a.id !== activity.id) ?? [];
-    /* 2014 monsters mark the rider "special", 2024 ones (Ghoul Claw) leave it as an action : any save on the attack's item rides it */
-    return saves.find(a => a.activation?.type === "special") ?? saves[0] ?? null;
+    /* Grapple / Shove (Unarmed Strike) are alternatives to the attack, never riders */
+    const saves = activity?.item?.system.activities?.getByType("save")
+      .filter(a => (a.id !== activity.id) && !maneuvers.of(a)) ?? [];
+    /* 2014 monsters mark the rider "special", 2024 ones (Ghoul Claw) leave it as an action : the item's one save rides it */
+    return saves.find(a => a.activation?.type === "special") ?? ((saves.length === 1) ? saves[0] : null);
   }
 
   /**
@@ -127,7 +131,10 @@ export class rollItem{
     const usable = item?.system?.activities?.filter(a => a.canUse) ?? [];
     const attacks = usable.filter(a => a.type === "attack");
     if(attacks.length !== 1 || usable.length < 2) return null;
-    return usable.every(a => a === attacks[0] || a.type === "save") ? attacks[0] : null;
+    /* Exactly one save, and not Grapple / Shove (Unarmed Strike offers those instead of the attack) */
+    const saves = usable.filter(a => a.type === "save");
+    if((saves.length !== 1) || maneuvers.of(saves[0])) return null;
+    return usable.every(a => a === attacks[0] || a === saves[0]) ? attacks[0] : null;
   }
 
   /* ---------- Multiple attack rolls (Scorching Ray, Eldritch Blast...) ---------- */
@@ -342,6 +349,82 @@ export class rollItem{
     return named && getMultiattackPlan(item).length > 0;
   }
 
+  /* ---------- Picking targets for heals, saves and effects ---------- */
+
+  /* Activity types picked for before their use (attacks pick after, see attackAfterUse) */
+  static PICK_TYPES = ["heal", "save", "utility"];
+
+  /**
+   * With Pick Targets on, a heal / save / effect activity aimed at creatures (Healing Hands, Grapple, Shove, Mage Armor)
+   * has you pick them on the map first, like attacks. Before dnd5e's use, so closing the pick spends nothing, and
+   * the card is made for exactly those targets. Same `use` paths as Item Macro's wrappers, so they chain.
+   */
+  static wrapTargeting(){
+    const types = CONFIG.DND5E?.activityTypes;
+    if(!types) return;
+    const owners = new Set();
+    for(const [type, { documentClass }] of Object.entries(types)){
+      let proto = documentClass?.prototype;
+      while(proto && !Object.hasOwn(proto, "use")) proto = Object.getPrototypeOf(proto);
+      if(!proto || owners.has(proto)) continue;
+      owners.add(proto);
+
+      patch.wrap(`CONFIG.DND5E.activityTypes.${type}.documentClass.prototype.use`, async function(wrapped, usage = {}, ...rest){
+        const spec = rollItem.pickSpec(this, usage);
+        if(spec){
+          const picks = await pickTargets(this.item, spec);
+          if(!picks.length) return;
+        }
+        return wrapped(usage, ...rest);
+      });
+    }
+  }
+
+  /* An activity's reach in feet : its own range, else the item's, Touch = 5 ft */
+  static activityRange(activity){
+    const feet = getRange(activity);
+    if(feet > 0) return feet;
+    const range = activity.range ?? {};
+    if(range.units === "touch") return canvas.scene?.grid.distance ?? 5;
+    if(range.units === "any") return Infinity;
+    return Number(range.value) || 0;
+  }
+
+  /**
+   * How to pick for an activity, or null when it doesn't need it : not a heal / save / effect, aimed at yourself,
+   * an area (its template does it), no range, or the setting is off.
+   *   who : "willing" / "ally" -> your allies and yourself, "enemy" or a save -> enemies, else anyone (yourself too)
+   *   how many : the target count (fewer is fine, Enter)
+   */
+  static pickSpec(activity, usage = {}){
+    const pick = settings.value("rollItemPick");
+    if((pick === "off") || !settings.value("rollItem") || !this.PICK_TYPES.includes(activity?.type)) return null;
+    if(usage?.[module.id]?.skipPick || !canvas.ready) return null;
+    const caster = tokenOf(activity.item);
+    if(!caster || (caster.document.parent !== canvas.scene)) return null;
+
+    /* Effects only : a utility without effects to apply (Arcane Recovery...) has no one to aim at */
+    if((activity.type === "utility") && !(activity.applicableEffects?.length)) return null;
+
+    const target = activity.target?.override ? activity.target : (activity.item.system.target ?? activity.target ?? {});
+    if(target.template?.type || activity.target?.template?.type) return null;
+    const type = target.affects?.type || activity.target?.affects?.type || "";
+    if(["self", "space", "object"].includes(type)) return null;
+
+    const range = this.activityRange(activity);
+    if(!(range > 0)) return null;
+
+    const disposition = ["ally", "willing"].includes(type) ? "ally"
+      : ((type === "enemy") || (activity.type === "save")) ? "enemy" : "any";
+    return {
+      count : Math.max(1, parseInt(target.affects?.count) || 1),
+      range, disposition,
+      includeSelf : disposition !== "enemy",
+      useTargets : pick !== "always",
+      confirm : "auto",
+    };
+  }
+
   /* ---------- Rolling ---------- */
 
   /* dnd5e attack roll, no dialog, no message */
@@ -447,8 +530,11 @@ export class rollItem{
     if(game.system.id !== "dnd5e") return;
     registerMessages();
     masteries.register();
+    maneuvers.register();
     Hooks.on("dnd5e.preUseActivity", rollItem.onPreUse);
     Hooks.on("dnd5e.postUseActivity", rollItem.onPostUse);
+
+    rollItem.wrapTargeting();
 
     /* Attack + save rider items skip dnd5e's activity choice (sheet, hotbar, anything calling item.use) */
     patch.wrap("CONFIG.Item.documentClass.prototype.use", async function(wrapped, config = {}, dialog = {}, message = {}){

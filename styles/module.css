@@ -99,6 +99,17 @@
   border-block-start: 1px solid var(--dnd5e-color-gold, var(--color-border));
 }
 /* Weapon mastery : Graze's damage on a miss, or the button for a hit */
+.chat-message .macro-helper-shove .icon-row {
+  align-items: center;
+}
+.chat-message .macro-helper-shove .name {
+  flex: 1;
+}
+.chat-message .macro-helper-shove .card-buttons {
+  display: flex;
+  gap: 4px;
+  margin: 0;
+}
 .chat-message .macro-helper-mastery,
 .chat-message .macro-helper-savage {
   display: flex;

@@ -139,7 +139,7 @@ export class masteries{
         case "push" : {
           if((getSize(actor)?.value ?? 2) > 3){ notes.push(module.format("rollItem.mastery.tooBig", { name : target.name })); break; }
           const moved = await pushAway(target, attackerToken, 10);
-          if(settings.value("homebrewPush")) await this.#pushCollision(target, moved, 10, item);
+          if(settings.value("homebrewPush")) await this.pushCollision(target, moved, 10, item);
           else if(!moved) notes.push(module.format("rollItem.mastery.blocked", { name : target.name }));
           break;
         }
@@ -175,7 +175,7 @@ export class masteries{
    *   part of it (5 of 10 ft)  -> Prone
    *   not at all               -> Prone, and 1d6 bludgeoning (rolled in chat, applied)
    */
-  static async #pushCollision(target, moved, feet, item){
+  static async pushCollision(target, moved, feet, item){
     if(moved >= feet) return;
     const actor = target.actor;
     await setStatus(actor, "prone", true);

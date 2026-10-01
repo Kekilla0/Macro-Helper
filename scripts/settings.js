@@ -49,6 +49,7 @@ export const GROUPS = {
       rollItemMultiattack : { scope : "world", default : false, type : Boolean },
       rollItemMasteries : { scope : "world", default : true, type : Boolean },
       rollItemSavage : { scope : "world", default : true, type : Boolean },
+      rollItemManeuvers : { scope : "world", default : true, type : Boolean },
       rollItemStaged : { scope : "world", default : true, type : Boolean },
       rollItemAdvantage : { scope : "world", default : "keys", type : String,
         choices : { keys : "settings.rollItemAdvantage.keys", prompt : "settings.rollItemAdvantage.prompt", none : "settings.rollItemAdvantage.none" } },

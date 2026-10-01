@@ -250,6 +250,61 @@ export async function pushAway(thing, from, feet = 10){
   return destination.feet;
 }
 
+/* ---------- Lights on tokens (Light, torches, glowing weapons) ---------- */
+
+/**
+ * Make a token give off light, remembering the light it had so removeLight can put it back.
+ * Several sources can light the same token, each under its own key; the first one's "before" is what comes back.
+ * Needs permission to change the token.
+ * @param {Token|TokenDocument|Actor} thing
+ * @param {object} light            token light data : { bright, dim, color, alpha, animation : { type, speed, intensity } }
+ * @param {object} [options]
+ * @param {string} [options.key="light"]  which source this is ("light", "torch"...)
+ * @returns {Promise<boolean>}
+ */
+export async function addLight(thing, light = {}, { key = "light" } = {}){
+  const doc = tokenOf(thing)?.document;
+  if(!doc?.canUserModify(game.user, "update")) return false;
+  const lights = doc.getFlag(module.id, "lights") ?? {};
+  const before = lights.before ?? doc.light.toObject();
+  await doc.update({
+    light : foundry.utils.mergeObject(doc.light.toObject(), light, { inplace : false }),
+    [`flags.${module.id}.lights`] : { ...lights, before, [key] : true },
+  });
+  return true;
+}
+
+/**
+ * Take a light source off a token (see addLight). When it was the last one, the token's original light comes back.
+ * @param {Token|TokenDocument|Actor} thing
+ * @param {object} [options]
+ * @param {string} [options.key="light"]
+ * @returns {Promise<boolean>}  false if that source wasn't lighting it
+ */
+export async function removeLight(thing, { key = "light" } = {}){
+  const doc = tokenOf(thing)?.document;
+  const lights = doc?.getFlag(module.id, "lights");
+  if(!lights?.[key] || !doc.canUserModify(game.user, "update")) return false;
+  const { before, [key] : _, ...rest } = lights;
+  const others = Object.keys(rest).length > 0;
+  if(others) await doc.update({ [`flags.${module.id}.lights`] : { before, ...rest } });
+  else {
+    await doc.update({ light : before ?? {} });
+    await doc.unsetFlag(module.id, "lights");
+  }
+  return true;
+}
+
+/**
+ * Is this light source on the token (see addLight) ?
+ * @param {Token|TokenDocument|Actor} thing
+ * @param {string} [key="light"]
+ * @returns {boolean}
+ */
+export function hasLight(thing, key = "light"){
+  return !!tokenOf(thing)?.document?.getFlag(module.id, `lights.${key}`);
+}
+
 /**
  * Tokens within a distance of an origin token, nearest first.
  * @param {Token|TokenDocument|Actor|Item} origin
@@ -259,13 +314,15 @@ export async function pushAway(thing, from, feet = 10){
  * @param {boolean} [options.includeDead=false]
  * @param {boolean} [options.includeHidden=false]
  * @param {Function} [options.filter]                         extra (token) => boolean
+ * @param {boolean} [options.includeSelf=false]               the origin token itself counts (it is "within" any range)
  * @returns {Token[]}
  */
-export function getTokensWithin(origin, feet, { disposition = "any", includeDead = false, includeHidden = false, filter } = {}){
+export function getTokensWithin(origin, feet, { disposition = "any", includeDead = false, includeHidden = false, filter, includeSelf = false } = {}){
   const from = tokenOf(origin);
   if(!from) return [];
   const sign = from.document.disposition;
-  return canvas.tokens.placeables
+  const self = includeSelf && (!filter || filter(from)) ? [from] : [];
+  return [...self, ...canvas.tokens.placeables
     .filter(t => (t !== from) && t.actor)
     .filter(t => includeHidden || !t.document.hidden)
     .filter(t => includeDead || ((t.actor.system.attributes?.hp?.value ?? 1) > 0))
@@ -274,5 +331,5 @@ export function getTokensWithin(origin, feet, { disposition = "any", includeDead
       || ((disposition === "ally") && ((t.document.disposition * sign) > 0)))
     .filter(t => !filter || filter(t))
     .filter(t => distanceBetween(from, t) <= feet)
-    .sort((a, b) => distanceBetween(from, a) - distanceBetween(from, b));
+    .sort((a, b) => distanceBetween(from, a) - distanceBetween(from, b))];
 }

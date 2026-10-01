@@ -33,7 +33,8 @@ Small functions for macros, available as `MacroHelper.x(...)` or `game.modules.g
 | `distanceBetween(a, b)` | Feet between two tokens, edge to edge on the grid. Adjacent squares, diagonals included, are 5 ft. Further out it follows the **Range Shape** setting: *Circle* (true distance, the default) or *Square* (5e: every diagonal step is 5 ft). |
 | `getRange(item, { long, thrown })` | How far an item reaches: a melee weapon's reach, a ranged weapon's range, or a spell's range. |
 | `pushDestination(thing, from, feet)`, `pushAway(thing, from, feet)` | Push a token straight away from another, square by square, stopping at walls (Push mastery, Shove, Thunderwave). It's measured by the **Range Shape** setting. `pushAway` needs permission to move the token, and returns how many feet it moved (0 if blocked straight away). |
-| `getTokensWithin(origin, feet, { disposition, includeDead, includeHidden, filter })` | Tokens within a distance, nearest first. `disposition` is `"any"`, `"enemy"` or `"ally"`. |
+| `addLight(thing, light, { key })`, `removeLight(thing, { key })`, `hasLight(thing, key)` | Give a token light (`{ bright, dim, color, animation }`) and take it away again. The token's original light comes back when the last source (`key`: "light", "torch"…) is removed. |
+| `getTokensWithin(origin, feet, { disposition, includeDead, includeHidden, filter, includeSelf })` | Tokens within a distance, nearest first. `disposition` is `"any"`, `"enemy"` or `"ally"`. |
 | `highlightRange(origin, feet, { normal, tokens, selected })` | Shows a range on the map, on your screen only: blue within `normal`, red from there out to `feet` (long range), orange candidates and green picks. Returns `{ select, clear }`. |
 | `isEnemy(a, b)`, `isAlly(a, b)` | Compares the two tokens' dispositions. |
 | `getFlanker(attacker, target)`, `isFlanking(attacker, target)` | The attacker's ally flanking the target with them (DMG rule: both next to it, on opposite sides or corners), or `null`. |
@@ -56,6 +57,7 @@ Small functions for macros, available as `MacroHelper.x(...)` or `game.modules.g
 | `getSaveAdvantages(thing)` | The conditions a creature has advantage on saves against, read from its features ("...to avoid or end the Frightened condition"), e.g. `Set { "frightened" }`. |
 | `rollSave(thing, ability, dc)` | Rolls a saving throw against a DC, with no dialog. Returns `{ success, total, roll }`. |
 | `addTimedEffect(thing, effectData, { of, until })` | Adds an effect that lasts until the start (`"turnStart"`) or end (`"turnEnd"`) of someone's next turn in combat (`of`, default the creature itself). The active GM removes it then. Out of combat it stays until removed. |
+| `recoverSpellSlots(thing, { levels, maxLevel, item, chat })` | A dialog to choose expended spell slots to recover, up to a combined level, and none above `maxLevel` (5). Used for Arcane Recovery and Natural Recovery. With `item`, it needs a use left and spends one. Returns `{ level: recovered }`. |
 | `findItem(thing, query, { type })` | One of the actor's items by name (any case), identifier, id or uuid. `query` can be several (`["Relentless Endurance", "Relentless"]`, first match wins) or a function. |
 | `splitToken(thing, { copies, hp, scale, stepSize, chat })` | Replaces a token with smaller copies that share its HP (Ochre Jelly's Split). GM only. |
 | `pickAndAttack(item, { count, repeat, disposition, within, long, confirm, clearTargets, strict, threatened, event })` | The whole attack in one call: clears your targets, you pick on the map, then one attack roll per pick. With `repeat`, a target can be picked more than once (Multiattack: both attacks at one foe). Fewer picks than `count` is fine: press Enter. Targets beyond reach get thrown at when the weapon can be thrown, targets at long range are attacked with disadvantage, and so are ranged or thrown attacks while the attacker is threatened (melee attacks aren't). Nobody attacks with what they don't have (quantity 0, not enough to throw or shoot) unless `strict: false`. Problems show as notifications. |
@@ -187,6 +189,20 @@ Sap and Vex are used up by the next attack roll they affect, from any sheet or c
 **Homebrew** (GM sub-menu, everything off by default): table rules that aren't in the books.
 - **Flanking:** *Off* (rules as written), *Advantage*, or *+2 to the attack roll*. It uses the DMG optional rule: a melee attack against a creature with one of the attacker's allies on its opposite side, both next to it. A line between the two must pass through opposite sides or corners of its space, and allies who are down or incapacitated don't count. It applies to every attack roll, not only Roll Item's.
 - **Push Into Obstacles:** a Push cut short by a wall. If the target travels only part of the way (5 of 10 ft), it falls Prone. If it can't move at all, it falls Prone and takes 1d6 bludgeoning, rolled in chat and applied.
+
+**Pick Targets** also covers heal, save and effect activities aimed at creatures (Healing Hands, Grapple, Shove, Mage Armor, Cure Wounds). The pick happens *before* dnd5e uses them, so closing it spends nothing. The count, range and who can be picked come from the activity:
+- *willing* or *ally* targets: your allies and yourself, so Mage Armor can't land on an enemy
+- saves and *enemy* targets: enemies
+- anything else (a heal): anyone, yourself included
+
+Areas (their template does it), self-only activities and activities without a range aren't picked for.
+
+**Grapple & Shove** (GM setting, on by default): for Unarmed Strike's Grapple and Shove saves.
+- **Grapple:** a failed save applies Grappled straight away.
+- **Shove:** a failed save gives the shover **Prone** and **Push 5 ft** buttons for that target, on Roll Item's save card (Roll Item's **Saves** setting). Homebrew Push Into Obstacles applies to the push.
+- **Size limit:** both only work on creatures up to one size larger.
+
+Unarmed Strike keeps dnd5e's Attack / Grapple / Shove choice: Roll Item only treats a save as an on-hit rider when it's the item's only save.
 
 **Savage Attacker** (GM setting, on by default): each weapon attack that hits, made by someone with the feat, gets a **Savage Attacker** button that only they see, so they choose which attack to use it on. It rolls that attack's damage again, crits included, next to the first roll. Each roll has its own APPLY, and applying one removes the other. It works once per turn in combat; out of combat, there are no turns to count.
 
