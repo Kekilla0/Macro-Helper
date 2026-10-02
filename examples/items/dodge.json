@@ -1,0 +1,91 @@
+{
+  "name": "Dodge",
+  "type": "feat",
+  "img": "icons/skills/movement/feet-winged-boots-brown.webp",
+  "system": {
+    "description": {
+      "value": "<p>Until the start of your next turn, any attack roll made against you has Disadvantage if you can see the attacker, and you make Dexterity saving throws with Advantage. You lose these benefits if you have the Incapacitated condition or if your Speed is 0.</p><p><em>Macro Helper</em> : using it makes you Dodging until your next turn starts.</p>",
+      "chat": ""
+    },
+    "identifier": "dodge",
+    "source": {
+      "rules": "2024",
+      "book": "Macro Helper"
+    },
+    "activities": {
+      "mhDodgeActivity1": {
+        "type": "utility",
+        "name": "Dodge",
+        "_id": "mhDodgeActivity1",
+        "sort": 100000,
+        "activation": {
+          "type": "action",
+          "value": null,
+          "override": false,
+          "condition": ""
+        },
+        "consumption": {
+          "scaling": {
+            "allowed": false
+          },
+          "spellSlot": true,
+          "targets": []
+        },
+        "description": {
+          "chatFlavor": "Dodging until the start of the next turn.",
+          "value": "<p>Until the start of your next turn, any attack roll made against you has Disadvantage if you can see the attacker, and you make Dexterity saving throws with Advantage. You lose these benefits if you have the Incapacitated condition or if your Speed is 0.</p><p><em>Macro Helper</em> : using it makes you Dodging until your next turn starts.</p>"
+        },
+        "duration": {
+          "units": "inst",
+          "concentration": false,
+          "override": false
+        },
+        "effects": [],
+        "range": {
+          "override": true,
+          "units": "self"
+        },
+        "target": {
+          "template": {
+            "contiguous": false,
+            "units": "ft",
+            "type": ""
+          },
+          "affects": {
+            "choice": false,
+            "count": "1",
+            "type": "self",
+            "special": ""
+          },
+          "override": true,
+          "prompt": false
+        },
+        "uses": {
+          "spent": 0,
+          "recovery": [],
+          "max": ""
+        },
+        "img": "",
+        "roll": {
+          "formula": "",
+          "name": "",
+          "prompt": false,
+          "visible": false
+        }
+      }
+    },
+    "uses": {
+      "spent": 0,
+      "recovery": [],
+      "max": ""
+    },
+    "type": {
+      "value": "",
+      "subtype": ""
+    },
+    "requirements": "",
+    "properties": []
+  },
+  "effects": [],
+  "flags": {}
+}

@@ -121,7 +121,8 @@ export function isKilledOutright(thing, amount){
   const hp = actorOf(thing)?.system?.attributes?.hp;
   if(!hp || !dropsToZero(thing, amount)) return false;
   const left = amount - (Number(hp.temp) || 0) - hp.value;
-  return left >= (hp.effectiveMax ?? hp.max);
+  const max = Number(hp.effectiveMax) || Number(hp.max) || 0;
+  return (max > 0) && (left >= max);
 }
 
 /**
@@ -179,37 +180,63 @@ export async function addTimedEffect(thing, data, { of, until = "turnStart" } = 
   const actor = actorOf(thing);
   if(!actor?.isOwner) return null;
   const expires = gm.stamp(actorOf(of) ?? actor, until);
-  const effect = foundry.utils.mergeObject({ flags : { [module.id] : { expires } } }, data, { inplace : false });
+  /* Shown on the token : Foundry only shows effects with a duration unless told to */
+  const effect = foundry.utils.mergeObject({ showIcon : CONST.ACTIVE_EFFECT_SHOW_ICON?.ALWAYS ?? 2, flags : { [module.id] : { expires } } }, data, { inplace : false });
   const [created] = await actor.createEmbeddedDocuments("ActiveEffect", [effect]);
   return created ?? null;
 }
 
-/**
- * The conditions a creature has advantage on saving throws against, read from its features' text :
- *   Brave        "Advantage on saving throws you make to avoid or end the Frightened condition"  -> frightened
- *   Fey Ancestry "...to avoid or end the Charmed condition"                                     -> charmed
- *   Dwarven Resilience "...to avoid or end the Poisoned condition"                               -> poisoned
- * @param {Actor|Token|TokenDocument} thing
- * @returns {Set<string>}  condition keys ("frightened", "charmed"...)
- */
-export function getSaveAdvantages(thing){
-  const actor = actorOf(thing);
-  const found = new Set();
-  if(!actor?.items) return found;
+/* ---------- Last damage ---------- */
 
-  const conditions = Object.entries(CONFIG.DND5E.conditionTypes ?? {})
-    .map(([key, config]) => [key, game.i18n.localize(config.name ?? config.label ?? key).toLowerCase()]);
-  const parser = new DOMParser();
-  for(const item of actor.items){
-    if(!["feat", "race"].includes(item.type)) continue;
-    const html = item.system.description?.value;
-    if(!html || !/advantage/i.test(html)) continue;
-    const text = (parser.parseFromString(html, "text/html").body.textContent ?? "").toLowerCase();
-    for(const [, clause] of text.matchAll(/advantage on saving throws?([^.]*)/g)){
-      for(const [key, name] of conditions) if(clause.includes(name)) found.add(key);
-    }
-  }
-  return found;
+/**
+ * The last damage a creature took (through dnd5e's damage application) and the card that dealt it.
+ * For "reduce the damage you take" reactions (Stone's Endurance, Uncanny Dodge...).
+ * @param {Actor|Token|TokenDocument} thing
+ * @returns {{ amount : number, message : ChatMessage|null, at : number }|null}
+ */
+export function getLastDamage(thing){
+  const last = actorOf(thing)?.getFlag(module.id, "lastDamage");
+  if(!last) return null;
+  return { amount : last.amount, message : last.message ? (game.messages.get(last.message) ?? null) : null, at : last.at };
+}
+
+/**
+ * Forget the last damage a creature took (see getLastDamage) : once a reaction has used it, so the same hit can't be
+ * reduced twice. Rests forget it too.
+ * @param {Actor|Token|TokenDocument} thing
+ * @returns {Promise<void>}
+ */
+export async function clearLastDamage(thing){
+  const actor = actorOf(thing);
+  if(actor?.isOwner && actor.getFlag(module.id, "lastDamage")) await actor.unsetFlag(module.id, "lastDamage");
+}
+
+/* ---------- Once per turn ---------- */
+
+/**
+ * Has a creature already used something this turn (Savage Attacker, Sneak Attack, Cleave...) ? In combat only :
+ * out of combat there are no turns to count, so it's never "used".
+ * @param {Actor|Token|TokenDocument} thing
+ * @param {string} key   what it is ("savage")
+ * @returns {boolean}
+ */
+export function usedThisTurn(thing, key){
+  const actor = actorOf(thing);
+  const now = gm.stamp(actor, "turnEnd");
+  const last = actor?.getFlag(module.id, `turn.${key}`);
+  return !!(now && last && (last.combat === now.combat) && (last.round === now.round) && (last.turn === now.turn));
+}
+
+/**
+ * Mark something as used this turn (see usedThisTurn). Does nothing out of combat.
+ * @param {Actor|Token|TokenDocument} thing
+ * @param {string} key
+ * @returns {Promise<void>}
+ */
+export async function markUsedThisTurn(thing, key){
+  const actor = actorOf(thing);
+  const now = gm.stamp(actor, "turnEnd");
+  if(now && actor?.isOwner) await actor.setFlag(module.id, `turn.${key}`, { combat : now.combat, round : now.round, turn : now.turn });
 }
 
 /* ---------- Spell slots ---------- */
@@ -347,6 +374,22 @@ export async function setStatus(thing, status, active = true, { overlay = false 
   const actor = actorOf(thing);
   if(!actor || (actor.statuses.has(status) === active)) return false;
   await actor.toggleStatusEffect(status, { active, overlay });
+  return true;
+}
+
+/**
+ * Stabilize a creature at 0 HP : its death saves reset and it's Stable (no more death saves until it takes damage or
+ * regains HP). Help's Stabilize, a Healer's Kit... The GM does it when you don't own the creature.
+ * @param {Actor|Token|TokenDocument} thing
+ * @returns {Promise<boolean>}  true if it's now stable
+ */
+export async function stabilize(thing){
+  const actor = actorOf(thing);
+  if(!actor || (Number(actor.system?.attributes?.hp?.value) > 0)) return false;
+  if(!actor.isOwner) return !!(await gm.run("stabilize", { actor : actor.uuid }));
+  await actor.update({ "system.attributes.death.success" : 0, "system.attributes.death.failure" : 0 });
+  await setStatus(actor, "stable", true);
+  ui.notifications.info(module.format("actions.stabilize.done", { name : actor.name }));
   return true;
 }
 

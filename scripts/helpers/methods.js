@@ -1,11 +1,11 @@
 import { logger } from '../log.js';
 import { rollItem } from '../roll-item/roll-item.js';
-import { distanceBetween, getRange, getTokensWithin, highlightRange, pushAway, pushDestination, addLight, removeLight, hasLight } from './tokens.js';
+import { distanceBetween, getRange, getTokensWithin, highlightRange, pushAway, pushDestination, addLight, removeLight, hasLight, canSee } from './tokens.js';
 import { isEnemy, isAlly, getThreats, isThreatened, getEnemiesWithinRange, pickTargets, getFlanker, isFlanking } from './targets.js';
 import { getSize, setStatus, setDefeated, splitToken, damage, heal, tempHP, dropsToZero, isKilledOutright, preventDropToZero, findItem,
-  rollSave, addTimedEffect, getSaveAdvantages, recoverSpellSlots } from './actors.js';
+  rollSave, addTimedEffect, recoverSpellSlots, usedThisTurn, markUsedThisTurn, getLastDamage, clearLastDamage, stabilize } from './actors.js';
 import { setBaseDamage, updateItem, attackModeFor, isLongRange, isRangedItem, isRangedAttack, canThrow, getAmmunition, pickAndAttack,
-  getUses, hasUses, spendUses, useActivity, getMultiattack, getMultiattackPlan, multiattack, getHealing, pickAttack } from './items.js';
+  getUses, hasUses, spendUses, useActivity, useAndApply, multiattack, getHealing, pickAttack, isOtherHandFree, hasShieldEquipped } from './items.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -20,12 +20,14 @@ const call = fn => function(...args){ return fn(this, ...args); };
 const creature = {
   getCreatureSize : call(getSize),                                  // { key, value, label }, core getSize() is the token's pixel size
   getTokensWithin : call(getTokensWithin),                          // (feet, options)
+  canSee : call(canSee),                                            // (other) -> boolean, by this token's own sight
   isEnemy : call(isEnemy),                                          // (other)
   isAlly : call(isAlly),                                            // (other)
   isThreatened : call(isThreatened),                                // ({ range, includeIncapacitated, includeHidden }) -> boolean
   getThreats : call(getThreats),                                    // ({ range, includeIncapacitated, includeHidden }) -> Token[]
   setStatus : call(setStatus),                                      // (status, active, { overlay })
   setDefeated : call(setDefeated),                                  // (defeated)
+  stabilize : call(stabilize),                                      // () -> Promise<boolean>, at 0 HP : Stable
   damage : call(damage),                                            // (value | formula | parts, type, { properties, multiplier, ignore })
   heal : call(heal),                                                // (value | formula)
   tempHP : call(tempHP),                                            // (value | formula, source)
@@ -33,14 +35,17 @@ const creature = {
   isKilledOutright : call(isKilledOutright),                        // (amount) -> boolean, massive damage
   preventDropToZero : call(preventDropToZero),                      // (amount, updates, { hp, massiveDamage }) -> boolean, in dnd5e.preApplyDamage
   findItem : call(findItem),                                        // (name | identifier | id | [several] | fn, { type }) -> Item | null
-  getSaveAdvantages : call(getSaveAdvantages),                      // () -> Set of condition keys it has advantage on saves against
+  hasShieldEquipped : call(hasShieldEquipped),                      // () -> boolean
+  getLastDamage : call(getLastDamage),                              // () -> { amount, message, at } | null
+  clearLastDamage : call(clearLastDamage),                          // () -> Promise, once a reaction used it
+  usedThisTurn : call(usedThisTurn),                                // (key) -> boolean, in combat
+  markUsedThisTurn : call(markUsedThisTurn),                        // (key) -> Promise
   getFlanker : call(getFlanker),                                    // (target) -> the ally flanking it with this creature | null
   isFlanking : call(isFlanking),                                    // (target) -> boolean
   rollSave : call(rollSave),
   recoverSpellSlots : call(recoverSpellSlots),                      // ({ levels, maxLevel, item, chat }) -> { level : recovered } | null                                        // (ability, dc) -> { success, total, roll } | null
   addTimedEffect : call(addTimedEffect),                            // (effectData, { of, until : "turnStart" | "turnEnd" }) -> ActiveEffect
-  getMultiattackPlan : call(getMultiattackPlan),                    // ({ feature }) -> [{ items, count, choice }]
-  multiattack : call(multiattack),                                  // ({ repeat, event, attack }) -> the whole Multiattack, one pick per weapon
+  multiattack : call(multiattack),                                  // (plan [{ weapon, count }], { repeat, event, attack }) -> one pick + card per weapon
 };
 
 const token = {
@@ -68,9 +73,9 @@ export const METHODS = {
     pickTargets : call(pickTargets),                                // ({ count, disposition, numberAllowed, within, confirm }) -> Promise<Token[]>, range = the item's
     pickAndAttack : call(pickAndAttack),                            // ({ count, repeat, disposition, within, long, confirm, clearTargets, event }) -> Promise<result | null>
     pickAttack : call(pickAttack),                                  // ({ count, repeat, ... }) -> { attack, targets, attackMode, disadvantage } | null
-    getMultiattack : call(getMultiattack),                          // ({ feature, fallback }) -> attacks with this item in the owner's Multiattack
-    getMultiattackPlan : call(getMultiattackPlan),                  // on the Multiattack feature : ({ }) -> [{ items, count, choice }]
-    multiattack : call(multiattack),                                // on the Multiattack feature : ({ repeat, event, attack })
+    multiattack : call(multiattack),                                // (plan [{ weapon, count }], options) : its owner's Multiattack
+    useAndApply : call(useAndApply),
+    isOtherHandFree : call(isOtherHandFree),                        // () -> boolean, no shield / other weapon equipped                                // ({ activity, to, event }) -> use it, apply its healing / damage (to yourself)
     getHealing : call(getHealing),                                  // ({ average }) -> "11" | "3d6" | null, from its activity or description
     attackModeFor : call(attackModeFor),                            // (target, { long }) -> "thrown" | null
     isLongRange : call(isLongRange),                                // (target) -> boolean, beyond normal but within long range

@@ -3,11 +3,14 @@ import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { patch } from '../patch.js';
 import { TYPES, registerMessages } from './message.js';
-import { tokenOf, getRange } from '../helpers/tokens.js';
+import { tokenOf, getRange, getTokensInArea } from '../helpers/tokens.js';
 import { pickTargets } from '../helpers/targets.js';
-import { pickAttack, getMultiattackPlan, multiattack } from '../helpers/items.js';
+import { pickAttack, attackModeFor } from '../helpers/items.js';
 import { masteries } from './masteries.js';
 import { maneuvers } from './maneuvers.js';
+import { rerolls } from './rerolls.js';
+import { conditions } from '../rules/conditions.js';
+import { actions } from '../rules/actions.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -55,8 +58,23 @@ export class rollItem{
     if(uuid) config[module.id] = { target : uuid };
     const mode = this.perTarget(attackMode, target);
     if(mode) config.attackMode = mode;
-    if(this.perTarget(disadvantage, target)) config.disadvantage = true;
+    const why = this.perTarget(disadvantage, target);
+    if(why){
+      config.disadvantage = true;
+      config[module.id] = { ...(config[module.id] ?? {}), reasons : [{ mode : "disadvantage", reason : this.disadvantageReason(why) }] };
+    }
     return config;
+  }
+
+  /* A disadvantage handed in : its reason when it says (pickAttack : long range, threatened), else "given" */
+  static disadvantageReason(value){
+    return (typeof value === "string") ? value : module.i18n("reasons.given");
+  }
+
+  /* An attack config's disadvantage : its reason, true when it has none, false when there's no disadvantage */
+  static disadvantageOf(config){
+    if(!config?.disadvantage) return false;
+    return config[module.id]?.reasons?.find(r => r.mode === "disadvantage")?.reason ?? true;
   }
 
   /**
@@ -77,6 +95,9 @@ export class rollItem{
     /* Advantage / disadvantage for the whole card : the keys held, or asked now (targets are already chosen) */
     const mode = await this.chooseMode(activity, event);
     if(!mode) return;
+
+    /* Attack mode from the weapon's data when not given : Versatile (what's in hand), thrown beyond reach */
+    attackMode ??= target => attackModeFor(activity.item, target) ?? undefined;
 
     const rays = this.countFor(activity, count ?? targets?.length);
     if(rays > 1) return this.rollRays(activity, rays, { event, scaling, attackMode, disadvantage, targets, mode });
@@ -102,7 +123,9 @@ export class rollItem{
       onSave : save.damage?.onSave ?? null,
     } : null;
 
-    const message = await this.attackCard(activity, [roll, ...damage, ...graze, ...riderDamage], { scaling, rider, disadvantage : !!config.disadvantage });
+    const why = this.disadvantageOf(config);
+    const message = await this.attackCard(activity, [roll, ...damage, ...graze, ...riderDamage], { scaling, rider,
+      disadvantage : !!why, disadvantageWhy : (typeof why === "string") ? why : "" });
     log.debug("Rolled", activity.item.name, { roll, damage, rider, riderDamage });
 
     return { attack : roll, damage, riderDamage, isCritical : roll.isCritical, isFumble : roll.isFumble, message };
@@ -113,9 +136,9 @@ export class rollItem{
    * which is how dnd5e builds on-hit riders : Giant Spider Bite, Giant Poisonous Snake Bite, Wolf Bite, Ghoul Claws.
    */
   static findRider(activity){
-    /* Grapple / Shove (Unarmed Strike) are alternatives to the attack, never riders */
+    /* Grapple / Shove (Unarmed Strike, apart or as one "Grapple/Shove") are alternatives to the attack, never riders */
     const saves = activity?.item?.system.activities?.getByType("save")
-      .filter(a => (a.id !== activity.id) && !maneuvers.of(a)) ?? [];
+      .filter(a => (a.id !== activity.id) && !maneuvers.isManeuver(a)) ?? [];
     /* 2014 monsters mark the rider "special", 2024 ones (Ghoul Claw) leave it as an action : the item's one save rides it */
     return saves.find(a => a.activation?.type === "special") ?? ((saves.length === 1) ? saves[0] : null);
   }
@@ -133,7 +156,7 @@ export class rollItem{
     if(attacks.length !== 1 || usable.length < 2) return null;
     /* Exactly one save, and not Grapple / Shove (Unarmed Strike offers those instead of the attack) */
     const saves = usable.filter(a => a.type === "save");
-    if((saves.length !== 1) || maneuvers.of(saves[0])) return null;
+    if((saves.length !== 1) || maneuvers.isManeuver(saves[0])) return null;
     return usable.every(a => a === attacks[0] || a === saves[0]) ? attacks[0] : null;
   }
 
@@ -176,11 +199,16 @@ export class rollItem{
   /* A miss is below the target's AC or a fumble, a crit always hits, no AC known counts as a hit */
   static isHit(roll){
     if(!roll) return false;
+    const ac = roll.options.target;
+    /* Total cover (the GM's cover chips) : it can't be hit, a natural 20 included */
+    if(Number.isFinite(ac) && (ac >= this.TOTAL_COVER_AC)) return false;
     if(roll.isCritical) return true;
     if(roll.isFumble) return false;
-    const ac = roll.options.target;
     return !Number.isFinite(ac) || roll.total >= ac;
   }
+
+  /* The AC a target behind total cover is given on a card : nothing reaches it */
+  static TOTAL_COVER_AC = 999;
 
   /**
    * One ray : attack against its target's AC plus its damage, rolled either way so the GM can still apply a "miss".
@@ -196,11 +224,12 @@ export class rollItem{
     if(attackMode) config.attackMode = attackMode;
     if(disadvantage) config.disadvantage = true;
     if(target?.token) config[module.id] = { target : target.token };
+    if(disadvantage) config[module.id] = { ...(config[module.id] ?? {}), reasons : [{ mode : "disadvantage", reason : this.disadvantageReason(disadvantage) }] };
     const attack = await this.rollAttack(activity, event, config, mode);
     if(!attack) return null;
     const damage = await this.rollDamage(activity, attack);
     const graze = await masteries.grazeRolls(activity, attack, damage);
-    for(const roll of [attack, ...damage]) roll.options[module.id] = { ray : index };
+    for(const roll of [attack, ...damage]) roll.options[module.id] = { ...(roll.options[module.id] ?? {}), ray : index };
     for(const roll of graze) roll.options[module.id] = { ray : index, part : "graze" };
     return [attack, ...damage, ...graze];
   }
@@ -211,14 +240,16 @@ export class rollItem{
     const rolls = [], rays = [];
     for(const [index, target] of targets.entries()){
       const config = this.attackConfig({ attackMode, disadvantage }, target ? TargetsField.resolve(target).token : null);
-      const ray = await this.rollRay(activity, event, index, target, { ...config, mode });
+      const why = this.disadvantageOf(config);
+      const ray = await this.rollRay(activity, event, index, target, { attackMode : config.attackMode, disadvantage : why, mode });
       if(!ray) return;
       rolls.push(...ray);
-      /* Each ray keeps its target, attack mode and disadvantage, so rerolls throw / shoot the same way */
+      /* Each ray keeps its target, attack mode and disadvantage (and why), so rerolls throw / shoot the same way */
       rays.push({
         target : target?.token ?? "",
         mode : ray[0].options.attackMode ?? config.attackMode ?? "",
-        disadvantage : !!config.disadvantage,
+        disadvantage : !!why,
+        why : (typeof why === "string") ? why : "",
       });
     }
     const message = await this.attackCard(activity, rolls, { scaling, rays });
@@ -298,19 +329,26 @@ export class rollItem{
     if(!mode) return;
     message.create = false;
     usage.subsequentActions = false;
-    usage[module.id] = { mode };
+    usage[module.id] = { ...(usage[module.id] ?? {}), mode };
   }
 
   /* activity here is dnd5e's scaled clone, so upcast spells roll at the cast level */
   static onPostUse(activity, usage, results){
+    /* An area placed by the use : whoever is inside becomes the targets, before any card is made */
+    const area = rollItem.targetArea(activity, results);
+
     switch(usage[module.id]?.mode){
       case "attack" :
-        return void rollItem.attackAfterUse(activity, usage);
+        return void rollItem.attackAfterUse(activity, usage, area);
       case "save" :
       case "heal" :
       case "damage" :
-      case "utility" :
-        return void rollItem.usageCard(activity, results.message);
+      case "utility" : {
+        /* The card is made after dnd5e's use returns : its promise goes on the results, for helpers that wait on it */
+        const card = rollItem.usageCard(activity, results.message, { area });
+        if(results) results[module.id] = { card };
+        return;
+      }
     }
   }
 
@@ -320,9 +358,11 @@ export class rollItem{
    * disadvantage at long range or for ranged attacks while threatened. Several rays / attacks can pick a target again.
    * Without a token on the scene being viewed there's nothing to pick from, so it rolls against your targets as usual.
    */
-  static async attackAfterUse(activity, usage){
+  static async attackAfterUse(activity, usage, area = null){
     const event = usage.event;
     const scaling = activity.item.getFlag("dnd5e", "scaling") ?? 0;
+    /* An area already chose the targets */
+    if(area) return this.rollActivity(activity, { event, scaling, targets : area.length ? area : undefined });
     const pick = settings.value("rollItemPick");
     const attacker = tokenOf(activity.item);
     if((pick === "off") || !canvas.ready || !attacker || (attacker.document.parent !== canvas.scene)){
@@ -333,20 +373,9 @@ export class rollItem{
     const picked = await pickAttack(activity.item, { activity, count, repeat : count > 1, clearTargets : pick === "always", used : true });
     if(!picked) return;
     const { targets, attackMode, disadvantage } = picked;
+    if(!this.announceTargets(activity, targets)) return;
     /* Fewer picks than rays : the rays are spread over the picks (3 rays, A and B -> A A B) */
     return this.rollActivity(activity, { event, scaling, count : Math.max(count, targets.length), targets, attackMode, disadvantage });
-  }
-
-  /**
-   * Using a Multiattack feature runs the whole Multiattack (MacroHelper.multiattack) with the Roll Item Multiattack
-   * setting on : a pick and a card per weapon, instead of dnd5e's card for the feature.
-   * @returns {boolean}
-   */
-  static isMultiattack(item, config = {}){
-    if(config.chooseActivity || !settings.value("rollItem") || !settings.value("rollItemMultiattack")) return false;
-    if(item?.type !== "feat") return false;
-    const named = (item.identifier ?? item.system.identifier) === "multiattack" || /^multiattack\b/i.test(item.name ?? "");
-    return named && getMultiattackPlan(item).length > 0;
   }
 
   /* ---------- Picking targets for heals, saves and effects ---------- */
@@ -370,13 +399,167 @@ export class rollItem{
       owners.add(proto);
 
       patch.wrap(`CONFIG.DND5E.activityTypes.${type}.documentClass.prototype.use`, async function(wrapped, usage = {}, ...rest){
+        /* Actions that choose and pick first (Help) : the card then shows who and what */
+        const before = await actions.beforeUse(this);
+        if(before === false) return;
+        if(before){
+          const [dialog = {}, message = {}] = rest;
+          foundry.utils.mergeObject(message, { data : { flags : { [module.id] : before } } });
+          rest = [dialog, message, ...rest.slice(2)];
+          usage = { ...usage, [module.id] : { ...(usage?.[module.id] ?? {}), skipPick : true, before } };
+        }
+        /* One activity for Grapple and Shove : choose first, the card is that one */
+        if(maneuvers.enabled() && maneuvers.isCombined(this) && !usage?.[module.id]?.maneuver){
+          const choice = await maneuvers.choose(this);
+          if(!choice) return;
+          const [dialog = {}, message = {}] = rest;
+          foundry.utils.setProperty(message, `data.flags.${module.id}.maneuver`, choice);
+          rest = [dialog, message, ...rest.slice(2)];
+          usage = { ...usage, [module.id] : { ...(usage?.[module.id] ?? {}), maneuver : choice } };
+        }
         const spec = rollItem.pickSpec(this, usage);
         if(spec){
           const picks = await pickTargets(this.item, spec);
-          if(!picks.length) return;
+          if(!picks.length || !rollItem.announceTargets(this, picks)) return;
         }
         return wrapped(usage, ...rest);
       });
+    }
+  }
+
+  /**
+   * Does the activity only ever affect its user ? Target "Self", or "Range : Self" with no area and no other target
+   * (Second Wind, Stone's Endurance). Its card is for the caster, never for what happens to be targeted.
+   * @param {Activity} activity
+   * @returns {boolean}
+   */
+  static isSelfOnly(activity){
+    const target = activity?.target?.override ? activity.target : (activity?.item?.system?.target ?? activity?.target ?? {});
+    const type = target.affects?.type || activity?.target?.affects?.type || "";
+    if(type) return type === "self";
+    if(target.template?.type || activity?.target?.template?.type) return false;
+    const range = activity?.range?.override ? activity.range : (activity?.item?.system?.range ?? activity?.range);
+    return range?.units === "self";
+  }
+
+  /* Does the activity's area come out of its user ("Range : Self" cones and lines : Burning Hands, Lightning Bolt) ? */
+  static isFromSelf(activity){
+    const range = activity?.range?.override ? activity.range : (activity?.item?.system?.range ?? activity?.range);
+    return (range?.units === "self") && ["cone", "line"].includes(activity?.target?.template?.type);
+  }
+
+  /**
+   * A "Range : Self" cone or line is placed from its caster : while placing, its point stays on the caster's token and
+   * the mouse only aims it. dnd5e places templates through core's canvas.regions.placeRegions without an onMove; this
+   * gives the next call one, then steps aside.
+   */
+  static anchorToSelf(activity){
+    if(!settings.value("rollItem") || !canvas.ready) return;
+    if(!this.isFromSelf(activity)) return this.keepInRange(activity);
+    const token = activity.getUsageToken?.()?.object ?? tokenOf(activity.item);
+    const layer = canvas.regions;
+    if(!token || !layer || layer.placeRegions?.[`${module.id}Anchor`]) return;
+
+    const hadOwn = Object.hasOwn(layer, "placeRegions");
+    const original = layer.placeRegions;
+    const restore = () => { if(hadOwn) layer.placeRegions = original; else delete layer.placeRegions; };
+    const anchored = function(data, options = {}){
+      restore();
+      const onMove = args => {
+        const { shape, position } = args;
+        const center = token.center;
+        const rotation = Math.toDegrees(Math.atan2(position.y - center.y, position.x - center.x));
+        shape.updateSource({ x : center.x, y : center.y, rotation });
+        options.onMove?.(args);
+        return false;
+      };
+      return original.call(this, data, { ...options, onMove });
+    };
+    anchored[`${module.id}Anchor`] = true;
+    layer.placeRegions = anchored;
+  }
+
+  /**
+   * A template with a range (Fireball 150 ft) : while placing, its centre stays within that range of the caster (from
+   * the edge of its space), with a clear path to it : it stops at the first wall in the way (walls that block movement,
+   * so a window stops it, an open door doesn't). Somewhere it can't see is fine.
+   */
+  static keepInRange(activity){
+    const feet = this.activityRange(activity);
+    const token = activity.getUsageToken?.()?.object ?? tokenOf(activity.item);
+    const layer = canvas.regions;
+    if(!(feet > 0) || !Number.isFinite(feet) || !token || !layer || layer.placeRegions?.[`${module.id}Anchor`]) return;
+
+    const hadOwn = Object.hasOwn(layer, "placeRegions");
+    const original = layer.placeRegions;
+    const restore = () => { if(hadOwn) layer.placeRegions = original; else delete layer.placeRegions; };
+    const limit = (feet / canvas.scene.grid.distance) * canvas.grid.size + (Math.max(token.w, token.h) / 2);
+    const ranged = function(data, options = {}){
+      restore();
+      const onMove = args => {
+        const { shape, position } = args;
+        const center = token.center;
+        const dx = position.x - center.x, dy = position.y - center.y;
+        const gap = Math.hypot(dx, dy);
+        let point = (gap <= limit) ? { x : position.x, y : position.y } : { x : center.x + (dx * limit / gap), y : center.y + (dy * limit / gap) };
+        /* A clear path : the first wall in the way, a step back towards the caster */
+        const wall = rollItem.firstWall(center, point);
+        if(wall){
+          const back = Math.hypot(wall.x - center.x, wall.y - center.y);
+          const step = Math.max(0, back - 2) / (back || 1);
+          point = { x : center.x + ((wall.x - center.x) * step), y : center.y + ((wall.y - center.y) * step) };
+        }
+        if(!wall && (gap <= limit)) return options.onMove?.(args);
+        shape.updateSource(point);
+        options.onMove?.(args);
+        return false;
+      };
+      return original.call(this, data, { ...options, onMove });
+    };
+    ranged[`${module.id}Anchor`] = true;
+    layer.placeRegions = ranged;
+  }
+
+  /**
+   * After dnd5e places an activity's template(s) : target the tokens inside, so the card, its save buttons and its
+   * trays are for exactly them. The caster counts too, except for their own cone or line (its point isn't in its area).
+   * With the Template Targeting setting.
+   * @returns {Token[]|null}  the tokens inside, null when nothing was placed (or the setting is off)
+   */
+  static targetArea(activity, results){
+    const templates = results?.templates ?? [];
+    if(!templates.length || !settings.value("rollItem") || !settings.value("rollItemTemplateTargets") || !canvas.ready) return null;
+    const caster = this.isFromSelf(activity) ? tokenOf(activity.item) : null;
+    const inside = [...new Set(templates.flatMap(t => getTokensInArea(t)))].filter(t => t !== caster);
+    this.announceTargets(activity, inside, { keepEmpty : true });
+    log.debug("Area targets", activity.item?.name, inside.map(t => t.name));
+    return inside;
+  }
+
+  /**
+   * Stage hook "macro-helper.targets" (activity, tokens) : a macro can drop targets from the list (splice it), e.g.
+   * Luring Song keeping only Humanoids and Giants. Whatever is left becomes your targets.
+   * @param {Activity} activity
+   * @param {Token[]} tokens           changed in place
+   * @param {object} [options]
+   * @param {boolean} [options.keepEmpty=false]  an area can end up with nobody in it and still go ahead
+   * @returns {boolean}  false when no target is left (and the use should stop)
+   */
+  static announceTargets(activity, tokens, { keepEmpty = false } = {}){
+    Hooks.callAll(`${module.id}.targets`, activity, tokens);
+    if(canvas.ready) canvas.tokens.setTargets(tokens.map(t => t.id));
+    if(tokens.length || keepEmpty) return true;
+    ui.notifications.info(module.i18n("rollItem.noTargetsLeft"));
+    return false;
+  }
+
+  /* The first wall that blocks movement between two points, or null */
+  static firstWall(from, to){
+    try {
+      return CONFIG.Canvas.polygonBackends.move.testCollision(from, to, { type : "move", mode : "closest" }) ?? null;
+    } catch(error){
+      log.debug("Wall test", error);
+      return null;
     }
   }
 
@@ -396,9 +579,9 @@ export class rollItem{
    *   who : "willing" / "ally" -> your allies and yourself, "enemy" or a save -> enemies, else anyone (yourself too)
    *   how many : the target count (fewer is fine, Enter)
    */
-  static pickSpec(activity, usage = {}){
+  static pickSpec(activity, usage = {}, { types = this.PICK_TYPES } = {}){
     const pick = settings.value("rollItemPick");
-    if((pick === "off") || !settings.value("rollItem") || !this.PICK_TYPES.includes(activity?.type)) return null;
+    if((pick === "off") || !settings.value("rollItem") || !types.includes(activity?.type)) return null;
     if(usage?.[module.id]?.skipPick || !canvas.ready) return null;
     const caster = tokenOf(activity.item);
     if(!caster || (caster.document.parent !== canvas.scene)) return null;
@@ -415,11 +598,11 @@ export class rollItem{
     if(!(range > 0)) return null;
 
     const disposition = ["ally", "willing"].includes(type) ? "ally"
-      : ((type === "enemy") || (activity.type === "save")) ? "enemy" : "any";
+      : ((type === "enemy") || ["save", "damage"].includes(activity.type)) ? "nonAlly" : "any";
     return {
       count : Math.max(1, parseInt(target.affects?.count) || 1),
       range, disposition,
-      includeSelf : disposition !== "enemy",
+      includeSelf : disposition === "ally" || disposition === "any",
       useTargets : pick !== "always",
       confirm : "auto",
     };
@@ -432,10 +615,24 @@ export class rollItem{
      dnd5e combines it with everything else (long range, Poisoned, Vex...), advantage and disadvantage cancel out */
   static async rollAttack(activity, event, config = {}, mode = {}){
     const rollConfig = { ...config, event : this.keyEvent(event) };
-    if(mode?.advantage) rollConfig.advantage = true;
-    if(mode?.disadvantage) rollConfig.disadvantage = true;
+    const reasons = [...(config[module.id]?.reasons ?? [])];
+    if(mode?.advantage){ rollConfig.advantage = true; reasons.push({ mode : "advantage", reason : module.i18n("reasons.chosen") }); }
+    if(mode?.disadvantage){ rollConfig.disadvantage = true; reasons.push({ mode : "disadvantage", reason : module.i18n("reasons.chosen") }); }
+    const keys = rollConfig.event && dnd5e.utils?.areKeysPressed;
+    if(keys && keys(rollConfig.event, "skipDialogAdvantage")) reasons.push({ mode : "advantage", reason : module.i18n("reasons.keys") });
+    if(keys && keys(rollConfig.event, "skipDialogDisadvantage")) reasons.push({ mode : "disadvantage", reason : module.i18n("reasons.keys") });
+    if(reasons.length) rollConfig[module.id] = { ...(rollConfig[module.id] ?? {}), reasons };
+
+    /* Stage hook : change the roll before it happens (rollConfig.advantage / disadvantage, rollConfig.rolls...),
+       or return false to stop it. config[module.id].target is the token uuid it's aimed at. */
+    if(Hooks.call(`${module.id}.preAttack`, activity, rollConfig) === false) return null;
     const [roll] = await activity.rollAttack(rollConfig, { configure : false }, { create : false }) ?? [];
-    return roll ?? null;
+    if(!roll) return null;
+    /* Who it was aimed at, kept on the roll (auto-crits, rerolls) */
+    const target = rollConfig[module.id]?.target;
+    if(target) roll.options[module.id] = { ...(roll.options[module.id] ?? {}), target };
+    Hooks.callAll(`${module.id}.attack`, activity, roll);
+    return roll;
   }
 
   /**
@@ -477,13 +674,20 @@ export class rollItem{
   static async rollDamage(activity, attack){
     if(!this.hasDamage(activity)) return [];
     const { ability, ammunition, attackMode } = attack?.options ?? {};
-    return await activity.rollDamage({
+    const config = {
       ability, attackMode,
       ammunition : activity.actor?.items.get(ammunition),
-      isCritical : attack?.isCritical ?? false,
+      /* A crit, or a hit on a Paralyzed / Unconscious target from within 5 ft (conditions.autoCrit) */
+      isCritical : !!(attack?.isCritical || conditions.autoCrit(activity, attack)),
       /* Cleave's extra attack : masteries.onPreRollDamage takes a positive ability modifier off */
       ...(attack?.options?.[module.id]?.noMod ? { [module.id] : { noMod : true } } : {}),
-    }, { configure : false }, { create : false }) ?? [];
+    };
+
+    /* Stage hook : change the damage before it's rolled (config.rolls, config.isCritical...), or return false to skip it */
+    if(Hooks.call(`${module.id}.preDamage`, activity, config, attack) === false) return [];
+    const rolls = await activity.rollDamage(config, { configure : false }, { create : false }) ?? [];
+    Hooks.callAll(`${module.id}.damage`, activity, rolls, attack);
+    return rolls;
   }
 
   /**
@@ -531,17 +735,15 @@ export class rollItem{
     registerMessages();
     masteries.register();
     maneuvers.register();
+    rerolls.register();
     Hooks.on("dnd5e.preUseActivity", rollItem.onPreUse);
     Hooks.on("dnd5e.postUseActivity", rollItem.onPostUse);
 
     rollItem.wrapTargeting();
+    Hooks.on("dnd5e.preCreateMeasuredTemplate", activity => rollItem.anchorToSelf(activity));
 
     /* Attack + save rider items skip dnd5e's activity choice (sheet, hotbar, anything calling item.use) */
     patch.wrap("CONFIG.Item.documentClass.prototype.use", async function(wrapped, config = {}, dialog = {}, message = {}){
-      /* Multiattack : the whole thing, your targets used as they are with Pick Targets "when you have none" */
-      if(rollItem.isMultiattack(this, config)){
-        return multiattack(this, { event : config.event, attack : { clearTargets : settings.value("rollItemPick") !== "empty" } });
-      }
       const attack = rollItem.fastForward(this, config);
       if(!attack) return wrapped(config, dialog, message);
       const { chooseActivity, ...usage } = config;
@@ -566,7 +768,7 @@ export class rollItem{
    * @param {Roll[]} rolls  attack roll(s) + damage rolls, multi-ray rolls tagged with options[module.id].ray
    * @param {object[]} [rays]  one { target : tokenUuid } per ray when rolling more than one attack
    */
-  static async attackCard(activity, rolls, { scaling = 0, rays = [], rider = null, disadvantage = false } = {}){
+  static async attackCard(activity, rolls, { scaling = 0, rays = [], rider = null, disadvantage = false, disadvantageWhy = "" } = {}){
     const attack = rolls.find(r => r instanceof CONFIG.Dice.D20Roll);
     const { ability, ammunition, attackMode, mastery } = attack?.options ?? {};
     const { TargetsField } = dnd5e.dataModels.chatMessage.fields;
@@ -578,7 +780,7 @@ export class rollItem{
       system : {
         ...activity.messageSources,
         targets : TargetsField.getDescriptors(),
-        ability, ammunition, mastery, scaling, rays, rider, disadvantage,
+        ability, ammunition, mastery, scaling, rays, rider, disadvantage, disadvantageWhy,
         mode : attackMode,
       },
     };
@@ -623,17 +825,35 @@ export class rollItem{
    * Save / heal : dnd5e already built its usage card data (buttons, targets, effects, scaling, roll mode) but did not create it.
    * Roll the damage (or healing) onto it, swap its "roll damage/healing" button for a reroll, and create it as our type.
    */
-  static async usageCard(activity, data){
+  static async usageCard(activity, data, { area = null } = {}){
     if(!data?.system) return;
     const isHeal = activity.type === "heal";
     const { TargetsField } = dnd5e.dataModels.chatMessage.fields;
-    data.system.targets ??= TargetsField.getDescriptors();
 
     /* Damage-only activities can roll several instances (Magic Missile darts), spread over the targets like rays */
     const count = activity.type === "damage" ? this.countFor(activity) : 1;
+
+    /* Who it's for : an area's occupants, else (damage-only) picked now that the cast level, and so the count, is known */
+    let picks = area;
+    if(!picks && (activity.type === "damage")){
+      const spec = this.pickSpec(activity, {}, { types : ["damage"] });
+      if(spec){
+        picks = await pickTargets(activity.item, { ...spec, count, repeat : count > 1 });
+        if(!picks.length || !this.announceTargets(activity, picks)) return null;
+      }
+    }
+    /* Self only : the caster, not whoever is still targeted from an earlier attack */
+    if(!picks && this.isSelfOnly(activity)){
+      const caster = tokenOf(activity.item);
+      picks = (caster && (caster.document.parent === canvas.scene)) ? [caster] : [];
+      if(canvas.ready) canvas.tokens.setTargets([]);
+    }
+    if(picks) data.system.targets = TargetsField.getDescriptors([...new Set(picks)]);
+    data.system.targets ??= TargetsField.getDescriptors();
+
     const damage = [];
     if(count > 1){
-      const targets = this.assignTargets(count);
+      const targets = this.assignTargets(count, picks ?? undefined);
       for(const i of targets.keys()){
         const rolls = await this.rollDamage(activity, null);
         for(const roll of rolls) roll.options[module.id] = { ray : i };
@@ -667,23 +887,7 @@ export class rollItem{
       label : { value : "rollItem.apply.all" },
     });
 
-    /* Healing that can only land on yourself (Second Wind) : applied straight away, no tray */
-    const selfHeal = isHeal && damage.length && (activity.target?.affects?.type === "self") && !!activity.actor;
-    if(selfHeal) foundry.utils.setProperty(data, `flags.${module.id}.selfHeal`, true);
-
     log.debug("Usage card", activity.item.name, { data, damage });
-    const message = await ChatMessage.implementation.create(data);
-    if(selfHeal && message) await this.applyToSelf(activity.actor, damage, message);
-    return message;
-  }
-
-  /* Same call dnd5e's tray makes, one entry per healing / damage type */
-  static async applyToSelf(actor, rolls, message){
-    const damages = dnd5e.dice.aggregateDamageRolls(rolls, { respectProperties : true }).map(roll => ({
-      properties : new Set(roll.options.properties ?? []),
-      type : roll.options.type,
-      value : Math.max(0, roll.total),
-    }));
-    await actor.applyDamage(damages, { isDelta : true, origin : message });
+    return await ChatMessage.implementation.create(data);
   }
 }

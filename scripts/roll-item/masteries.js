@@ -1,9 +1,9 @@
 import { module } from '../module.js';
+import { giveMode } from './reasons.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
-import { gm } from '../gm.js';
 import { tokenOf, distanceBetween, pushAway } from '../helpers/tokens.js';
-import { getSize, rollSave, setStatus, addTimedEffect } from '../helpers/actors.js';
+import { getSize, rollSave, setStatus, addTimedEffect, usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
 import { pickAttack, isRangedAttack } from '../helpers/items.js';
 import { rollItem } from './roll-item.js';
 const log = logger.for(import.meta.url);
@@ -24,8 +24,8 @@ const log = logger.for(import.meta.url);
  *                   its damage without your ability modifier (unless that's negative).
  *   Nick          : changes when the Light extra attack happens, nothing to roll.
  *
- * Buttons only work on targets the card knows hit. Each can be used once per attack. A player's buttons are carried
- * out by the active GM (moving enemies, effects on them), who checks the card first.
+ * Buttons only work on targets the card knows hit, once per attack. Topple, Push, Sap, Slow and Vex change the target :
+ * outcomes, so only the GM sees and clicks those (nothing happens on its own). Cleave is another attack : its roller's.
  */
 export class masteries{
   static ACTIONS = ["topple", "push", "sap", "slow", "vex", "cleave"];
@@ -44,7 +44,6 @@ export class masteries{
     Hooks.on("dnd5e.preRollAttackV2", config => this.onPreRollAttack(config));
     Hooks.on("dnd5e.rollAttackV2", rolls => this.onRollAttack(rolls));
     Hooks.on("dnd5e.preRollDamageV2", config => this.onPreRollDamage(config));
-    gm.handle("mastery", (data, user)=> this.applyAsGM(data, user));
   }
 
   /* ---------- Card ---------- */
@@ -93,26 +92,25 @@ export class masteries{
   /* ---------- Using a mastery from the card ---------- */
 
   /**
-   * The card's mastery button. Cleave is made here (you pick and roll); the rest go to the GM.
+   * The card's mastery button. Cleave is made by its roller (you pick and roll); the rest are the GM's to apply.
    * @param {ChatMessage} message
    * @param {number|null} ray   which attack on a multi-attack card, null for a single attack
    */
   static async use(message, ray, event){
     const key = message.system.masteryOf(ray);
     if(key === "cleave") return this.cleave(message, ray, event);
-    const notes = await gm.run("mastery", { message : message.id, ray });
+    if(!game.user.isGM) return;
+    const notes = await this.apply(message, ray);
     for(const note of notes ?? []) ui.notifications.info(note);
   }
 
   /**
-   * Done by the GM's client. Everything is read from the card again : the asker must have made it,
-   * the attack must use this mastery, and only targets it hit are affected, once.
+   * Apply an outcome mastery (GM) : only to targets the card says were hit, once per attack.
+   * @returns {Promise<string[]>}  notes to show (too big to push, blocked...)
    */
-  static async applyAsGM({ message : id, ray = null } = {}, user){
-    const message = game.messages.get(id);
+  static async apply(message, ray = null){
     const system = message?.system;
     if(!system?.masteryOf) throw new Error("Not a Roll Item attack card.");
-    if(!user?.isGM && (message.author?.id !== user?.id)) throw new Error("Only the card's roller can use its mastery.");
 
     const key = system.masteryOf(ray);
     if(!this.ACTIONS.includes(key) || (key === "cleave")) throw new Error(`No mastery to use : ${key}`);
@@ -232,11 +230,7 @@ export class masteries{
     if(isRangedAttack(item, first)) return ui.notifications.warn(module.i18n("rollItem.mastery.cleaveMelee"));
 
     /* Once per turn, in combat */
-    const stamp = gm.stamp(attacker, "turnEnd");
-    const last = attacker.getFlag(module.id, "cleave");
-    if(stamp && last && (last.combat === stamp.combat) && (last.round === stamp.round) && (last.turn === stamp.turn)){
-      return ui.notifications.warn(module.i18n("rollItem.mastery.cleaveOnce"));
-    }
+    if(usedThisTurn(attacker, "cleave")) return ui.notifications.warn(module.i18n("rollItem.mastery.cleaveOnce"));
 
     const picked = await pickAttack(item, {
       activity, count : 1, long : false, clearTargets : true, used : true,
@@ -247,7 +241,7 @@ export class masteries{
     const { attack, targets, attackMode, disadvantage } = picked;
     const result = await rollItem.roll(item, { activity : attack.id, count : 1, targets, attackMode, disadvantage, event, cleave : true });
     if(!result) return;
-    if(stamp) await attacker.setFlag(module.id, "cleave", { combat : stamp.combat, round : stamp.round, turn : stamp.turn });
+    await markUsedThisTurn(attacker, "cleave");
     await message.setFlag(module.id, `mastery.${this.rayKey(ray)}`, true);
   }
 
@@ -275,11 +269,11 @@ export class masteries{
       const flags = effect.getFlag(module.id, "mastery") ? effect.flags[module.id] : null;
       if(!flags) continue;
       if(flags.mastery === "sap"){
-        roll.options.disadvantage = true;
+        giveMode(roll, "disadvantage", module.i18n("reasons.sap"));
         used.push(effect.uuid);
       }
       else if((flags.mastery === "vex") && target && ((flags.target === target) || (flags.targetActor === targetActor))){
-        roll.options.advantage = true;
+        giveMode(roll, "advantage", module.i18n("reasons.vex"));
         used.push(effect.uuid);
       }
     }

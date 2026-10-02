@@ -1,6 +1,7 @@
 {{!-- dnd5e attack-card.hbs, with the damage-card.hbs roll + tray appended --}}
 <div class="chat-card">
     {{> "dnd5e.card-header" }}
+    {{> "macro-helper.cover" }}
 
     {{#if mastery}}
     <p class="supplement">
@@ -75,6 +76,7 @@
                     <option value="{{ token }}">{{ name }}</option>
                 </datalist>
             </target-pill>
+            {{#with applied}}<span class="macro-helper-applied {{#if healing}}healing{{else}}damage{{/if}}" data-tooltip="{{ localize "rollItem.row.applied" }}">{{ text }}</span>{{/with}}
         </li>
         {{/each}}
     </ul>
@@ -122,6 +124,7 @@
                         <option value="{{ token }}">{{ name }}</option>
                     </datalist>
                 </target-pill>
+                {{#with applied}}<span class="macro-helper-applied {{#if healing}}healing{{else}}damage{{/if}}" data-tooltip="{{ localize "rollItem.row.applied" }}">{{ text }}</span>{{/with}}
             </li>
         </ul>
     </section>
@@ -138,7 +141,7 @@
     <macro-helper-damage class="dnd5e2" data-ray="{{ index }}" data-part="base"></macro-helper-damage>
     {{/if}}
 
-    {{#with savage}}{{> "macro-helper.savage" }}{{/with}}
+    {{#with extras}}{{> "macro-helper.extras" }}{{/with}}
     {{#with mastery}}{{> "macro-helper.mastery" }}{{/with}}
 </div>
 {{/each}}
@@ -152,8 +155,8 @@
 {{/if}}
 {{/with}}
 
-{{!-- Savage Attacker : the second damage roll and its tray, or the button to roll it --}}
-{{#with savage}}{{> "macro-helper.savage" }}{{/with}}
+{{!-- Added by item macros (stage hooks) : extra damage boxes, card buttons (Savage Attacker...) --}}
+{{#with extras}}{{> "macro-helper.extras" }}{{/with}}
 
 {{!-- Weapon mastery : Graze's damage on a miss, or the button for a hit (Topple, Push, Sap, Slow, Vex, Cleave) --}}
 {{#with mastery}}{{> "macro-helper.mastery" }}{{/with}}
@@ -175,6 +178,12 @@
         <span class="roboto-upper">{{ name }}</span>
     </section>
 
+    {{#if rows.length}}
+    {{!-- One row per target hit : its save (no dialog), then the save's damage sized by it --}}
+    <section class="icon-row"><span class="pill transparent"><span class="label">{{ label }}</span></span></section>
+    {{#with damage}}{{> "macro-helper.damage-rows" }}{{/with}}
+    {{> "macro-helper.rows" }}
+    {{else}}
     <section class="icon-row">
         <i class="fa-fw fa-solid fa-circle-play" aria-label="{{ localize "DND5E.CHATMESSAGE.Row.Actions" }}"></i>
         <ul class="unlist pills">
@@ -195,6 +204,7 @@
 
     {{#if damage.showTray}}
     <macro-helper-damage class="dnd5e2" data-part="save"></macro-helper-damage>
+    {{/if}}
     {{/if}}
 
     {{#if effects.length}}

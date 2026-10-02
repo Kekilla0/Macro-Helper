@@ -98,6 +98,52 @@
   padding-block-start: 6px;
   border-block-start: 1px solid var(--dnd5e-color-gold, var(--color-border));
 }
+/* Save / heal cards : one row per target (save button or result, then apply) */
+.chat-message .macro-helper-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-block: 6px;
+}
+.chat-message .macro-helper-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.chat-message .macro-helper-row img.token {
+  width: 24px;
+  height: 24px;
+  border: none;
+  flex: none;
+}
+.chat-message .macro-helper-row .name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-message .macro-helper-row button {
+  flex: none;
+  width: auto;
+  line-height: 1.6;
+  padding: 0 6px;
+}
+.chat-message .macro-helper-row .result.success { color: var(--dnd5e-color-success, #2e7d32); }
+.chat-message .macro-helper-row button.icon {
+  padding: 0;
+  width: 22px;
+}
+.chat-message .macro-helper-row .applied,
+.chat-message .macro-helper-applied {
+  font-weight: bold;
+  min-width: 2.5em;
+  text-align: end;
+}
+.chat-message .targets li:has(.macro-helper-applied) { display: flex; align-items: center; gap: 4px; }
+.chat-message :is(.macro-helper-row .applied, .macro-helper-applied).damage { color: var(--dnd5e-color-failure, #c62828); }
+.chat-message :is(.macro-helper-row .applied, .macro-helper-applied).healing { color: var(--dnd5e-color-success, #2e7d32); }
+.chat-message .macro-helper-row .result.failure { color: var(--dnd5e-color-failure, #c62828); }
+
 /* Weapon mastery : Graze's damage on a miss, or the button for a hit */
 .chat-message .macro-helper-shove .icon-row {
   align-items: center;
@@ -111,14 +157,14 @@
   margin: 0;
 }
 .chat-message .macro-helper-mastery,
-.chat-message .macro-helper-savage {
+.chat-message .macro-helper-extras {
   display: flex;
   flex-direction: column;
   gap: 4px;
   margin-block-start: 6px;
 }
 .chat-message .macro-helper-mastery:has(.ray-header),
-.chat-message .macro-helper-savage:has(.ray-header) {
+.chat-message .macro-helper-extras:has(.ray-header) {
   padding-block-start: 6px;
   border-block-start: 1px solid var(--dnd5e-color-gold, var(--color-border));
 }
@@ -155,3 +201,38 @@
 .chat-message .macro-helper-rider.miss {
   opacity: 0.5;
 }
+
+/* Settings sub-menus : the list scrolls, the Save button stays in view */
+.macro-helper-settings .window-content {
+  max-height: 80vh;
+}
+.macro-helper-settings .macro-helper-settings-list {
+  max-height: 65vh;
+  overflow-y: auto;
+  padding-inline-end: 4px;
+}
+
+
+/* Cover chips (GM only), compact at the top of a card */
+.chat-message .macro-helper-cover {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  font-size: var(--font-size-11, 11px);
+  margin: 2px 0;
+}
+.chat-message .macro-helper-cover .cover-target { display: inline-flex; align-items: center; gap: 2px; }
+.chat-message .macro-helper-cover .name { margin-right: 2px; opacity: 0.8; }
+.chat-message .macro-helper-cover button {
+  min-width: 20px;
+  height: 18px;
+  line-height: 16px;
+  padding: 0 3px;
+  font-size: inherit;
+}
+.chat-message .macro-helper-cover button.active {
+  background: var(--dnd5e-color-gold, #9f9275);
+  color: white;
+}
+.chat-message .macro-helper-row .result.covered { opacity: 0.75; font-style: italic; }

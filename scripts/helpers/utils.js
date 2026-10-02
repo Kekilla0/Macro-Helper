@@ -22,3 +22,15 @@ export async function waitFor(condition, { interval = 100, timeout = 20000 } = {
   }
   return !!(await condition());
 }
+
+/**
+ * The chat card a message came from (a save rolled from a save card...). dnd5e's message models turn
+ * system.origin into the card itself, data that hasn't gone through them keeps its id : either works.
+ * @param {ChatMessage|object} message
+ * @returns {ChatMessage|null}
+ */
+export function originOf(message){
+  const origin = message?.system?.origin ?? message?._source?.system?.origin;
+  if(!origin) return null;
+  return (typeof origin === "string") ? (game.messages.get(origin) ?? null) : origin;
+}

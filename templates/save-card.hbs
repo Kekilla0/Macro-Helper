@@ -1,17 +1,15 @@
 {{!-- dnd5e usage-card.hbs, with the damage-card.hbs roll + tray added below the card face --}}
+{{> "macro-helper.cover" }}
 {{#if content}}
 {{{ content }}}
 {{else}}
 {{> "dnd5e.card-face" }}
 {{/if}}
 
+{{#if note}}<p class="supplement macro-helper-note"><strong>{{ note }}</strong></p>{{/if}}
+
 {{!-- Damage, already rolled, one box per damage type --}}
 {{#with damage}}{{> "macro-helper.damage-rows" }}{{/with}}
-{{#if selfApplied}}
-<p class="supplement macro-helper-self-applied">
-    <i class="fa-solid fa-check" inert></i> {{ localize "rollItem.selfApplied" name=selfApplied }}
-</p>
-{{/if}}
 
 {{!-- Utility roll formula, already rolled, its name underneath --}}
 {{#with formula}}
@@ -65,6 +63,9 @@
     {{/if}}
 </div>
 {{/each}}
+
+{{!-- One row per target : its save (button, then the result), then its damage / healing by that result --}}
+{{#if rows.length}}{{> "macro-helper.rows" }}{{/if}}
 
 {{!-- Save results (dnd5e "Chat Card Summary" setting) --}}
 {{#each summaries}}

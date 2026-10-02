@@ -77,6 +77,8 @@ export class itemHooks{
     if(first.documentName === "Actor") return first;
     if(first.documentName === "Combat") return first.combatant?.actor ?? null;
     if(first.documentName === "ChatMessage") return first.getSpeakerActor?.() ?? null;
+    /* dnd5e roll configs (preRollAttackV2, preRollSavingThrowV2...) : their subject is the actor or the activity */
+    if(first.subject) return (first.subject.documentName === "Actor") ? first.subject : (first.subject.actor ?? null);
     return first.actor ?? ((first.parent?.documentName === "Actor") ? first.parent : null);
   }
 

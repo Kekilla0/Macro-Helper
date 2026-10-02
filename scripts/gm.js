@@ -1,5 +1,6 @@
 import { module } from './module.js';
 import { logger } from './log.js';
+import { settings } from './settings.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -29,9 +30,11 @@ export class gm{
    * Run a registered query as the GM : here when you are the GM, else on the active GM's client.
    * @param {string} name
    * @param {object} data   JSON-serializable
+   * @param {object} [options]
+   * @param {number} [options.timeout=30000]  ms to wait for the GM's answer (longer when the GM asks a player first)
    * @returns {Promise<any>}  the handler's result, null with a warning when no GM is online
    */
-  static async run(name, data){
+  static async run(name, data, { timeout = 30000 } = {}){
     const handler = this.#handlers.get(name);
     if(!handler) throw new Error(`Macro Helper | no GM query "${name}"`);
     if(game.user.isGM) return handler(data, game.user);
@@ -41,7 +44,7 @@ export class gm{
       ui.notifications.warn("gm.none", { localize : true });
       return null;
     }
-    return target.query(`${module.id}.${name}`, data, { timeout : 30000 });
+    return target.query(`${module.id}.${name}`, data, { timeout });
   }
 
   static register(){
@@ -61,8 +64,11 @@ export class gm{
   static stamp(actor, at){
     const combat = game.combat;
     if(!combat?.started || !actor) return null;
-    if(!combat.combatants.some(c => c.actor?.uuid === actor.uuid)) return null;
-    return { actor : actor.uuid, at, combat : combat.id, round : combat.round, turn : combat.turn ?? 0 };
+    /* Its combatant : the same actor, or the same character opened from the sidebar instead of its token */
+    const combatant = combat.combatants.find(c => c.actor?.uuid === actor.uuid)
+      ?? combat.combatants.find(c => (c.actorId === actor.id) || (c.actor?.id === actor.id));
+    if(!combatant) return null;
+    return { actor : combatant.actor?.uuid ?? actor.uuid, at, combat : combat.id, round : combat.round, turn : combat.turn ?? 0 };
   }
 
   /* Every actor that could carry a timed effect : the world's, plus unlinked tokens on the viewed scene */
@@ -91,15 +97,31 @@ export class gm{
 
   static async expire(combat, prior, current){
     if(!game.users.activeGM?.isSelf) return;
+    /* Same round and turn, another combatant : the order was re-sorted (initiative rolled), nobody's turn changed */
+    if((prior?.round === current?.round) && (prior?.turn === current?.turn)) return;
     const actorOf = state => combat.combatants.get(state?.combatantId)?.actor?.uuid ?? null;
     const ended = actorOf(prior), started = actorOf(current);
     const priorAt = this.#at(prior?.round, prior?.turn), currentAt = this.#at(current?.round, current?.turn);
+    /* A new round with Initiative Each Round (Homebrew) : who starts isn't known until everyone rerolls (expireStart) */
+    const waitForOrder = (current?.round > prior?.round) && settings.value("homebrewInitiative");
 
     /* "Next turn" : never the turn the effect was made in */
     const done = this.#effects(e => (e.combat === combat.id) && (
       ((e.at === "turnEnd") && (e.actor === ended) && (priorAt > this.#at(e.round, e.turn)))
-      || ((e.at === "turnStart") && (e.actor === started) && (currentAt > this.#at(e.round, e.turn)))
+      || (!waitForOrder && (e.at === "turnStart") && (e.actor === started) && (currentAt > this.#at(e.round, e.turn)))
     ));
+    for(const effect of done){
+      log.debug("Expiring", effect.name, "on", effect.parent?.name);
+      await effect.delete();
+    }
+  }
+
+  /* The start of the current combatant's turn, once the round's new order is set (Initiative Each Round) */
+  static async expireStart(combat){
+    if(!game.users.activeGM?.isSelf) return;
+    const started = combat.combatant?.actor?.uuid;
+    const currentAt = this.#at(combat.round, combat.turn);
+    const done = this.#effects(e => (e.combat === combat.id) && (e.at === "turnStart") && (e.actor === started) && (currentAt > this.#at(e.round, e.turn)));
     for(const effect of done){
       log.debug("Expiring", effect.name, "on", effect.parent?.name);
       await effect.delete();
