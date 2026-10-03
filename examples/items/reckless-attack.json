@@ -1,0 +1,91 @@
+{
+  "name": "Reckless Attack",
+  "type": "feat",
+  "img": "icons/skills/melee/blade-tips-triple-bent-white.webp",
+  "system": {
+    "description": {
+      "value": "<p>You can throw aside all concern for defense to attack with increased ferocity. When you make your first attack roll on your turn, you can decide to attack recklessly. Doing so gives you Advantage on attack rolls using Strength until the start of your next turn, but attack rolls against you have Advantage during that time.</p><p><em>Macro Helper</em> : using it makes you Reckless until the start of your next turn.</p>",
+      "chat": ""
+    },
+    "identifier": "reckless-attack",
+    "source": {
+      "rules": "2024",
+      "book": "Macro Helper"
+    },
+    "activities": {
+      "mhRecklessAtk001": {
+        "type": "utility",
+        "name": "Reckless Attack",
+        "_id": "mhRecklessAtk001",
+        "sort": 100000,
+        "activation": {
+          "type": "special",
+          "value": null,
+          "override": false,
+          "condition": "Your first attack roll on your turn"
+        },
+        "consumption": {
+          "scaling": {
+            "allowed": false
+          },
+          "spellSlot": true,
+          "targets": []
+        },
+        "description": {
+          "chatFlavor": "Reckless until the start of your next turn.",
+          "value": "<p>You can throw aside all concern for defense to attack with increased ferocity. When you make your first attack roll on your turn, you can decide to attack recklessly. Doing so gives you Advantage on attack rolls using Strength until the start of your next turn, but attack rolls against you have Advantage during that time.</p><p><em>Macro Helper</em> : using it makes you Reckless until the start of your next turn.</p>"
+        },
+        "duration": {
+          "units": "inst",
+          "concentration": false,
+          "override": false
+        },
+        "effects": [],
+        "range": {
+          "override": true,
+          "units": "self"
+        },
+        "target": {
+          "template": {
+            "contiguous": false,
+            "units": "ft",
+            "type": ""
+          },
+          "affects": {
+            "choice": false,
+            "count": "1",
+            "type": "self",
+            "special": ""
+          },
+          "override": true,
+          "prompt": false
+        },
+        "uses": {
+          "spent": 0,
+          "recovery": [],
+          "max": ""
+        },
+        "img": "",
+        "roll": {
+          "formula": "",
+          "name": "",
+          "prompt": false,
+          "visible": false
+        }
+      }
+    },
+    "uses": {
+      "spent": 0,
+      "recovery": [],
+      "max": ""
+    },
+    "type": {
+      "value": "class",
+      "subtype": ""
+    },
+    "requirements": "Barbarian 2",
+    "properties": []
+  },
+  "effects": [],
+  "flags": {}
+}

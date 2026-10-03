@@ -22,7 +22,9 @@ export const CATALOG = {
   actors : ["updateActor", "createItem", "deleteItem", "createActiveEffect", "deleteActiveEffect"],
   chat : ["createChatMessage"],
   game : ["pauseGame", "updateWorldTime"],
-  dnd5e : ["dnd5e.rollAttack", "dnd5e.rollDamage", "dnd5e.preApplyDamage", "dnd5e.applyDamage", "dnd5e.rollInitiative",
+  macroHelper : ["macro-helper.targets", "macro-helper.preAttack", "macro-helper.attack", "macro-helper.preDamage",
+    "macro-helper.damage", "macro-helper.cardButtons", "macro-helper.cardButton"],
+  dnd5e : ["dnd5e.preRollAttackV2", "dnd5e.preRollSavingThrowV2", "dnd5e.rollAttack", "dnd5e.rollDamage", "dnd5e.preApplyDamage", "dnd5e.applyDamage", "dnd5e.rollInitiative",
     "dnd5e.restCompleted", "dnd5e.beginConcentrating", "dnd5e.endConcentration"],
 };
 

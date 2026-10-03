@@ -1,5 +1,5 @@
 import { module } from '../module.js';
-import { tokenOf, distanceBetween, getRange, getTokensWithin, highlightRange } from './tokens.js';
+import { tokenOf, distanceBetween, getRange, getTokensWithin, highlightRange, isOutOfAction, canSee } from './tokens.js';
 
 /* Opposite dispositions (hostile vs friendly) */
 export function isEnemy(a, b){
@@ -28,14 +28,15 @@ export function getThreats(thing, { range = 5, includeIncapacitated = false, inc
   const token = tokenOf(thing);
   if(!token) return [];
   return getTokensWithin(token, range, {
-    disposition : "enemy",
+    disposition : "nonAlly",
     includeHidden,
-    filter : t => includeIncapacitated || !INCAPACITATED.some(status => t.actor.statuses?.has(status)),
+    /* 2024 : an enemy who can see you and isn't Incapacitated */
+    filter : t => (includeIncapacitated || !INCAPACITATED.some(status => t.actor.statuses?.has(status))) && canSee(t, token),
   });
 }
 
 /**
- * Is a token threatened : an enemy (opposite disposition) within 5 feet that isn't incapacitated ?
+ * Is a token threatened : a creature not on its side (Hostile or Neutral) within 5 feet that isn't incapacitated ?
  * 5e : ranged attacks made while threatened have disadvantage.
  * @param {Token|TokenDocument|Actor} thing
  * @param {object} [options]  see getThreats
@@ -242,28 +243,37 @@ export function setTargets(tokens){
  * @param {boolean} [options.useTargets=true]        use the targets you already have in range instead of asking;
  *                                                   false clears your targets first and always asks
  * @param {boolean} [options.repeat=false]          the same token can be picked more than once
+ * @param {Function} [options.filter]              only tokens that pass (token) => boolean can be picked
+ * @param {boolean} [options.includeSelf=false]      the origin's own token can be picked too (Healing Hands, Mage Armor)
+ * @param {boolean} [options.sight=true]             only tokens the origin's token can see (Vision Rules setting); false : any
+ * @param {Function} [options.tokenColor]          (token) => "advantage" | "normal5e" | "disadvantage" : a colour per candidate (attacks)
  * @param {boolean} [options.long] [options.thrown]  passed to getRange
  * @returns {Promise<Token[]>}  the picks, empty if cancelled or nothing in range
  */
 export async function pickTargets(origin, { count = 1, range, disposition = "enemy", numberAllowed = Infinity, within = Infinity,
-  confirm = "auto", setTargets : target = true, useTargets = true, repeat = false, long = false, thrown = false, normalRange, notice = "" } = {}){
+  confirm = "auto", setTargets : target = true, useTargets = true, repeat = false, long = false, thrown = false, normalRange, notice = "", filter : only, includeSelf = false,
+  sight = true, tokenColor } = {}){
   const from = tokenOf(origin);
   if(!from) return warn(module.i18n("helpers.pick.noToken"));
   if(!useTargets) canvas.tokens.setTargets([]);
+  /* Only what the picker can see (Vision Rules) */
+  const filter = sight ? (t => canSee(from, t) && (!only || only(t))) : only;
 
   const isItem = (origin?.documentName === "Item") || !!origin?.item;
   const feet = range ?? (isItem ? getRange(origin, { long, thrown }) : Infinity);
-  const candidates = getTokensWithin(from, feet, { disposition });
+  const candidates = getTokensWithin(from, feet, { disposition, filter, includeSelf });
   if(!candidates.length) return warn(module.i18n("helpers.pick.none"));
 
   /* Your own targets in range win, nothing to ask */
-  const targeted = useTargets ? [...game.user.targets].filter(t => (t !== from) && (distanceBetween(from, t) <= feet)) : [];
+  const targeted = useTargets
+    ? [...game.user.targets].filter(t => ((t !== from) || includeSelf) && (distanceBetween(from, t) <= feet) && (!filter || filter(t)))
+    : [];
   if(targeted.length){
     if(!repeat || (targeted.length >= count)) return targeted.slice(0, count);
     return Array.from({ length : count }, (_, i) => targeted[Math.floor(i * targeted.length / count)]);
   }
 
-  const picks = await pickOnMap(from, feet, candidates, { count, numberAllowed, within, confirm, repeat, normalRange, notice });
+  const picks = await pickOnMap(from, feet, candidates, { count, numberAllowed, within, confirm, repeat, normalRange, notice, includeSelf, tokenColor });
   if(target && picks.length) setTargets(picks);
   return picks;
 }
@@ -274,9 +284,9 @@ function warn(message){
 }
 
 /* The clicking itself : overlay, banner, click + key listeners, all removed at the end */
-function pickOnMap(from, feet, candidates, { count, numberAllowed, within, confirm, repeat = false, normalRange, notice = "" }){
+function pickOnMap(from, feet, candidates, { count, numberAllowed, within, confirm, repeat = false, normalRange, notice = "", includeSelf = false, tokenColor }){
   const allowed = picks => Math.min(count, typeof numberAllowed === "function" ? numberAllowed(picks) : numberAllowed);
-  const highlight = highlightRange(from, feet, { tokens : candidates, normal : normalRange });
+  const highlight = highlightRange(from, feet, { tokens : candidates, normal : normalRange, showSelf : includeSelf, tokenColor });
   const hasLong = Number.isFinite(normalRange) && (normalRange < feet);
   const view = canvas.app.view;
   const picks = [];
@@ -291,7 +301,7 @@ function pickOnMap(from, feet, candidates, { count, numberAllowed, within, confi
       banner.innerHTML = `<strong>${module.format("helpers.pick.banner", { picked : picks.length, limit })}</strong>`
         + (picks.length ? `<span class="picks">${Handlebars.escapeExpression(listPicks(picks))}</span>` : "")
         + `<span>${module.i18n(repeat ? "helpers.pick.keysRepeat" : "helpers.pick.keys")}</span>`
-        + `<span class="legend">${module.i18n(hasLong ? "helpers.pick.legendLong" : "helpers.pick.legend")}</span>`
+        + `<span class="legend">${module.i18n(tokenColor ? "helpers.pick.legendModes" : hasLong ? "helpers.pick.legendLong" : "helpers.pick.legend")}</span>`
         + (notice ? `<span class="notice">${Handlebars.escapeExpression(notice)}</span>` : "")
         + (message ? `<span class="warning">${message}</span>` : "");
     };
@@ -313,9 +323,11 @@ function pickOnMap(from, feet, candidates, { count, numberAllowed, within, confi
       finish([...picks]);
     };
 
+    /* On the map : the canvas, or a layer drawn over it (Dice So Nice's dice), not a window or the sidebar */
+    const onMap = target => (target === view) || ((target?.tagName === "CANVAS") && !target.closest?.(".application, #sidebar, #ui-left, #ui-right, #hotbar"));
     const onPointer = event => {
       const remove = repeat && (event.button === 2);
-      if((event.target !== view) || ((event.button !== 0) && !remove)) return;
+      if(!onMap(event.target) || ((event.button !== 0) && !remove)) return;
       const point = canvas.canvasCoordinatesFromClient({ x : event.clientX, y : event.clientY });
       const token = candidates.find(t => t.bounds.contains(point.x, point.y));
       /* Right clicks elsewhere still pan the map */
@@ -369,4 +381,60 @@ function listPicks(picks){
   const counts = new Map();
   for(const t of picks) counts.set(t, (counts.get(t) ?? 0) + 1);
   return [...counts].map(([t, n]) => (n > 1) ? `${t.name} ×${n}` : t.name).join(", ");
+}
+
+/* ---------- Flanking (DMG optional rule) ---------- */
+
+/* Does the segment p -> q cross a vertical (x = X, y0..y1) or horizontal (y = Y, x0..x1) edge ? Corners count. */
+function crosses(p, q, { x, y0, y1 } = {}, { y, x0, x1 } = {}){
+  const eps = 1e-6;
+  if(x !== undefined){
+    if(Math.abs(q.x - p.x) < eps) return false;
+    const t = (x - p.x) / (q.x - p.x);
+    if((t < -eps) || (t > 1 + eps)) return false;
+    const at = p.y + (t * (q.y - p.y));
+    return (at >= y0 - eps) && (at <= y1 + eps);
+  }
+  if(Math.abs(q.y - p.y) < eps) return false;
+  const t = (y - p.y) / (q.y - p.y);
+  if((t < -eps) || (t > 1 + eps)) return false;
+  const at = p.x + (t * (q.x - p.x));
+  return (at >= x0 - eps) && (at <= x1 + eps);
+}
+
+/**
+ * Who flanks a target with the attacker (DMG optional rule) : an ally of the attacker, also next to the target,
+ * on the opposite side. A line between the two flankers' centers must pass through opposite sides or opposite
+ * corners of the target's space. Allies that are down or incapacitated don't count.
+ * @param {Token|TokenDocument|Actor} attacker
+ * @param {Token|TokenDocument|Actor} target
+ * @returns {Token|null}  the ally flanking with the attacker, null if the target isn't flanked
+ */
+export function getFlanker(attacker, target){
+  const a = tokenOf(attacker), t = tokenOf(target);
+  if(!a || !t || (a === t)) return null;
+  const reach = canvas.scene.grid.distance;
+  if(distanceBetween(a, t) > reach) return null;
+
+  const { x : x0, y : y0 } = t.document;
+  const x1 = x0 + t.w, y1 = y0 + t.h;
+  const opposite = (p, q) => (crosses(p, q, { x : x0, y0, y1 }) && crosses(p, q, { x : x1, y0, y1 }))
+    || (crosses(p, q, {}, { y : y0, x0, x1 }) && crosses(p, q, {}, { y : y1, x0, x1 }));
+
+  return canvas.tokens.placeables.find(ally => (ally !== a) && (ally !== t) && ally.actor
+    && isAlly(ally, a)
+    && !isOutOfAction(ally)
+    && !INCAPACITATED.some(status => ally.actor.statuses?.has(status))
+    && (distanceBetween(ally, t) <= reach)
+    && opposite(a.center, ally.center)) ?? null;
+}
+
+/**
+ * Is the attacker flanking the target with an ally (see getFlanker) ?
+ * @param {Token|TokenDocument|Actor} attacker
+ * @param {Token|TokenDocument|Actor} target
+ * @returns {boolean}
+ */
+export function isFlanking(attacker, target){
+  return !!getFlanker(attacker, target);
 }

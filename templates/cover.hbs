@@ -1,0 +1,15 @@
+{{!-- Cover, GM only : per target, none / half (+2) / three-quarters (+5) / total. Context : cover from message.js coverContext. --}}
+{{#with cover}}
+<section class="macro-helper-cover">
+    <i class="fa-fw fa-solid fa-shield-halved" data-tooltip="{{ localize "cover.title" }}" aria-label="{{ localize "cover.title" }}"></i>
+    {{#each targets}}
+    <span class="cover-target">
+        {{#if ../named}}<span class="name">{{ name }}</span>{{/if}}
+        {{#each levels}}
+        <button type="button" class="{{#if active}}active{{/if}}" data-action="setCover" data-target="{{ ../uuid }}" data-level="{{ id }}"
+                data-tooltip="{{ tooltip }}" aria-label="{{ tooltip }}">{{ label }}</button>
+        {{/each}}
+    </span>
+    {{/each}}
+</section>
+{{/with}}

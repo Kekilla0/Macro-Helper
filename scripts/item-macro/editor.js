@@ -127,7 +127,7 @@ export class MacroEditor extends MacroConfig{
   }
 
   async _processSubmitData(event, form, submitData, options){
-    if(submitData.type === "script" && !game.user.can("MACRO_SCRIPT"))
+    if((submitData.type === "script" && !game.user.can("MACRO_SCRIPT")) || !itemMacro.playersMayEdit())
       return ui.notifications.error("itemMacro.error.permission", { localize : true });
 
     this.document.updateSource(submitData);

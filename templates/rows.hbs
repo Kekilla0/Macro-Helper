@@ -1,0 +1,54 @@
+{{!-- One row per target : its save (a button per ability for its owner / the GM, then the result), then its damage
+      or healing sized by that result. Context : rows from message.js buildRows. --}}
+<ul class="unlist macro-helper-rows">
+    {{#each rows}}
+    <li class="macro-helper-row">
+        <img class="token" src="{{ img }}" alt="">
+        <span class="name">{{ name }}</span>
+        {{#each saves}}
+        <button type="button" class="save" data-action="rowSave" data-target="{{ ../uuid }}" data-ability="{{ ability }}"
+                data-tooltip="{{ hint }}" aria-label="{{ hint }}">
+            <i class="fa-solid fa-shield-heart" inert></i> {{ label }}
+        </button>
+        {{/each}}
+        {{#if covered}}<span class="result covered">{{ covered }}</span>{{/if}}
+        {{#if pending}}{{#unless saves.length}}<span class="pending"><i class="fa-solid fa-hourglass-half" inert></i></span>{{/unless}}{{/if}}
+        {{#with result}}
+        <span class="result {{#if success}}success{{else}}failure{{/if}}"{{#if detail}} data-tooltip="{{ detail }}"{{/if}}>
+            {{ total }} <i class="fa-solid {{#if success}}fa-check{{else}}fa-xmark{{/if}}" inert></i>
+        </span>
+        {{/with}}
+        {{#if canReroll}}
+        <button type="button" class="icon" data-action="rowReroll" data-message="{{ saveMessage }}" data-tooltip="{{ localize "rerolls.reroll" }}" aria-label="{{ localize "rerolls.reroll" }}">
+            <i class="fa-solid fa-rotate" inert></i>
+        </button>
+        {{/if}}
+        {{#if lucky}}
+        <button type="button" class="icon" data-action="rowLucky" data-message="{{ saveMessage }}" data-tooltip="{{ lucky }}" aria-label="{{ lucky }}">
+            <i class="fa-solid fa-clover" inert></i>
+        </button>
+        {{/if}}
+        {{#if inspire}}
+        <button type="button" class="icon" data-action="rowInspire" data-message="{{ saveMessage }}" data-tooltip="{{ inspire }}" aria-label="{{ inspire }}">
+            <i class="fa-solid fa-music" inert></i>
+        </button>
+        {{/if}}
+        {{#with apply}}
+        <button type="button" class="apply" data-action="rowApply" data-target="{{ ../uuid }}" data-multiplier="{{ multiplier }}">
+            <i class="fa-solid fa-reply-all fa-flip-horizontal" inert></i> {{ localize label }}
+        </button>
+        {{/with}}
+        {{#with applied}}
+        <span class="applied {{#if healing}}healing{{else}}damage{{/if}}" data-tooltip="{{ localize "rollItem.row.applied" }}">{{ text }}</span>
+        {{/with}}
+        {{#if effectApply}}
+        <button type="button" class="apply" data-action="rowEffect" data-target="{{ uuid }}">
+            <i class="fa-solid fa-reply-all fa-flip-horizontal" inert></i> {{ effectApply }}
+        </button>
+        {{/if}}
+        {{#if effectApplied}}
+        <span class="applied healing" data-tooltip="{{ localize "rollItem.row.applied" }}"><i class="fa-solid fa-check" inert></i> {{ effectApplied }}</span>
+        {{/if}}
+    </li>
+    {{/each}}
+</ul>

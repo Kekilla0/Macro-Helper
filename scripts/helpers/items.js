@@ -1,6 +1,12 @@
 import { module } from '../module.js';
+import { conditions } from '../rules/conditions.js';
+import { homebrew } from '../rules/homebrew.js';
+import { actions } from '../rules/actions.js';
+import { weapons } from '../rules/weapons.js';
+import { masteries } from '../roll-item/masteries.js';
+import { barbarian } from '../rules/classes/barbarian.js';
 import { rollItem } from '../roll-item/roll-item.js';
-import { tokenOf, actorOf, distanceBetween, getRange } from './tokens.js';
+import { tokenOf, actorOf, distanceBetween, getRange, isOutOfAction } from './tokens.js';
 import { pickTargets, getThreats } from './targets.js';
 import { findItem } from './actors.js';
 
@@ -18,12 +24,38 @@ import { findItem } from './actors.js';
  */
 
 /**
- * The attack mode to use against a target, for weapons that can be thrown :
- *   within reach                     -> the weapon's melee mode ("oneHanded"...), always given explicitly :
- *                                       dnd5e otherwise reuses the last mode, so a stab after a throw would be a throw
- *   beyond reach, within thrown range -> "thrown" (uses one up, not with Returning)
- *   weapons that can only be thrown (Dart) -> "thrown"
- * Weapons that can't be thrown : null (dnd5e's usual mode).
+ * Is a shield equipped ?
+ * @param {Actor|Token|Item} thing   the creature (or one of its items)
+ * @returns {boolean}
+ */
+export function hasShieldEquipped(thing){
+  const actor = actorOf(thing);
+  return !!actor?.items?.some(i => (i.type === "equipment") && (i.system.type?.value === "shield") && i.system.equipped);
+}
+
+/**
+ * Is the hand not holding this weapon free : no shield and no other weapon equipped (natural weapons don't count) ?
+ * Read from what's equipped, so a Versatile weapon is used two-handed when nothing else is in hand.
+ * @param {Item} item   the weapon in hand
+ * @returns {boolean}
+ */
+export function isOtherHandFree(item){
+  const actor = item?.actor;
+  if(!actor?.items) return false;
+  if(hasShieldEquipped(actor)) return false;
+  return !actor.items.some(i => (i !== item) && (i.id !== item.id) && (i.type === "weapon") && i.system.equipped
+    && (i.system.type?.value !== "natural"));
+}
+
+/**
+ * The attack mode to use against a target :
+ *   Versatile weapons : "twoHanded" when the other hand is free (isOtherHandFree), else "oneHanded"
+ *   weapons that can be thrown :
+ *     within reach                      -> the melee mode, always given explicitly : dnd5e otherwise reuses the
+ *                                          last mode, so a stab after a throw would be a throw
+ *     beyond reach, within thrown range -> "thrown" (uses one up, not with Returning)
+ *     weapons that can only be thrown (Dart) -> "thrown"
+ * Anything else : null (dnd5e's usual mode).
  * @param {Item} item
  * @param {Token|TokenDocument} target
  * @param {object} [options]
@@ -32,8 +64,10 @@ import { findItem } from './actors.js';
  */
 export function attackModeFor(item, target, { long = true } = {}){
   const modes = (item?.system?.attackModes ?? []).map(m => m.value).filter(Boolean);
-  if(!modes.includes("thrown")) return null;
-  const melee = modes.find(m => !m.startsWith("thrown")) ?? null;
+  const versatile = !!item?.system?.properties?.has("ver") && modes.includes("oneHanded") && modes.includes("twoHanded");
+  const melee = versatile ? (isOtherHandFree(item) ? "twoHanded" : "oneHanded")
+    : (modes.find(m => !m.startsWith("thrown")) ?? null);
+  if(!modes.includes("thrown")) return versatile ? melee : null;
 
   const from = tokenOf(item), to = tokenOf(target);
   if(!from || !to) return melee ?? "thrown";
@@ -96,7 +130,7 @@ function attackFailed(item, message, error){
  * @param {Item} item
  * @param {object} [options]
  * @param {number} [options.count=1]                 most targets
- * @param {"enemy"|"ally"|"any"} [options.disposition="enemy"]  who can be picked
+ * @param {"nonAlly"|"enemy"|"ally"|"any"} [options.disposition="nonAlly"]  who can be picked : nonAlly = anyone not on the attacker's side (Neutral too)
  * @param {number} [options.within]                  feet the targets must be within of each other
  * @param {boolean} [options.long=true]              ranged / thrown : allow targets out to long range (with disadvantage)
  * @param {"auto"|"enter"} [options.confirm="auto"]  finish as soon as the most allowed are picked, or wait for Enter
@@ -106,11 +140,12 @@ function attackFailed(item, message, error){
  * @param {boolean} [options.repeat=false]           the same target can be picked more than once (one attack per pick)
  * @param {string|Activity} [options.activity]       attack activity, or its id / name, default the first
  * @param {boolean} [options.used=false]             dnd5e has already used the activity : don't refuse it for having no uses left
+ * @param {Function} [options.filter]              only tokens that pass (token) => boolean can be picked (Cleave : next to the first)
  * @returns {Promise<{ attack : Activity, targets : Token[], attackMode : Function, disadvantage : Function }|null>}
  *          null if cancelled or refused (with a notification saying why)
  */
-export async function pickAttack(item, { count = 1, disposition = "enemy", within = Infinity, long = true, confirm = "auto",
-  clearTargets = true, strict = true, threatened : threatRule = true, repeat = false, activity, used = false } = {}){
+export async function pickAttack(item, { count = 1, disposition = "nonAlly", within = Infinity, long = true, confirm = "auto",
+  clearTargets = true, strict = true, threatened : threatRule = true, repeat = false, activity, used = false, filter } = {}){
   const fail = (message, error) => attackFailed(item, message, error);
 
   try {
@@ -131,7 +166,7 @@ export async function pickAttack(item, { count = 1, disposition = "enemy", withi
     const attacker = tokenOf(item);
     if(!attacker) return fail(module.format("helpers.attack.noToken", { name : actor.name }));
     if(!canvas.ready || (attacker.document.parent !== canvas.scene)) return fail(module.format("helpers.attack.otherScene", { name : actor.name }));
-    if((actor.system.attributes?.hp?.value ?? 1) <= 0) return fail(module.format("helpers.attack.down", { name : actor.name }));
+    if(isOutOfAction(attacker)) return fail(module.format("helpers.attack.down", { name : actor.name }));
 
     /* Range : thrown weapons reach as far as they can be thrown */
     const thrown = canThrow(item);
@@ -148,15 +183,22 @@ export async function pickAttack(item, { count = 1, disposition = "enemy", withi
        (a bow : all of its range, a dagger : everything past the stab) */
     const threats = threatRule ? getThreats(attacker) : [];
     const threatened = threats.length > 0;
-    const shownNormal = threatened ? (isRangedItem(item) ? 0 : getRange(attack)) : normalRange;
-    const notice = threatened ? module.format("helpers.attack.threatened", { names : threats.map(t => t.name).join(", ") }) : "";
+    /* The attacker's own conditions (Prone, Blinded, Poisoned...) : every attack has disadvantage, the map is all red */
+    const hampered = conditions.attackerDisadvantages(actor, attack.ability);
+    const shownNormal = hampered.length ? 0 : threatened ? (isRangedItem(item) ? 0 : getRange(attack)) : normalRange;
+    const notice = [
+      hampered.length ? module.format("helpers.attack.hampered", { conditions : hampered.join(", ") }) : "",
+      threatened ? module.format("helpers.attack.threatened", { names : threats.map(t => t.name).join(", ") }) : "",
+    ].filter(Boolean).join(" ");
 
-    /* Pick */
+    /* Pick : each candidate coloured by how the attack would roll against it */
+    const longOrThreat = t => isLongRange(item, t) || (threatened && isRangedAttack(item, t));
     const targets = await pickTargets(item, {
       count : Math.max(1, Math.floor(count) || 1),
-      range, within, disposition, confirm, notice, repeat,
+      range, within, disposition, confirm, notice, repeat, filter,
       normalRange : shownNormal,
       useTargets : !clearTargets,
+      tokenColor : t => predictMode(attack, t, { attackMode : attackModeFor(item, t, { long }), disadvantage : longOrThreat(t) }),
     });
     if(!targets.length) return null;   // cancelled, or nothing in range (pickTargets said which)
 
@@ -174,7 +216,8 @@ export async function pickAttack(item, { count = 1, disposition = "enemy", withi
     }
 
     /* Disadvantage at long range, or for a ranged / thrown attack while threatened */
-    const disadvantage = target => isLongRange(item, target) || (threatened && isRangedAttack(item, target));
+    const disadvantage = target => (isLongRange(item, target) && module.i18n("reasons.longRange"))
+      || ((threatened && isRangedAttack(item, target)) && module.i18n("reasons.threatened"));
     return { attack, targets, attackMode, disadvantage };
   }
   catch(error){
@@ -306,137 +349,114 @@ export async function spendUses(item, amount = 1, { warn = true } = {}){
  * @returns {Promise<object|null>}  dnd5e's usage results, null if it wasn't used (no uses left, cancelled...)
  */
 export async function useActivity(item, { activity, configure = false, event } = {}){
-  const activities = item?.system?.activities;
-  if(!activities?.size) return null;
-  const chosen = activity
-    ? activities.find(a => (a.id === activity) || (a.name === activity) || (a.type === activity))
-    : activities.contents[0];
+  const chosen = findActivity(item, activity);
   if(!chosen) return null;
   return (await chosen.use({ event }, { configure }, {})) ?? null;
 }
 
-/* ---------- Multiattack ----------
- * dnd5e keeps Multiattack as text only, so it's read from the feature's description :
- *   "makes two attacks with its hand axes"                          -> Hand Axe × 2
- *   "makes three attacks: one with its bite and two with its claws" -> Bite × 1, then Claw × 2
- *   "makes two attacks, using Scimitar or Shortbow in any combination" -> 2, split between Scimitar and Shortbow
- *   "makes two melee attacks or two ranged attacks" (no weapon named) -> 2, split between all its attacks
- * Sentences about replacing an attack ("It can replace one attack with Spellcasting") are skipped.
+/**
+ * Use an item the dnd5e way, then apply the healing (or damage) it rolled to a creature, yourself by default.
+ * For features only you benefit from (Second Wind) : `return item.useAndApply();` instead of a tray to click.
+ * Works with Roll Item's card (rolled onto it) and with dnd5e's own (rolled here when its card has no roll).
+ * @param {Item} item
+ * @param {object} [options]
+ * @param {string} [options.activity]                activity id, name or type, default the first
+ * @param {Actor|Token|TokenDocument} [options.to]    who it lands on, default the item's owner
+ * @param {number} [options.max]                       never more than this (Stone's Endurance : the damage just taken)
+ * @param {Event} [options.event]
+ * @returns {Promise<number|null>}  the amount applied (before resistances), null if the item wasn't used or rolled nothing
  */
+export async function useAndApply(item, { activity, to, max, event } = {}){
+  const chosen = findActivity(item, activity);
+  if(!chosen) return null;
+  const results = (await chosen.use({ event }, { configure : false }, {})) ?? null;
+  if(!results) return null;
 
-const NUMBER_WORDS = { once : 1, twice : 2, thrice : 3, one : 1, two : 2, three : 3, four : 4, five : 5, six : 6, seven : 7, eight : 8, nine : 9, ten : 10 };
-const NUMBER = new RegExp(`\\b(\\d+|${Object.keys(NUMBER_WORDS).join("|")})\\b`, "i");
+  /* Roll Item makes its card after the use : wait for it */
+  const card = (await results[module.id]?.card) ?? ((results.message?.documentName === "ChatMessage") ? results.message : null);
+  const { DamageRoll } = CONFIG.Dice;
+  let rolls = (card?.rolls ?? []).filter(r => r instanceof DamageRoll);
+  if(!rolls.length && chosen.rollDamage) rolls = (await chosen.rollDamage({ event }, { configure : false }, {})) ?? [];
+  if(!rolls.length) return null;
 
-function numberIn(text){
-  const match = String(text ?? "").match(NUMBER);
-  return match ? (NUMBER_WORDS[match[1].toLowerCase()] ?? Number(match[1])) : null;
+  const target = actorOf(to) ?? item.actor;
+  let left = Number.isFinite(max) ? Math.max(0, max) : Infinity;
+  const damages = dnd5e.dice.aggregateDamageRolls(rolls, { respectProperties : true }).map(roll => {
+    const value = Math.min(Math.max(0, roll.total), left);
+    left -= value;
+    return { properties : new Set(roll.options.properties ?? []), type : roll.options.type, value };
+  });
+  await target.applyDamage(damages, { isDelta : true, ...(card ? { origin : card } : {}) });
+  return damages.reduce((sum, d) => sum + d.value, 0);
 }
 
-/* Plain text of an item's description */
+/* An item's activity by id, name or type, default the first */
+function findActivity(item, activity){
+  const activities = item?.system?.activities;
+  if(!activities?.size) return null;
+  if(!activity) return activities.contents[0];
+  return activities.find(a => (a.id === activity) || (a.name === activity) || (a.type === activity)) ?? null;
+}
+
+/**
+ * The conditions a chat card's activity puts on those it affects (its effects' statuses and riders), including an
+ * on-hit save's on a Roll Item attack card. For a save rolled from that card : what is it a save against ?
+ * (Brave : advantage when the card applies Frightened.)
+ * @param {ChatMessage} card
+ * @returns {Set<string>}  status ids ("frightened", "prone"...)
+ */
+export function getAppliedConditions(card){
+  const found = new Set();
+  const activities = [card?.getAssociatedActivity?.(), card?.system?.riderActivity].filter(Boolean);
+  for(const a of activities){
+    for(const link of a.applicableEffects ?? []){
+      const effect = link.uuid ? fromUuidSync(link.uuid, { strict : false }) : a.item?.effects.get(link._id);
+      for(const status of effect?.statuses ?? []) found.add(status);
+      for(const status of effect?.system?.rider?.statuses ?? []) found.add(status);
+    }
+  }
+  return found;
+}
+
+/* ---------- Multiattack ----------
+ * A creature's Multiattack written out in its item macro, then made in one go :
+ *   [{ weapon : "Hand Axe", count : 2 }]                          Orc Warrior
+ *   [{ weapon : "Bite", count : 1 }, { weapon : "Claw", count : 2 }]   Dragon : the Bite, then the Claws
+ *   [{ weapon : ["Shortsword", "Longbow"], count : 2 }]            Scout : asks how to split the 2 between them
+ */
+
+/* Plain text of an item's description (getHealing) */
 function descriptionOf(item){
   const html = item?.system?.description?.value;
   if(!html) return "";
   return (new DOMParser().parseFromString(html, "text/html").body.textContent ?? "").replace(/\s+/g, " ").trim();
 }
 
-/* An item's name, singular or plural : "Hand Axe" matches "hand axes", "Claw" matches "claws" */
-function nameMatcher(item){
-  const name = (item?.name ?? "").replace(/\(.*?\)/g, "").trim().toLowerCase();
-  if(!name) return null;
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`\\b${escaped}(?:e?s)?\\b`, "i");
-}
-
-/* The actor's items that make attacks : weapons, and features / spells with an attack activity */
-function attackItems(actor){
-  return (actor?.items?.contents ?? []).filter(i => i.system.activities?.getByType?.("attack")?.length);
-}
-
-/* The Multiattack feature : the item itself when given one that doesn't attack, else found by name */
-function multiattackFeature(thing, feature){
-  const isFeature = (thing?.documentName === "Item") && !attackItems(thing.actor).includes(thing);
-  return isFeature ? thing : findItem(thing, feature);
-}
-
 /**
- * The attacks in a creature's Multiattack, in order : [{ items, count, choice }].
- * `items` has one item, or several when the attacks can be made with any of them (`choice` true).
- * @param {Actor|Token|Item} thing          the creature, or its Multiattack feature
- * @param {object} [options]
- * @param {string|string[]} [options.feature="Multiattack"]  the feature to read (see findItem)
- * @returns {{ items : Item[], count : number, choice : boolean }[]}  empty without a Multiattack or any attacks
- */
-export function getMultiattackPlan(thing, { feature = "Multiattack" } = {}){
-  const actor = actorOf(thing);
-  const text = descriptionOf(multiattackFeature(thing, feature));
-  const weapons = attackItems(actor).map(item => ({ item, named : nameMatcher(item) })).filter(w => w.named);
-  if(!text || !weapons.length) return [];
-
-  const plan = [];
-  let total = null;
-  for(const sentence of text.split(/(?<=\.)\s+/)){
-    if(/\breplaces?\b/i.test(sentence)) continue;
-    const sentenceCount = numberIn(sentence);
-    if(/\battacks?\b/i.test(sentence)) total ??= sentenceCount;
-
-    for(const clause of sentence.split(/[,:;]|\band\b/)){
-      const items = weapons.filter(w => w.named.test(clause)).map(w => w.item);
-      if(!items.length) continue;
-      /* The clause's own number ("two with its claws"), else the sentence's ("two attacks, using Scimitar or Shortbow") */
-      const count = numberIn(clause) ?? sentenceCount ?? 1;
-      if(plan.some(p => (p.items.length === items.length) && p.items.every(i => items.includes(i)))) continue;
-      plan.push({ items, count, choice : items.length > 1 });
-    }
-  }
-
-  /* No weapon named : that many attacks, with any of them */
-  if(!plan.length && total){
-    const items = weapons.map(w => w.item);
-    plan.push({ items, count : total, choice : items.length > 1 });
-  }
-  return plan;
-}
-
-/**
- * How many attacks this item gets in its owner's Multiattack (see getMultiattackPlan) :
- * Hand Axe in "two attacks with its hand axes" -> 2, Bite in "one with its bite and two with its claws" -> 1.
- * @param {Item} item
- * @param {object} [options]
- * @param {string|string[]} [options.feature="Multiattack"]
- * @param {number} [options.fallback=1]  when the Multiattack doesn't include this item, or there is none
- * @returns {number}
- */
-export function getMultiattack(item, { feature = "Multiattack", fallback = 1 } = {}){
-  const counts = getMultiattackPlan(item?.actor, { feature }).filter(p => p.items.includes(item)).map(p => p.count);
-  return counts.length ? counts.reduce((a, b) => a + b, 0) : fallback;
-}
-
-/**
- * The whole Multiattack in one click : for each weapon in it, in order, pick targets on the map and attack
- * (pickAndAttack, one card per weapon). "Scimitar or Shortbow" asks how to split the attacks first.
+ * Make a written Multiattack : for each weapon in turn, pick targets on the map and attack (pickAndAttack, one card
+ * per weapon). An entry with several weapons asks how to split its attacks first.
  *   repeat (default true) lets a target take more than one of a weapon's attacks; it's allowed, never required.
  *   Picking fewer than a weapon's attacks is fine (Enter), Esc skips that weapon and carries on with the next.
- * @param {Actor|Token|Item} thing          the creature, or its Multiattack feature (from its item macro)
+ * @param {Actor|Token|Item} thing   the creature (or any of its items)
+ * @param {{ weapon : string|Item|Array<string|Item>, count : number }[]} plan
  * @param {object} [options]
- * @param {string|string[]} [options.feature="Multiattack"]
  * @param {boolean} [options.repeat=true]   the same target can be picked more than once for a weapon
- * @param {Event} [options.event]            advantage / disadvantage keys
- * @param {object} [options.attack]          more pickAndAttack options for every weapon (disposition, long, strict...)
- * @returns {Promise<object[]|null>}  each weapon's pickAndAttack result, null if there's no Multiattack or it was cancelled
+ * @param {Event} [options.event]           advantage / disadvantage keys
+ * @param {object} [options.attack]         more pickAndAttack options for every weapon (disposition, long, strict...)
+ * @returns {Promise<object[]|null>}  each weapon's pickAndAttack result, null if a weapon is missing or it was cancelled
  */
-export async function multiattack(thing, { feature = "Multiattack", repeat = true, event, attack = {} } = {}){
+export async function multiattack(thing, plan = [], { repeat = true, event, attack = {} } = {}){
   const actor = actorOf(thing);
-  const plan = getMultiattackPlan(thing, { feature });
-  if(!plan.length){
-    ui.notifications.warn(module.format("helpers.multiattack.none", { name : actor?.name ?? "" }));
-    return null;
-  }
-
-  /* Choices first, so the attacks themselves run back to back */
   const steps = [];
   for(const entry of plan){
-    if(!entry.choice){ steps.push({ item : entry.items[0], count : entry.count }); continue; }
-    const split = await splitAttacks(entry);
+    const items = [entry.weapon].flat().map(w => (w?.documentName === "Item") ? w : findItem(actor, w)).filter(Boolean);
+    if(!items.length){
+      ui.notifications.warn(module.format("helpers.multiattack.missing", { name : actor?.name ?? "", weapon : [entry.weapon].flat().join(" / ") }));
+      return null;
+    }
+    const count = Math.max(1, Math.floor(entry.count) || 1);
+    if(items.length === 1){ steps.push({ item : items[0], count }); continue; }
+    const split = await splitAttacks({ items, count });
     if(!split) return null;
     steps.push(...split);
   }
@@ -539,4 +559,33 @@ export async function setBaseDamage(item, { number, denomination, types, bonus }
 
   if(foundry.utils.isEmpty(changes)) return null;
   return updateItem(item, changes);
+}
+
+/**
+ * How an attack would roll against a target, before rolling : "advantage", "disadvantage" or "normal5e" (neither, or
+ * both cancelling). The same rules the roll uses (conditions, sight, Dodging, flanking, Help, Sap / Vex, Heavy, Reckless),
+ * plus long range / threatened. For the pick map's colours; the keys or prompt you choose aren't known yet.
+ * @param {Activity} activity   the attack
+ * @param {Token} target
+ * @param {object} [options]
+ * @param {string} [options.attackMode]
+ * @param {boolean} [options.disadvantage]  long range, ranged while threatened...
+ * @returns {"advantage"|"normal5e"|"disadvantage"}
+ */
+export function predictMode(activity, target, { attackMode, disadvantage = false } = {}){
+  const roll = { options : {} };
+  const config = { subject : activity, rolls : [roll], attackMode, ability : activity?.ability, [module.id] : { target : target?.document?.uuid } };
+  try {
+    conditions.onPreRollAttack(config);
+    homebrew.onPreRollAttack(config);
+    actions.onPreRollAttack(config);
+    masteries.onPreRollAttack(config);
+    barbarian.onPreRollAttack(config);
+    const ranged = String(activity?.getActionType?.(attackMode) ?? "").startsWith("r");
+    if(weapons.isHeavyFor(activity?.actor, activity?.item, ranged)) roll.options.disadvantage = true;
+  } catch(error){
+    console.warn(`${module.title} | predicting the attack's mode`, error);
+  }
+  const adv = !!roll.options.advantage, dis = !!roll.options.disadvantage || !!disadvantage;
+  return (adv && !dis) ? "advantage" : (dis && !adv) ? "disadvantage" : "normal5e";
 }
