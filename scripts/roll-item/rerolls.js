@@ -3,7 +3,25 @@ import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { findItem } from '../helpers/actors.js';
 import { spendUses } from '../helpers/items.js';
+import { bard } from '../rules/classes/bard.js';
 const log = logger.for(import.meta.url);
+
+/**
+ * A die added to a roll already made (Bardic Inspiration) : the same roll, with "+ 1d6" rolled onto its end.
+ * @param {Roll} roll
+ * @param {string} formula   "1d6"
+ * @returns {Promise<{ updated : Roll, extra : Roll }>}
+ */
+export async function addDie(roll, formula){
+  const extra = await new Roll(formula).evaluate();
+  const updated = roll.constructor.fromData(roll.toJSON());
+  const { RollTerm } = foundry.dice.terms;
+  updated.terms.push(RollTerm.fromData({ class : "OperatorTerm", operator : "+", evaluated : true }));
+  for(const term of extra.terms) updated.terms.push(RollTerm.fromData(term.toJSON()));
+  updated._formula = updated.constructor.getFormula(updated.terms);
+  updated._total = updated._evaluateTotal();
+  return { updated, extra };
+}
 
 /**
  * A second d20 for a roll already made, keeping the higher ("kh", advantage) or lower ("kl", disadvantage).
@@ -119,21 +137,25 @@ export class rerolls{
     const [roll] = message?.rolls ?? [];
     const actor = message?.getAssociatedActor?.() ?? null;
     /* An automatic failure fails whatever is rolled */
-    if(message?.getFlag?.(module.id, "autoFail")) return { reroll : false, lucky : null, actor };
+    if(message?.getFlag?.(module.id, "autoFail")) return { reroll : false, lucky : null, inspiration : null, actor };
     const reroll = !!(message?.isOwner || game.user.isGM);
     const feat = actor?.isOwner && settings.value("traitRules") && this.luckyOf(actor);
     const lucky = (feat && !message.getFlag(module.id, "lucky") && (Number(roll?.options?.advantageMode ?? 0) !== 1)) ? feat : null;
-    return { reroll, lucky, actor };
+    /* Bardic Inspiration : the creature's owner, on a failed test (not initiative), once */
+    const inspired = actor?.isOwner && !this.isInitiative(message) && !message.getFlag(module.id, "bardic") && bard.failed(roll)
+      ? bard.inspirationOf(actor) : null;
+    return { reroll, lucky, inspiration : inspired, actor };
   }
 
   /* The buttons, styled like an attack card's (icon buttons in an icon row) */
   static addButtons(message, html){
     if(!settings.value("rollItem") || !this.isTest(message) || !message.isContentVisible) return;
     if(html.querySelector(`.${module.id}-rerolls`)) return;
-    const { reroll, lucky, actor } = this.optionsFor(message);
+    const { reroll, lucky, inspiration, actor } = this.optionsFor(message);
     const buttons = [];
     if(reroll) buttons.push({ id : "reroll", icon : "fa-rotate", label : module.i18n("rerolls.reroll") });
     if(lucky) buttons.push({ id : "lucky", icon : "fa-clover", label : module.format("feats.lucky.adv", { name : lucky.name, left : lucky.system.uses.value }) });
+    if(inspiration) buttons.push({ id : "bardic", icon : "fa-music", label : module.format("classes.bard.use", { die : inspiration.die }) });
     if(!buttons.length) return;
 
     const row = document.createElement("section");
@@ -151,7 +173,7 @@ export class rerolls{
       button.addEventListener("click", async event => {
         event.preventDefault();
         button.disabled = true;
-        try { await ((b.id === "lucky") ? this.lucky(message, actor) : this.reroll(message, event)); }
+        try { await ((b.id === "lucky") ? this.lucky(message, actor) : (b.id === "bardic") ? this.inspire(message, actor) : this.reroll(message, event)); }
         catch(error){ console.error("Macro Helper | reroll", error); ui.notifications.warn(error.message); }
         finally { button.disabled = false; }
       });
@@ -193,6 +215,16 @@ export class rerolls{
     await this.replace(message, result.updated, result.extra ? [result.extra] : []);
     await spendUses(feat, 1, { warn : false });
     await message.setFlag(module.id, "lucky", true);
+  }
+
+  /* Bardic Inspiration on a save / check message : its die added to the roll, the mark gone */
+  static async inspire(message, actor){
+    const inspiration = bard.inspirationOf(actor);
+    if(!inspiration || !message.isOwner) return;
+    const { updated, extra } = await addDie(message.rolls[0], inspiration.die);
+    await this.replace(message, updated, [extra]);
+    await message.setFlag(module.id, "bardic", true);
+    if(inspiration.effect.isOwner) await inspiration.effect.delete();
   }
 
   /* The initiative in the tracker follows a rerolled initiative message */

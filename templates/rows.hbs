@@ -28,6 +28,11 @@
             <i class="fa-solid fa-clover" inert></i>
         </button>
         {{/if}}
+        {{#if inspire}}
+        <button type="button" class="icon" data-action="rowInspire" data-message="{{ saveMessage }}" data-tooltip="{{ inspire }}" aria-label="{{ inspire }}">
+            <i class="fa-solid fa-music" inert></i>
+        </button>
+        {{/if}}
         {{#with apply}}
         <button type="button" class="apply" data-action="rowApply" data-target="{{ ../uuid }}" data-multiplier="{{ multiplier }}">
             <i class="fa-solid fa-reply-all fa-flip-horizontal" inert></i> {{ localize label }}

@@ -3,7 +3,7 @@ import { settings } from '../settings.js';
 import { rollItem } from './roll-item.js';
 import { masteries } from './masteries.js';
 import { maneuvers } from './maneuvers.js';
-import { extraD20, rerolls } from './rerolls.js';
+import { extraD20, rerolls, addDie } from './rerolls.js';
 import { originOf } from '../helpers/utils.js';
 import { conditions } from '../rules/conditions.js';
 import { feats } from '../rules/feats.js';
@@ -274,6 +274,7 @@ export function registerMessages(){
         saveMessage : result?.message?.id ?? "",
         canReroll : !!saveOptions?.reroll && !result?.auto,
         lucky : (saveOptions?.lucky && !result?.auto) ? module.format("feats.lucky.adv", { name : saveOptions.lucky.name, left : saveOptions.lucky.system.uses.value }) : null,
+        inspire : (saveOptions?.inspiration && !result?.auto && !result?.success) ? module.format("classes.bard.use", { die : saveOptions.inspiration.die }) : null,
         applied : appliedOn(message, descriptor.token, ["rows"]),
         saves : (hasSave && !result && owner) ? abilities.map(ability => ({
           ability, label : `${String(CONFIG.DND5E.abilities[ability]?.abbreviation ?? ability).toUpperCase()} ${dc ?? ""}`.trim(),
@@ -335,6 +336,10 @@ export function registerMessages(){
   const rowLucky = async (event, button) => {
     const save = game.messages.get(button.dataset.message);
     if(save) await rerolls.lucky(save, save.getAssociatedActor?.());
+  };
+  const rowInspire = async (event, button) => {
+    const save = game.messages.get(button.dataset.message);
+    if(save) await rerolls.inspire(save, save.getAssociatedActor?.());
   };
 
   /* A row's damage / healing : only the target's owner (or the GM) can apply it, sized by its save */
@@ -546,6 +551,7 @@ export function registerMessages(){
         setCover : RollItemMessageData.#setCover,
         rowReroll : rowReroll,
         rowLucky : rowLucky,
+        rowInspire : rowInspire,
       },
     }, { inplace : false }));
 
@@ -746,6 +752,16 @@ export function registerMessages(){
       }
       await replaceRolls(this.parent, { rolls, shown });
       return result.status;
+    }
+
+    /* A die added to one attack roll (Bardic Inspiration) : the card re-judges the hit */
+    async addBonus(ray, formula){
+      const old = this.attackOf(ray);
+      if(!old) return false;
+      const { updated, extra } = await addDie(old, formula);
+      const rolls = this.parent.rolls.map(r => (r === old) ? updated : r);
+      await replaceRolls(this.parent, { rolls, shown : [extra] });
+      return true;
     }
 
     /* The extra boxes for one attack, and the buttons item macros add to it (macro-helper.cardButtons) */
@@ -1232,6 +1248,7 @@ export function registerMessages(){
         setCover : RollItemSaveData.#setCover,
         rowReroll : rowReroll,
         rowLucky : rowLucky,
+        rowInspire : rowInspire,
       },
     }, { inplace : false }));
 

@@ -344,7 +344,7 @@
   "feats.alert.preview" : "Alert : swap with {b}. {a} would go {mine} ({myInit}), {b} {theirs} ({theirInit}).",
   "initiative.changed" : "changed since (swap or edit)",
   "settings.classRules.title" : "Class Rules",
-  "settings.classRules.hint" : "Class features dnd5e's data doesn't fully cover (levels 1-2 so far : Barbarian).",
+  "settings.classRules.hint" : "Class features dnd5e's data doesn't fully cover (levels 1-2 so far : Barbarian, Bard).",
   "classes.barbarian.noSpells" : "{name} is raging : no spells.",
   "classes.barbarian.noEffect" : "{item} has no effect to turn on.",
   "classes.barbarian.extended" : "{name}'s Rage is extended.",
@@ -375,5 +375,9 @@
   "rules.weapon.logTime" : "Time",
   "rules.weapon.statusEquipped" : "Equipped",
   "rules.weapon.statusUnequipped" : "Unequipped",
-  "rules.weapon.statusRemoved" : "Removed"
+  "rules.weapon.statusRemoved" : "Removed",
+  "classes.bard.use" : "Bardic Inspiration (+{die})",
+  "classes.bard.inspired" : "Inspired",
+  "classes.bard.already" : "{name} already holds a Bardic Inspiration die.",
+  "classes.bard.markHint" : "Bardic Inspiration from {name} : once within the hour, after failing a D20 Test, add {die} to it."
 }

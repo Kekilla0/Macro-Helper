@@ -11,6 +11,7 @@ import { maneuvers } from './maneuvers.js';
 import { rerolls } from './rerolls.js';
 import { conditions } from '../rules/conditions.js';
 import { actions } from '../rules/actions.js';
+import { bard } from '../rules/classes/bard.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -317,6 +318,8 @@ export class rollItem{
   static modeFor(activity, usage){
     /* Utility activities only have something to roll when they define a formula */
     if(activity?.type === "utility" && !activity.roll?.formula) return null;
+    /* A formula that names a die to keep, not one to roll now (Bardic Inspiration's die is rolled when it's used) */
+    if(bard.keepsDie(activity)) return null;
     let mode = usage?.[module.id]?.mode;
     const setting = this.DEFAULT_MODES[activity?.type];
     if(!mode && setting && settings.value(setting)) mode = activity.type;
