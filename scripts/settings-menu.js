@@ -53,7 +53,8 @@ export class SettingsMenu extends HandlebarsApplicationMixin(ApplicationV2){
         key,
         id : `${this.id}-${key}`,
         name : config.name,
-        hint : config.hint,
+        /* Settings with no hint text show no hint line */
+        hint : (config.hint && game.i18n.has(config.hint)) ? config.hint : "",
         value : settings.value(key),
         isBoolean,
         choices : config.choices ?? null,
@@ -61,8 +62,22 @@ export class SettingsMenu extends HandlebarsApplicationMixin(ApplicationV2){
         disabled : (config.scope === "world") && !game.user.isGM,
       };
     });
+    /* Buttons opening nested pages (Helpers → Methods), for those who can change them */
+    context.submenus = (GROUPS[this.constructor.GROUP]?.submenus ?? [])
+      .filter(sub => game.user.isGM || Object.values(GROUPS[sub]?.settings ?? {}).some(s => s.scope === "client"))
+      .map(sub => ({ key : sub, icon : GROUPS[sub].icon, name : `settings.${sub}.menu.title`, label : `settings.${sub}.menu.label`, hint : `settings.${sub}.menu.hint` }));
     context.buttons = [{ type : "submit", icon : "fa-solid fa-floppy-disk", label : "SETTINGS.Save" }];
     return context;
+  }
+
+  _onRender(context, options){
+    super._onRender?.(context, options);
+    for(const button of this.element.querySelectorAll("[data-submenu]")){
+      button.addEventListener("click", event => {
+        event.preventDefault();
+        new (SettingsMenu.for(button.dataset.submenu))().render({ force : true });
+      });
+    }
   }
 
   /** @this {SettingsMenu} */

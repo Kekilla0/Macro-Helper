@@ -38,7 +38,8 @@ export class actions{
   static HELP = "help";
 
   static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("actionRules");
+    /* Having the item is the switch : nothing to turn on */
+    return game.system.id === "dnd5e";
   }
 
   static register(){

@@ -79,13 +79,20 @@ export class hookMacros{
   }
 
   /**
-   * Only macros written by a GM run on their own, so a player can't have their script run on the GM's client.
-   * "gm" runs once, on the active GM. "all" runs on every client the hook fires on, for users who can run the macro.
+   * A GM's macro : "gm" runs once, on the active GM; "all" on every client the hook fires on, for users who can run it.
+   * A player's macro (Allow Players to Create) only ever runs on that player's own client, so a player's script never
+   * runs on the GM's or anyone else's.
    */
   static shouldRun(macro){
-    if(!macro.author?.isGM) return false;
+    if(!macro.author) return false;
+    if(!macro.author.isGM) return settings.value("hookMacrosPlayers") && macro.author.isSelf;
     if(this.runAsOf(macro) === "gm") return !!game.users.activeGM?.isSelf;
     return macro.canExecute;
+  }
+
+  /* Who can set a macro to run on hooks : the GM, or (Allow Players to Create) a player on a macro they own */
+  static canEdit(macro){
+    return game.user.isGM || (settings.value("hookMacrosPlayers") && !!macro?.isOwner);
   }
 
   static run(hook, args){
@@ -101,7 +108,7 @@ export class hookMacros{
   /* ---------- Macro config : hook fields under the Type line ---------- */
 
   static async renderFields(app, element){
-    if(!game.user.isGM || (app instanceof MacroEditor) || (app.document?.documentName !== "Macro")) return;
+    if((app instanceof MacroEditor) || (app.document?.documentName !== "Macro") || !this.canEdit(app.document)) return;
     if(element.querySelector(`.${module.id}-hooks`)) return;
 
     const typeGroup = element.querySelector("[name=type]")?.closest(".form-group");
@@ -109,9 +116,10 @@ export class hookMacros{
 
     const macro = app.document;
     const data = foundry.utils.getProperty(macro, this.flag) ?? {};
+    /* A player's macro runs on their own client only : no choice to make */
     const html = await this.renderHookFields(this.flag, data, {
-      runAs : this.runAsOf(macro),
-      runAsChoices : { gm : "hookMacros.runAs.gm", all : "hookMacros.runAs.all" },
+      runAs : game.user.isGM ? this.runAsOf(macro) : "self",
+      runAsChoices : game.user.isGM ? { gm : "hookMacros.runAs.gm", all : "hookMacros.runAs.all" } : { self : "hookMacros.runAs.self" },
       count : this.hooksOf(macro).length,
     });
     typeGroup.insertAdjacentHTML("afterend", html);

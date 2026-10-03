@@ -412,7 +412,7 @@ export class feats{
     if(!allies.length) return;
 
     /* Compact Initiative : the offer goes on the round's initiative card (swap buttons on the allies' rows) */
-    if(settings.value("compactInitiative")){
+    if(settings.value("initiativeMessages") === "compact"){
       await combat.setFlag(module.id, `alert.${combatant.id}`, { round : combat.round, turn : combat.turn ?? 0, done : false });
       log.debug("Alert swap offered on the initiative card", actor.name);
       return;

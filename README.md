@@ -18,7 +18,7 @@ https://github.com/Kekilla0/Macro-Helper/releases/latest/download/module.json
 
 **Configure Settings → Macro Helper** has one sub-menu per feature: **Helpers**, **Item Macro**, **Hook Macros** and **Roll Item**. Each one can be turned off on its own. Settings are the GM's and apply to everyone. The one exception is Roll Item's **Pick Targets**, which each player sets for themselves, so players only see the Roll Item sub-menu, with just that setting.
 
-**Weapon Property Rules** (in **Helpers**, default *Warn*): weapon properties are applied from the weapon's data, following dnd5e's **Rules Version** setting (Modern 2024 / Legacy 2014). Like the other settings here, they apply to every attack roll.
+**Weapon Property Rules** (in **Roll Item**, default *Warn*): weapon properties are applied from the weapon's data, following dnd5e's **Rules Version** setting (Modern 2024 / Legacy 2014). Like the other settings here, they apply to every attack roll.
 - **Heavy:** disadvantage below STR 13 (melee) or DEX 13 (ranged). With 2014 rules, Small and Tiny creatures instead.
 - **Versatile:** two-handed when the other hand is free (no shield and no other weapon equipped), otherwise one-handed. The card shows which was used.
 - **Allowed-use checks:**
@@ -33,7 +33,7 @@ https://github.com/Kekilla0/Macro-Helper/releases/latest/download/module.json
   - *Change* fixes what can be fixed, then rolls: it equips the weapon, puts away what's in the way (two-handed weapons first, then other weapons, then shields), and holds a Versatile weapon one-handed when the other hand is busy. Loading and Light can't be fixed, so they warn.
   - *Off* turns all of the above off, Heavy included.
 
-**Species & Feat Rules** (in **Helpers**, on by default): traits and feats dnd5e has no data for, recognised by the item's identifier.
+**Species & Feat Rules** (in **Roll Item**, on by default): traits and feats dnd5e has no data for, recognised by the item's identifier.
 - **Brave** (Frightened), **Fey Ancestry** (Charmed) and **Dwarven Resilience** (Poisoned) give advantage on saves rolled from a card whose activity applies that condition.
 - **Savage Attacker:** each weapon hit gets a button for its owner that rolls the damage again. Each roll has its own APPLY, and applying one hides the other. Once per turn in combat.
 - **Alert:** right after the character's initiative is rolled, their player and the GM get a card listing allies in the combat. Clicking one asks that ally's player to agree, then the GM swaps the two initiatives. There's no question when you own both characters or no other player owns the ally. **Do not swap** closes the offer. It isn't available while either of them is Incapacitated, and the offer closes once a turn passes.
@@ -43,7 +43,7 @@ https://github.com/Kekilla0/Macro-Helper/releases/latest/download/module.json
   - *Healing Rerolls:* 1s on a spell's healing dice are rolled again.
   - *Battle Medic:* using the feat picks a creature within 5 ft, reads its remaining Hit Dice (when it has several sizes, the creature's player picks which one; for an NPC or your own character, you pick), and rolls the matching "Heal dX". It needs a Healer's Kit with a use left, and spends one. The target's owner spends that Hit Die when they apply it from the card. Traits dnd5e does have data for, like Gnomish Cunning, Luck and Powerful Build, work through dnd5e as usual.
 
-**Condition & Downed Rules** (in **Helpers**, on by default): the 5e condition rules dnd5e doesn't apply to attacks.
+**Condition & Downed Rules** (in **Roll Item**, on by default): the 5e condition rules dnd5e doesn't apply to attacks.
 - **Attacks against** a Blinded, Paralyzed, Petrified, Restrained, Stunned or Unconscious creature have advantage. Against a Prone one, advantage within 5 ft and disadvantage beyond (so a ranged attack on a downed character is a normal roll: advantage and disadvantage cancel). Against an Invisible one, disadvantage.
 - **Attackers** who are Blinded, Prone or Restrained have disadvantage; attackers who are Invisible have advantage.
 - **Auto-crit:** a hit on a Paralyzed or Unconscious creature from within 5 ft is a critical hit, and its damage rolls as one.
@@ -55,13 +55,13 @@ https://github.com/Kekilla0/Macro-Helper/releases/latest/download/module.json
 - **Dodging:** attacks against a Dodging creature have disadvantage, if it can see the attacker (Vision Rules). dnd5e already gives the DEX save advantage.
 - **Stable:** a Stable creature makes no death saves. It stops being Stable when it takes damage or regains HP.
 
-**Vision Rules** (in **Helpers**, on by default): uses each token's own sight, the way Foundry works it out: walls, light and darkness, darkvision and other senses, Blinded and Invisible. When the GM attacks with an NPC, it's what the NPC sees, not what the GM's screen shows.
+**Vision Rules** (in **Roll Item**, on by default): uses each token's own sight, the way Foundry works it out: walls, light and darkness, darkvision and other senses, Blinded and Invisible. When the GM attacks with an NPC, it's what the NPC sees, not what the GM's screen shows.
 - **Picking targets:** you can't pick a creature your token can't see. Areas (Fireball, Burning Hands) aren't limited.
 - **Attacks:** attacking a creature you can't see has disadvantage, and attacking one that can't see you has advantage. The console log line says which.
 - **Threatened** (ranged attacks within 5 ft of an enemy) and **Dodging** both need that creature to see you.
 - A token with sight turned off (or a scene without token vision) still follows the conditions: it sees nothing while Blinded, and never sees an Invisible creature. Otherwise it sees everything, with a warning in the console so you can spot tokens missing vision.
 
-**Dash, Disengage, Dodge & Help** (in **Helpers**, on by default): items to import from [examples/items](examples/items) (right-click an item in the Items sidebar, Import Data), recognised by identifier. Each activity carries its own text, so the card shows only the one used:
+**Dash, Disengage, Dodge & Help** (no setting: having the item is the switch): items to import from [examples/items](examples/items) (right-click an item in the Items sidebar, Import Data), recognised by identifier. Each activity carries its own text, so the card shows only the one used:
 - **Dash:** Dashing until the end of the turn (extra movement equal to your Speed, for the action tracker).
 - **Disengage:** Disengaged until the end of the turn (your movement doesn't provoke Opportunity Attacks).
 - **Dodge:** Dodging until the start of your next turn.
@@ -76,7 +76,7 @@ https://github.com/Kekilla0/Macro-Helper/releases/latest/download/module.json
 
 **Elevation:** distances count the height gap between tokens from their elevation, which you set by hand for flying or climbing. Each token is as tall as it is wide, so a Medium creature flying 5 ft up is still adjacent to one on the ground, and one 30 ft up is out of a sword's reach.
 
-**Class Rules** (in **Helpers**, on by default): class features at levels 1-2, on top of what the items' own data does. Edits Plutonium's items need are listed in [docs/plutonium-notes.md](docs/plutonium-notes.md). So far:
+**Class Rules** (in **Roll Item**, on by default): class features at levels 1-2, on top of what the items' own data does. Edits Plutonium's items need are listed in [docs/plutonium-notes.md](docs/plutonium-notes.md). So far:
 - **Barbarian, Rage:** dnd5e's Rage effect already gives the resistances, the STR advantage and the Rage damage. The module adds:
   - *Turning it on:* using Rage turns its effect on and ends your Concentration. Using it again while raging extends it without spending a use (the Bonus Action extension).
   - *Rage damage:* only on attacks using Strength. A DEX melee attack doesn't get it, and a STR thrown attack does.
@@ -92,11 +92,11 @@ https://github.com/Kekilla0/Macro-Helper/releases/latest/download/module.json
   - *Divine Spark (damage):* Roll Item asks **necrotic or radiant** before rolling (any damage that offers a choice of types does, like Chromatic Orb; the last choice comes first).
   - *Turn Undead:* no template to place and no pick. A 30 ft circle appears round the Cleric (removed at the end of the turn), and every Undead in it (not on the Cleric's side) becomes the targets and saves on its row. The GM applies **Turned** to those that fail with the row's **Apply effect** button. Turned ends early when that creature takes damage, or when the Cleric is Incapacitated or dies. Moving away is left to the table.
 
-**Compact Initiative** (in **Helpers**, off by default): instead of one chat message per combatant, one card per round lists everyone's initiative, highest first. Hover a total for its dice. The combatant's owner and the GM get a Reroll button on its row, which follows the Advantage setting and moves the combatant in the tracker. Hidden combatants go on a second card only the GM sees. Players' own initiative rolls land on the same card. Dice So Nice still shows the dice, in each player's own dice colours (the GM's for monsters). The card follows the tracker: after a swap or an edit it shows the new initiative and order (the roll stays in the hover). An **Alert** character's swap offer appears here instead of its own card: its owner gets a swap button on each ally's row, previewing where both would end up ("Bob would go 2nd (15), Aria 5th (9)"), and **Do not swap** on its own row. The buttons go once a turn passes. With dnd5e's ability score tie-breaker on, only the rolled initiative swaps: each creature keeps its own DEX decimal.
+**Initiative Messages** (in **Helpers**, default *Individual*): *Compact*: instead of one chat message per combatant, one card per round lists everyone's initiative, highest first. Hover a total for its dice. The combatant's owner and the GM get a Reroll button on its row, which follows the Advantage setting and moves the combatant in the tracker. Hidden combatants go on a second card only the GM sees. Players' own initiative rolls land on the same card. Dice So Nice still shows the dice, in each player's own dice colours (the GM's for monsters). The card follows the tracker: after a swap or an edit it shows the new initiative and order (the roll stays in the hover). An **Alert** character's swap offer appears here instead of its own card: its owner gets a swap button on each ally's row, previewing where both would end up ("Bob would go 2nd (15), Aria 5th (9)"), and **Do not swap** on its own row. The buttons go once a turn passes. With dnd5e's ability score tie-breaker on, only the rolled initiative swaps: each creature keeps its own DEX decimal.
 
-**Auto-Roll Initiative** (in **Helpers**, off by default): when combat begins, everyone who hasn't rolled initiative rolls, and the first turn goes to the top of the order. Anyone added to the combat later rolls as they join, without moving the current turn.
+**Initiative Method** (in **Helpers**, default *Player rolled*): *Auto-rolled*: when combat begins, everyone who hasn't rolled initiative rolls, and the first turn goes to the top of the order. Anyone added to the combat later rolls as they join, without moving the current turn.
 
-**Conditions on Attack Rolls** (in **Helpers**, dnd5e, on by default): Poisoned gives disadvantage on attack rolls, as does Exhaustion 3 with 2014 rules and Heavily Encumbered on Strength and Dexterity attacks. dnd5e 6 lists these but only applies them to ability checks. This covers every dnd5e attack, and it works the same whether the creature has the Poisoned condition or an effect whose Statuses include Poisoned.
+**Conditions on Attack Rolls** (in **Roll Item**, dnd5e, on by default): Poisoned gives disadvantage on attack rolls, as does Exhaustion 3 with 2014 rules and Heavily Encumbered on Strength and Dexterity attacks. dnd5e 6 lists these but only applies them to ability checks. This covers every dnd5e attack, and it works the same whether the creature has the Poisoned condition or an effect whose Statuses include Poisoned.
 
 ## Helpers
 
@@ -190,7 +190,7 @@ if(group.length) return item.rollItem({ count : group.length });
 ## Item Macro
 
 - **Storing a macro:** store a macro on any item, or on a dnd5e activity, from the **</>** button in its sheet's title bar. The button turns gold once a macro is set.
-- **The editor** is Foundry's own macro editor. Players need Foundry's script macro permission, and the GM can stop players editing item macros altogether with **Players Can Edit Item Macros**. Items with a macro still run it for everyone.
+- **The editor** is Foundry's own macro editor. Players need Foundry's script macro permission, and the GM can stop players editing item macros altogether with **Allow Players to Edit**. Items with a macro still run it for everyone.
 - **When it runs:** choose **Default only**, **Macro only**, or **Macro, then Default**. In the last mode, the macro can return `false` to skip the default.
 - **Variables:** macros get `item`, `activity`, `actor`, `token`, `speaker`, `event`, `usage`, `dialog`, `message` and `scope`, plus `hook` and `args` (below; `null` and `[]` when the item is used).
 - **Run on Hooks (GMs, items):** a passive feature's macro can also run when a hook fires, e.g. Relentless Endurance on *Damage about to apply*. It only listens while the creature has a token on the scene you're viewing, so nothing is left behind when it isn't on the battlefield.
@@ -202,6 +202,8 @@ if(group.length) return item.rollItem({ count : group.length });
 ## Hook Macros
 
 Run a world macro when something happens in the game, without installing a module for it.
+
+**Allow Players to Create** (Hook Macros setting, off by default): players get the *Run on Hooks* fields on macros they own. A player's hook macro only ever runs on that player's own client, never the GM's or anyone else's.
 
 1. Open a world macro (GM only).
 2. Expand **Run on Hooks** under the Type line.

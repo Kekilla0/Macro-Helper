@@ -34,7 +34,7 @@ export class initiative{
     if(!game.users.activeGM?.isSelf || !("round" in changes)) return;
     const round = Number(changes.round) || 0;
     /* Combat began : round 0 to 1 */
-    if((round !== 1) || !settings.value("autoInitiative")) return;
+    if((round !== 1) || !(settings.value("initiativeMethod") === "auto")) return;
     const ids = combat.combatants.filter(c => c.initiative === null).map(c => c.id);
     if(ids.length) await this.roll(combat, ids, "begin");
   }
@@ -42,7 +42,7 @@ export class initiative{
   /* Joining a combat already under way : roll now, keeping whoever's turn it is */
   static async onJoin(combatant){
     const combat = combatant?.combat ?? combatant?.parent;
-    if(!game.users.activeGM?.isSelf || !combat?.started || !settings.value("autoInitiative") || (combatant.initiative !== null)) return;
+    if(!game.users.activeGM?.isSelf || !combat?.started || !(settings.value("initiativeMethod") === "auto") || (combatant.initiative !== null)) return;
     log.debug("Rolling initiative", "joined", combatant.name);
     await combat.rollInitiative([combatant.id], { updateTurn : true });
   }
@@ -62,7 +62,7 @@ export class initiative{
   static #chain = Promise.resolve();
 
   static compact(){
-    return settings.value("compactInitiative");
+    return settings.value("initiativeMessages") === "compact";
   }
 
   /* An initiative message about to be made here : its roll goes to the round's card instead (Foundry already set the

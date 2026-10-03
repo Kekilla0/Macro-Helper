@@ -38,7 +38,7 @@ Hooks.once("init", ()=> {
 /* System classes and CONFIG are in place by setup */
 Hooks.once("setup", ()=> {
   itemMacro.register();
-  if(settings.value("helperMethods")) methods.register();
+  methods.register();
 });
 
 /* World macros exist from here on */
@@ -46,6 +46,7 @@ Hooks.once("ready", ()=> {
   log.info("Module ready.");
   log.debug("Module data", module.data);
   hookMacros.register();
+  settings.migrate();
 });
 
 /**

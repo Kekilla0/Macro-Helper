@@ -1,4 +1,5 @@
 import { logger } from '../log.js';
+import { settings } from '../settings.js';
 import { rollItem } from '../roll-item/roll-item.js';
 import { distanceBetween, getRange, getTokensWithin, highlightRange, pushAway, pushDestination, addLight, removeLight, hasLight, canSee } from './tokens.js';
 import { isEnemy, isAlly, getThreats, isThreatened, getEnemiesWithinRange, pickTargets, getFlanker, isFlanking } from './targets.js';
@@ -102,9 +103,11 @@ export class methods{
       Item : CONFIG.Item.documentClass,
     };
 
+    /* Helpers → Methods : one switch per kind of document */
+    const wanted = { Actor : "methodsActor", TokenDocument : "methodsToken", Token : "methodsToken", Item : "methodsItem" };
     for(const [className, fns] of Object.entries(METHODS)){
       const proto = classes[className]?.prototype;
-      if(!proto) continue;
+      if(!proto || !settings.value(wanted[className])) continue;
       for(const [name, fn] of Object.entries(fns)){
         if(name in proto){
           log.info(`${className}.${name} already exists, not adding the Macro Helper version (use MacroHelper instead).`);
