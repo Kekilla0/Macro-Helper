@@ -23,6 +23,7 @@ export const GROUPS = {
       visionRules : { scope : "world", default : true, type : Boolean },
       traitRules : { scope : "world", default : true, type : Boolean },
       autoInitiative : { scope : "world", default : false, type : Boolean },
+      compactInitiative : { scope : "world", default : false, type : Boolean },
       weaponRules : { scope : "world", default : "warn", type : String,
         choices : { warn : "settings.weaponRules.warn", block : "settings.weaponRules.block", change : "settings.weaponRules.change", off : "settings.weaponRules.off" } },
     },

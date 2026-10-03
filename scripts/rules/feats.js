@@ -389,6 +389,13 @@ export class feats{
     const allies = this.alliesOf(combatant, combat);
     if(!allies.length) return;
 
+    /* Compact Initiative : the offer goes on the round's initiative card (swap buttons on the allies' rows) */
+    if(settings.value("compactInitiative")){
+      await combat.setFlag(module.id, `alert.${combatant.id}`, { round : combat.round, turn : combat.turn ?? 0, done : false });
+      log.debug("Alert swap offered on the initiative card", actor.name);
+      return;
+    }
+
     const owners = game.users.filter(u => !u.isGM && actor.testUserPermission(u, "OWNER")).map(u => u.id);
     const rows = allies.map(c => `
       <li class="macro-helper-row">
@@ -416,6 +423,51 @@ export class feats{
       && (c.initiative !== null) && c.actor
       && ((c.token?.disposition ?? c.actor.prototypeToken?.disposition) === side)
       && !this.INCAPACITATED.some(s => c.actor.statuses?.has(s)));
+  }
+
+  /**
+   * An Alert offer and how to close it : from its own card ({ message }), or from the combat (Compact Initiative :
+   * { combat, combatant }).
+   * @returns {{ info : object|null, read : () => object|null, close : () => Promise }}
+   */
+  static alertOffer({ message : id, combat : combatId, combatant : combatantId } = {}){
+    if(id){
+      const message = game.messages.get(id);
+      return { info : message?.getFlag(module.id, "alert") ?? null, read : () => message?.getFlag(module.id, "alert"),
+        close : () => message.setFlag(module.id, "alert.done", true) };
+    }
+    const combat = game.combats.get(combatId);
+    const read = () => {
+      const info = combat?.getFlag(module.id, `alert.${combatantId}`);
+      return info ? { ...info, combat : combatId, combatant : combatantId } : null;
+    };
+    return { info : read(), read, close : () => combat.setFlag(module.id, `alert.${combatantId}.done`, true) };
+  }
+
+  /* The open offers of a combat's Alert characters (Compact Initiative) : [{ combatant, info }] */
+  static openAlerts(combat){
+    const offers = combat?.getFlag?.(module.id, "alert") ?? {};
+    return Object.keys(offers).map(id => ({ combatant : combat.combatants.get(id), info : this.alertOffer({ combat : combat.id, combatant : id }).info }))
+      .filter(o => o.combatant && this.inTime(o.info));
+  }
+
+  /**
+   * Two combatants' initiative after Alert's swap. The rolled initiative trades places; dnd5e's ability score
+   * tie-breaker (DEX 14 : +0.14 in the initiative) belongs to each creature, so each keeps its own.
+   * @returns {{ a : number, b : number }}
+   */
+  static swappedInitiatives(a, b){
+    const tie = c => {
+      let on = false;
+      try { on = game.settings.get("dnd5e", "initiativeDexTiebreaker"); } catch { on = false; }
+      if(!on) return 0;
+      const ability = c.actor?.system?.attributes?.init?.ability || CONFIG.DND5E.defaultAbilities?.initiative || "dex";
+      const value = Number(c.actor?.system?.abilities?.[ability]?.value);
+      return Number.isFinite(value) ? value / 100 : 0;
+    };
+    const round = n => Math.round(n * 100) / 100;
+    const ta = tie(a), tb = tie(b);
+    return { a : round((b.initiative - tb) + ta), b : round((a.initiative - ta) + tb) };
   }
 
   /* Still in time : the same combat, no turn has passed since the roll */
@@ -453,16 +505,16 @@ export class feats{
    * to swap (in the combat, allies, not Incapacitated). The ally's player is asked (unless the asker owns it too, or
    * no other player does); then the two initiatives trade places. No ally (null) : "Do not swap", the card closes.
    */
-  static async swapAsGM({ message : id, ally : allyId } = {}, user){
-    const message = game.messages.get(id);
-    const info = message?.getFlag(module.id, "alert");
+  static async swapAsGM({ message : id, combat : combatId, combatant : combatantId, ally : allyId } = {}, user){
+    const offer = this.alertOffer({ message : id, combat : combatId, combatant : combatantId });
+    const info = offer.info;
     const combat = game.combats.get(info?.combat);
     const combatant = combat?.combatants.get(info?.combatant);
     if(!combatant) throw new Error("This Alert card no longer matches a combat.");
     if(!user?.isGM && !combatant.actor?.testUserPermission(user, "OWNER")) throw new Error("Only the Alert character's owner can swap.");
     if(!this.inTime(info)) return [module.i18n("feats.alert.late")];
     if(!allyId){
-      await message.setFlag(module.id, "alert.done", true);
+      await offer.close();
       return [module.format("feats.alert.kept", { a : combatant.name })];
     }
     if(this.INCAPACITATED.some(s => combatant.actor?.statuses?.has(s))) return [module.i18n("feats.alert.incapacitated")];
@@ -480,12 +532,12 @@ export class feats{
       ],
     }, { exclude : [user], fallback : "yes" });
     if(answer !== "yes") return [module.format("feats.alert.declined", { b : ally.name })];
-    if(!this.inTime(message.getFlag(module.id, "alert"))) return [module.i18n("feats.alert.late")];
+    if(!this.inTime(offer.read())) return [module.i18n("feats.alert.late")];
 
-    const mine = combatant.initiative, theirs = ally.initiative;
-    await combat.updateEmbeddedDocuments("Combatant", [{ _id : combatant.id, initiative : theirs }, { _id : ally.id, initiative : mine }],
+    const swapped = this.swappedInitiatives(combatant, ally);
+    await combat.updateEmbeddedDocuments("Combatant", [{ _id : combatant.id, initiative : swapped.a }, { _id : ally.id, initiative : swapped.b }],
       { [module.id] : { alertSwap : true } });
-    await message.setFlag(module.id, "alert.done", true);
+    await offer.close();
     return [module.format("feats.alert.swapped", { a : combatant.name, b : ally.name })];
   }
 }

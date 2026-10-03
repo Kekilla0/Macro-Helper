@@ -236,3 +236,7 @@
   color: white;
 }
 .chat-message .macro-helper-row .result.covered { opacity: 0.75; font-style: italic; }
+
+/* Compact Initiative : one card per round */
+.chat-message .macro-helper-initiative .title { margin: 0 0 4px; }
+.chat-message .macro-helper-initiative .result { font-weight: bold; min-width: 2em; text-align: end; }

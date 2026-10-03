@@ -340,5 +340,12 @@
   "actions.help.noteCheck" : "Assist Check : {name} has advantage on their next {check} check.",
   "actions.help.noteStabilize" : "Stabilize {name} : WIS (Medicine) DC 10.",
   "rollItem.hint.kept" : "kept",
-  "rollItem.hint.rerolled" : "rerolled"
+  "rollItem.hint.rerolled" : "rerolled",
+  "settings.compactInitiative.title" : "Compact Initiative",
+  "settings.compactInitiative.hint" : "One chat card per round listing everyone's initiative, instead of a message each.",
+  "initiative.title" : "Initiative",
+  "initiative.round" : "Initiative · Round {round}",
+  "initiative.hiddenRound" : "Initiative (hidden) · Round {round}",
+  "feats.alert.preview" : "Alert : swap with {b}. {a} would go {mine} ({myInit}), {b} {theirs} ({theirInit}).",
+  "initiative.changed" : "changed since (swap or edit)"
 }
