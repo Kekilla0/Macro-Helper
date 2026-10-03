@@ -323,9 +323,11 @@ function pickOnMap(from, feet, candidates, { count, numberAllowed, within, confi
       finish([...picks]);
     };
 
+    /* On the map : the canvas, or a layer drawn over it (Dice So Nice's dice), not a window or the sidebar */
+    const onMap = target => (target === view) || ((target?.tagName === "CANVAS") && !target.closest?.(".application, #sidebar, #ui-left, #ui-right, #hotbar"));
     const onPointer = event => {
       const remove = repeat && (event.button === 2);
-      if((event.target !== view) || ((event.button !== 0) && !remove)) return;
+      if(!onMap(event.target) || ((event.button !== 0) && !remove)) return;
       const point = canvas.canvasCoordinatesFromClient({ x : event.clientX, y : event.clientY });
       const token = candidates.find(t => t.bounds.contains(point.x, point.y));
       /* Right clicks elsewhere still pan the map */

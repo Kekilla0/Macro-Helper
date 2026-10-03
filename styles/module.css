@@ -240,3 +240,8 @@
 /* Compact Initiative : one card per round */
 .chat-message .macro-helper-initiative .title { margin: 0 0 4px; }
 .chat-message .macro-helper-initiative .result { font-weight: bold; min-width: 2em; text-align: end; }
+
+/* Equipment log (GM whisper) : label / value rows */
+.chat-message .macro-helper-equip-log { margin: 0; border: none; background: none; }
+.chat-message .macro-helper-equip-log th { text-align: left; white-space: nowrap; width: 1%; padding: 0 8px 0 0; font-weight: bold; }
+.chat-message .macro-helper-equip-log td { padding: 0; }

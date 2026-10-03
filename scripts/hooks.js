@@ -10,6 +10,7 @@ import { conditions } from './rules/conditions.js';
 import { weapons } from './rules/weapons.js';
 import { homebrew } from './rules/homebrew.js';
 import { actions } from './rules/actions.js';
+import { barbarian } from './rules/classes/barbarian.js';
 import { gm } from './gm.js';
 import { feats } from './rules/feats.js';
 import { initiative } from './rules/initiative.js';
@@ -24,6 +25,7 @@ Hooks.once("init", ()=> {
   weapons.register();
   homebrew.register();
   actions.register();
+  barbarian.register();
   gm.register();
   feats.register();
   initiative.register();

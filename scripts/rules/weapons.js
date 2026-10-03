@@ -48,16 +48,20 @@ export class weapons{
     const actor = item.actor, combat = game.combat;
     if((equipped === undefined) || !actor || !combat?.started) return;
     if(!combat.combatants.some(c => (c.actor?.uuid === actor.uuid) || (c.actorId === actor.id))) return;
-    const user = game.users.get(userId);
     const esc = s => foundry.utils.escapeHTML(String(s ?? ""));
-    const what = removed ? "rules.weapon.logRemoved" : equipped ? "rules.weapon.logEquipped" : "rules.weapon.logUnequipped";
-    const lines = [
-      module.format("rules.weapon.logWhen", { round : combat.round, turn : esc(combat.combatant?.name ?? "—") }),
-      module.format(what, { actor : esc(actor.name), item : esc(item.name) }),
-      module.format("rules.weapon.logBy", { user : esc(user?.name ?? "?") }),
+    const status = removed ? "rules.weapon.statusRemoved" : equipped ? "rules.weapon.statusEquipped" : "rules.weapon.statusUnequipped";
+    const rows = [
+      ["rules.weapon.logRound", `${String(combat.round ?? 0).padStart(2, "0")} (${esc(combat.combatant?.name ?? "—")})`],
+      ["rules.weapon.logWho", esc(actor.name)],
+      ["rules.weapon.logItem", esc(item.name)],
+      ["rules.weapon.logStatus", module.i18n(status)],
     ];
+    /* Armor and shields : how long it really takes, for the GM to rule on */
+    const time = this.armorTime(item, equipped && !removed);
+    if(time) rows.push(["rules.weapon.logTime", `<strong>${time}</strong>`]);
+    const table = rows.map(([label, value]) => `<tr><th>${module.i18n(label)}</th><td>${value}</td></tr>`).join("");
     await ChatMessage.implementation.create({
-      content : `<p><i class="fa-solid fa-shield-halved" inert></i> ${lines.join("<br>")}</p>`,
+      content : `<table class="${module.id}-equip-log">${table}</table>`,
       whisper : game.users.filter(u => u.isGM).map(u => u.id),
       speaker : { alias : module.title },
     });
@@ -156,6 +160,19 @@ export class weapons{
     return this.isLegacy()
       ? ["tiny", "sm"].includes(actor?.system?.traits?.size)
       : ((actor?.system?.abilities?.[ranged ? "dex" : "str"]?.value ?? 20) < 13);
+  }
+
+  /* 2024 donning / doffing : light 1 / 1 min, medium 5 / 1 min, heavy 10 / 5 min, a shield a Utilize action */
+  static ARMOR_TIMES = { light : [1, 1], medium : [5, 1], heavy : [10, 5] };
+  /* (the log's Time line reads "10 minutes to don" : the kind is already in the item's name) */
+
+  static armorTime(item, donning){
+    if(item?.type !== "equipment") return null;
+    const kind = item.system?.type?.value;
+    if(kind === "shield") return module.i18n(donning ? "rules.weapon.timeShieldOn" : "rules.weapon.timeShieldOff");
+    const times = this.ARMOR_TIMES[kind];
+    if(!times) return null;
+    return module.format(donning ? "rules.weapon.timeDon" : "rules.weapon.timeDoff", { kind : module.i18n(`rules.weapon.armor.${kind}`), minutes : donning ? times[0] : times[1] });
   }
 
   /* Hands an equipped item takes : a shield 1, a Two-Handed weapon 2, any other weapon 1 (natural weapons and Unarmed Strike none) */

@@ -157,6 +157,18 @@ export function registerMessages(){
     if((CONFIG.DND5E.abilities[ability]?.type === "physical") && has("physicalSaveDisadvantage")) dis.push(...named("physicalSaveDisadvantage"));
     const trait = feats.saveTraitFor(actor, message);
     if(trait) adv.push(trait.name);
+    /* Effects that set the save's roll mode (Danger Sense, Rage...) */
+    const key = `system.abilities.${ability}.save.roll.mode`;
+    const incapacitated = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned"].some(st => actor.statuses?.has(st));
+    for(const effect of actor.appliedEffects ?? []){
+      /* Danger Sense gives nothing while Incapacitated (classes/barbarian.js) */
+      if(incapacitated && /danger sense/i.test(effect.name ?? "")) continue;
+      for(const change of [...(effect.system?.changes ?? effect.changes ?? [])]){
+        if(change.key !== key) continue;
+        if(Number(change.value) > 0) adv.push(effect.name);
+        else if(Number(change.value) < 0) dis.push(effect.name);
+      }
+    }
     const modes = [];
     if(adv.length) modes.push(`${game.i18n.localize("DND5E.Advantage")} : ${[...new Set(adv)].join(", ")}`);
     if(dis.length) modes.push(`${game.i18n.localize("DND5E.Disadvantage")} : ${[...new Set(dis)].join(", ")}`);
@@ -836,6 +848,12 @@ export function registerMessages(){
       const rolls = this.parent.rolls;
       const rendered = context.rolls;
       context.cover = coverContext(this.parent, this.targets);
+      /* The item's description, as dnd5e's own cards show it (folds under the header) */
+      if(this.parent.isContentVisible){
+        const activity = this.parent.getAssociatedActivity?.();
+        const item = activity?.item ?? this.parent.getAssociatedItem?.();
+        context.description = (await Promise.resolve(item?.system?.getCardData?.({ activity })).catch(() => null))?.description || null;
+      }
 
 
       /* Only whoever can update the message (roller / GM) can reroll it */
@@ -1473,6 +1491,13 @@ export function registerMessages(){
     }
     ui.chat?.updateMessage(card);
   });
+  /* Collapse Card Descriptions (GM) : every card's description starts folded for everyone, as dnd5e's own client
+     setting does it (click the card's title to open it) */
+  Hooks.on("dnd5e.renderChatMessage", (message, html) => {
+    if(!settings.value("collapseCards")) return;
+    html.querySelectorAll(".card-header, .card-description, .description.collapsible").forEach(el => el.classList.add("collapsed"));
+  });
+
   /* A note the module put on a dnd5e card (Help : who, which skill) : shown under its description */
   Hooks.on("dnd5e.renderChatMessage", (message, html) => {
     const note = message.getFlag?.(module.id, "note");

@@ -24,8 +24,9 @@ const log = logger.for(import.meta.url);
  *                     question when the asker owns both, or no other player owns the ally).
  *   Lucky           : after an attack roll, a Luck Point adds a second d20 : the attacker's owner keeps the higher, the
  *                     target's owner (attacked Lucky character) keeps the lower. Advantage and disadvantage cancel.
- *   Tavern Brawler  : once per turn, an Unarmed Strike hit can also push the target 5 ft (a GM button, like Push).
- *                     Plutonium's "Enhanced Unarmed Strike" activity already rolls 1d4 (reroll 1s) + STR.
+ *   Tavern Brawler  : the Unarmed Strike's own damage becomes 1d4 + STR, its 1s rerolled (Enhanced Unarmed Strike,
+ *                     Damage Rerolls), unless it already rolls a die (a Monk's Martial Arts). Once per turn, a hit can
+ *                     also push the target 5 ft (a GM button, like Push).
  *   Healer          : Healing Rerolls (1s on a spell's healing dice are rolled again). Battle Medic : using the feat
  *                     picks a creature within 5 ft, reads its remaining Hit Dice (its player picks the size when it has several),
  *                     and runs the matching "Heal dX" activity; it needs a Healer's Kit use, and spends the target's Hit
@@ -50,7 +51,10 @@ export class feats{
       this.luckyClicked(message, id, context);
       this.brawlerClicked(message, id, context);
     });
-    Hooks.on("dnd5e.preRollDamageV2", config => this.healingRerolls(config));
+    Hooks.on("dnd5e.preRollDamageV2", config => {
+      this.healingRerolls(config);
+      this.enhancedUnarmedStrike(config);
+    });
     Hooks.on("dnd5e.preRollSavingThrowV2", (config, dialog, message) => this.onPreRollSave(config, message));
     Hooks.on("dnd5e.preUseActivity", activity => this.battleMedicKit(activity));
     Hooks.on("dnd5e.postUseActivity", activity => this.battleMedicSpendKit(activity));
@@ -281,6 +285,24 @@ export class feats{
 
   static healersKit(actor){
     return actor?.items?.find(i => ((i.identifier ?? i.system?.identifier) === "healers-kit") || /^healer.?s kit$/i.test(i.name ?? "")) ?? null;
+  }
+
+  static BRAWLER = "tavern-brawler";
+
+  /* Tavern Brawler : the Unarmed Strike's base damage "1 + STR" becomes "1d4r1 + STR" */
+  static enhancedUnarmedStrike(config){
+    if(!this.enabled()) return;
+    const activity = config?.subject;
+    const item = activity?.item;
+    if((activity?.type !== "attack") || ((item?.identifier ?? item?.system?.identifier) !== "unarmed-strike")) return;
+    if(!findItem(activity.actor, this.BRAWLER)) return;
+    const base = item.system.damage?.base?.formula;
+    if(!base || /\d*d\d+/i.test(base)) return;
+    const enhanced = "1d4r1 + @mod";
+    for(const roll of config.rolls ?? []){
+      const i = (roll.parts ?? []).findIndex(p => String(p).replace(/\s+/g, "") === base.replace(/\s+/g, ""));
+      if(i >= 0){ roll.parts[i] = enhanced; log.debug("Enhanced Unarmed Strike", activity.actor?.name); return; }
+    }
   }
 
   /* Healing Rerolls : a spell's healing dice reroll 1s (once), for a caster with the Healer feat */

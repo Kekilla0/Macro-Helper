@@ -57,6 +57,7 @@ export class initiative{
   /* ---------- Compact Initiative ---------- */
 
   static #pending = [];
+  static #rolling = [];
   static #flush = null;
   static #chain = Promise.resolve();
 
@@ -73,10 +74,12 @@ export class initiative{
     const { token, actor } = message.speaker ?? {};
     const combatant = combat?.combatants.find(c => (token && (c.tokenId === token)) || (!token && (c.actorId === actor)));
     if(!roll || !combatant) return;
-    this.#show(roll, combatant);
+    this.#rolling.push(this.#show(roll, combatant));
     this.#pending.push({ combatant : combatant.id, roll : JSON.stringify(roll) });
     clearTimeout(this.#flush);
-    this.#flush = setTimeout(() => {
+    this.#flush = setTimeout(async () => {
+      /* The numbers go on the card once the dice have landed */
+      await Promise.allSettled(this.#rolling.splice(0));
       const rows = this.#pending.splice(0);
       if(rows.length) gm.run("initiativeRows", { combat : combat.id, rows }).catch(error => log.error(error));
     }, 150);
@@ -91,7 +94,7 @@ export class initiative{
       return;
     }
     const whisper = combatant.hidden ? game.users.filter(u => u.isGM).map(u => u.id) : null;
-    game.dice3d.showForRoll(roll, game.user, true, whisper);
+    return game.dice3d.showForRoll(roll, game.user, true, whisper);
   }
 
   /**
@@ -261,7 +264,7 @@ export class initiative{
     let roll = await combatant.getInitiativeRoll().evaluate();
     const keep = (mode.advantage && !mode.disadvantage) ? "kh" : (mode.disadvantage && !mode.advantage) ? "kl" : null;
     if(keep) roll = (await extraD20(roll, keep))?.updated ?? roll;
-    this.#show(roll, combatant);
+    await this.#show(roll, combatant);
     await gm.run("initiativeRows", { combat : combat.id, rows : [{ combatant : combatant.id, roll : JSON.stringify(roll) }], reroll : true });
   }
 }

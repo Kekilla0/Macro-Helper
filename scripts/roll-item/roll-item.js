@@ -324,7 +324,8 @@ export class rollItem{
   }
 
   /* Let dnd5e handle dialogs, consumption, concentration and templates, but skip its card and follow-up prompts */
-  static onPreUse(activity, usage, _dialog, message){
+  static onPreUse(activity, usage, dialog, message){
+    rollItem.skipTemplateQuestion(activity, dialog);
     const mode = rollItem.modeFor(activity, usage);
     if(!mode) return;
     message.create = false;
@@ -553,6 +554,31 @@ export class rollItem{
     return false;
   }
 
+  /**
+   * Clear Instant Templates : at the end of a turn, the areas placed by that creature's instantaneous activities
+   * (Fireball, Burning Hands) are removed. Areas that last (a duration, or Concentration) stay. Done by the active GM.
+   */
+  static async clearTemplates(combat, prior, current){
+    if(!game.users.activeGM?.isSelf || !settings.value("clearTemplates")) return;
+    if((prior?.round === current?.round) && (prior?.turn === current?.turn)) return;   // a re-sorted order
+    const actor = combat.combatants.get(prior?.combatantId)?.actor;
+    const scene = canvas.scene;
+    if(!actor || !scene) return;
+    const gone = [];
+    for(const region of scene.regions ?? []){
+      const activity = fromUuidSync(region.getFlag?.("dnd5e", "activity") ?? "", { strict : false });
+      if(!activity) continue;
+      const origin = fromUuidSync(region.getFlag("dnd5e", "origin") ?? "", { strict : false });
+      const by = origin?.actor ?? origin?.parent ?? activity.actor;
+      if((by?.uuid !== actor.uuid) && (by?.id !== actor.id)) continue;
+      const duration = activity.duration ?? {};
+      if((duration.units !== "inst") || duration.concentration) continue;
+      gone.push(region.id);
+    }
+    if(gone.length) await scene.deleteEmbeddedDocuments("Region", gone);
+    log.debug("Cleared templates", actor.name, gone.length);
+  }
+
   /* The first wall that blocks movement between two points, or null */
   static firstWall(from, to){
     try {
@@ -600,12 +626,24 @@ export class rollItem{
     const disposition = ["ally", "willing"].includes(type) ? "ally"
       : ((type === "enemy") || ["save", "damage"].includes(activity.type)) ? "nonAlly" : "any";
     return {
-      count : Math.max(1, parseInt(target.affects?.count) || 1),
+      count : this.targetCount(activity, target),
       range, disposition,
       includeSelf : disposition === "ally" || disposition === "any",
       useTargets : pick !== "always",
       confirm : "auto",
     };
+  }
+
+  /* How many creatures an activity affects : a number, or a formula from the item ("2 + @item.level" : Bless) */
+  static targetCount(activity, target){
+    const raw = target?.affects?.count;
+    if(!raw) return 1;
+    let count = Number(raw);
+    if(!Number.isFinite(count)){
+      try { count = dnd5e.utils.simplifyBonus(raw, activity.getRollData?.() ?? {}); }
+      catch { count = parseInt(raw); }
+    }
+    return Math.max(1, Math.floor(count) || 1);
   }
 
   /* ---------- Rolling ---------- */
@@ -657,6 +695,19 @@ export class rollItem{
     });
     if(!choice) return null;
     return { advantage : choice === "advantage", disadvantage : choice === "disadvantage" };
+  }
+
+  /**
+   * An area with nothing else to ask (no spell slot level, no scaling to choose) : dnd5e's usage dialog would only
+   * ask whether to place the template. Skip it : the template is placed (Fireball from a monster's innate spells).
+   */
+  static skipTemplateQuestion(activity, dialog){
+    if(!settings.value("rollItem") || !dialog || !activity?.target?.template?.type) return;
+    const item = activity.item;
+    const slots = activity.requiresSpellSlot && (Number(item?.system?.level) > 0)
+      && Object.values(activity.actor?.system?.spells ?? {}).some(s => Number(s?.max) > 0);
+    if(slots || activity.consumption?.scaling?.allowed) return;
+    dialog.configure = false;
   }
 
   /* A utility activity's own roll formula (dnd5e's "Roll" button), no dialog, no message */
@@ -741,6 +792,7 @@ export class rollItem{
 
     rollItem.wrapTargeting();
     Hooks.on("dnd5e.preCreateMeasuredTemplate", activity => rollItem.anchorToSelf(activity));
+    Hooks.on("combatTurnChange", (combat, prior, current) => rollItem.clearTemplates(combat, prior, current));
 
     /* Attack + save rider items skip dnd5e's activity choice (sheet, hotbar, anything calling item.use) */
     patch.wrap("CONFIG.Item.documentClass.prototype.use", async function(wrapped, config = {}, dialog = {}, message = {}){

@@ -4,6 +4,7 @@ import { homebrew } from '../rules/homebrew.js';
 import { actions } from '../rules/actions.js';
 import { weapons } from '../rules/weapons.js';
 import { masteries } from '../roll-item/masteries.js';
+import { barbarian } from '../rules/classes/barbarian.js';
 import { rollItem } from '../roll-item/roll-item.js';
 import { tokenOf, actorOf, distanceBetween, getRange, isOutOfAction } from './tokens.js';
 import { pickTargets, getThreats } from './targets.js';
@@ -562,7 +563,7 @@ export async function setBaseDamage(item, { number, denomination, types, bonus }
 
 /**
  * How an attack would roll against a target, before rolling : "advantage", "disadvantage" or "normal5e" (neither, or
- * both cancelling). The same rules the roll uses (conditions, sight, Dodging, flanking, Help, Sap / Vex, Heavy),
+ * both cancelling). The same rules the roll uses (conditions, sight, Dodging, flanking, Help, Sap / Vex, Heavy, Reckless),
  * plus long range / threatened. For the pick map's colours; the keys or prompt you choose aren't known yet.
  * @param {Activity} activity   the attack
  * @param {Token} target
@@ -579,6 +580,7 @@ export function predictMode(activity, target, { attackMode, disadvantage = false
     homebrew.onPreRollAttack(config);
     actions.onPreRollAttack(config);
     masteries.onPreRollAttack(config);
+    barbarian.onPreRollAttack(config);
     const ranged = String(activity?.getActionType?.(attackMode) ?? "").startsWith("r");
     if(weapons.isHeavyFor(activity?.actor, activity?.item, ranged)) roll.options.disadvantage = true;
   } catch(error){

@@ -38,7 +38,7 @@ https://github.com/Kekilla0/Macro-Helper/releases/latest/download/module.json
 - **Savage Attacker:** each weapon hit gets a button for its owner that rolls the damage again. Each roll has its own APPLY, and applying one hides the other. Once per turn in combat.
 - **Alert:** right after the character's initiative is rolled, their player and the GM get a card listing allies in the combat. Clicking one asks that ally's player to agree, then the GM swaps the two initiatives. There's no question when you own both characters or no other player owns the ally. **Do not swap** closes the offer. It isn't available while either of them is Incapacitated, and the offer closes once a turn passes.
 - **Lucky:** after an attack roll, the attacker's owner can spend a Luck Point to roll a second d20 and keep the higher. The owner of an attacked Lucky character can spend one to roll a second d20 and keep the lower; the GM carries that out, since it changes someone else's card. Advantage and disadvantage don't stack, and they cancel. If the new die changes whether it's a crit, the damage is rerolled to match.
-- **Tavern Brawler:** once per turn, an Unarmed Strike hit gets a GM button to push the target 5 ft (homebrew obstacle rule included). Plutonium's *Enhanced Unarmed Strike* activity already rolls 1d4 (rerolling 1s) + STR.
+- **Tavern Brawler:** your Unarmed Strike's own damage becomes 1d4 + STR, rerolling 1s (Enhanced Unarmed Strike and Damage Rerolls), unless it already rolls a die (a Monk's Martial Arts). Once per turn, an Unarmed Strike hit also gets a GM button to push the target 5 ft (homebrew obstacle rule included).
 - **Healer:**
   - *Healing Rerolls:* 1s on a spell's healing dice are rolled again.
   - *Battle Medic:* using the feat picks a creature within 5 ft, reads its remaining Hit Dice (when it has several sizes, the creature's player picks which one; for an NPC or your own character, you pick), and rolls the matching "Heal dX". It needs a Healer's Kit with a use left, and spends one. The target's owner spends that Hit Die when they apply it from the card. Traits dnd5e does have data for, like Gnomish Cunning, Luck and Powerful Build, work through dnd5e as usual.
@@ -70,9 +70,19 @@ https://github.com/Kekilla0/Macro-Helper/releases/latest/download/module.json
   - The choice and the pick come first, so the card targets who was picked and says what for ("Assist Check: Bob has advantage on their next Athletics check"), on dnd5e's own card too.
 - [examples/items/unarmed-strike.json](examples/items/unarmed-strike.json) is dnd5e's 2024 Unarmed Strike with separate Damage, Grapple and Shove activities.
 
-**Equipment changes in combat** (with Weapon Property Rules on): equipping, unequipping, adding an equipped item or deleting one during a running combat whispers the GM three lines: when (round and turn), what (who equipped what), and by which user. Nothing is blocked.
+**Equipment changes in combat** (with Weapon Property Rules on): equipping, unequipping, adding an equipped item or deleting one during a running combat whispers the GM a short table: **Round** (two digits, and whose turn it is), **Who**, **Equipped** (the item), **Status** (Equipped, Unequipped or Removed) and, for armor and shields, **Time** in bold: the 2024 time it takes (light 1 / 1 min, medium 5 / 1 min, heavy 10 / 5 min to don / doff; a shield a Utilize action). Nothing is blocked.
 
 **Elevation:** distances count the height gap between tokens from their elevation, which you set by hand for flying or climbing. Each token is as tall as it is wide, so a Medium creature flying 5 ft up is still adjacent to one on the ground, and one 30 ft up is out of a sword's reach.
+
+**Class Rules** (in **Helpers**, on by default): class features at levels 1-2, on top of what the items' own data does. So far:
+- **Barbarian, Rage:** dnd5e's Rage effect already gives the resistances, the STR advantage and the Rage damage. The module adds:
+  - *Turning it on:* using Rage turns its effect on and ends your Concentration. Using it again while raging extends it without spending a use (the Bonus Action extension).
+  - *Rage damage:* only on attacks using Strength. A DEX melee attack doesn't get it, and a STR thrown attack does.
+  - *How long:* until the end of your next turn. On each of your turns, an attack roll against an enemy, or posting a card that makes an enemy save (Grapple, Shove, any save aimed at an enemy), keeps it going. Otherwise it ends at the end of that turn, with a chat line saying why. Out of combat, dnd5e's 10 minutes apply.
+  - *Ends early:* when you're Incapacitated, or equip heavy armor. You can't start a Rage in heavy armor.
+  - *No spells:* casting a spell while raging is refused.
+- **Barbarian, Danger Sense:** no DEX save advantage while Incapacitated. The save hover now names advantage from item effects ("Advantage : Danger Sense").
+- **Barbarian, Reckless Attack:** dnd5e's item has no activity, so import [examples/items/reckless-attack.json](examples/items/reckless-attack.json) into the Items sidebar and run [upgrade-items.js](examples/item-macros/upgrade-items.js) on the character: it gives their own Reckless Attack the activity and keeps it under Barbarian. Using it on your turn makes you Reckless until the start of your next turn: your STR attacks have advantage and attacks against you have advantage. The attack pick map colours follow.
 
 **Compact Initiative** (in **Helpers**, off by default): instead of one chat message per combatant, one card per round lists everyone's initiative, highest first. Hover a total for its dice. The combatant's owner and the GM get a Reroll button on its row, which follows the Advantage setting and moves the combatant in the tracker. Hidden combatants go on a second card only the GM sees. Players' own initiative rolls land on the same card. Dice So Nice still shows the dice. The card follows the tracker: after a swap or an edit it shows the new initiative and order (the roll stays in the hover). An **Alert** character's swap offer appears here instead of its own card: its owner gets a swap button on each ally's row, previewing where both would end up ("Bob would go 2nd (15), Aria 5th (9)"), and **Do not swap** on its own row. The buttons go once a turn passes. With dnd5e's ability score tie-breaker on, only the rolled initiative swaps: each creature keeps its own DEX decimal.
 
@@ -227,7 +237,7 @@ Either way the choice is combined with long range, being threatened, conditions 
 
 **Damage After the Attack** (world setting, on by default): attack and damage are both still rolled automatically, but the card shows the attack first. The damage dice roll once the attack dice have landed, so crit damage dice don't give away a natural 20 early. This mostly matters with Dice So Nice; without it the damage follows straight away.
 
-**Pick Targets** (a setting for each player): attacks rolled by Roll Item let you click your targets on the map first. Each creature is coloured by how the attack would roll against it: green advantage, yellow normal (or both cancelling), red disadvantage. The squares show the range: blue normal, red long range. Your own space stays plain when you can't pick yourself. It works like `pickAndAttack`: the range is shown, targets beyond reach are thrown at, and long range or a ranged attack while threatened gives disadvantage. It also checks you have enough ammunition or weapons to throw. The pick happens after dnd5e's use, so Scorching Ray knows its ray count from the cast level, and rays or attacks can pick a target again. If you pick fewer targets than rays, the rays are spread over your picks. Esc after casting still spends the slot.
+**Pick Targets** (a setting for each player, default *Always*): attacks rolled by Roll Item let you click your targets on the map first. Each creature is coloured by how the attack would roll against it: green advantage, yellow normal (or both cancelling), red disadvantage. The squares show the range: blue normal, red long range. Your own space stays plain when you can't pick yourself. It works like `pickAndAttack`: the range is shown, targets beyond reach are thrown at, and long range or a ranged attack while threatened gives disadvantage. It also checks you have enough ammunition or weapons to throw. The pick happens after dnd5e's use, so Scorching Ray knows its ray count from the cast level, and rays or attacks can pick a target again. If you pick fewer targets than rays, the rays are spread over your picks. Esc after casting still spends the slot.
 - *Off* uses your targets as they are.
 - *When you have no targets in range* picks only then.
 - *Always* clears your targets and picks every time.
@@ -275,6 +285,12 @@ On attack cards, damage is always rolled, but the APPLY tray only shows on a hit
 - **Lucky (n):** for the owner of a creature with the Lucky feat and a point left. It adds a second d20 and keeps the higher, once per roll.
 - **Saves linked to a card:** a save rolled from a card's row, or an on-hit save, updates that card when it changes, including its ✓/✗, its Apply sizes, and the on-hit save's halving. Reroll before applying: damage already applied isn't taken back.
 - **Initiative:** a rerolled initiative moves the combatant in the tracker too.
+
+**Clear Instant Templates** (GM setting, on by default): at the end of a creature's turn in combat, the areas its instantaneous spells and features placed (Fireball, Burning Hands) are removed. Areas that last (a duration, or Concentration) stay.
+
+**No template question:** when a use's only question would be "place the template?" (no spell slot level or scaling to choose, like a monster's innate Fireball), dnd5e's dialog is skipped and the template is placed straight away.
+
+**Collapse Card Descriptions** (GM setting, on by default): every chat card, dnd5e's and Roll Item's (attack cards included, which now carry the item's description), shows its description folded for everyone, the way dnd5e's own *Collapse Item Cards in Chat* does for one player. Click the card's title to open it.
 
 **DM Screen** (GM setting, off by default):
 - **NPC cards:** players see the cards but no numbers (no d20, totals or damage), only whether it hit or saved.
