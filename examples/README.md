@@ -21,7 +21,7 @@ Macros built with Macro Helper. To use one, copy the file's contents into a macr
 | [zero-hp.js](item-macros/zero-hp.js) | Hook Macro | At 0 HP: NPCs are Dead and defeated, PCs are Unconscious and dying. Healing clears it. |
 | [relentless-endurance.js](item-macros/relentless-endurance.js) | Item Macro, on a hook | **Relentless Endurance**: damage that would drop the creature to 0 HP leaves it on 1 instead, once a day, unless it's killed outright (massive damage). It sits on the feature and runs on *Damage about to apply*, only while the creature is on the scene. |
 | [turn-announce.js](item-macros/turn-announce.js) | Hook Macro | Posts whose turn it is when the combat turn changes. |
-| [default-actions.js](item-macros/default-actions.js) | Hook Macro | When a token is placed, its creature gets **Dodge**, **Help** and **Unarmed Strike** (the copies in your Items sidebar) unless it already has them, and the new ones go in its Favorites. |
+| [default-actions.js](item-macros/default-actions.js) | Hook Macro | When a token is placed, its creature gets **Dash**, **Disengage**, **Dodge**, **Help** and **Unarmed Strike** (the copies in your Items sidebar) unless it already has them, and the new ones go in its Favorites. |
 | [reset-actor.js](item-macros/reset-actor.js) | Script macro (GM) | **Reset actor** for testing builds: the selected token's actor is deleted and remade blank (same name, image, folder, ownership), and a linked token goes back on the same spot. |
 | [upgrade-items.js](item-macros/upgrade-items.js) | Script macro (GM) | **Upgrade items**: puts the Macro Helper items from your Items sidebar onto the selected creatures *in place*. Items they already have keep their spot on the sheet (a Barbarian feature stays under Barbarian), only the activities and text change. Class features that ended up under "Other features" go back under their class. |
 
@@ -37,6 +37,8 @@ Right-click an item in the Items sidebar, **Import Data**, and pick the file. Th
 
 | File | What it is |
 |---|---|
+| [items/dash.json](items/dash.json) | **Dash** action: Dashing until the end of the turn (extra movement equal to your Speed), for the action tracker. |
+| [items/disengage.json](items/disengage.json) | **Disengage** action: Disengaged until the end of the turn (no Opportunity Attacks from your movement). |
 | [items/dodge.json](items/dodge.json) | **Dodge** action: Dodging until the start of your next turn (Dodge & Help setting). |
 | [items/help.json](items/help.json) | **Help** action with three activities: Assist Attack, Assist Check, Stabilize (Dodge & Help setting). |
 | [items/unarmed-strike.json](items/unarmed-strike.json) | dnd5e's 2024 **Unarmed Strike** with separate Damage, Grapple and Shove activities, so the choice comes before any roll. |

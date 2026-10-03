@@ -13,7 +13,7 @@ const log = logger.for(import.meta.url);
  * Grapple and Shove (2024 Unarmed Strike) : save activities the target makes (STR or DEX, its choice) instead of
  * taking the strike's damage. dnd5e rolls the save; these do what a failure means.
  *
- *   Grapple : on a failed save the target is Grappled, applied as soon as the save is rolled (from any card).
+ *   Grapple : on a failed save the GM applies Grappled with the row's Apply effect, like any save's effect.
  *   Shove   : on a failed save the shover chooses : Prone, or pushed 5 ft away. Roll Item's save card shows both
  *             buttons per target that failed, for its roller; the GM carries them out (pushing an enemy).
  *   Both    : only a creature no more than one size larger than you.
@@ -93,10 +93,7 @@ export class maneuvers{
 
   static register(){
     if(game.system.id !== "dnd5e") return;
-    Hooks.on("createChatMessage", message => {
-      this.onSaveRolled(message);
-      this.onGrappleCard(message);
-    });
+    Hooks.on("createChatMessage", message => this.onSaveRolled(message));
     gm.handle("shove", (data, user)=> this.shoveAsGM(data, user));
   }
 
@@ -110,33 +107,6 @@ export class maneuvers{
     if(!key) return;
 
     ui.chat?.updateMessage(card);
-    if((key !== "grapple") || (conditions.saveOutcome(message)?.success !== false) || (message.author?.id !== game.user.id)) return;
-
-    const token = message.getAssociatedToken?.();
-    const target = token?.actor;
-    const attacker = card.getAssociatedActor();
-    if(!target) return;
-    if(attacker && !this.fits(target, attacker)){
-      return ui.notifications.warn(module.format("rollItem.maneuver.tooBig", { name : token.name, action : module.i18n("rollItem.maneuver.grapple") }));
-    }
-    if(target.isOwner) await setStatus(target, "grappled", true);
-    log.debug("Grappled", token.name, "by", attacker?.name);
-  }
-
-  /* A Grapple card : targets that automatically fail (Paralyzed, Stunned...) are Grappled now, by the GM's client */
-  static async onGrappleCard(card){
-    if(!this.enabled() || !game.users.activeGM?.isSelf || (this.ofCard(card) !== "grapple")) return;
-    const activity = card.getAssociatedActivity?.();
-    const abilities = [...(activity?.save?.ability ?? [])];
-    const attacker = card.getAssociatedActor?.();
-    const { TargetsField } = dnd5e.dataModels.chatMessage.fields;
-    for(const descriptor of card.system?.targets ?? []){
-      const { actor, token } = TargetsField.resolve(descriptor);
-      if(!actor || !abilities.length || !abilities.every(a => conditions.autoFailOf(actor, a))) continue;
-      if(attacker && !this.fits(actor, attacker)) continue;
-      await setStatus(actor, "grappled", true);
-      log.debug("Grappled (automatic failure)", token?.name ?? actor.name);
-    }
   }
 
   /* ---------- Shove's choice ---------- */

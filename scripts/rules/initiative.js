@@ -94,7 +94,9 @@ export class initiative{
       return;
     }
     const whisper = combatant.hidden ? game.users.filter(u => u.isGM).map(u => u.id) : null;
-    return game.dice3d.showForRoll(roll, game.user, true, whisper);
+    /* In the colours of the combatant's player (their own dice), the GM's for creatures no player owns */
+    const player = (combatant.players ?? []).find(u => u.active && !u.isGM) ?? (combatant.players ?? []).find(u => !u.isGM) ?? game.user;
+    return game.dice3d.showForRoll(roll, player, true, whisper);
   }
 
   /**

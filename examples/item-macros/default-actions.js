@@ -1,9 +1,9 @@
 /**
- * Default actions : when a token is placed, its creature gets Dodge, Help and Unarmed Strike if it doesn't have
+ * Default actions : when a token is placed, its creature gets Dash, Disengage, Dodge, Help and Unarmed Strike if it doesn't have
  * them yet, and the ones it gets are added to its Favorites (characters' sheets). A creature that already has one
- * (by identifier : "dodge", "help", "unarmed-strike") keeps its own, and nothing else happens.
+ * (by identifier : "dash", "disengage", "dodge", "help", "unarmed-strike") keeps its own, and nothing else happens.
  *
- * Setup : 1. Import examples/items/dodge.json, help.json and unarmed-strike.json into the Items sidebar (right-click
+ * Setup : 1. Import examples/items/dash.json, disengage.json, dodge.json, help.json and unarmed-strike.json into the Items sidebar (right-click
  *            an item, Import Data). The copies there are what creatures get.
  *         2. Hook Macro (world macro, Script). Run on Hooks : "Token created" (createToken).
  *            Run For : Active GM (once).
@@ -12,7 +12,7 @@
  */
 
 const TYPES = ["character", "npc"];
-const DEFAULTS = ["dodge", "help", "unarmed-strike"];
+const DEFAULTS = ["dash", "disengage", "dodge", "help", "unarmed-strike"];
 
 const [tokenDoc] = args;
 const actor = tokenDoc?.actor;

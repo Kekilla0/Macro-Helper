@@ -12,6 +12,8 @@ import { rerolls } from './rerolls.js';
 import { conditions } from '../rules/conditions.js';
 import { actions } from '../rules/actions.js';
 import { bard } from '../rules/classes/bard.js';
+import { cleric } from '../rules/classes/cleric.js';
+import { chooseOption } from '../helpers/utils.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -95,7 +97,9 @@ export class rollItem{
 
     /* Advantage / disadvantage for the whole card : the keys held, or asked now (targets are already chosen) */
     const mode = await this.chooseMode(activity, event);
-    if(!mode) return;
+    if(!mode) return this.cancelUse(activity);
+    /* A damage type to choose (necrotic or radiant) : asked before anything is rolled */
+    if(!await this.chooseDamageTypes(activity)) return this.cancelUse(activity);
 
     /* Attack mode from the weapon's data when not given : Versatile (what's in hand), thrown beyond reach */
     attackMode ??= target => attackModeFor(activity.item, target) ?? undefined;
@@ -338,6 +342,10 @@ export class rollItem{
 
   /* activity here is dnd5e's scaled clone, so upcast spells roll at the cast level */
   static onPostUse(activity, usage, results){
+    /* What the use spent and placed, in case it's cancelled before its card (cancelUse) */
+    rollItem.#lastUse = { uuid : activity.uuid, results, at : Date.now() };
+    /* Turn Undead's circle round the Cleric, for everyone to see */
+    cleric.placeEmanation(activity);
     /* An area placed by the use : whoever is inside becomes the targets, before any card is made */
     const area = rollItem.targetArea(activity, results);
 
@@ -375,11 +383,37 @@ export class rollItem{
 
     const count = this.countFor(activity);
     const picked = await pickAttack(activity.item, { activity, count, repeat : count > 1, clearTargets : pick === "always", used : true });
-    if(!picked) return;
+    if(!picked) return this.cancelUse(activity);
     const { targets, attackMode, disadvantage } = picked;
-    if(!this.announceTargets(activity, targets)) return;
+    if(!this.announceTargets(activity, targets)) return this.cancelUse(activity);
     /* Fewer picks than rays : the rays are spread over the picks (3 rays, A and B -> A A B) */
     return this.rollActivity(activity, { event, scaling, count : Math.max(count, targets.length), targets, attackMode, disadvantage });
+  }
+
+  static #lastUse = { uuid : null, results : null, at : 0 };
+
+  /**
+   * A use stopped part way (the pick closed, a question closed) : as if it never happened. What dnd5e spent is
+   * refunded (a slot, a use), the templates it placed are removed, and no card is made.
+   * @param {Activity} activity
+   */
+  static async cancelUse(activity){
+    const last = this.#lastUse;
+    this.#lastUse = { uuid : null, results : null, at : 0 };
+    if(!last.results || (last.uuid !== activity?.uuid) || ((Date.now() - last.at) > 600000)) return null;
+    const message = last.results.message;
+    const deltas = message?.data?.system?.deltas ?? message?.system?.deltas;
+    try {
+      if(deltas) await activity.refund(deltas);
+      const placed = (last.results.templates ?? []).filter(t => t?.id && t.parent?.regions?.has?.(t.id));
+      for(const scene of new Set(placed.map(t => t.parent))){
+        await scene.deleteEmbeddedDocuments("Region", placed.filter(t => t.parent === scene).map(t => t.id));
+      }
+      ui.notifications.info(module.format("rollItem.cancelled", { name : activity.item?.name ?? "" }));
+    } catch(error){
+      log.error("Cancelling the use", error);
+    }
+    return null;
   }
 
   /* ---------- Picking targets for heals, saves and effects ---------- */
@@ -403,6 +437,12 @@ export class rollItem{
       owners.add(proto);
 
       patch.wrap(`CONFIG.DND5E.activityTypes.${type}.documentClass.prototype.use`, async function(wrapped, usage = {}, ...rest){
+        /* Targets an activity sets itself, no placement or pick (Turn Undead : the Undead within 30 ft) */
+        const preset = cleric.presetTargets(this);
+        if(preset){
+          rollItem.announceTargets(this, preset, { keepEmpty : true });
+          usage = { ...usage, [module.id] : { ...(usage?.[module.id] ?? {}), skipPick : true } };
+        }
         /* Actions that choose and pick first (Help) : the card then shows who and what */
         const before = await actions.beforeUse(this);
         if(before === false) return;
@@ -565,21 +605,50 @@ export class rollItem{
     if(!game.users.activeGM?.isSelf || !settings.value("clearTemplates")) return;
     if((prior?.round === current?.round) && (prior?.turn === current?.turn)) return;   // a re-sorted order
     const actor = combat.combatants.get(prior?.combatantId)?.actor;
+    if(actor) await this.#clearInstant(region => this.#placedBy(region, [actor]));
+  }
+
+  /* The combat is over : every instant area its combatants placed goes */
+  static async clearCombatTemplates(combat){
+    if(!game.users.activeGM?.isSelf || !settings.value("clearTemplates")) return;
+    const actors = [...(combat?.combatants ?? [])].map(c => c.actor).filter(Boolean);
+    if(actors.length) await this.#clearInstant(region => this.#placedBy(region, actors));
+  }
+
+  /* Out of combat there are no turns : an instant area goes after a minute */
+  static onTemplateCreated(region){
+    if(!game.users.activeGM?.isSelf || !settings.value("clearTemplates") || game.combat?.started) return;
+    if(!this.#isInstant(region)) return;
+    setTimeout(() => {
+      const scene = region.parent;
+      if(scene?.regions?.has?.(region.id)) scene.deleteEmbeddedDocuments("Region", [region.id]).catch(() => {});
+    }, this.TEMPLATE_MINUTE);
+  }
+
+  static TEMPLATE_MINUTE = 60000;
+
+  /* An area placed by an instantaneous activity (not a duration, not Concentration) */
+  static #isInstant(region){
+    const activity = fromUuidSync(region?.getFlag?.("dnd5e", "activity") ?? "", { strict : false });
+    if(!activity) return false;
+    const duration = activity.duration ?? {};
+    return (duration.units === "inst") && !duration.concentration;
+  }
+
+  /* Placed by one of these creatures */
+  static #placedBy(region, actors){
+    const activity = fromUuidSync(region.getFlag?.("dnd5e", "activity") ?? "", { strict : false });
+    const origin = fromUuidSync(region.getFlag?.("dnd5e", "origin") ?? "", { strict : false });
+    const by = origin?.actor ?? origin?.parent ?? activity?.actor;
+    return actors.some(a => (by?.uuid === a.uuid) || (by?.id === a.id));
+  }
+
+  static async #clearInstant(test){
     const scene = canvas.scene;
-    if(!actor || !scene) return;
-    const gone = [];
-    for(const region of scene.regions ?? []){
-      const activity = fromUuidSync(region.getFlag?.("dnd5e", "activity") ?? "", { strict : false });
-      if(!activity) continue;
-      const origin = fromUuidSync(region.getFlag("dnd5e", "origin") ?? "", { strict : false });
-      const by = origin?.actor ?? origin?.parent ?? activity.actor;
-      if((by?.uuid !== actor.uuid) && (by?.id !== actor.id)) continue;
-      const duration = activity.duration ?? {};
-      if((duration.units !== "inst") || duration.concentration) continue;
-      gone.push(region.id);
-    }
+    if(!scene) return;
+    const gone = (scene.regions?.contents ?? [...(scene.regions ?? [])]).filter(r => this.#isInstant(r) && test(r)).map(r => r.id);
     if(gone.length) await scene.deleteEmbeddedDocuments("Region", gone);
-    log.debug("Cleared templates", actor.name, gone.length);
+    log.debug("Cleared templates", gone.length);
   }
 
   /* The first wall that blocks movement between two points, or null */
@@ -737,11 +806,60 @@ export class rollItem{
       ...(attack?.options?.[module.id]?.noMod ? { [module.id] : { noMod : true } } : {}),
     };
 
+    /* A damage part with several types (Divine Spark : necrotic or radiant) : which one */
+    if(!await this.chooseDamageTypes(activity)) return [];
+
     /* Stage hook : change the damage before it's rolled (config.rolls, config.isCritical...), or return false to skip it */
     if(Hooks.call(`${module.id}.preDamage`, activity, config, attack) === false) return [];
     const rolls = await activity.rollDamage(config, { configure : false }, { create : false }) ?? [];
     Hooks.callAll(`${module.id}.damage`, activity, rolls, attack);
     return rolls;
+  }
+
+  static #typesAsked = { uuid : null, at : 0 };
+
+  /**
+   * A damage part that offers several types (Divine Spark : necrotic or radiant ; Chromatic Orb) : ask which, once
+   * per use (several rays don't ask again). The answer is dnd5e's own "last damage type" for that part, which it
+   * rolls with, and the next time's default.
+   * @returns {Promise<boolean>}  false when closed (no damage)
+   */
+  static async chooseDamageTypes(activity){
+    if(!activity?.item?.isOwner || (activity.type === "heal")) return true;
+    const asked = this.#typesAsked;
+    if((asked.uuid === activity.uuid) && ((Date.now() - asked.at) < 10000)) return true;
+    /* A cast spell's activity is a scaled copy : remember the answer on the real item */
+    const item = activity.actor?.items?.get(activity.item.id) ?? activity.item;
+    const parts = (typeof activity._getDamageParts === "function") ? activity._getDamageParts({}) : (activity.damage?.parts ?? []);
+    const chosenTypes = {};
+    for(const [index, part] of [...parts].entries()){
+      const types = [...(part?.types ?? [])];
+      if(types.length < 2) continue;
+      const key = `last.${activity.id}.damageType.${index}`;
+      const chosen = await chooseOption({
+        title : activity.item.name, icon : "fa-solid fa-burst", prompt : module.i18n("rollItem.damageType"),
+        options : types.map(t => ({ value : t, label : game.i18n.localize(CONFIG.DND5E.damageTypes[t]?.label ?? t) })),
+        value : item.getFlag("dnd5e", key), confirm : module.i18n("rollItem.damageTypeRoll"),
+      });
+      if(!chosen) return false;
+      chosenTypes[index] = chosen;
+      if(item.isOwner) await item.setFlag("dnd5e", key, chosen);
+    }
+    this.#typesAsked = { uuid : activity.uuid, at : Date.now(), types : chosenTypes };
+    return true;
+  }
+
+  /* The damage roll gets the chosen type itself (dnd5e's damage application reads the roll's type) */
+  static applyDamageTypes(config){
+    const asked = this.#typesAsked;
+    if(!asked.types || (config?.subject?.uuid !== asked.uuid) || ((Date.now() - asked.at) > 10000)) return;
+    for(const [index, roll] of (config.rolls ?? []).entries()){
+      const type = asked.types[index];
+      if(!type) continue;
+      roll.options ??= {};
+      roll.options.type = type;
+      if(roll.data?.roll?.damage) roll.data.roll.damage.type = type;
+    }
   }
 
   /**
@@ -796,6 +914,9 @@ export class rollItem{
     rollItem.wrapTargeting();
     Hooks.on("dnd5e.preCreateMeasuredTemplate", activity => rollItem.anchorToSelf(activity));
     Hooks.on("combatTurnChange", (combat, prior, current) => rollItem.clearTemplates(combat, prior, current));
+    Hooks.on("deleteCombat", combat => rollItem.clearCombatTemplates(combat));
+    Hooks.on("createRegion", region => rollItem.onTemplateCreated(region));
+    Hooks.on("dnd5e.preRollDamageV2", config => rollItem.applyDamageTypes(config));
 
     /* Attack + save rider items skip dnd5e's activity choice (sheet, hotbar, anything calling item.use) */
     patch.wrap("CONFIG.Item.documentClass.prototype.use", async function(wrapped, config = {}, dialog = {}, message = {}){
@@ -824,6 +945,8 @@ export class rollItem{
    * @param {object[]} [rays]  one { target : tokenUuid } per ray when rolling more than one attack
    */
   static async attackCard(activity, rolls, { scaling = 0, rays = [], rider = null, disadvantage = false, disadvantageWhy = "" } = {}){
+    /* The card is going out : nothing left to cancel */
+    this.#lastUse = { uuid : null, results : null, at : 0 };
     const attack = rolls.find(r => r instanceof CONFIG.Dice.D20Roll);
     const { ability, ammunition, attackMode, mastery } = attack?.options ?? {};
     const { TargetsField } = dnd5e.dataModels.chatMessage.fields;
@@ -856,10 +979,12 @@ export class rollItem{
     const message = await ChatMessage.implementation.create(messageData);
     if(!message) return message;
 
+    /* Dice that never report landing (Dice So Nice hiccup) don't leave the card on "Rolling..." */
+    const landed = rolls => Promise.race([this.showDice(rolls, message), new Promise(r => setTimeout(r, 8000))]);
     try {
-      await this.showDice(attacks, message);
+      await landed(attacks);
       await message.setFlag(module.id, "reveal", 1);
-      await this.showDice(damage, message);
+      await landed(damage);
     }
     finally {
       await message.setFlag(module.id, "reveal", 2);
@@ -894,7 +1019,7 @@ export class rollItem{
       const spec = this.pickSpec(activity, {}, { types : ["damage"] });
       if(spec){
         picks = await pickTargets(activity.item, { ...spec, count, repeat : count > 1 });
-        if(!picks.length || !this.announceTargets(activity, picks)) return null;
+        if(!picks.length || !this.announceTargets(activity, picks)) return this.cancelUse(activity);
       }
     }
     /* Self only : the caster, not whoever is still targeted from an earlier attack */
@@ -903,6 +1028,8 @@ export class rollItem{
       picks = (caster && (caster.document.parent === canvas.scene)) ? [caster] : [];
       if(canvas.ready) canvas.tokens.setTargets([]);
     }
+    /* A damage type to choose : asked before anything is rolled; closing it cancels the use */
+    if(!await this.chooseDamageTypes(activity)) return this.cancelUse(activity);
     if(picks) data.system.targets = TargetsField.getDescriptors([...new Set(picks)]);
     data.system.targets ??= TargetsField.getDescriptors();
 
@@ -922,6 +1049,8 @@ export class rollItem{
     const formula = await this.rollFormula(activity);
     for(const roll of formula) roll.options[module.id] = { part : "formula" };
 
+    /* The card is going out : nothing left to cancel */
+    this.#lastUse = { uuid : null, results : null, at : 0 };
     data.type = TYPES.save;
     data.rolls = [...(data.rolls ?? []), ...damage, ...formula];
     data.system.onSave = activity.damage?.onSave ?? null;

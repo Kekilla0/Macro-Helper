@@ -249,7 +249,7 @@ export function registerMessages(){
    * @param {ChatMessage} message
    * @param {object} options   { targets, hasSave, abilities, dc, onSave, hasRolls, isHeal }
    */
-  const buildRows = (message, { targets = [], hasSave = false, abilities = [], dc, onSave, hasRolls = false, isHeal = false, bonus = "" } = {}) => {
+  const buildRows = (message, { targets = [], hasSave = false, abilities = [], dc, onSave, hasRolls = false, isHeal = false, bonus = "", effects = [] } = {}) => {
     if(!targets.length || !message.isContentVisible) return [];
     const results = saveResultsOf(message);
     const dmScreen = settings.value("rollItemDmScreen");
@@ -290,8 +290,47 @@ export function registerMessages(){
         } : null,
         /* Once applied from this card, the amount shows instead */
         apply : (hasRolls && owner && (!hasSave || result) && !appliedOn(message, descriptor.token, ["rows"])) ? { multiplier, label : labelKey } : null,
+        /* The save's effects (Turned, Paralyzed...) : the GM applies them once it's rolled, to those they apply to */
+        ...effectRow(message, descriptor.token, { hasSave, result, effects }),
       };
     });
+  };
+
+  /* A row's effect button (GM) : on a failure all of them, on a success those that apply anyway; applied once */
+  const effectRow = (message, uuid, { hasSave, result, effects }) => {
+    if(!game.user.isGM || !hasSave || !result || !effects.length) return {};
+    const due = effects.filter(e => !result.success || e.onSave);
+    if(!due.length) return {};
+    const names = due.map(e => e.doc.name).join(", ");
+    if(message.getFlag(module.id, `effects.${uuidKey(uuid)}`)) return { effectApplied : names };
+    return { effectApply : module.format("rollItem.row.applyEffect", { names }) };
+  };
+
+  /* The GM applies a row's effects to its creature */
+  const applyRowEffects = async (message, button, { activity, targets = [] } = {}) => {
+    if(!game.user.isGM) return;
+    const uuid = button.dataset.target;
+    const descriptor = targets.find(t => t.token === uuid) ?? { token : uuid };
+    const { actor } = TargetsField.resolve(descriptor);
+    const result = saveResultsOf(message).get(uuid);
+    if(!actor || !result) return;
+    const due = effectsOf(activity).filter(e => !result.success || e.onSave);
+    if(!due.length) return;
+    /* Grapple : only a creature no more than one size larger than the grappler */
+    const grappler = message.getAssociatedActor?.();
+    if((maneuvers.ofCard(message) === "grapple") && grappler && !maneuvers.fits(actor, grappler)){
+      return ui.notifications.warn(module.format("rollItem.maneuver.tooBig", { name : actor.name, action : module.i18n("rollItem.maneuver.grapple") }));
+    }
+    const data = due.map(({ doc }) => {
+      const d = foundry.utils.mergeObject(doc.toObject(), { origin : activity.item?.uuid ?? doc.parent?.uuid, transfer : false, disabled : false,
+        start : { time : game.time.worldTime, ...(game.combat?.started ? { combat : game.combat.id, round : game.combat.round, turn : game.combat.turn ?? 0 } : {}) },
+        flags : { [module.id] : { fromCard : message.id } } });
+      delete d._id;
+      return d;
+    });
+    button.disabled = true;
+    await actor.createEmbeddedDocuments("ActiveEffect", data);
+    await message.setFlag(module.id, `effects.${uuidKey(uuid)}`, true);
   };
 
   /**
@@ -337,6 +376,11 @@ export function registerMessages(){
     const save = game.messages.get(button.dataset.message);
     if(save) await rerolls.lucky(save, save.getAssociatedActor?.());
   };
+  /* Apply effect on a row : the rider's activity on an attack card, the card's own on a save card */
+  async function RowEffect(event, button){
+    const activity = this.riderActivity ?? this.parent.getAssociatedActivity({ scaled : true });
+    await applyRowEffects(this.parent, button, { activity, targets : this.targets });
+  }
   const rowInspire = async (event, button) => {
     const save = game.messages.get(button.dataset.message);
     if(save) await rerolls.inspire(save, save.getAssociatedActor?.());
@@ -418,6 +462,11 @@ export function registerMessages(){
   const effectDocs = activity => (activity?.applicableEffects ?? [])
     .map(e => e.uuid ? fromUuidSync(e.uuid, { strict : false }) : activity.item?.effects.get(e._id))
     .filter(Boolean);
+
+  /* An activity's effects with whether each applies on a successful save too : [{ doc, onSave }] */
+  const effectsOf = activity => (activity?.applicableEffects ?? [])
+    .map(e => ({ doc : e.uuid ? fromUuidSync(e.uuid, { strict : false }) : activity.item?.effects.get(e._id), onSave : !!e.onSave }))
+    .filter(e => e.doc);
 
   /* Same permission dnd5e uses for its effect tray */
   const canApplyEffects = message => message.isContentVisible && (game.user.isGM || dnd5e.settings.allowPlayerEffectsTray);
@@ -552,6 +601,7 @@ export function registerMessages(){
         rowReroll : rowReroll,
         rowLucky : rowLucky,
         rowInspire : rowInspire,
+        rowEffect : RowEffect,
       },
     }, { inplace : false }));
 
@@ -998,6 +1048,7 @@ export function registerMessages(){
         onSave : this.rider.onSave,
         hasRolls : this.riderRolls.length > 0,
         bonus : save.save?.bonus ?? "",
+        effects : effectsOf(save),
       });
     }
 
@@ -1030,7 +1081,8 @@ export function registerMessages(){
         damage : rolls.length ? { ...damageContext(this.parent, rolls, { hidden : hidesNumbers(this.parent) }), showTray : this.canApply && rollItem.isHit(this.attackRoll) } : null,
         summaries,
         rows : this.riderRows(),
-        effects : canApplyEffects(this.parent) ? effectDocs(save) : [],
+        /* The rows apply the save's effects (Apply effect, GM) : no tray, which would use the GM's selection */
+        effects : [],
       };
     }
 
@@ -1249,6 +1301,7 @@ export function registerMessages(){
         rowReroll : rowReroll,
         rowLucky : rowLucky,
         rowInspire : rowInspire,
+        rowEffect : RowEffect,
       },
     }, { inplace : false }));
 
@@ -1326,6 +1379,7 @@ export function registerMessages(){
         hasRolls : this.damageRolls.length > 0,
         isHeal : activity?.type === "heal",
         bonus : activity?.save?.bonus ?? "",
+        effects : hasSave ? effectsOf(activity) : [],
       });
     }
 
@@ -1373,6 +1427,7 @@ export function registerMessages(){
       context.rows = this.targetRows();
       if(context.rows.length){
         if(context.damage) context.damage.showTray = false;
+        if(this.parent.getAssociatedActivity()?.type === "save") context.effects = [];
         context.summaries = [];
         /* dnd5e's own save button rolls for everyone through its dialog : the rows replace it */
         if(context.buttonGroups){

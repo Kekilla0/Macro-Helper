@@ -6,12 +6,15 @@ import { pickTargets } from '../helpers/targets.js';
 import { tokenOf, isDown } from '../helpers/tokens.js';
 import { addTimedEffect, stabilize } from '../helpers/actors.js';
 import { giveMode } from '../roll-item/reasons.js';
+import { chooseOption } from '../helpers/utils.js';
 const log = logger.for(import.meta.url);
 
 /**
  * The basic actions dnd5e has no automation for, from items you add to a character (examples/items : dodge.json,
  * help.json), recognised by item identifier and activity name (Action Rules setting) :
  *
+ *   Dash           : Dashing until the end of the turn (extra movement equal to your Speed : the action tracker).
+ *   Disengage      : Disengaged until the end of the turn (your movement doesn't provoke Opportunity Attacks).
  *   Dodge          : Dodging until the start of your next turn. Attacks against you have disadvantage (conditions.js);
  *                    dnd5e gives the DEX save advantage and ends it when you're Incapacitated or can't move.
  *   Help :
@@ -28,6 +31,8 @@ const log = logger.for(import.meta.url);
  */
 export class actions{
   static DODGE = "dodge";
+  static DASH = "dash";
+  static DISENGAGE = "disengage";
   /* Assist Check's reach in feet : how far coaching carries (Inspiring Leader, Rally) */
   static ASSIST_CHECK_RANGE = 30;
   static HELP = "help";
@@ -103,7 +108,10 @@ export class actions{
     const id = this.idOf(activity.item);
     try {
       /* On the token's own actor : an unlinked token opened from the sidebar would otherwise miss it */
-      if(id === this.DODGE) return await this.dodge(activity.getUsageToken?.()?.actor ?? tokenOf(activity.actor)?.actor ?? activity.actor);
+      const own = activity.getUsageToken?.()?.actor ?? tokenOf(activity.actor)?.actor ?? activity.actor;
+      if(id === this.DODGE) return await this.dodge(own);
+      if(id === this.DASH) return await this.mark(own, "dash", "actions.dash.mark", "icons/skills/movement/feet-winged-boots-glowing-yellow.webp");
+      if(id === this.DISENGAGE) return await this.mark(own, "disengage", "actions.disengage.mark", "icons/skills/movement/arrow-upward-yellow.webp");
       const help = usage?.[module.id]?.before?.help;
       if((id !== this.HELP) || !help?.target) return;
       if(help.mode === "attack") return await this.assistAttack(activity, help);
@@ -124,6 +132,16 @@ export class actions{
       name : game.i18n.localize(status?.name ?? "Dodging"), img : status?.img, statuses : ["dodging"],
     }, { until : "turnStart" });
     log.debug("Dodging", actor.name);
+  }
+
+  /* ---------- Dash, Disengage ---------- */
+
+  /* Marked until the end of this turn : Dashing (extra movement equal to its Speed), Disengaged (its movement
+     doesn't provoke Opportunity Attacks). The action tracker reads them. */
+  static async mark(actor, key, label, img){
+    if(actor.effects.some(e => e.getFlag(module.id, key))) return;
+    await addTimedEffect(actor, { name : module.i18n(label), img, flags : { [module.id] : { [key] : true } } }, { until : "turnEnd" });
+    log.debug(key, actor.name);
   }
 
   /* ---------- Help : Assist Attack ---------- */
@@ -182,16 +200,9 @@ export class actions{
       ui.notifications.warn(module.format("actions.help.noProficiency", { name : actor.name }));
       return null;
     }
-    const esc = s => foundry.utils.escapeHTML(String(s));
-    const key = await foundry.applications.api.DialogV2.wait({
-      window : { title : activity.item.name, icon : "fa-solid fa-hands-helping" },
-      content : `<p>${module.i18n("actions.help.chooseCheck")}</p>
-        <select name="key" autofocus>${options.map(o => `<option value="${esc(o.key)}">${esc(o.label)}</option>`).join("")}</select>`,
-      buttons : [{ action : "ok", label : module.i18n("actions.help.choose"), icon : "fa-solid fa-check", default : true,
-        callback : (event, button) => button.form.elements.key.value }],
-      rejectClose : false,
-    });
-    if(!key || (key === "ok")) return null;
+    const key = await chooseOption({ title : activity.item.name, icon : "fa-solid fa-hands-helping", prompt : module.i18n("actions.help.chooseCheck"),
+      options : options.map(o => ({ value : o.key, label : o.label })), confirm : module.i18n("actions.help.choose") });
+    if(!key) return null;
     return { key, label : options.find(o => o.key === key)?.label ?? key };
   }
 

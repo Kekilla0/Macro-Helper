@@ -34,3 +34,29 @@ export function originOf(message){
   if(!origin) return null;
   return (typeof origin === "string") ? (game.messages.get(origin) ?? null) : origin;
 }
+
+/**
+ * Ask the user to choose one option from a dropdown (a skill, a damage type...).
+ * @param {object} options
+ * @param {string} options.title
+ * @param {{ value : string, label : string }[]} options.options
+ * @param {string} [options.prompt]   a line above the dropdown
+ * @param {string} [options.value]    the option chosen to begin with
+ * @param {string} [options.icon]     Font Awesome classes for the window
+ * @param {string} [options.confirm]  the button's label
+ * @returns {Promise<string|null>}  the chosen value, null when closed
+ */
+export async function chooseOption({ title, options = [], prompt = "", value, icon = "fa-solid fa-list", confirm } = {}){
+  if(!options.length) return null;
+  if(options.length === 1) return options[0].value;
+  const esc = s => foundry.utils.escapeHTML(String(s ?? ""));
+  const chosen = await foundry.applications.api.DialogV2.wait({
+    window : { title, icon },
+    content : `${prompt ? `<p>${esc(prompt)}</p>` : ""}
+      <select name="choice" autofocus>${options.map(o => `<option value="${esc(o.value)}"${o.value === value ? " selected" : ""}>${esc(o.label)}</option>`).join("")}</select>`,
+    buttons : [{ action : "ok", label : confirm ?? game.i18n.localize("Confirm"), icon : "fa-solid fa-check", default : true,
+      callback : (event, button) => button.form.elements.choice.value }],
+    rejectClose : false,
+  });
+  return (!chosen || (chosen === "ok")) ? null : chosen;
+}

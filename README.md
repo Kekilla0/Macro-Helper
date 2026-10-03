@@ -61,7 +61,9 @@ https://github.com/Kekilla0/Macro-Helper/releases/latest/download/module.json
 - **Threatened** (ranged attacks within 5 ft of an enemy) and **Dodging** both need that creature to see you.
 - A token with sight turned off (or a scene without token vision) still follows the conditions: it sees nothing while Blinded, and never sees an Invisible creature. Otherwise it sees everything, with a warning in the console so you can spot tokens missing vision.
 
-**Dodge & Help** (in **Helpers**, on by default): two items to import from [examples/items](examples/items) (right-click an item in the Items sidebar, Import Data), recognised by identifier. Each activity carries its own text, so the card shows only the one used:
+**Dash, Disengage, Dodge & Help** (in **Helpers**, on by default): items to import from [examples/items](examples/items) (right-click an item in the Items sidebar, Import Data), recognised by identifier. Each activity carries its own text, so the card shows only the one used:
+- **Dash:** Dashing until the end of the turn (extra movement equal to your Speed, for the action tracker).
+- **Disengage:** Disengaged until the end of the turn (your movement doesn't provoke Opportunity Attacks).
 - **Dodge:** Dodging until the start of your next turn.
 - **Help** asks which of its three activities:
   - *Assist Attack:* pick an enemy within 5 ft. The next attack roll against it by one of your allies (not you) has advantage. The mark shows on the enemy and ends when used, or at the start of your next turn.
@@ -74,19 +76,23 @@ https://github.com/Kekilla0/Macro-Helper/releases/latest/download/module.json
 
 **Elevation:** distances count the height gap between tokens from their elevation, which you set by hand for flying or climbing. Each token is as tall as it is wide, so a Medium creature flying 5 ft up is still adjacent to one on the ground, and one 30 ft up is out of a sword's reach.
 
-**Class Rules** (in **Helpers**, on by default): class features at levels 1-2, on top of what the items' own data does. So far:
+**Class Rules** (in **Helpers**, on by default): class features at levels 1-2, on top of what the items' own data does. Edits Plutonium's items need are listed in [docs/plutonium-notes.md](docs/plutonium-notes.md). So far:
 - **Barbarian, Rage:** dnd5e's Rage effect already gives the resistances, the STR advantage and the Rage damage. The module adds:
   - *Turning it on:* using Rage turns its effect on and ends your Concentration. Using it again while raging extends it without spending a use (the Bonus Action extension).
   - *Rage damage:* only on attacks using Strength. A DEX melee attack doesn't get it, and a STR thrown attack does.
   - *How long:* until the end of your next turn. On each of your turns, an attack roll against an enemy, or posting a card that makes an enemy save (Grapple, Shove, any save aimed at an enemy), keeps it going. Otherwise it ends at the end of that turn, with a chat line saying why. Out of combat, dnd5e's 10 minutes apply.
-  - *Ends early:* when you're Incapacitated, or equip heavy armor. You can't start a Rage in heavy armor.
+  - *Ends early:* when you're Incapacitated, equip heavy armor, or the combat ends. You can't start a Rage in heavy armor.
   - *No spells:* casting a spell while raging is refused.
 - **Barbarian, Danger Sense:** no DEX save advantage while Incapacitated. The save hover now names advantage from item effects ("Advantage : Danger Sense").
 - **Barbarian, Reckless Attack:** dnd5e's item has no activity, so import [examples/items/reckless-attack.json](examples/items/reckless-attack.json) into the Items sidebar and run [upgrade-items.js](examples/item-macros/upgrade-items.js) on the character: it gives their own Reckless Attack the activity and keeps it under Barbarian. Using it on your turn makes you Reckless until the start of your next turn: your STR attacks have advantage and attacks against you have advantage. The attack pick map colours follow.
 
 - **Bard, Bardic Inspiration:** nothing is rolled when you inspire (Roll Item skips Inspire's formula, which only names the die). *Inspire* marks the creature you pick (not yourself; one die at a time) as Inspired with your die (d6 at levels 1-2) for an hour, done by the GM's client. When that creature fails a D20 Test, its owner gets a 🎵 **Bardic Inspiration (+1d6)** button: on a missed attack (attack card), a failed save (card row or sheet) or a failed check from the sheet. When no DC is known, the button shows anyway. Clicking rolls the die, adds it to the roll (the card re-judges it) and removes the mark. Expertise and Jack of All Trades are dnd5e's own (2024 Jack of All Trades only adds to skill checks).
 
-**Compact Initiative** (in **Helpers**, off by default): instead of one chat message per combatant, one card per round lists everyone's initiative, highest first. Hover a total for its dice. The combatant's owner and the GM get a Reroll button on its row, which follows the Advantage setting and moves the combatant in the tracker. Hidden combatants go on a second card only the GM sees. Players' own initiative rolls land on the same card. Dice So Nice still shows the dice. The card follows the tracker: after a swap or an edit it shows the new initiative and order (the roll stays in the hover). An **Alert** character's swap offer appears here instead of its own card: its owner gets a swap button on each ally's row, previewing where both would end up ("Bob would go 2nd (15), Aria 5th (9)"), and **Do not swap** on its own row. The buttons go once a turn passes. With dnd5e's ability score tie-breaker on, only the rolled initiative swaps: each creature keeps its own DEX decimal.
+- **Cleric:** Thaumaturge's Arcana / Religion bonus, Channel Divinity's uses and Divine Spark are the items' own data.
+  - *Divine Spark (damage):* Roll Item asks **necrotic or radiant** before rolling (any damage that offers a choice of types does, like Chromatic Orb; the last choice comes first).
+  - *Turn Undead:* no template to place and no pick. A 30 ft circle appears round the Cleric (removed at the end of the turn), and every Undead in it (not on the Cleric's side) becomes the targets and saves on its row. The GM applies **Turned** to those that fail with the row's **Apply effect** button. Turned ends early when that creature takes damage, or when the Cleric is Incapacitated or dies. Moving away is left to the table.
+
+**Compact Initiative** (in **Helpers**, off by default): instead of one chat message per combatant, one card per round lists everyone's initiative, highest first. Hover a total for its dice. The combatant's owner and the GM get a Reroll button on its row, which follows the Advantage setting and moves the combatant in the tracker. Hidden combatants go on a second card only the GM sees. Players' own initiative rolls land on the same card. Dice So Nice still shows the dice, in each player's own dice colours (the GM's for monsters). The card follows the tracker: after a swap or an edit it shows the new initiative and order (the roll stays in the hover). An **Alert** character's swap offer appears here instead of its own card: its owner gets a swap button on each ally's row, previewing where both would end up ("Bob would go 2nd (15), Aria 5th (9)"), and **Do not swap** on its own row. The buttons go once a turn passes. With dnd5e's ability score tie-breaker on, only the rolled initiative swaps: each creature keeps its own DEX decimal.
 
 **Auto-Roll Initiative** (in **Helpers**, off by default): when combat begins, everyone who hasn't rolled initiative rolls, and the first turn goes to the top of the order. Anyone added to the combat later rolls as they join, without moving the current turn.
 
@@ -274,6 +280,7 @@ Sap and Vex are used up by the next attack roll they affect, from any sheet or c
 - **Self only:** an activity that targets Self, or has Range Self with no area (Second Wind), is always for the caster. Your targets are cleared.
 - **Save button:** shown to the token's owner and the GM. It rolls with the keys you hold, with no prompt. A choice of abilities (STR or DEX) gets a button each. Hovering shows what the roll will add before you click, for example "Bonus: +5 (Advantage: Dodging) = DEX (+3) + Prof (+2)". That includes cover and species traits against the card's condition.
 - **Result:** shown once rolled, as the total and ✓ or ✗. Hovering it shows the dice behind it, for example "d20 : 2, 12 (Advantage, kept 12) · 12 + 2 = 14", plus any cover added since.
+- **Apply effect (GM):** once a target has rolled, the save's effects (Turned, Grappled, Paralyzed, Frightened...) get an **Apply {effect}** button on its row, the same as Apply damage: all of them on a failure, and on a success only those set to apply on a save. It shows ✓ once applied. These cards don't show dnd5e's effect tray, which would apply to whatever the GM has selected.
 - **Apply button:** applies that target's damage, sized by its save (full, half or none), or its healing. Only the token's owner and the GM can use it, so a player can apply healing to their own character but not someone else's.
 - **Applied:** once applied, the row shows the amount instead of the button, such as −7 in red or +5 in green. For an NPC behind the DM screen, players see ✓. Attack cards show the amount beside each target.
 - **Once per card:** a card's damage or healing applies to each creature once (its rows, its hits and dnd5e's damage tray each count once). A second click warns instead. After rerolling damage that was already applied, change HP by hand.
@@ -288,7 +295,9 @@ On attack cards, damage is always rolled, but the APPLY tray only shows on a hit
 - **Saves linked to a card:** a save rolled from a card's row, or an on-hit save, updates that card when it changes, including its ✓/✗, its Apply sizes, and the on-hit save's halving. Reroll before applying: damage already applied isn't taken back.
 - **Initiative:** a rerolled initiative moves the combatant in the tracker too.
 
-**Clear Instant Templates** (GM setting, on by default): at the end of a creature's turn in combat, the areas its instantaneous spells and features placed (Fireball, Burning Hands) are removed. Areas that last (a duration, or Concentration) stay.
+**Cancelling:** closing a use part way (the target pick, the advantage prompt, the damage type question) undoes it: what dnd5e spent (a spell slot, a use) is refunded, any template it placed is removed, and no card is made.
+
+**Clear Instant Templates** (GM setting, on by default): the areas instantaneous spells and features place (Fireball, Burning Hands, Turn Undead's circle) are removed at the end of their creature's turn, when the combat ends, or a minute after they're placed when there's no combat. Areas that last (a duration, or Concentration) stay.
 
 **No template question:** when a use's only question would be "place the template?" (no spell slot level or scaling to choose, like a monster's innate Fireball), dnd5e's dialog is skipped and the template is placed straight away.
 
@@ -308,7 +317,7 @@ On attack cards, damage is always rolled, but the APPLY tray only shows on a hit
 
 Areas (their template does it), self-only activities and activities without a range aren't picked for.
 
-**Grapple & Shove** (GM setting, on by default): for Unarmed Strike's Grapple and Shove saves.
+**Grapple & Shove** (GM setting, on by default): for Unarmed Strike's Grapple and Shove saves. A failed Grapple save gets the row's **Apply Grappled** button (GM), like any save's effect.
 - **Grapple:** a failed save applies Grappled straight away.
 - **Shove:** a failed save gives the shover **Prone** and **Push 5 ft** buttons for that target, on Roll Item's save card (Roll Item's **Saves** setting). Homebrew Push Into Obstacles applies to the push.
 - **Size limit:** both only work on creatures up to one size larger.

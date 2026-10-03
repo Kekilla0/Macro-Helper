@@ -20,7 +20,7 @@ const log = logger.for(import.meta.url);
  *     Lasts        : until the end of your next turn. Each of your turns keeps it going if you make an attack roll
  *                    against an enemy, or post a card that forces an enemy to make a saving throw (or extend it).
  *                    Otherwise it ends at the end of that turn (in combat; out of combat, dnd5e's 10 minutes).
- *     Ends early   : Incapacitated, or heavy armor equipped. Can't start in heavy armor.
+ *     Ends early   : Incapacitated, heavy armor equipped, or the combat ends. Can't start in heavy armor.
  *     No spells    : casting a spell while raging is refused.
  *   Danger Sense   : no DEX save advantage while Incapacitated.
  *   Reckless Attack: examples/items/reckless-attack.json. Using it (on your turn) makes you Reckless until the start of
@@ -51,6 +51,7 @@ export class barbarian{
     Hooks.on("updateActiveEffect", effect => this.onStatus(effect));
     Hooks.on("updateItem", (item, changes) => this.onArmor(item, foundry.utils.getProperty(changes ?? {}, "system.equipped")));
     Hooks.on("createItem", item => this.onArmor(item, item.system?.equipped));
+    Hooks.on("deleteCombat", combat => this.onCombatEnd(combat));
   }
 
   static idOf(item){
@@ -210,6 +211,15 @@ export class barbarian{
     if(kept.round < prior.round) await this.endRage(actor, module.i18n("classes.barbarian.notKept"));
   }
 
+  /* The combat is over : its Barbarians' Rages end */
+  static async onCombatEnd(combat){
+    if(!this.enabled() || !game.users.activeGM?.isSelf) return;
+    for(const combatant of combat?.combatants ?? []){
+      const actor = combatant.actor;
+      if(actor && this.rageEffects(actor).length) await this.endRage(actor, module.i18n("classes.barbarian.combatEnded"));
+    }
+  }
+
   /* Incapacitated : the Rage ends */
   static async onStatus(effect){
     if(!this.enabled() || !game.users.activeGM?.isSelf) return;
@@ -227,7 +237,17 @@ export class barbarian{
   }
 
   static async endRage(actor, reason){
-    for(const effect of this.rageEffects(actor)){
+    const effects = this.rageEffects(actor);
+    if(!effects.length || this.#ending.has(actor.uuid)) return;
+    this.#ending.add(actor.uuid);
+    try { await this.#endRage(actor, effects, reason); }
+    finally { this.#ending.delete(actor.uuid); }
+  }
+
+  static #ending = new Set();
+
+  static async #endRage(actor, effects, reason){
+    for(const effect of effects){
       if(effect.parent?.documentName === "Item") await effect.update({ disabled : true, [`flags.${module.id}.rage`] : globalThis._del ?? new foundry.data.operators.ForcedDeletion() });
       else await effect.delete();
     }
