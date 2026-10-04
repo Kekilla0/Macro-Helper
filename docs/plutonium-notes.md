@@ -12,3 +12,6 @@ whether the module covers it or you need to edit the item.
 | **Turn Undead** (Cleric 2) | Targets "creature", with "Undead of your choice" only in the text. | Nothing: the module targets the Undead within 30 ft by identifier and shows the circle. |
 | **Bless** (spell) | Target count is the formula `2 + @item.level`. | Nothing: the module works the formula out at the cast level. |
 | **Divine Spark** (Cleric 2) | Damage is necrotic *or* radiant (both listed). | Nothing: the module asks which before rolling. |
+| **Wild Companion** (Druid 2), **Trance** (Elf) | Each has 1 use per Long Rest that the rule doesn't give. It looks like Plutonium adds one to any feature whose text mentions a Long Rest. Nothing spends them. | Nothing: harmless. Clear the item's uses if the counter bothers you. |
+| **Elven Lineage (Wood Elf)** | Longstrider (character level 3) and Pass without Trace (level 5) are added at level 2. | Delete them on characters below those levels. |
+| **Wild Companion** (Druid 2) | Its summons don't have *Match Disposition* ticked, so the familiar keeps the beast's hostile side. | Nothing: the module puts summons on the summoner's side. |

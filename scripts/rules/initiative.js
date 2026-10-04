@@ -17,6 +17,10 @@ const log = logger.for(import.meta.url);
  * Hidden combatants go on a second card only the GM sees. The GM's client keeps the cards : players' own rolls are
  * sent there. The card shows the tracker's current initiative (a swap or an edit re-sorts it), and an Alert
  * character's swap offer : buttons on its allies' rows, each previewing where both would end up.
+ *
+ * Summons join the combat their summoner is in (Summon Initiative setting) : Roll Initiative (their own roll, now when
+ * the combat is under way, else with everyone) or Shared Initiative (right after the summoner, following its
+ * initiative when it changes).
  */
 export class initiative{
   static register(){
@@ -28,6 +32,10 @@ export class initiative{
     Hooks.on("updateCombatant", combatant => this.redraw(combatant.combat ?? combatant.parent));
     Hooks.on("updateCombat", combat => this.redraw(combat));
     gm.handle("initiativeRows", (data, user) => this.addRowsAsGM(data, user));
+    /* Summons : dnd5e's own and the module's familiars (both announce dnd5e.postSummon) */
+    Hooks.on("dnd5e.postSummon", (activity, profile, tokens) => this.onSummon(activity?.actor, tokens));
+    Hooks.on("updateCombatant", (combatant, changes) => this.followLeader(combatant, changes));
+    gm.handle("summonsJoin", (data, user) => this.summonsJoinAsGM(data, user));
   }
 
   static async onUpdate(combat, changes = {}){
@@ -35,7 +43,7 @@ export class initiative{
     const round = Number(changes.round) || 0;
     /* Combat began : round 0 to 1 */
     if((round !== 1) || !(settings.value("initiativeMethod") === "auto")) return;
-    const ids = combat.combatants.filter(c => c.initiative === null).map(c => c.id);
+    const ids = combat.combatants.filter(c => (c.initiative === null) && !this.leaderOf(c)).map(c => c.id);
     if(ids.length) await this.roll(combat, ids, "begin");
   }
 
@@ -43,8 +51,74 @@ export class initiative{
   static async onJoin(combatant){
     const combat = combatant?.combat ?? combatant?.parent;
     if(!game.users.activeGM?.isSelf || !combat?.started || !(settings.value("initiativeMethod") === "auto") || (combatant.initiative !== null)) return;
+    if(this.leaderOf(combatant)) return;
     log.debug("Rolling initiative", "joined", combatant.name);
     await combat.rollInitiative([combatant.id], { updateTurn : true });
+  }
+
+  /* ---------- Summons ---------- */
+
+  /* Shared Initiative : just after its summoner */
+  static SHARED_GAP = 0.01;
+
+  /* The combatant a summon shares initiative with (Shared Initiative), by id */
+  static leaderOf(combatant){
+    return combatant?.getFlag?.(module.id, "sharedWith") ?? null;
+  }
+
+  /**
+   * Summoned tokens join the summoner's combat. From the summoning client : the active GM adds them.
+   * @param {Actor} summoner
+   * @param {TokenDocument[]} tokens
+   */
+  static async onSummon(summoner, tokens = []){
+    const uuids = (tokens ?? []).map(t => t?.uuid ?? t?.document?.uuid).filter(Boolean);
+    if(!summoner || !uuids.length) return;
+    try { await gm.run("summonsJoin", { summoner : summoner.uuid, tokens : uuids }); }
+    catch(error){ log.error("Summons joining combat", error); }
+  }
+
+  /* The summoner's combatant in a combat : its token's, or its Wild Shape form's */
+  static summonerIn(combat, summoner){
+    return combat.combatants.find(c => c.actor && ((c.actor.id === summoner.id) || (c.actor.uuid === summoner.uuid)
+      || (c.actor.getFlag?.("dnd5e", "originalActor") === summoner.id))) ?? null;
+  }
+
+  static async summonsJoinAsGM({ summoner : uuid, tokens = [] } = {}, user){
+    const summoner = fromUuidSync(uuid ?? "", { strict : false });
+    if(!summoner?.testUserPermission(user, "OWNER")) return false;
+    const shared = settings.value("summonInitiative") === "shared";
+    for(const tokenUuid of tokens){
+      const token = fromUuidSync(tokenUuid, { strict : false });
+      if(!token?.parent) continue;
+      const combat = game.combats.find(c => ((c.scene?.id ?? c.scene) === token.parent.id) && this.summonerIn(c, summoner))
+        ?? game.combats.find(c => !c.scene && this.summonerIn(c, summoner));
+      if(!combat || combat.combatants.some(c => c.tokenId === token.id)) continue;
+      const leader = this.summonerIn(combat, summoner);
+      const data = { tokenId : token.id, sceneId : token.parent.id, actorId : token.actorId, hidden : token.hidden };
+      if(shared){
+        data.initiative = (leader.initiative === null) ? null : (leader.initiative - this.SHARED_GAP);
+        data.flags = { [module.id] : { sharedWith : leader.id } };
+      }
+      const [combatant] = await combat.createEmbeddedDocuments("Combatant", [data]);
+      log.debug("Summon joins combat", token.name, shared ? "shared" : "rolls");
+      /* Its own roll now, when Auto-Rolled Initiative isn't doing it already (onJoin) */
+      if(!shared && combatant && combat.started && (combatant.initiative === null) && (settings.value("initiativeMethod") !== "auto")){
+        await combat.rollInitiative([combatant.id], { updateTurn : true });
+      }
+    }
+    return true;
+  }
+
+  /* Shared Initiative : the summoner's initiative changes (rolled, rerolled, swapped), its summons follow (active GM) */
+  static async followLeader(combatant, changes){
+    if(!game.users.activeGM?.isSelf || !("initiative" in (changes ?? {}))) return;
+    const combat = combatant.combat ?? combatant.parent;
+    const followers = combat?.combatants?.filter(c => this.leaderOf(c) === combatant.id) ?? [];
+    if(!followers.length) return;
+    const initiative = (combatant.initiative === null) ? null : (combatant.initiative - this.SHARED_GAP);
+    const updates = followers.filter(c => c.initiative !== initiative).map(c => ({ _id : c.id, initiative }));
+    if(updates.length) await combat.updateEmbeddedDocuments("Combatant", updates);
   }
 
   /* Roll, then start from the top of the new order */

@@ -20,6 +20,8 @@ export const GROUPS = {
         choices : { player : "settings.initiativeMethod.player", auto : "settings.initiativeMethod.auto" } },
       initiativeMessages : { scope : "world", default : "individual", type : String,
         choices : { individual : "settings.initiativeMessages.individual", compact : "settings.initiativeMessages.compact" } },
+      summonInitiative : { scope : "world", default : "roll", type : String,
+        choices : { roll : "settings.summonInitiative.roll", shared : "settings.summonInitiative.shared" } },
       /* Any dnd5e card, Roll Item or not */
       cardDescriptions : { scope : "world", default : "collapsed", type : String,
         choices : { open : "settings.cardDescriptions.open", collapsed : "settings.cardDescriptions.collapsed" } },

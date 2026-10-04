@@ -5,6 +5,8 @@ import * as targets from './helpers/targets.js';
 import * as actors from './helpers/actors.js';
 import * as items from './helpers/items.js';
 import * as utils from './helpers/utils.js';
+import * as creatures from './helpers/creatures.js';
+import { restChoices } from './rules/rest-choices.js';
 
 /* Public functions for macros : MacroHelper.x(...) or game.modules.get("macro-helper").api.x(...) */
 export class api{
@@ -19,6 +21,9 @@ export class api{
       ...items,     // pickAndAttack, pickAttack, attackModeFor, isLongRange, isRangedItem, isRangedAttack, canThrow, getAmmunition,
                   // getUses, hasUses, spendUses, useActivity, useAndApply, getAppliedConditions, multiattack, getHealing, updateItem, setBaseDamage
       ...utils,     // wait, waitFor, originOf, chooseOption
+      ...creatures, // folderActors, crOf, fitsProfile, chooseCreature, chooseCreatures
+      /* The character's Rest Choices window (Wild Shape forms...), e.g. after a rest the GM ran for everyone */
+      restChoices : actor => restChoices.open(actor),
     };
 
     module.data.api = functions;

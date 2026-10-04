@@ -1,5 +1,5 @@
 import { module } from '../module.js';
-import { tokenOf, distanceBetween, getRange, getTokensWithin, highlightRange, isOutOfAction, canSee } from './tokens.js';
+import { tokenOf, distanceBetween, getRange, getTokensWithin, highlightRange, isOutOfAction, canSee, isSpaceFree, HIGHLIGHT } from './tokens.js';
 
 /* Opposite dispositions (hostile vs friendly) */
 export function isEnemy(a, b){
@@ -371,6 +371,98 @@ function pickOnMap(from, feet, candidates, { count, numberAllowed, within, confi
 
     window.addEventListener("pointerdown", onPointer, true);
     window.addEventListener("contextmenu", onMenu, true);
+    window.addEventListener("keydown", onKey, true);
+    status();
+  });
+}
+
+/**
+ * Click an empty space on the map within range of a creature (where a summon appears). The range is shown like
+ * pickTargets'; the space must be free of creatures, within range, and reachable without crossing a wall that blocks
+ * movement. Esc cancels.
+ * @param {Token|TokenDocument|Actor|Item} origin
+ * @param {object} [options]
+ * @param {number} [options.range=5]  in feet
+ * @param {number} [options.size=1]   the space's width in squares (a Large creature : 2)
+ * @param {string} [options.notice]   a line for the banner ("Owl")
+ * @returns {Promise<{x : number, y : number}|null>}  the space's top-left corner (canvas pixels), null if cancelled
+ */
+export async function pickSpace(origin, { range = 5, size = 1, notice = "" } = {}){
+  const from = tokenOf(origin);
+  if(!from) return warn(module.i18n("helpers.pick.noToken")) && null;
+  const highlight = highlightRange(from, range, { showSelf : false });
+  const view = canvas.app.view;
+  const grid = canvas.grid.size;
+  const banner = document.createElement("div");
+  banner.className = `${module.id}-pick-banner`;
+  document.body.append(banner);
+  const status = message => {
+    banner.innerHTML = `<strong>${module.i18n("helpers.space.banner")}</strong>`
+      + (notice ? `<span class="picks">${Handlebars.escapeExpression(notice)}</span>` : "")
+      + `<span>${module.i18n("helpers.space.keys")}</span>`
+      + (message ? `<span class="warning">${message}</span>` : "");
+  };
+
+  /* The space under the mouse : yellow where it can go, red where it can't */
+  const layer = canvas.interface.grid;
+  const hoverName = `${module.id}-space`;
+  layer.addHighlightLayer(hoverName);
+  const spaceAt = event => {
+    const point = canvas.canvasCoordinatesFromClient({ x : event.clientX, y : event.clientY });
+    return { x : Math.floor(point.x / grid) * grid, y : Math.floor(point.y / grid) * grid };
+  };
+  /* Why a space can't be used, or "" */
+  const problem = ({ x, y }) => {
+    const space = { document : { x, y, width : size, height : size, elevation : from.document.elevation ?? 0 } };
+    if(distanceBetween(from, space) > range) return module.i18n("helpers.space.tooFar");
+    if(!isSpaceFree(x, y, size)) return module.i18n("helpers.space.occupied");
+    const center = { x : x + (size * grid / 2), y : y + (size * grid / 2) };
+    let blocked = false;
+    try { blocked = !!CONFIG.Canvas.polygonBackends.move.testCollision(from.center, center, { type : "move", mode : "any" }); }
+    catch { blocked = false; }
+    return blocked ? module.i18n("helpers.space.wall") : "";
+  };
+  let hovered = null;
+
+  return new Promise(resolve => {
+    const finish = result => {
+      window.removeEventListener("pointerdown", onPointer, true);
+      window.removeEventListener("pointermove", onMove, true);
+      window.removeEventListener("keydown", onKey, true);
+      highlight.clear();
+      layer.destroyHighlightLayer(hoverName);
+      banner.remove();
+      resolve(result);
+    };
+    const onMap = target => (target === view) || ((target?.tagName === "CANVAS") && !target.closest?.(".application, #sidebar, #ui-left, #ui-right, #hotbar"));
+    const onMove = event => {
+      if(!onMap(event.target)) return;
+      const at = spaceAt(event);
+      if(hovered && (hovered.x === at.x) && (hovered.y === at.y)) return;
+      hovered = at;
+      const color = problem(at) ? HIGHLIGHT.long : HIGHLIGHT.normal5e;
+      layer.clearHighlightLayer(hoverName);
+      for(let i = 0; i < size; i++) for(let j = 0; j < size; j++){
+        layer.highlightPosition(hoverName, { x : at.x + (i * grid), y : at.y + (j * grid), color, alpha : 0.5, border : color });
+      }
+    };
+    const onPointer = event => {
+      if(!onMap(event.target) || (event.button !== 0)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      const at = spaceAt(event);
+      const why = problem(at);
+      if(why) return status(why);
+      finish(at);
+    };
+    const onKey = event => {
+      if(event.key !== "Escape") return;
+      event.preventDefault(); event.stopPropagation();
+      finish(null);
+    };
+    window.addEventListener("pointerdown", onPointer, true);
+    window.addEventListener("pointermove", onMove, true);
     window.addEventListener("keydown", onKey, true);
     status();
   });

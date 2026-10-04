@@ -265,6 +265,24 @@ export function pushDestination(thing, from, feet = 10){
   return (best && ((best.x !== x0) || (best.y !== y0))) ? best : null;
 }
 
+/**
+ * Is a space free of creatures ? A size × size square block with its top-left corner at x / y (canvas pixels).
+ * @param {number} x
+ * @param {number} y
+ * @param {number} [size=1]  in squares
+ * @returns {boolean}
+ */
+export function isSpaceFree(x, y, size = 1){
+  const grid = canvas.grid.size;
+  const left = Math.round(x / grid), top = Math.round(y / grid);
+  const right = left + Math.max(1, Math.round(size)), bottom = top + Math.max(1, Math.round(size));
+  return !canvas.tokens.placeables.some(other => {
+    if(!other.actor) return false;
+    const c = cells(other);
+    return (c.left < right) && (c.right > left) && (c.top < bottom) && (c.bottom > top);
+  });
+}
+
 /* Would the token, moved to x / y, share a square with another creature's token ? */
 function occupied(token, x, y){
   const grid = canvas.grid.size;

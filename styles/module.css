@@ -245,3 +245,15 @@
 .chat-message .macro-helper-equip-log { margin: 0; border: none; background: none; }
 .chat-message .macro-helper-equip-log th { text-align: left; white-space: nowrap; width: 1%; padding: 0 8px 0 0; font-weight: bold; }
 .chat-message .macro-helper-equip-log td { padding: 0; }
+
+/* Creature pickers (Wild Shape forms, familiars) : a grid of pictures */
+.macro-helper-creatures .window-content { max-width : 640px; }
+.macro-helper-creature-grid { display : grid; grid-template-columns : repeat(auto-fill, minmax(110px, 1fr)); gap : 6px; max-height : 60vh; overflow-y : auto; }
+.macro-helper-creature { display : flex; flex-direction : column; align-items : center; gap : 2px; padding : 4px; border : 1px solid transparent; border-radius : 6px; cursor : pointer; text-align : center; }
+.macro-helper-creature:has(input:checked) { border-color : var(--color-border-highlight, #ff6400); background : rgba(255, 100, 0, 0.12); }
+.macro-helper-creature input { display : none; }
+.macro-helper-creature img { width : 72px; height : 72px; object-fit : contain; border : none; }
+.macro-helper-creature .name { font-weight : bold; line-height : 1.1; }
+.macro-helper-creature .cr { font-size : 0.85em; opacity : 0.75; }
+.macro-helper-creature-status .warning { color : var(--color-level-error, #c00); }
+.macro-helper-rest-choice .summary { flex : 1; }

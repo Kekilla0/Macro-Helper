@@ -13,6 +13,7 @@ import { conditions } from '../rules/conditions.js';
 import { actions } from '../rules/actions.js';
 import { bard } from '../rules/classes/bard.js';
 import { cleric } from '../rules/classes/cleric.js';
+import { druid } from '../rules/classes/druid.js';
 import { chooseOption } from '../helpers/utils.js';
 const log = logger.for(import.meta.url);
 
@@ -461,6 +462,15 @@ export class rollItem{
           rest = [dialog, message, ...rest.slice(2)];
           usage = { ...usage, [module.id] : { ...(usage?.[module.id] ?? {}), maneuver : choice } };
         }
+        /* Wild Shape's form, a familiar and its space : chosen first, then dnd5e uses it */
+        const own = await druid.beforeUse(this, usage);
+        if(own === false) return;
+        if(own){
+          const [dialog = {}, message = {}] = rest;
+          foundry.utils.mergeObject(message, { data : { flags : { [module.id] : own.flags } } });
+          rest = [dialog, message, ...rest.slice(2)];
+          usage = own.usage;
+        }
         const spec = rollItem.pickSpec(this, usage);
         if(spec){
           const picks = await pickTargets(this.item, spec);
@@ -477,6 +487,15 @@ export class rollItem{
    * @param {Activity} activity
    * @returns {boolean}
    */
+  /* A summoned creature is on its summoner's side, even when the activity doesn't ask dnd5e to match it (Plutonium's
+     Wild Companion : a familiar would otherwise keep the beast's own hostile disposition) */
+  static summonOnSide(activity, config){
+    if(!settings.value("rollItem") || !config?.tokenUpdates || !activity?.actor) return;
+    if(activity.match?.disposition || ("disposition" in config.tokenUpdates)) return;
+    const token = activity.getUsageToken?.()?.document ?? (activity.actor.isToken ? activity.actor.token : activity.actor.prototypeToken);
+    if(token?.disposition !== undefined) config.tokenUpdates.disposition = token.disposition;
+  }
+
   static isSelfOnly(activity){
     const target = activity?.target?.override ? activity.target : (activity?.item?.system?.target ?? activity?.target ?? {});
     const type = target.affects?.type || activity?.target?.affects?.type || "";
@@ -917,6 +936,7 @@ export class rollItem{
     Hooks.on("deleteCombat", combat => rollItem.clearCombatTemplates(combat));
     Hooks.on("createRegion", region => rollItem.onTemplateCreated(region));
     Hooks.on("dnd5e.preRollDamageV2", config => rollItem.applyDamageTypes(config));
+    Hooks.on("dnd5e.preSummonToken", (activity, profile, config) => rollItem.summonOnSide(activity, config));
 
     /* Attack + save rider items skip dnd5e's activity choice (sheet, hotbar, anything calling item.use) */
     patch.wrap("CONFIG.Item.documentClass.prototype.use", async function(wrapped, config = {}, dialog = {}, message = {}){
