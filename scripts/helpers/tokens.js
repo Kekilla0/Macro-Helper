@@ -447,13 +447,19 @@ const warnedSight = new Set();
 export function canSee(viewer, target){
   const v = tokenOf(viewer), t = tokenOf(target);
   if(!v || !t || (v === t)) return true;
-  try { if(!game.settings.get(module.id, "visionRules")) return true; } catch { return true; }
+  /* Vision setting : off, conditions only (Blinded / Invisible, no walls or light), full sight */
+  let mode = "full";
+  let enabled = true;
+  try { enabled = game.settings.get(module.id, "rollItemEnabled") !== false; } catch { enabled = true; }
+  try { mode = enabled ? game.settings.get(module.id, "vision") : "off"; }
+  catch { try { mode = game.settings.get(module.id, "visionRules") ? "full" : "off"; } catch { mode = "off"; } }
+  if(mode === "off") return true;
   /* Blinded : only senses that aren't sight (blindsight, tremorsense...) can still find it */
   const blinded = !!v.actor?.statuses?.has("blinded");
   /* Without sight to work it out (vision off on the token or the scene), the conditions still count :
      a Blinded viewer sees nothing, an Invisible target can't be seen */
   const byConditions = !blinded && !t.actor?.statuses?.has("invisible");
-  if(!canvas.ready || !canvas.visibility?.tokenVision) return byConditions;
+  if((mode === "conditions") || !canvas.ready || !canvas.visibility?.tokenVision) return byConditions;
   if(!v.document.sight?.enabled){
     if(!byConditions) return false;
     if(!warnedSight.has(v.id)){ warnedSight.add(v.id); console.warn(`${module.title} | ${v.name} has no vision : it sees everything.`); }

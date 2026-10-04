@@ -37,9 +37,9 @@ export class actions{
   static ASSIST_CHECK_RANGE = 30;
   static HELP = "help";
 
+  /* Default Actions setting; a creature also needs the item */
   static enabled(){
-    /* Having the item is the switch : nothing to turn on */
-    return game.system.id === "dnd5e";
+    return (game.system.id === "dnd5e") && settings.value("actionRules");
   }
 
   static register(){

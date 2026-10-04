@@ -11,7 +11,7 @@ import { masteries } from '../roll-item/masteries.js';
 const log = logger.for(import.meta.url);
 
 /**
- * Feats and features dnd5e has no data for, found on the character by item identifier (Species & Feat Rules setting)
+ * Feats and features dnd5e has no data for, found on the character by item identifier (Species and Feats settings)
  * and applied at the stage they affect. Each is a small, self-contained rule.
  *
  *   Save traits     : advantage on saves against a condition (Brave : Frightened, Fey Ancestry : Charmed, Dwarven
@@ -35,8 +35,14 @@ const log = logger.for(import.meta.url);
 export class feats{
   static INCAPACITATED = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
 
+  /* Feats (Savage Attacker, Alert, Lucky, Tavern Brawler, Healer) */
   static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("traitRules");
+    return (game.system.id === "dnd5e") && settings.value("featRules");
+  }
+
+  /* Species traits (Brave, Fey Ancestry, Dwarven Resilience) */
+  static speciesEnabled(){
+    return (game.system.id === "dnd5e") && settings.value("speciesRules");
   }
 
   static register(){
@@ -143,7 +149,7 @@ export class feats{
    * @returns {Item|null}
    */
   static saveTraitFor(actor, card){
-    if(!this.enabled() || !actor?.items || !card) return null;
+    if(!this.speciesEnabled() || !actor?.items || !card) return null;
     const against = getAppliedConditions(card);
     if(!against.size) return null;
     return actor.items.find(i => (this.SAVE_ADVANTAGES[i.identifier ?? i.system?.identifier] ?? []).some(c => against.has(c))) ?? null;

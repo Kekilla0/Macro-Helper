@@ -1,4 +1,5 @@
 import { module } from '../module.js';
+import { settings } from '../settings.js';
 import { conditions } from '../rules/conditions.js';
 import { homebrew } from '../rules/homebrew.js';
 import { actions } from '../rules/actions.js';
@@ -152,7 +153,7 @@ export async function pickAttack(item, { count = 1, disposition = "nonAlly", wit
     /* Item : MacroHelper.pickAndAttack({ ... }) without the item is an easy slip, say so */
     if(item && (typeof item === "object") && !item.documentName) return fail(module.i18n("helpers.attack.itemFirst"));
     if(!item || (item.documentName !== "Item")) return fail(module.i18n("helpers.attack.noItem"));
-    if(!game.settings.get(module.id, "rollItem")) return fail(module.i18n("rollItem.warn.disabled"));
+    if(!settings.value("rollItem")) return fail(module.i18n("rollItem.warn.disabled"));
     const attacks = item.system.activities?.getByType("attack") ?? [];
     const attack = (activity?.type === "attack") ? activity
       : activity ? attacks.find(a => (a.id === activity) || (a.name === activity)) : attacks[0];

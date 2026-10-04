@@ -139,7 +139,7 @@ export class rerolls{
     /* An automatic failure fails whatever is rolled */
     if(message?.getFlag?.(module.id, "autoFail")) return { reroll : false, lucky : null, inspiration : null, actor };
     const reroll = !!(message?.isOwner || game.user.isGM);
-    const feat = actor?.isOwner && settings.value("traitRules") && this.luckyOf(actor);
+    const feat = actor?.isOwner && settings.value("featRules") && this.luckyOf(actor);
     const lucky = (feat && !message.getFlag(module.id, "lucky") && (Number(roll?.options?.advantageMode ?? 0) !== 1)) ? feat : null;
     /* Bardic Inspiration : the creature's owner, on a failed test (not initiative), once */
     const inspired = actor?.isOwner && !this.isInitiative(message) && !message.getFlag(module.id, "bardic") && bard.failed(roll)
