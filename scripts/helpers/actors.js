@@ -174,12 +174,15 @@ export async function rollSave(thing, ability, dc){
  * @param {object} [options]
  * @param {Actor|Token} [options.of]                    whose turn it waits for (default : the creature itself)
  * @param {"turnStart"|"turnEnd"} [options.until="turnStart"]
+ * @param {boolean} [options.thisTurn=false]          "turnEnd" : the end of the turn going on now, not the next one
  * @returns {Promise<ActiveEffect|null>}
  */
-export async function addTimedEffect(thing, data, { of, until = "turnStart" } = {}){
+export async function addTimedEffect(thing, data, { of, until = "turnStart", thisTurn = false } = {}){
   const actor = actorOf(thing);
   if(!actor?.isOwner) return null;
   const expires = gm.stamp(actorOf(of) ?? actor, until);
+  /* "Until the end of this turn" (Action Surge, Dash) : not the next one */
+  if(expires && thisTurn) expires.thisTurn = true;
   /* Shown on the token : Foundry only shows effects with a duration unless told to */
   const effect = foundry.utils.mergeObject({ showIcon : CONST.ACTIVE_EFFECT_SHOW_ICON?.ALWAYS ?? 2, flags : { [module.id] : { expires } } }, data, { inplace : false });
   const [created] = await actor.createEmbeddedDocuments("ActiveEffect", [effect]);

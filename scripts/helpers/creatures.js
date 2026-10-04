@@ -1,31 +1,9 @@
 import { module } from '../module.js';
 
 /**
- * Creatures kept in Actors sidebar folders for features to choose from (Wild Shape forms, familiars), so a table
- * uses its own imports (art, stats) rather than dnd5e's compendium search.
+ * Choosing creatures (and other things) from a grid of pictures, and whether a creature fits one of dnd5e's transform /
+ * summon profiles. The creatures come from Macro Helper's compendiums (rules/compendiums.js) : index entries or actors.
  */
-
-/**
- * The actors in the first folder found by these names (case ignored), subfolders included.
- * @param {string[]} names  e.g. ["Familiars", "Wild Companions"]
- * @returns {Actor[]}
- */
-export function folderActors(names){
-  const wanted = names.map(n => n.toLowerCase());
-  const folder = game.folders?.find(f => (f.type === "Actor") && wanted.includes(String(f.name).toLowerCase()));
-  if(!folder) return [];
-  const ids = new Set([folder.id]);
-  /* Subfolders, however deep */
-  let grew = true;
-  while(grew){
-    grew = false;
-    for(const f of game.folders){
-      if((f.type === "Actor") && !ids.has(f.id) && ids.has(f.folder?.id ?? f.folder)){ ids.add(f.id); grew = true; }
-    }
-  }
-  return game.actors.filter(a => ids.has(a.folder?.id ?? a.folder))
-    .sort((a, b) => (crOf(a) - crOf(b)) || a.name.localeCompare(b.name));
-}
 
 /* A creature's challenge rating as a number (¼ = 0.25) */
 export function crOf(actor){
@@ -63,13 +41,18 @@ export function fitsProfile(actor, profile, rollData = {}){
 
 const esc = s => foundry.utils.escapeHTML(String(s ?? ""));
 
-/* One creature's tile : picture, name, CR */
-function tile(actor, input){
-  return `<label class="${module.id}-creature" data-uuid="${esc(actor.uuid)}">
+/* A creature as a tile entry : picture, name, CR */
+function entryOf(actor){
+  return { value : actor.uuid, label : actor.name, img : actor.prototypeToken?.texture?.src || actor.img, detail : `CR ${crLabel(crOf(actor))}` };
+}
+
+/* One tile : picture, name, a detail line (CR, weapon type) */
+function tile(entry, input){
+  return `<label class="${module.id}-creature" data-uuid="${esc(entry.value)}">
       ${input}
-      <img src="${esc(actor.prototypeToken?.texture?.src || actor.img)}" alt="">
-      <span class="name">${esc(actor.name)}</span>
-      <span class="cr">CR ${crLabel(crOf(actor))}</span>
+      ${entry.img ? `<img src="${esc(entry.img)}" alt="">` : ""}
+      <span class="name">${esc(entry.label)}</span>
+      ${entry.detail ? `<span class="cr">${esc(entry.detail)}</span>` : ""}
     </label>`;
 }
 
@@ -83,13 +66,21 @@ function tile(actor, input){
  * @param {object[]} [options.extra]   more buttons, as DialogV2 buttons ({ action, label, icon }) : their action is returned
  * @returns {Promise<string|null>}  the creature's uuid (or an extra button's action), null if closed
  */
-export async function chooseCreature(actors, { title, prompt = "", icon = "fa-solid fa-paw", extra = [] } = {}){
-  if(!actors.length) return null;
-  const grid = actors.map((a, i) => tile(a, `<input type="radio" name="creature" value="${esc(a.uuid)}"${i ? "" : " checked"}>`)).join("");
+export async function chooseCreature(actors, options = {}){
+  return chooseOne(actors.map(entryOf), options);
+}
+
+/**
+ * Choose one from a grid of tiles ({ value, label, img, detail }).
+ * @returns {Promise<string|null>}  the value (or an extra button's action), null if closed
+ */
+export async function chooseOne(entries, { title, prompt = "", icon = "fa-solid fa-paw", extra = [], columns = null } = {}){
+  if(!entries.length) return null;
+  const grid = entries.map((e, i) => tile(e, `<input type="radio" name="creature" value="${esc(e.value)}"${i ? "" : " checked"}>`)).join("");
   const chosen = await foundry.applications.api.DialogV2.wait({
     window : { title, icon },
     classes : [`${module.id}-creatures`],
-    content : `${prompt ? `<p>${esc(prompt)}</p>` : ""}<div class="${module.id}-creature-grid">${grid}</div>`,
+    content : `${prompt ? `<p>${esc(prompt)}</p>` : ""}<div class="${module.id}-creature-grid"${columns ? ` style="grid-template-columns : repeat(${columns}, 1fr)"` : ""}>${grid}</div>`,
     buttons : [
       { action : "ok", label : game.i18n.localize("Confirm"), icon : "fa-solid fa-check", default : true,
         callback : (event, button) => button.form.elements.creature?.value ?? null },
@@ -118,17 +109,29 @@ export async function chooseCreature(actors, { title, prompt = "", icon = "fa-so
  * @param {string} [options.prompt]
  * @returns {Promise<string[]|null>}  the new set, null if closed
  */
-export async function chooseCreatures(actors, { known = [], max, swaps = Infinity, title, prompt = "" } = {}){
+export async function chooseCreatures(actors, options = {}){
+  return chooseSet(actors.map(entryOf), options);
+}
+
+/**
+ * Choose a set from a grid of tiles ({ value, label, img, detail }) : up to `max`, with at most `swaps` of the current
+ * ones taken away (more when there are more than `max` already : down to `max` is free).
+ * @returns {Promise<string[]|null>}  the new set, null if closed
+ */
+export async function chooseSet(entries, { known = [], max, swaps = Infinity, title, prompt = "", icon = "fa-solid fa-paw", allowPast = false } = {}){
   /* Known ones no longer offered (deleted, moved out of the folder) don't count against the swaps */
-  known = known.filter(uuid => actors.some(a => a.uuid === uuid));
-  const grid = actors.map(a => tile(a, `<input type="checkbox" name="creature" value="${esc(a.uuid)}"${known.includes(a.uuid) ? " checked" : ""}>`)).join("");
-  const status = `<p class="${module.id}-creature-status"></p>`;
+  known = known.filter(value => entries.some(e => e.value === value));
+  swaps += Math.max(0, known.length - max);
+  const grid = entries.map(e => tile(e, `<input type="checkbox" name="creature" value="${esc(e.value)}"${known.includes(e.value) ? " checked" : ""}>`)).join("");
+  const status = `<p class="${module.id}-creature-status"></p>`
+    + (allowPast ? `<label class="${module.id}-past"><input type="checkbox" name="past"> ${esc(module.i18n("creatures.past"))}</label>` : "");
   const result = await foundry.applications.api.DialogV2.wait({
-    window : { title, icon : "fa-solid fa-paw" },
+    window : { title, icon },
     classes : [`${module.id}-creatures`],
     content : `${prompt ? `<p>${esc(prompt)}</p>` : ""}${status}<div class="${module.id}-creature-grid">${grid}</div>`,
     buttons : [{ action : "ok", label : game.i18n.localize("Save Changes"), icon : "fa-solid fa-check", default : true,
-      callback : (event, button) => [...button.form.querySelectorAll('input[name="creature"]:checked')].map(i => i.value) }],
+      callback : (event, button) => Object.assign([...button.form.querySelectorAll('input[name="creature"]:checked')].map(i => i.value),
+        { past : !!button.form.querySelector('input[name="past"]')?.checked }) }],
     /* The limits, as boxes are ticked : no more than max, and only `swaps` of the known ones can be unticked */
     render : (event, dialog) => {
       const root = dialog.element;
@@ -139,11 +142,14 @@ export async function chooseCreatures(actors, { known = [], max, swaps = Infinit
         line.innerHTML = module.format("creatures.status", { picked, max, swaps : Number.isFinite(swaps) ? Math.max(0, swaps - removed) : "∞" })
           + (warning ? ` <strong class="warning">${esc(warning)}</strong>` : "");
       };
+      const past = () => !!root.querySelector('input[name="past"]')?.checked;
+      root.querySelector('input[name="past"]')?.addEventListener("change", () => show());
       root.querySelectorAll('input[name="creature"]').forEach(input => input.addEventListener("change", () => {
         const picked = root.querySelectorAll('input[name="creature"]:checked').length;
         const removed = known.filter(uuid => !root.querySelector(`input[value="${CSS.escape(uuid)}"]`)?.checked).length;
         if(input.checked && (picked > max)){ input.checked = false; return show(module.format("creatures.tooMany", { max })); }
-        if(!input.checked && known.includes(input.value) && (removed > swaps)){ input.checked = true; return show(module.i18n("creatures.noSwaps")); }
+        /* Past the rules : as many replaced as wanted, never more than the limit */
+        if(!past() && !input.checked && known.includes(input.value) && (removed > swaps)){ input.checked = true; return show(module.i18n("creatures.noSwaps")); }
         show();
       }));
       show();

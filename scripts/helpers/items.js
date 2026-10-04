@@ -66,7 +66,9 @@ export function isOtherHandFree(item){
 export function attackModeFor(item, target, { long = true } = {}){
   const modes = (item?.system?.attackModes ?? []).map(m => m.value).filter(Boolean);
   const versatile = !!item?.system?.properties?.has("ver") && modes.includes("oneHanded") && modes.includes("twoHanded");
-  const melee = versatile ? (isOtherHandFree(item) ? "twoHanded" : "oneHanded")
+  /* Dueling : a Versatile weapon is meant for one hand (its +2 needs it) */
+  const dueling = item?.actor?.items?.some?.(i => ["dueling", "fighting-style-dueling"].includes(i.identifier ?? i.system?.identifier));
+  const melee = versatile ? ((isOtherHandFree(item) && !dueling) ? "twoHanded" : "oneHanded")
     : (modes.find(m => !m.startsWith("thrown")) ?? null);
   if(!modes.includes("thrown")) return versatile ? melee : null;
 

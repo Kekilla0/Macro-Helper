@@ -1,5 +1,6 @@
 import { module } from '../module.js';
 import { settings } from '../settings.js';
+import { limits } from './limits.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
 import { patch } from '../patch.js';
@@ -174,7 +175,7 @@ export class feats{
     const actor = message.getAssociatedActor?.();
     const feat = actor && findItem(actor, this.SAVAGE);
     if(!feat || !actor.isOwner) return;
-    if(usedThisTurn(actor, "savage")) return ui.notifications.warn(module.format("feats.savage.used", { name : feat.name }));
+    if(usedThisTurn(actor, "savage") && !limits.allow(module.format("feats.savage.used", { name : feat.name }), { who : actor.name, what : feat.name })) return;
     const rolls = await message.system.rollDamage(ray);
     await message.system.addDamage(rolls, { key : "savage", label : feat.name, ray, alternative : true });
     await markUsedThisTurn(actor, "savage");
@@ -302,6 +303,8 @@ export class feats{
     const item = activity?.item;
     if((activity?.type !== "attack") || ((item?.identifier ?? item?.system?.identifier) !== "unarmed-strike")) return;
     if(!findItem(activity.actor, this.BRAWLER)) return;
+    /* Unarmed Fighting's d6 / d8 is the better die (fighting-styles.js) */
+    if(activity.actor.items?.some?.(i => ["unarmed-fighting", "fighting-style-unarmed-fighting"].includes(i.identifier ?? i.system?.identifier))) return;
     const base = item.system.damage?.base?.formula;
     if(!base || /\d*d\d+/i.test(base)) return;
     const enhanced = "1d4r1 + @mod";

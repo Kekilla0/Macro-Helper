@@ -21,7 +21,7 @@ export class api{
       ...items,     // pickAndAttack, pickAttack, attackModeFor, isLongRange, isRangedItem, isRangedAttack, canThrow, getAmmunition,
                   // getUses, hasUses, spendUses, useActivity, useAndApply, getAppliedConditions, multiattack, getHealing, updateItem, setBaseDamage
       ...utils,     // wait, waitFor, originOf, chooseOption
-      ...creatures, // folderActors, crOf, fitsProfile, chooseCreature, chooseCreatures
+      ...creatures, // crOf, fitsProfile, chooseCreature, chooseCreatures, chooseOne, chooseSet
       /* The character's Rest Choices window (Wild Shape forms...), e.g. after a rest the GM ran for everyone */
       restChoices : actor => restChoices.open(actor),
     };

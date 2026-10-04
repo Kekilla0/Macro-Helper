@@ -257,3 +257,9 @@
 .macro-helper-creature .cr { font-size : 0.85em; opacity : 0.75; }
 .macro-helper-creature-status .warning { color : var(--color-level-error, #c00); }
 .macro-helper-rest-choice .summary { flex : 1; }
+
+/* Buttons with words on dnd5e's check / save messages (Reroll, Lucky, Tactical Mind...) */
+.macro-helper-rerolls ul { display : flex; flex-wrap : wrap; gap : 4px; }
+.macro-helper-rerolls button.macro-helper-labelled { width : auto; padding : 2px 8px; white-space : nowrap; font-size : var(--font-size-12, 12px); }
+/* Notes on a card (Interception) */
+.macro-helper-card-note { font-size : var(--font-size-12, 12px); font-style : italic; }

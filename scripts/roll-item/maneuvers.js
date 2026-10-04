@@ -1,5 +1,6 @@
 import { module } from '../module.js';
 import { settings } from '../settings.js';
+import { limits } from '../rules/limits.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
 import { tokenOf, pushAway } from '../helpers/tokens.js';
@@ -128,11 +129,10 @@ export class maneuvers{
     const attacker = card.getAssociatedActor();
     const attackerToken = tokenOf(card.getAssociatedToken?.() ?? attacker);
     if(!token?.actor) return [];
-    if(attacker && !this.fits(token.actor, attacker)){
-      return [module.format("rollItem.maneuver.tooBig", { name : token.name, action : module.i18n("rollItem.maneuver.shove") })];
-    }
-
     const notes = [];
+    if(attacker && !this.fits(token.actor, attacker)
+      && !limits.allow(module.format("rollItem.maneuver.tooBig", { name : token.name, action : module.i18n("rollItem.maneuver.shove") }), { notes, who : attacker.name, what : `Shove ${token.name}` })) return notes;
+
     if(choice === "push"){
       const moved = await pushAway(token, attackerToken, 5);
       if(settings.value("homebrewPush")) await masteries.pushCollision(token, moved, 5, card.getAssociatedItem?.());

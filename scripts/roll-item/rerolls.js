@@ -4,6 +4,7 @@ import { logger } from '../log.js';
 import { findItem } from '../helpers/actors.js';
 import { spendUses } from '../helpers/items.js';
 import { bard } from '../rules/classes/bard.js';
+import { fighter } from '../rules/classes/fighter.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -137,25 +138,29 @@ export class rerolls{
     const [roll] = message?.rolls ?? [];
     const actor = message?.getAssociatedActor?.() ?? null;
     /* An automatic failure fails whatever is rolled */
-    if(message?.getFlag?.(module.id, "autoFail")) return { reroll : false, lucky : null, inspiration : null, actor };
+    if(message?.getFlag?.(module.id, "autoFail")) return { reroll : false, lucky : null, inspiration : null, tactical : false, actor };
     const reroll = !!(message?.isOwner || game.user.isGM);
     const feat = actor?.isOwner && settings.value("featRules") && this.luckyOf(actor);
     const lucky = (feat && !message.getFlag(module.id, "lucky") && (Number(roll?.options?.advantageMode ?? 0) !== 1)) ? feat : null;
     /* Bardic Inspiration : the creature's owner, on a failed test (not initiative), once */
     const inspired = actor?.isOwner && !this.isInitiative(message) && !message.getFlag(module.id, "bardic") && bard.failed(roll)
       ? bard.inspirationOf(actor) : null;
-    return { reroll, lucky, inspiration : inspired, actor };
+    /* Tactical Mind : the Fighter's owner, on a failed ability check, once (nothing spent until the GM says it worked) */
+    const tactical = bard.failed(roll) && fighter.canTactical(message, actor);
+    return { reroll, lucky, inspiration : inspired, tactical, actor };
   }
 
   /* The buttons, styled like an attack card's (icon buttons in an icon row) */
   static addButtons(message, html){
     if(!settings.value("rollItem") || !this.isTest(message) || !message.isContentVisible) return;
     if(html.querySelector(`.${module.id}-rerolls`)) return;
-    const { reroll, lucky, inspiration, actor } = this.optionsFor(message);
+    const { reroll, lucky, inspiration, tactical, actor } = this.optionsFor(message);
     const buttons = [];
     if(reroll) buttons.push({ id : "reroll", icon : "fa-rotate", label : module.i18n("rerolls.reroll") });
     if(lucky) buttons.push({ id : "lucky", icon : "fa-clover", label : module.format("feats.lucky.adv", { name : lucky.name, left : lucky.system.uses.value }) });
     if(inspiration) buttons.push({ id : "bardic", icon : "fa-music", label : module.format("classes.bard.use", { die : inspiration.die }) });
+    if(tactical) buttons.push({ id : "tactical", icon : "fa-chess-knight", label : module.i18n("classes.fighter.tactical") });
+    if(fighter.canSpend(message)) buttons.push({ id : "tacticalSpend", icon : "fa-heart-crack", label : module.i18n("classes.fighter.tacticalSpend") });
     if(!buttons.length) return;
 
     const row = document.createElement("section");
@@ -166,14 +171,19 @@ export class rerolls{
       const li = document.createElement("li");
       const button = document.createElement("button");
       button.type = "button";
-      button.className = "icon";
+      /* Words on the button, not just an icon : easy to miss otherwise */
+      button.className = `${module.id}-labelled`;
       button.dataset.tooltip = b.label;
       button.ariaLabel = b.label;
-      button.innerHTML = `<i class="fa-solid ${b.icon}" inert></i>`;
+      button.innerHTML = `<i class="fa-solid ${b.icon}" inert></i> <span>${foundry.utils.escapeHTML(b.short ?? b.label)}</span>`;
       button.addEventListener("click", async event => {
         event.preventDefault();
         button.disabled = true;
-        try { await ((b.id === "lucky") ? this.lucky(message, actor) : (b.id === "bardic") ? this.inspire(message, actor) : this.reroll(message, event)); }
+        try {
+          const run = { lucky : () => this.lucky(message, actor), bardic : () => this.inspire(message, actor),
+            tactical : () => this.tactical(message, actor), tacticalSpend : () => fighter.spendSecondWind(message) }[b.id] ?? (() => this.reroll(message, event));
+          await run();
+        }
         catch(error){ console.error("Macro Helper | reroll", error); ui.notifications.warn(error.message); }
         finally { button.disabled = false; }
       });
@@ -225,6 +235,15 @@ export class rerolls{
     await this.replace(message, updated, [extra]);
     await message.setFlag(module.id, "bardic", true);
     if(inspiration.effect.isOwner) await inspiration.effect.delete();
+  }
+
+  /* Tactical Mind : 1d10 added to the check, nothing spent (the GM spends Second Wind if it then succeeds) */
+  static async tactical(message, actor){
+    if(!fighter.canTactical(message, actor) || !message.isOwner) return;
+    const { updated, extra } = await addDie(message.rolls[0], "1d10");
+    await this.replace(message, updated, [extra]);
+    const target = updated.options?.target;
+    await message.setFlag(module.id, "tacticalMind", { spent : false, success : Number.isFinite(target) ? (updated.total >= target) : null });
   }
 
   /* The initiative in the tracker follows a rerolled initiative message */

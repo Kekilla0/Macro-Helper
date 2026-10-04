@@ -3,7 +3,10 @@ import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
 import { gm } from '../../gm.js';
 import { patch } from '../../patch.js';
-import { folderActors, fitsProfile, chooseCreature, chooseCreatures } from '../../helpers/creatures.js';
+import { fitsProfile, chooseCreature, chooseCreatures } from '../../helpers/creatures.js';
+import { compendiums } from '../compendiums.js';
+import { limits } from '../limits.js';
+import { tokenOf, fitSpace } from '../../helpers/tokens.js';
 import { restChoices } from '../rest-choices.js';
 import { familiars } from '../familiars.js';
 const log = logger.for(import.meta.url);
@@ -13,7 +16,7 @@ const log = logger.for(import.meta.url);
  * keeps the Druid's HP and features, gives temp HP equal to its Druid level, and leaves its spells behind (no casting
  * while shifted).
  *
- *   Known forms    : chosen from the Actors folder "Wild Shapes" (any depth), only the creatures the item's current
+ *   Known forms    : chosen from the Wild Shapes compendium (Macro Helper), only the creatures the item's current
  *                    profile allows (CR ¼ Beast, no fly speed at level 2), up to the class's Known Forms. Kept on the
  *                    Druid's Wild Shape item. Free to add up to the limit; replacing one needs a Long Rest (Rest
  *                    Choices : one swap per Long Rest). The GM can change them freely.
@@ -28,7 +31,6 @@ const log = logger.for(import.meta.url);
 export class druid{
   static WILD_SHAPE = "wild-shape";
   static WILD_COMPANION = "wild-companion";
-  static FORMS_FOLDERS = ["Wild Shapes"];
   static INCAPACITATED = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
 
   static enabled(){
@@ -50,7 +52,11 @@ export class druid{
     /* dnd5e asks for a creature (its compendium search) : the one already chosen here. Its usage window can put
        back a profile, so this is the one sure way it doesn't search. */
     patch.wrap("CONFIG.DND5E.activityTypes.transform.documentClass.prototype.queryActor", async function(wrapped, ...args){
-      return druid.takeChosen(this) ?? wrapped(...args);
+      const chosen = druid.takeChosen(this);
+      if(chosen) return chosen;
+      /* Reached without our question (dnd5e's own path) : still our forms, never the compendium browser */
+      if(druid.enabled() && (druid.idOf(this.item) === druid.WILD_SHAPE)) return druid.pickForm(druid.originalOf(this.actor), this.item);
+      return wrapped(...args);
     });
     gm.handle("wildShape", (data, user) => this.wildShapeAsGM(data, user));
     gm.handle("wildShapeLeave", (data, user) => this.leaveAsGM(data, user));
@@ -115,11 +121,11 @@ export class druid{
     return [...(this.wildShapeItem(actor)?.getFlag(module.id, "forms") ?? [])];
   }
 
-  /* The folder's creatures the Druid may know now */
-  static eligibleForms(actor){
+  /* The Wild Shapes compendium's creatures the Druid may know now */
+  static async eligibleForms(actor){
     const { profile, rollData } = this.profileOf(actor);
     if(!profile) return [];
-    return folderActors(this.FORMS_FOLDERS).filter(a => fitsProfile(a, profile, rollData));
+    return (await compendiums.entries(compendiums.WILD_SHAPES)).filter(a => fitsProfile(a, profile, rollData));
   }
 
   static formsSummary(actor){
@@ -137,22 +143,28 @@ export class druid{
     const original = this.originalOf(actor);
     const item = this.wildShapeItem(original);
     if(!item) return null;
-    const eligible = this.eligibleForms(original);
+    const eligible = await this.eligibleForms(original);
     if(!eligible.length){
-      ui.notifications.warn(module.format("classes.druid.noForms", { folder : this.FORMS_FOLDERS[0] }));
+      ui.notifications.warn(module.i18n("classes.druid.noForms"));
       return null;
     }
     const known = this.knownForms(original);
     const swaps = game.user.isGM ? Infinity : (Number(item.getFlag(module.id, "formSwaps")) || 0);
+    const max = this.formLimit(original);
     const chosen = await chooseCreatures(eligible, {
-      known, max : this.formLimit(original), swaps,
+      known, max, swaps, allowPast : limits.canGoPast(),
       title : module.format("classes.druid.formsTitle", { name : original.name }),
       prompt : module.i18n("classes.druid.formsPrompt"),
     });
     if(!chosen) return null;
     const removed = known.filter(uuid => eligible.some(a => a.uuid === uuid) && !chosen.includes(uuid)).length;
-    const update = { [`flags.${module.id}.forms`] : chosen };
+    const update = { [`flags.${module.id}.forms`] : [...chosen] };
     if(Number.isFinite(swaps)) update[`flags.${module.id}.formSwaps`] = Math.max(0, swaps - removed);
+    /* Past the rules on purpose : the GM is told */
+    const free = swaps + Math.max(0, known.length - max);
+    if(chosen.past && (removed > free)){
+      await limits.tellGM({ who : original.name, what : module.i18n("restChoices.wildShapeForms"), rule : module.format("classes.druid.formsPast", { name : original.name, removed, allowed : free }) });
+    }
     await item.update(update);
     return chosen;
   }
@@ -179,37 +191,59 @@ export class druid{
         rejectClose : false,
       });
       if(choice === "leave"){
-        await gm.run("wildShapeLeave", { actor : actor.uuid });
+        const token = tokenOf(actor);
+        const size = original.prototypeToken ?? {};
+        const place = token ? fitSpace(token, Number(size.width) || 1, Number(size.height) || Number(size.width) || 1) : null;
+        await gm.run("wildShapeLeave", { actor : actor.uuid, token : token?.document.uuid ?? null, x : place?.x, y : place?.y });
         return false;
       }
       if(choice !== "new") return false;
     }
-    /* No use left : dnd5e says so */
-    const uses = activity.item.system.uses;
-    if(uses?.max && !(uses.value > 0)) return null;
-
-    let form = null;
-    while(!form){
-      const { profile, rollData } = this.profileOf(original);
-      const forms = this.knownForms(original).map(uuid => fromUuidSync(uuid, { strict : false }))
-        .filter(a => a && fitsProfile(a, profile, rollData));
-      if(!forms.length){
-        if(!(await this.manageForms(original))?.length) return false;
-        continue;
+    /* Even with no use left : dnd5e says so when it spends, and whatever it does next uses this form */
+    const form = await this.pickForm(original, activity.item);
+    if(!form) return false;
+    /* Room for it : a bigger form spreads where there's space; none : nothing is spent, try somewhere else */
+    const token = tokenOf(actor);
+    let place = null;
+    if(token){
+      const entry = (await compendiums.entries(compendiums.WILD_SHAPES)).find(a => a.uuid === form);
+      const size = entry?.prototypeToken ?? {};
+      place = fitSpace(token, Number(size.width) || 1, Number(size.height) || Number(size.width) || 1);
+      if(!place){
+        ui.notifications.error(module.i18n("classes.druid.noRoom"));
+        return false;
       }
-      const chosen = await chooseCreature(forms, {
-        title : activity.item.name, prompt : module.i18n("classes.druid.formPrompt"),
-        extra : [{ action : "manage", label : module.i18n("classes.druid.knownForms"), icon : "fa-solid fa-list" }],
-      });
-      if(!chosen) return false;
-      if(chosen === "manage"){ await this.manageForms(original); continue; }
-      form = chosen;
     }
     this.#chosen.set(activity.item.uuid, { uuid : form, at : Date.now() });
     return {
-      usage : { ...usage, [module.id] : { ...(usage[module.id] ?? {}), skipPick : true, wildShape : { form } } },
+      usage : { ...usage, [module.id] : { ...(usage[module.id] ?? {}), skipPick : true,
+        wildShape : { form, token : token?.document.uuid ?? null, x : place?.x, y : place?.y } } },
       flags : { auto : true },
     };
+  }
+
+  /**
+   * Which known form (the Known Forms list opens first when there are none yet, or from the picker's button).
+   * @returns {Promise<string|null>}  the form's uuid, null if closed
+   */
+  static async pickForm(original, item){
+    for(;;){
+      const { profile, rollData } = this.profileOf(original);
+      const all = await compendiums.entries(compendiums.WILD_SHAPES);
+      const forms = this.knownForms(original).map(uuid => all.find(a => a.uuid === uuid))
+        .filter(a => a && fitsProfile(a, profile, rollData));
+      if(!forms.length){
+        if(!(await this.manageForms(original))?.length) return null;
+        continue;
+      }
+      const chosen = await chooseCreature(forms, {
+        title : item?.name ?? module.i18n("classes.druid.wildShape"), prompt : module.i18n("classes.druid.formPrompt"),
+        extra : [{ action : "manage", label : module.i18n("classes.druid.knownForms"), icon : "fa-solid fa-list" }],
+      });
+      if(!chosen) return null;
+      if(chosen === "manage"){ await this.manageForms(original); continue; }
+      return chosen;
+    }
   }
 
   /* The creature chosen for a use, by item (dnd5e works on a copy of the item, same uuid), for a minute */
@@ -229,7 +263,7 @@ export class druid{
     this.#chosen.delete(activity.item?.uuid);
     try {
       if(own.wildShape?.form){
-        await gm.run("wildShape", { actor : activity.actor.uuid, item : activity.item.uuid, activity : activity.id, form : own.wildShape.form });
+        await gm.run("wildShape", { actor : activity.actor.uuid, item : activity.item.uuid, activity : activity.id, ...own.wildShape });
       }
     } catch(error){
       log.error(error);
@@ -271,7 +305,7 @@ export class druid{
    * GM : take the form, for the Druid's owner. Only a form it knows (the GM : any). dnd5e only updates the tokens on
    * the scene the GM is viewing, so the Druid's tokens elsewhere are updated here, from the same token data.
    */
-  static async wildShapeAsGM({ actor : uuid, item : itemUuid, activity : activityId, form } = {}, user){
+  static async wildShapeAsGM({ actor : uuid, item : itemUuid, activity : activityId, form, token : tokenUuid = null, x, y } = {}, user){
     const actor = fromUuidSync(uuid ?? "", { strict : false });
     if(!actor?.testUserPermission(user, "OWNER")) return false;
     const original = this.originalOf(actor);
@@ -280,8 +314,13 @@ export class druid{
     const activity = fromUuidSync(itemUuid ?? "", { strict : false })?.system?.activities?.get(activityId);
     if(!source || !activity?.settings) return false;
 
-    /* Unlinked token : dnd5e changes the token itself, wherever it is */
-    if(actor.isToken) return !!(await actor.transformInto(source, activity.settings, { renderSheet : false }));
+    const place = (Number.isFinite(x) && Number.isFinite(y)) ? { token : tokenUuid, x, y } : null;
+    /* Unlinked token : dnd5e changes the token itself, wherever it is; then it goes where it fits */
+    if(actor.isToken){
+      const done = !!(await actor.transformInto(source, activity.settings, { renderSheet : false }));
+      if(done && place) await actor.token?.update({ x : place.x, y : place.y });
+      return done;
+    }
 
     const tokens = game.scenes.contents.flatMap(s => s.tokens.filter(t => t.actorLink && (t.actorId === actor.id)));
     await actor.transformInto(source, activity.settings.clone({ transformTokens : false }), { renderSheet : false });
@@ -290,12 +329,12 @@ export class druid{
     const prototype = this.#prototype.get(actor.id);
     this.#prototype.delete(actor.id);
     if(!shape || !prototype) return !!shape;
-    await this.#retarget(tokens, shape, prototype, source);
+    await this.#retarget(tokens, shape, prototype, source, place);
     return true;
   }
 
   /* The Druid's tokens become the form's (what dnd5e's transformInto does for the viewed scene) */
-  static async #retarget(tokens, shape, prototype, source){
+  static async #retarget(tokens, shape, prototype, source, place = null){
     const fromSource = ["width", "height", "alpha", "lockRotation", "ring"];
     const textureFromSource = ["offsetX", "offsetY", "scaleX", "scaleY", "src", "tint"];
     const fromSelf = ["bar1", "bar2", "displayBars", "displayName", "actorLink", "disposition"];
@@ -307,6 +346,8 @@ export class druid{
       data.actorId = shape.id;
       data.actorLink = true;
       for(const k of kept) data[k] = t[k];
+      /* The token the player used : where the form fits (worked out on their map) */
+      if(place && (t.uuid === place.token)){ data.x = place.x; data.y = place.y; }
       data.name = `${t.name} (${source.name})`;
       foundry.utils.setProperty(data, "flags.dnd5e.originalActor", shape.getFlag("dnd5e", "originalActor"));
       foundry.utils.setProperty(data, "flags.dnd5e.isPolymorphed", true);
@@ -323,10 +364,13 @@ export class druid{
   }
 
   /* GM : leave the form, for its owner */
-  static async leaveAsGM({ actor : uuid } = {}, user){
+  static async leaveAsGM({ actor : uuid, token : tokenUuid = null, x, y } = {}, user){
     const actor = fromUuidSync(uuid ?? "", { strict : false });
     if(!actor?.testUserPermission(user, "OWNER") || !this.isWildShaped(actor)) return false;
     await this.revertEverywhere(actor);
+    /* Back to its own size where it fits (a smaller Druid stays put; no room : it stays where the form was) */
+    const token = tokenUuid ? fromUuidSync(tokenUuid, { strict : false }) : null;
+    if(token && Number.isFinite(x) && Number.isFinite(y)) await token.update({ x, y }).catch(() => {});
     return true;
   }
 

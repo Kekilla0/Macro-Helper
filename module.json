@@ -41,6 +41,65 @@
       "save": {}
     }
   },
+  "packs": [
+    {
+      "name": "wild-shapes",
+      "label": "Wild Shapes",
+      "path": "packs/wild-shapes",
+      "type": "Actor",
+      "system": "dnd5e",
+      "ownership": {
+        "PLAYER": "OBSERVER",
+        "ASSISTANT": "OWNER"
+      }
+    },
+    {
+      "name": "familiars",
+      "label": "Familiars",
+      "path": "packs/familiars",
+      "type": "Actor",
+      "system": "dnd5e",
+      "ownership": {
+        "PLAYER": "OBSERVER",
+        "ASSISTANT": "OWNER"
+      }
+    },
+    {
+      "name": "fighting-styles",
+      "label": "Fighting Styles",
+      "path": "packs/fighting-styles",
+      "type": "Item",
+      "system": "dnd5e",
+      "ownership": {
+        "PLAYER": "OBSERVER",
+        "ASSISTANT": "OWNER"
+      }
+    },
+    {
+      "name": "actions",
+      "label": "Actions",
+      "path": "packs/actions",
+      "type": "Item",
+      "system": "dnd5e",
+      "ownership": {
+        "PLAYER": "OBSERVER",
+        "ASSISTANT": "OWNER"
+      }
+    }
+  ],
+  "packFolders": [
+    {
+      "name": "Macro Helper",
+      "sorting": "m",
+      "color": "#3a2f5b",
+      "packs": [
+        "actions",
+        "fighting-styles",
+        "wild-shapes",
+        "familiars"
+      ]
+    }
+  ],
   "languages": [
     {
       "lang": "en",

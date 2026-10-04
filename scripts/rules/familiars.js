@@ -4,16 +4,18 @@ import { logger } from '../log.js';
 import { gm } from '../gm.js';
 import { patch } from '../patch.js';
 import { initiative } from './initiative.js';
+import { limits } from './limits.js';
 import { tokenOf, getRange } from '../helpers/tokens.js';
 import { pickSpace } from '../helpers/targets.js';
-import { folderActors, fitsProfile, chooseCreature } from '../helpers/creatures.js';
+import { fitsProfile, chooseCreature } from '../helpers/creatures.js';
+import { compendiums } from './compendiums.js';
 const log = logger.for(import.meta.url);
 
 /**
  * Familiars (2024 Find Familiar) : the spell itself (Spells setting) and the Druid's Wild Companion, which casts it
  * (Classes setting).
  *
- *   Summoning  : choose from the Actors folder "Familiars" or "Wild Companions" (what the activity's profile allows :
+ *   Summoning  : choose from the Familiars compendium (Macro Helper) (what the activity's profile allows :
  *                CR 0 Beast), then an empty space within the spell's range (10 ft) on the map. The token is made there
  *                by the GM's client, on the summoner's side and owned by its players. Not in a Wild Shape form (it's a
  *                spell). One familiar at a time : a new one replaces the last.
@@ -29,7 +31,6 @@ export class familiars{
   static WILD_COMPANION = "wild-companion";
   static FIND_FAMILIAR = "find-familiar";
   static IDS = [this.WILD_COMPANION, this.FIND_FAMILIAR];
-  static FOLDERS = ["Familiars", "Wild Companions"];
   /* Find Familiar's range (Wild Companion casts it), and how far a dismissed familiar can reappear */
   static RANGE = 10;
   static RETURN_RANGE = 30;
@@ -46,6 +47,13 @@ export class familiars{
       if(choice === false) return;
       if(choice) config = { ...config, [module.id] : { ...(config[module.id] ?? {}), familiarChoice : choice } };
       return wrapped(config, ...rest);
+    }));
+    /* dnd5e's own summoning (its chat button, a use our question didn't see) : our compendium, never its browser */
+    Hooks.once("setup", () => patch.wrap("CONFIG.DND5E.activityTypes.summon.documentClass.prototype.queryActor", async function(wrapped, ...args){
+      if(!familiars.enabledFor(familiars.idOf(this.item))) return wrapped(...args);
+      const profile = args[0];
+      const creatures = (await compendiums.entries(compendiums.FAMILIARS)).filter(a => !profile || fitsProfile(a, profile, this.getRollData?.({ deterministic : true }) ?? {}));
+      return creatures.length ? chooseCreature(creatures, { title : this.item.name, prompt : module.i18n("classes.druid.familiarPrompt") }) : wrapped(...args);
     }));
     gm.handle("summonFamiliar", (data, user) => this.summonAsGM(data, user));
     gm.handle("familiarStore", (data, user) => this.storeAsGM(data, user));
@@ -109,20 +117,17 @@ export class familiars{
       if(choice !== "new") return false;
     }
     /* It casts a spell, and no spells can be cast in a Wild Shape form */
-    if(this.isWildShaped(activity.actor)){
-      ui.notifications.warn(module.format("classes.druid.noSpellsShifted", { name : activity.item.name }));
-      return false;
-    }
+    if(this.isWildShaped(activity.actor) && !limits.allow(module.format("classes.druid.noSpellsShifted", { name : activity.item.name }), { who : activity.actor.name, what : activity.item.name })) return false;
     const profile = activity.availableProfiles?.[0];
     const rollData = activity.getRollData?.({ deterministic : true }) ?? {};
-    const creatures = folderActors(this.FOLDERS).filter(a => !profile || fitsProfile(a, profile, rollData));
+    const creatures = (await compendiums.entries(compendiums.FAMILIARS)).filter(a => !profile || fitsProfile(a, profile, rollData));
     if(!creatures.length){
-      ui.notifications.warn(module.format("classes.druid.noFamiliars", { folder : this.FOLDERS[0] }));
+      ui.notifications.warn(module.i18n("classes.druid.noFamiliars"));
       return null;
     }
     const creature = await chooseCreature(creatures, { title : activity.item.name, prompt : module.i18n("classes.druid.familiarPrompt") });
     if(!creature) return false;
-    const actor = fromUuidSync(creature, { strict : false });
+    const actor = creatures.find(a => a.uuid === creature);
     const from = tokenOf(activity.actor);
     if(!from){
       ui.notifications.warn(module.i18n("helpers.pick.noToken"));
@@ -159,7 +164,7 @@ export class familiars{
   }
 
   /**
-   * GM : make the familiar's token, for the summoner's owner : a creature from the familiars folder, in the space it
+   * GM : make the familiar's token, for the summoner's owner : a creature from the Familiars compendium, in the space it
    * picked, through dnd5e's own summon data (Fey, its flags), on the summoner's side and owned by its players, with
    * nothing to attack with.
    */
@@ -167,9 +172,10 @@ export class familiars{
     const activity = fromUuidSync(itemUuid ?? "", { strict : false })?.system?.activities?.get(activityId);
     const summoner = activity?.actor;
     if(!summoner?.testUserPermission(user, "OWNER")) return false;
-    if(!user.isGM && !folderActors(this.FOLDERS).some(a => a.uuid === creature)) return false;
+    if(!user.isGM && !(await compendiums.entries(compendiums.FAMILIARS)).some(a => a.uuid === creature)) return false;
     const scene = game.scenes.get(sceneId);
-    const actor = await fromUuid(creature ?? "");
+    /* A world copy of the compendium's creature for its token (dnd5e's own : reused the next time) */
+    const actor = creature ? await dnd5e.documents.Actor5e.fetchExisting(creature).catch(error => { log.error(error); return null; }) : null;
     const profile = activity.profiles.find(p => p._id === profileId) ?? activity.availableProfiles?.[0];
     if(!scene || !actor || !profile) return false;
 

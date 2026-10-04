@@ -1,6 +1,7 @@
 import { module } from '../module.js';
 import { giveMode } from './reasons.js';
 import { settings } from '../settings.js';
+import { limits } from '../rules/limits.js';
 import { logger } from '../log.js';
 import { tokenOf, distanceBetween, pushAway } from '../helpers/tokens.js';
 import { getSize, rollSave, setStatus, addTimedEffect, usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
@@ -135,7 +136,7 @@ export class masteries{
           break;
         }
         case "push" : {
-          if((getSize(actor)?.value ?? 2) > 3){ notes.push(module.format("rollItem.mastery.tooBig", { name : target.name })); break; }
+          if(((getSize(actor)?.value ?? 2) > 3) && !limits.allow(module.format("rollItem.mastery.tooBig", { name : target.name }), { notes, who : attacker?.name, what : `Push ${target.name}` })) break;
           const moved = await pushAway(target, attackerToken, 10);
           if(settings.value("homebrewPush")) await this.pushCollision(target, moved, 10, item);
           else if(!moved) notes.push(module.format("rollItem.mastery.blocked", { name : target.name }));
@@ -227,10 +228,10 @@ export class masteries{
     const attacker = message.getAssociatedActor();
     const [first] = system.hitTargets(ray);
     if(!item || !attacker || !first) return ui.notifications.warn(module.i18n("rollItem.mastery.noHit"));
-    if(isRangedAttack(item, first)) return ui.notifications.warn(module.i18n("rollItem.mastery.cleaveMelee"));
+    if(isRangedAttack(item, first) && !limits.allow(module.i18n("rollItem.mastery.cleaveMelee"), { who : attacker.name, what : `Cleave (${item.name})` })) return;
 
     /* Once per turn, in combat */
-    if(usedThisTurn(attacker, "cleave")) return ui.notifications.warn(module.i18n("rollItem.mastery.cleaveOnce"));
+    if(usedThisTurn(attacker, "cleave") && !limits.allow(module.i18n("rollItem.mastery.cleaveOnce"), { who : attacker.name, what : `Cleave (${item.name})` })) return;
 
     const picked = await pickAttack(item, {
       activity, count : 1, long : false, clearTargets : true, used : true,

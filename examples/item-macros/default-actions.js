@@ -3,8 +3,7 @@
  * them yet, and the ones it gets are added to its Favorites (characters' sheets). A creature that already has one
  * (by identifier : "dash", "disengage", "dodge", "help", "unarmed-strike") keeps its own, and nothing else happens.
  *
- * Setup : 1. Import examples/items/dash.json, disengage.json, dodge.json, help.json and unarmed-strike.json into the Items sidebar (right-click
- *            an item, Import Data). The copies there are what creatures get.
+ * Setup : 1. Nothing to import : they come from Macro Helper's Actions compendium (filled the first time the GM loads).
  *         2. Hook Macro (world macro, Script). Run on Hooks : "Token created" (createToken).
  *            Run For : Active GM (once).
  * Notes : Unlinked tokens (most monsters) get their own copies on that token; linked ones (characters) get them on
@@ -22,10 +21,13 @@ const idOf = item => item.identifier ?? item.system?.identifier;
 const missing = DEFAULTS.filter(id => !actor.items.some(i => idOf(i) === id));
 if(!missing.length) return;
 
-/* The world's copies, from the Items sidebar */
-const sources = missing.map(id => game.items.find(i => idOf(i) === id)).filter(Boolean);
-const absent = missing.filter(id => !game.items.some(i => idOf(i) === id));
-if(absent.length) ui.notifications.warn(`Default actions : import ${absent.join(", ")} into the Items sidebar first (examples/items).`);
+/* Macro Helper's Actions compendium */
+const pack = game.packs.get("macro-helper.actions");
+const index = pack ? await pack.getIndex({ fields : ["system.identifier"] }) : [];
+const found = missing.map(id => [...index].find(e => e.system?.identifier === id)).filter(Boolean);
+const absent = missing.filter(id => ![...index].some(e => e.system?.identifier === id));
+if(absent.length) ui.notifications.warn(`Default actions : ${absent.join(", ")} not in the Actions compendium (Macro Helper).`);
+const sources = (await Promise.all(found.map(e => fromUuid(e.uuid)))).filter(Boolean);
 if(!sources.length) return;
 
 const created = await actor.createEmbeddedDocuments("Item", sources.map(i => i.toObject()));

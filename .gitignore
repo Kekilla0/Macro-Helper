@@ -12,3 +12,9 @@ desktop.ini
 node_modules/
 *.zip
 *.log
+
+# Compendium databases : keep their data (LevelDB keeps recent writes in .log files), not their lock or logs
+!packs/**/*.log
+packs/**/LOCK
+packs/**/LOG
+packs/**/LOG.old

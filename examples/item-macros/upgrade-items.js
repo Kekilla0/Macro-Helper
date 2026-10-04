@@ -1,17 +1,17 @@
 /**
- * Upgrade items (GM) : the Macro Helper items in your Items sidebar (examples/items : Dodge, Help, Unarmed Strike,
- * Reckless Attack...) are copied onto the selected tokens' creatures, in place :
+ * Upgrade items (GM) : the items in Macro Helper's Actions compendium (Dash, Disengage, Dodge, Help, Unarmed Strike,
+ * Reckless Attack) are copied onto the selected tokens' creatures, in place :
  *   - a creature that has the item (same identifier) keeps its own : only the activities, description and the
  *     effects they use are replaced, so it stays where it was on the sheet (a Barbarian feature under Barbarian);
  *   - one that doesn't gets a copy;
  *   - a class feature that lost its place on the sheet (dragged in from a file : "Other features") is put back under
  *     its class, from the class's own grant of it.
  *
- * Setup : Script macro (GM). Import the examples/items files into the Items sidebar first. Select the tokens, run it.
+ * Setup : Script macro (GM). Select the tokens, run it.
  */
 
-const sources = game.items.filter(i => i.system?.source?.book === "Macro Helper");
-if(!sources.length) return ui.notifications.warn("Upgrade items : import the examples/items files into the Items sidebar first.");
+const sources = await (game.packs.get("macro-helper.actions")?.getDocuments() ?? []);
+if(!sources.length) return ui.notifications.warn("Upgrade items : the Actions compendium (Macro Helper) is empty.");
 const actors = [...new Set(canvas.tokens.controlled.map(t => t.actor).filter(Boolean))];
 if(!actors.length) return ui.notifications.warn("Upgrade items : select one or more tokens.");
 

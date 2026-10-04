@@ -141,7 +141,7 @@ export class actions{
      doesn't provoke Opportunity Attacks). The action tracker reads them. */
   static async mark(actor, key, label, img){
     if(actor.effects.some(e => e.getFlag(module.id, key))) return;
-    await addTimedEffect(actor, { name : module.i18n(label), img, flags : { [module.id] : { [key] : true } } }, { until : "turnEnd" });
+    await addTimedEffect(actor, { name : module.i18n(label), img, flags : { [module.id] : { [key] : true } } }, { until : "turnEnd", thisTurn : true });
     log.debug(key, actor.name);
   }
 

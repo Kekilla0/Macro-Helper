@@ -266,21 +266,68 @@ export function pushDestination(thing, from, feet = 10){
 }
 
 /**
- * Is a space free of creatures ? A size × size square block with its top-left corner at x / y (canvas pixels).
+ * Is a space free of creatures ? A block of squares with its top-left corner at x / y (canvas pixels).
  * @param {number} x
  * @param {number} y
- * @param {number} [size=1]  in squares
+ * @param {number} [size=1]  its width in squares
+ * @param {object} [options]
+ * @param {number} [options.height]   its height in squares (default : the width)
+ * @param {Token} [options.ignore]    a token that doesn't count (the one growing into the space)
  * @returns {boolean}
  */
-export function isSpaceFree(x, y, size = 1){
+export function isSpaceFree(x, y, size = 1, { height, ignore } = {}){
   const grid = canvas.grid.size;
   const left = Math.round(x / grid), top = Math.round(y / grid);
-  const right = left + Math.max(1, Math.round(size)), bottom = top + Math.max(1, Math.round(size));
+  const right = left + Math.max(1, Math.round(size)), bottom = top + Math.max(1, Math.round(height ?? size));
+  const skip = ignore?.document?.id ?? ignore?.id;
   return !canvas.tokens.placeables.some(other => {
-    if(!other.actor) return false;
+    if(!other.actor || (skip && (other.document.id === skip))) return false;
     const c = cells(other);
     return (c.left < right) && (c.right > left) && (c.top < bottom) && (c.bottom > top);
   });
+}
+
+/**
+ * Where a token can take a bigger size (Wild Shape into a Large beast) : a block of width × height squares that still
+ * covers its space, in whichever direction there's room (centred first), free of other creatures, inside the scene,
+ * with no wall cutting through it. A size no bigger than now keeps its corner.
+ * @param {Token|TokenDocument|Actor} thing
+ * @param {number} width   in squares
+ * @param {number} height  in squares
+ * @returns {{ x : number, y : number }|null}  the new top-left corner, null if it can't fit here
+ */
+export function fitSpace(thing, width, height = width){
+  const token = tokenOf(thing);
+  if(!token) return null;
+  const grid = canvas.grid.size;
+  const { x, y } = token.document;
+  const w0 = Math.max(1, Math.round(token.document.width)), h0 = Math.max(1, Math.round(token.document.height));
+  const W = Math.max(1, Math.round(width)), H = Math.max(1, Math.round(height));
+  if((W <= w0) && (H <= h0)) return { x, y };
+  const offsets = [];
+  for(let dx = 0; dx <= Math.max(0, W - w0); dx++) for(let dy = 0; dy <= Math.max(0, H - h0); dy++) offsets.push([dx, dy]);
+  const cx = Math.max(0, W - w0) / 2, cy = Math.max(0, H - h0) / 2;
+  offsets.sort((a, b) => (Math.abs(a[0] - cx) + Math.abs(a[1] - cy)) - (Math.abs(b[0] - cx) + Math.abs(b[1] - cy)));
+  const rect = canvas.dimensions?.sceneRect;
+  for(const [dx, dy] of offsets){
+    const nx = x - (dx * grid), ny = y - (dy * grid);
+    if(rect && ((nx < rect.x) || (ny < rect.y) || (nx + (W * grid) > rect.x + rect.width) || (ny + (H * grid) > rect.y + rect.height))) continue;
+    if(!isSpaceFree(nx, ny, W, { height : H, ignore : token })) continue;
+    if(wallInside(token, nx, ny, W, H)) continue;
+    return { x : nx, y : ny };
+  }
+  return null;
+}
+
+/* A wall between the token and any square of the block (it couldn't spread through it) */
+function wallInside(token, x, y, width, height){
+  const grid = canvas.grid.size;
+  for(let i = 0; i < width; i++) for(let j = 0; j < height; j++){
+    const center = { x : x + ((i + 0.5) * grid), y : y + ((j + 0.5) * grid) };
+    try { if(CONFIG.Canvas.polygonBackends.move.testCollision(token.center, center, { type : "move", mode : "any" })) return true; }
+    catch { /* no walls to test against */ }
+  }
+  return false;
 }
 
 /* Would the token, moved to x / y, share a square with another creature's token ? */

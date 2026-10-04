@@ -1,5 +1,6 @@
 import { module } from '../module.js';
 import { settings } from '../settings.js';
+import { limits } from './limits.js';
 import { usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
 import { giveMode } from '../roll-item/reasons.js';
 
@@ -151,6 +152,7 @@ export class weapons{
     if(changed.length) ui.notifications.info(changed.join(" "));
     if(!problems.length) return;
     ui.notifications.warn(problems.join(" "));
+    limits.log({ who : actor.name, what : item.name, rule : problems.join(" "), status : (mode === "block") ? "blocked" : "allowed" });
     if(mode === "block") return false;
   }
 

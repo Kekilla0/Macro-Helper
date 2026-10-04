@@ -12,10 +12,17 @@
     {{/if}}
     {{/each}}
 
+    {{#each notes}}
+    <section class="icon-row macro-helper-card-note" {{#if tooltip}}data-tooltip="{{ tooltip }}"{{/if}}>
+        <i class="fa-fw fa-solid {{#if icon}}{{ icon }}{{else}}fa-circle-info{{/if}}" inert></i>
+        <span>{{ text }}</span>
+    </section>
+    {{/each}}
+
     {{#if buttons.length}}
     <div class="card-buttons">
         {{#each buttons}}
-        <button type="button" data-action="cardButton" data-id="{{ id }}" data-ray="{{ ../ray }}">
+        <button type="button" data-action="cardButton" data-id="{{ id }}" data-ray="{{ ../ray }}" {{#if tooltip}}data-tooltip="{{ tooltip }}"{{/if}}>
             <i class="fa-solid {{#if icon}}{{ icon }}{{else}}fa-star{{/if}}" inert></i>
             <span>{{ label }}</span>
         </button>

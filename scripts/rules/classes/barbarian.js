@@ -1,5 +1,6 @@
 import { module } from '../../module.js';
 import { settings } from '../../settings.js';
+import { limits } from '../limits.js';
 import { logger } from '../../log.js';
 import { tokenOf } from '../../helpers/tokens.js';
 import { findItem, addTimedEffect } from '../../helpers/actors.js';
@@ -99,8 +100,7 @@ export class barbarian{
     if(!this.enabled()) return;
     const actor = this.actorFor(activity);
     if((activity.item?.type === "spell") && this.isRaging(actor)){
-      ui.notifications.warn(module.format("classes.barbarian.noSpells", { name : actor.name }));
-      return false;
+      if(!limits.allow(module.format("classes.barbarian.noSpells", { name : actor.name }), { who : actor.name, what : activity.item.name })) return false;
     }
     if((this.idOf(activity.item) === this.RAGE) && this.isRaging(actor)){
       usage.consume = false;
@@ -108,8 +108,7 @@ export class barbarian{
     }
     /* "if you aren't wearing Heavy armor" */
     else if((this.idOf(activity.item) === this.RAGE) && this.inHeavyArmor(actor)){
-      ui.notifications.warn(module.format("classes.barbarian.noRageArmor", { name : actor.name }));
-      return false;
+      if(!limits.allow(module.format("classes.barbarian.noRageArmor", { name : actor.name }), { who : actor.name, what : activity.item.name })) return false;
     }
   }
 
@@ -319,7 +318,7 @@ export class barbarian{
 
   static async reckless(activity){
     const actor = this.actorFor(activity);
-    if(game.combat?.started && !this.isTurnOf(actor)) ui.notifications.warn(module.format("classes.barbarian.recklessTurn", { name : actor.name }));
+    if(game.combat?.started && !this.isTurnOf(actor) && !limits.allow(module.format("classes.barbarian.recklessTurn", { name : actor.name }), { who : actor.name, what : activity.item.name })) return;
     if(this.isReckless(actor)) return;
     await addTimedEffect(actor, {
       name : module.i18n("classes.barbarian.reckless"), img : this.RECKLESS_IMG,

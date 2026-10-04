@@ -118,6 +118,10 @@ export class rollItem{
     const graze = await masteries.grazeRolls(activity, roll, damage);
     for(const r of graze) r.options[module.id] = { part : "graze" };
 
+    /* Extra damage from the same item (a monster's charge, a second damage activity) : rolled with the attack into
+       boxes of its own, each with its APPLY once the attack hits (crits like the attack) */
+    const extras = await this.extraDamage(activity, roll);
+
     /* On-hit save from the same item (Giant Spider's poison) : its damage is rolled now too, never crits */
     const save = this.findRider(activity);
     const riderDamage = save ? await this.rollDamage(save, null) : [];
@@ -130,11 +134,24 @@ export class rollItem{
     } : null;
 
     const why = this.disadvantageOf(config);
-    const message = await this.attackCard(activity, [roll, ...damage, ...graze, ...riderDamage], { scaling, rider,
+    const message = await this.attackCard(activity, [roll, ...damage, ...graze, ...extras, ...riderDamage], { scaling, rider,
       disadvantage : !!why, disadvantageWhy : (typeof why === "string") ? why : "" });
     log.debug("Rolled", activity.item.name, { roll, damage, rider, riderDamage });
 
     return { attack : roll, damage, riderDamage, isCritical : roll.isCritical, isFumble : roll.isFumble, message };
+  }
+
+  /* The item's other damage activities, rolled for this attack (tagged as extras that only apply on a hit) */
+  static async extraDamage(activity, attack){
+    const others = activity?.item?.system?.activities?.filter(a => (a.type === "damage") && (a.id !== activity.id) && (a.canUse !== false)) ?? [];
+    const rolls = [];
+    for(const extra of others){
+      for(const roll of await this.rollDamage(extra, attack)){
+        roll.options[module.id] = { part : "extra", key : `extra-${extra.id}`, label : extra.name || extra.item.name, onHit : true };
+        rolls.push(roll);
+      }
+    }
+    return rolls;
   }
 
   /**
@@ -150,20 +167,21 @@ export class rollItem{
   }
 
   /**
-   * An item whose only usable activities are one attack + its save rider(s) (Giant Spider Bite, Ghoul Claw)
-   * goes straight to the attack instead of dnd5e's "which activity?" prompt : the rider is on the attack's card anyway.
+   * An item whose usable activities are one attack plus what rides on it (Giant Spider Bite and Ghoul Claw's save;
+   * the Elk's Ram and its charge damage : any number of damage activities, at most one save) goes straight to the
+   * attack instead of dnd5e's "which activity?" prompt : the rest is rolled onto the attack's card. Grapple and Shove
+   * aren't riders (Unarmed Strike offers them instead of the attack). Shift : dnd5e's choice anyway.
    * @returns {Activity|null}  the attack to use, or null to let dnd5e prompt as normal
    */
   static fastForward(item, config = {}){
-    if(config.chooseActivity) return null;
+    if(config.chooseActivity || config.event?.shiftKey) return null;
     if(!settings.value("rollItem") || !settings.value("rollItemDefault")) return null;
     const usable = item?.system?.activities?.filter(a => a.canUse) ?? [];
     const attacks = usable.filter(a => a.type === "attack");
     if(attacks.length !== 1 || usable.length < 2) return null;
-    /* Exactly one save, and not Grapple / Shove (Unarmed Strike offers those instead of the attack) */
     const saves = usable.filter(a => a.type === "save");
-    if((saves.length !== 1) || maneuvers.isManeuver(saves[0])) return null;
-    return usable.every(a => a === attacks[0] || a === saves[0]) ? attacks[0] : null;
+    if((saves.length > 1) || saves.some(s => maneuvers.isManeuver(s))) return null;
+    return usable.every(a => (a === attacks[0]) || (a.type === "damage") || (a === saves[0])) ? attacks[0] : null;
   }
 
   /* ---------- Multiple attack rolls (Scorching Ray, Eldritch Blast...) ---------- */
@@ -391,6 +409,21 @@ export class rollItem{
     return this.rollActivity(activity, { event, scaling, count : Math.max(count, targets.length), targets, attackMode, disadvantage });
   }
 
+  /**
+   * Roll Type : Normal : an attack picks its targets on the map before dnd5e's use, like Roll Item's own cards
+   * (range, long range, ammunition), then dnd5e makes its card for them.
+   * @returns {Promise<boolean|null>}  false : the pick was closed (nothing used); null : nothing to pick here
+   */
+  static async pickForNormal(activity){
+    const pick = settings.value("rollItemPick");
+    const attacker = tokenOf(activity.item);
+    if(!settings.value("rollItem") || (pick === "off") || !canvas.ready || !attacker || (attacker.document.parent !== canvas.scene)) return null;
+    const picked = await pickAttack(activity.item, { activity, count : this.countFor(activity), repeat : this.countFor(activity) > 1,
+      clearTargets : pick === "always", used : false });
+    if(!picked?.targets?.length) return false;
+    return this.announceTargets(activity, picked.targets);
+  }
+
   static #lastUse = { uuid : null, results : null, at : 0 };
 
   /**
@@ -470,6 +503,11 @@ export class rollItem{
           foundry.utils.mergeObject(message, { data : { flags : { [module.id] : own.flags } } });
           rest = [dialog, message, ...rest.slice(2)];
           usage = own.usage;
+        }
+        /* Roll Type : Normal : dnd5e's own attack card, still aimed at the targets you pick (Pick Targets) */
+        if((this.type === "attack") && !rollItem.modeFor(this, usage) && !usage?.[module.id]?.skipPick){
+          const picked = await rollItem.pickForNormal(this);
+          if(picked === false) return;
         }
         const spec = rollItem.pickSpec(this, usage);
         if(spec){

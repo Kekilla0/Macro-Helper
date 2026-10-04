@@ -1,5 +1,6 @@
 import { module } from '../module.js';
 import { settings } from '../settings.js';
+import { limits } from '../rules/limits.js';
 import { rollItem } from './roll-item.js';
 import { masteries } from './masteries.js';
 import { maneuvers } from './maneuvers.js';
@@ -319,7 +320,7 @@ export function registerMessages(){
     /* Grapple : only a creature no more than one size larger than the grappler */
     const grappler = message.getAssociatedActor?.();
     if((maneuvers.ofCard(message) === "grapple") && grappler && !maneuvers.fits(actor, grappler)){
-      return ui.notifications.warn(module.format("rollItem.maneuver.tooBig", { name : actor.name, action : module.i18n("rollItem.maneuver.grapple") }));
+      if(!limits.allow(module.format("rollItem.maneuver.tooBig", { name : actor.name, action : module.i18n("rollItem.maneuver.grapple") }), { who : grappler.name, what : `Grapple ${actor.name}` })) return;
     }
     const data = due.map(({ doc }) => {
       const d = foundry.utils.mergeObject(doc.toObject(), { origin : activity.item?.uuid ?? doc.parent?.uuid, transfer : false, disabled : false,
@@ -828,15 +829,19 @@ export function registerMessages(){
       }
       const extras = [...groups.values()]
         .filter(g => !choice || (choice === g.key) || !g.rolls.some(r => tagOf(r).alternative))
-        .map(g => ({ key : g.key, label : g.label, damage : { ...damageContext(this.parent, g.rolls), showTray : this.canApply }, chosen : choice === g.key }));
+        .map(g => ({ key : g.key, label : g.label, chosen : choice === g.key,
+          damage : { ...damageContext(this.parent, g.rolls), showTray : this.canApply && (!g.rolls.some(r => tagOf(r).onHit) || this.isHitOn(ray)) } }));
 
-      /* Buttons : item macros listening to macro-helper.cardButtons push { id, label, icon } */
+      /* Buttons : item macros listening to macro-helper.cardButtons push { id, label, icon, tooltip } */
       const buttons = [];
       Hooks.callAll(`${module.id}.cardButtons`, this.parent, buttons, { ray });
       const valid = buttons.filter(b => b?.id && b?.label);
+      /* Notes : what changed the card's outcome (Interception) push { text, icon, tooltip } */
+      const notes = [];
+      Hooks.callAll(`${module.id}.cardNotes`, this.parent, notes, { ray });
 
-      if(!extras.length && !valid.length) return null;
-      return { extras, buttons : valid, ray : hasRay ? ray : "", hasRay };
+      if(!extras.length && !valid.length && !notes.length) return null;
+      return { extras, buttons : valid, notes, ray : hasRay ? ray : "", hasRay };
     }
 
     /* ---------- Rider (on-hit save) ---------- */

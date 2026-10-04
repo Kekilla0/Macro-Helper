@@ -153,7 +153,7 @@ const VIRTUAL = {
   spellRules : rule("spellRules"),
   /* The Rules page's own keys : off with Roll Item */
   weaponRules : () => (ENABLED() ? RAW("weaponRules") : "off"),
-  classRules : () => ENABLED() && RAW("classRules"),
+  classRules : rule("classRules"),
   vision : () => (ENABLED() ? RAW("vision") : "off"),
 };
 

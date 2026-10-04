@@ -107,7 +107,7 @@ export class gm{
 
     /* "Next turn" : never the turn the effect was made in */
     const done = this.#effects(e => (e.combat === combat.id) && (
-      ((e.at === "turnEnd") && (e.actor === ended) && (priorAt > this.#at(e.round, e.turn)))
+      ((e.at === "turnEnd") && (e.actor === ended) && ((priorAt > this.#at(e.round, e.turn)) || (e.thisTurn && (priorAt >= this.#at(e.round, e.turn)))))
       || (!waitForOrder && (e.at === "turnStart") && (e.actor === started) && (currentAt > this.#at(e.round, e.turn)))
     ));
     for(const effect of done){
