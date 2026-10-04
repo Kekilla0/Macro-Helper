@@ -50,6 +50,17 @@ export class limits{
   }
 
   /**
+   * A free reroll isn't in the rules : the GM always may; anyone else follows Rule Limits (logged on Warn / Block).
+   * @param {string} who    whose roll
+   * @param {string} what   which roll ("Athletics", "Longsword attack")
+   * @returns {boolean}
+   */
+  static mayReroll(who, what){
+    if(game.user.isGM) return true;
+    return this.allow(module.i18n("rerolls.rule"), { who, what : module.format("rerolls.did", { roll : what || "—" }) });
+  }
+
+  /**
    * A player went past the rules on purpose (Warn) : a line in the GM's log, not shown to them.
    * @param {object} entry   { who, what, rule }
    */

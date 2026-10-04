@@ -207,6 +207,8 @@ export class rerolls{
   /* A fresh roll; advantage / disadvantage chosen now adds a second d20 (cancelling with any already on it) */
   static async reroll(message, event){
     if(!(message.isOwner || game.user.isGM)) return;
+    const { limits } = await import('../rules/limits.js');
+    if(!limits.mayReroll(message.getAssociatedActor?.()?.name ?? message.speaker?.alias, message.flavor || message.rolls?.[0]?.formula)) return;
     const mode = await this.modeFor(event);
     if(!mode) return;
     const [roll] = message.rolls;

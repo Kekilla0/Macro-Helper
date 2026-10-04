@@ -7,6 +7,7 @@ import * as items from './helpers/items.js';
 import * as utils from './helpers/utils.js';
 import * as creatures from './helpers/creatures.js';
 import { restChoices } from './rules/rest-choices.js';
+import { rollRequests } from './requests/requests.js';
 
 /* Public functions for macros : MacroHelper.x(...) or game.modules.get("macro-helper").api.x(...) */
 export class api{
@@ -24,6 +25,8 @@ export class api{
       ...creatures, // crOf, fitsProfile, chooseCreature, chooseCreatures, chooseOne, chooseSet
       /* The character's Rest Choices window (Wild Shape forms...), e.g. after a rest the GM ran for everyone */
       restChoices : actor => restChoices.open(actor),
+      /* Roll Requests : the window (no options), or a card straight away ({ who, what, dc, hideDC, mode, whisper }) */
+      rollRequest : options => (options ? rollRequests.request(options) : rollRequests.open()),
     };
 
     module.data.api = functions;

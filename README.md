@@ -18,7 +18,7 @@ https://github.com/Kekilla0/Macro-Helper/releases/latest/download/module.json
 
 **Configure Settings → Macro Helper** has one sub-menu per feature: **Helpers**, **Item Macro**, **Hook Macros**, **Roll Item** and **Homebrew**. Some pages have a button opening a page of their own (Helpers → Methods, Roll Item → Rules). Each one can be turned off on its own. Settings are the GM's and apply to everyone. The one exception is Roll Item's **Pick Targets**, which each player sets for themselves, so players only see the Roll Item sub-menu, with just that setting.
 
-**Rule Limits** (Roll Item → Rules: Off, Warn, Block, Change; default *Warn*): one setting for everything the rules don't allow. *Warn* gives a notice and lets it happen, *Block* stops it, *Off* checks nothing, and *Change* fixes what it can (weapons: equipping, grip) and blocks the rest. It covers the weapon handling below, Rage (no spells; not starting in heavy armor), Reckless Attack off your turn, Savage Attacker and Cleave once a turn, Cleave melee only, the Grapple / Shove / Push size limits, Wild Companion in a Wild Shape form, Weapon Mastery changes made on the sheet, and Interception's and Protection's requirements. Each time one comes up on *Warn* or *Block*, the GM gets a whispered table like the equipment log: **Round** (or the time out of combat), **Who**, **Did**, **Status** (allowed, stopped, or past the rules on purpose) and **Rule**.
+**Rule Limits** (Roll Item → Rules: Off, Warn, Block, Change; default *Warn*): one setting for everything the rules don't allow. *Warn* gives a notice and lets it happen, *Block* stops it, *Off* checks nothing, and *Change* fixes what it can (weapons: equipping, grip) and blocks the rest. It covers the weapon handling below, Rage (no spells; not starting in heavy armor), Reckless Attack off your turn, Savage Attacker and Cleave once a turn, Cleave melee only, the Grapple / Shove / Push size limits, Wild Companion in a Wild Shape form, Weapon Mastery changes made on the sheet, Interception's and Protection's requirements, and **Reroll** buttons (Roll Item's cards, dnd5e's check and save messages, request cards: a free reroll isn't in the rules; the GM always may). Each time one comes up on *Warn* or *Block*, the GM gets a whispered table like the equipment log: **Round** (or the time out of combat), **Who**, **Did**, **Status** (allowed, stopped, or past the rules on purpose) and **Rule**.
 
 **Weapon handling** (part of Rule Limits): weapon properties are applied from the weapon's data, following dnd5e's **Rules Version** setting (Modern 2024 / Legacy 2014). Like the other settings here, they apply to every attack roll.
 - **Heavy:** disadvantage below STR 13 (melee) or DEX 13 (ranged). With 2014 rules, Small and Tiny creatures instead.
@@ -263,6 +263,19 @@ The macro runs inside the hook, so until its first `await` it can still change w
 const [combat] = args;
 ChatMessage.create({ content : `It's ${combat.combatant?.name}'s turn.` });
 ```
+
+## Roll Requests (dnd5e)
+
+The GM asks creatures for an ability check, skill, tool or save, with the DC set **before** anyone rolls. Settings page **Roll Requests**: **Enable Roll Requests**, **DM Screen** (players don't see the DC, only ✓ / ✗) and **Request Messages** (*Compact* or *Individual*, below).
+
+- **Opening it:** the small d20 button at the right end of the hotbar (GM only), or the macro `MacroHelper.rollRequest()`.
+- **Who:** every creature on the scene, plus the player characters who aren't on it (in italics). The selected tokens are ticked; with none selected, the players on the scene. **Players / Everyone / Nobody** set the ticks quickly.
+- **The check** (in a tab): **What** (a category: Ability Checks, Saving Throws, Skills, Tools; then which one), **DC** (5 to 30 in fives, hover for the PHB's names, then **−2 / +2** or type it; its name shows underneath) and **How** (*Each rolls*, or *Group check*: the group succeeds when at least half succeed). **Whisper** keeps the cards and their rolls to the GM and the creatures' owners.
+- **One tab:** **Request** posts the card and the window closes.
+- **Skill Challenge:** the **+** by the tabs adds another check; more than one tab makes it a Skill Challenge. Each tab is its own check (each rolls or group, its own DC), requested when you want (**Request check 2**, in any order); it's posted exactly like a single request. The window keeps each check's outcome (✓ / ✗ on its tab; an *each rolls* check counts when at least half succeed, one creature: its own result) and stays open (closing it keeps the challenge; the hotbar button brings it back). A tab not requested yet can be removed. Once every tab is decided, a **Skill Challenge** message says whether the party succeeded: a majority of the checks. **Start over** clears it.
+- **The card:** a row per creature with a **Roll** button for its owner (the GM can roll any). It's dnd5e's roll, so the Advantage setting applies. The GM's client marks the row ✓ / ✗. With Roll Item's DM Screen on, players don't see NPCs' totals.
+  - *Compact* (default): the roll goes into the card, nothing else is posted (Dice So Nice still shows it). **Reroll** sits by the total. **Lucky**, **Bardic Inspiration** and **Tactical Mind** are buttons at the card's foot, each only for its owner; the GM's **Tactical Mind: Spend Use** shows there once Tactical Mind has made it a success.
+  - *Individual*: each roll is dnd5e's own message (with its buttons), linked to the card, which follows any change to it.
 
 ## Roll Item (dnd5e)
 

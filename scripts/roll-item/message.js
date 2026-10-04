@@ -1097,6 +1097,7 @@ export function registerMessages(){
     static async #rerollAttack(event, target){
       const activity = this.parent.getAssociatedActivity({ scaled : true });
       if(!activity) return;
+      if(!limits.mayReroll(this.parent.getAssociatedActor?.()?.name, activity?.item?.name ?? this.parent.flavor)) return;
       target.disabled = true;
 
       const mode = await rollItem.chooseMode(activity, event);
@@ -1140,6 +1141,7 @@ export function registerMessages(){
     static async #rerollDamage(event, target){
       const activity = this.parent.getAssociatedActivity({ scaled : true });
       if(!activity) return;
+      if(!limits.mayReroll(this.parent.getAssociatedActor?.()?.name, activity?.item?.name ?? this.parent.flavor)) return;
       target.disabled = true;
 
       /* Multi : new damage for every ray, attacks stay */
@@ -1165,6 +1167,7 @@ export function registerMessages(){
     static async #rerollRiderDamage(event, target){
       const save = this.riderActivity;
       if(!save) return;
+      if(!limits.mayReroll(this.parent.getAssociatedActor?.()?.name, save.item?.name)) return;
       target.disabled = true;
 
       const damage = tag(await rollItem.rollDamage(save, null), { part : "save" });
@@ -1251,6 +1254,7 @@ export function registerMessages(){
       const activity = this.parent.getAssociatedActivity({ scaled : true });
       const index = Number(target.dataset.ray);
       if(!activity || !this.rays[index]) return;
+      if(!limits.mayReroll(this.parent.getAssociatedActor?.()?.name, activity?.item?.name ?? this.parent.flavor)) return;
       target.disabled = true;
 
       const mode = await rollItem.chooseMode(activity, event);
@@ -1456,6 +1460,7 @@ export function registerMessages(){
     static async #rerollDamage(event, target){
       const activity = this.parent.getAssociatedActivity({ scaled : true });
       if(!activity) return;
+      if(!limits.mayReroll(this.parent.getAssociatedActor?.()?.name, activity?.item?.name ?? this.parent.flavor)) return;
       target.disabled = true;
 
       const keep = this.parent.rolls.filter(r => !(r instanceof DamageRoll));
@@ -1472,6 +1477,7 @@ export function registerMessages(){
       const activity = this.parent.getAssociatedActivity({ scaled : true });
       const index = Number(target.dataset.ray);
       if(!activity || !this.rays[index]) return;
+      if(!limits.mayReroll(this.parent.getAssociatedActor?.()?.name, activity?.item?.name ?? this.parent.flavor)) return;
       target.disabled = true;
 
       const damage = await this._rollRay(activity, index);

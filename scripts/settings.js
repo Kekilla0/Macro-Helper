@@ -90,6 +90,16 @@ export const GROUPS = {
       featRules : { scope : "world", default : true, type : Boolean },
     },
   },
+  /* Roll Requests : the GM asks for checks and saves, the DC set before the rolls */
+  requests : {
+    icon : "fa-solid fa-dice-d20",
+    settings : {
+      requestsEnabled : { scope : "world", default : true, type : Boolean, requiresReload : true },
+      requestsDmScreen : { scope : "world", default : true, type : Boolean },
+      requestsMessages : { scope : "world", default : "compact", type : String,
+        choices : { compact : "settings.requestsMessages.compact", individual : "settings.requestsMessages.individual" } },
+    },
+  },
   /* Table rules that aren't RAW, all off by default */
   homebrew : {
     icon : "fa-solid fa-flask",

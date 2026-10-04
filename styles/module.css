@@ -263,3 +263,87 @@
 .macro-helper-rerolls button.macro-helper-labelled { width : auto; padding : 2px 8px; white-space : nowrap; font-size : var(--font-size-12, 12px); }
 /* Notes on a card (Interception) */
 .macro-helper-card-note { font-size : var(--font-size-12, 12px); font-style : italic; }
+
+/* Roll Requests : the button by the hotbar (GM) */
+#hotbar { position : relative; }
+.macro-helper-request-button { position : absolute; right : -34px; bottom : 2px; width : 28px; height : 28px; padding : 0; line-height : 26px;
+  font-size : 14px; border-radius : 6px; opacity : 0.85; }
+.macro-helper-request-button:hover { opacity : 1; }
+/* The window */
+.macro-helper-request-window .window-content { max-width : 560px; }
+.macro-helper-request-form fieldset { margin : 0 0 6px; padding : 4px 8px; }
+.macro-helper-request-form .quick { display : flex; gap : 4px; margin-bottom : 4px; }
+.macro-helper-request-people { display : grid; grid-template-columns : repeat(auto-fill, minmax(150px, 1fr)); gap : 2px 8px; max-height : 30vh; overflow-y : auto; }
+.macro-helper-request-who { display : flex; align-items : center; gap : 4px; }
+.macro-helper-request-who img { width : 24px; height : 24px; border : none; object-fit : contain; }
+.macro-helper-request-who.off-scene span { font-style : italic; opacity : 0.8; }
+.macro-helper-request-form .dc-buttons { display : flex; gap : 4px; margin-bottom : 4px; }
+.macro-helper-request-form .dc-buttons button { flex : 1; }
+.macro-helper-request-form .dc-step { display : flex; align-items : center; justify-content : center; gap : 6px; margin-bottom : 2px; }
+.macro-helper-request-form .dc-step input[type="number"] { width : 4em; text-align : center; }
+.macro-helper-request-form .dc-step button { flex : 0 0 auto; width : 2.5em; }
+.macro-helper-request-form .difficulty { text-align : center; font-style : italic; min-height : 1.2em; }
+.macro-helper-request-form .challenge-counts input { width : 3.5em; }
+/* The card */
+.macro-helper-request-card .request-header { display : flex; align-items : center; gap : 6px; margin-bottom : 4px; }
+.macro-helper-request-card .request-header .titles { display : flex; flex-direction : column; flex : 1; }
+.macro-helper-request-card .request-header .subtitle { font-size : var(--font-size-11, 11px); opacity : 0.75; }
+.macro-helper-request-card .request-header .dc { font-weight : bold; white-space : nowrap; }
+.macro-helper-request-card select { flex : 0 1 9em; height : 22px; font-size : var(--font-size-11, 11px); }
+.macro-helper-request-card .request-summary { margin-top : 4px; font-weight : bold; text-align : center; }
+.macro-helper-request-card .request-summary.success { color : var(--color-level-success, #2a7d2a); }
+.macro-helper-request-card .request-summary.failure { color : var(--color-level-error, #b22); }
+.macro-helper-request-card [data-request-next] { width : 100%; margin-top : 4px; }
+.macro-helper-request-card .request-next { display : flex; gap : 4px; margin-top : 4px; }
+.macro-helper-request-card .request-next select { flex : 1; height : auto; }
+.macro-helper-request-card .request-next button { flex : 0 0 auto; width : auto; }
+.macro-helper-request-card .request-feet { flex-wrap : wrap; margin-top : 4px; }
+.macro-helper-request-form .challenge-counts .hint { font-size : var(--font-size-11, 11px); opacity : 0.8; }
+.macro-helper-request-form .challenge-tabs nav, .macro-helper-request-card .request-tabs { display : flex; gap : 3px; margin : 4px 0; }
+.macro-helper-request-form .challenge-tabs nav button, .macro-helper-request-card .request-tabs button { flex : 1; padding : 1px 4px; line-height : 1.4; }
+.macro-helper-request-form .challenge-tabs nav button.active, .macro-helper-request-card .request-tabs button.viewing { outline : 2px solid var(--color-border-highlight, #ff6400); }
+.macro-helper-request-form .challenge-tab { display : flex; flex-wrap : wrap; align-items : center; gap : 4px; }
+.macro-helper-request-form .challenge-tab select { flex : 1 1 40%; }
+.macro-helper-request-form .challenge-tab .dc-step { display : flex; align-items : center; gap : 4px; margin : 0 auto; }
+.macro-helper-request-form .challenge-tab input[type="number"] { width : 4em; text-align : center; }
+.macro-helper-request-card .request-tabs button.success { color : var(--color-level-success, #2a7d2a); font-weight : bold; }
+.macro-helper-request-card .request-tabs button.failure { color : var(--color-level-error, #b22); font-weight : bold; }
+.macro-helper-request-card .request-tabs button.later { opacity : 0.5; }
+.macro-helper-request-card .request-check { display : flex; justify-content : space-between; margin : 2px 0; }
+.macro-helper-request-card button.request-next { width : 100%; margin-top : 4px; }
+.macro-helper-request-card .request-step .step-number { flex : 0 0 1.6em; text-align : center; font-weight : bold; }
+.macro-helper-request-card .request-step .dc { font-size : var(--font-size-11, 11px); opacity : 0.85; white-space : nowrap; }
+.macro-helper-request-card .request-step.planned .name { opacity : 0.8; }
+.macro-helper-challenge .tally { display : flex; align-items : center; gap : 12px; margin-bottom : 6px; }
+.macro-helper-challenge .tally select { width : 4em; }
+.macro-helper-challenge .tally .wins { color : var(--color-level-success, #2a7d2a); font-weight : bold; }
+.macro-helper-challenge .tally .losses { color : var(--color-level-error, #b22); font-weight : bold; }
+.macro-helper-challenge .checks li { display : flex; align-items : center; gap : 6px; padding : 2px 0; }
+.macro-helper-challenge .checks li .what { flex : 1; }
+.macro-helper-challenge .checks li .who { font-size : var(--font-size-11, 11px); opacity : 0.8; }
+.macro-helper-challenge .checks li.success i { color : var(--color-level-success, #2a7d2a); }
+.macro-helper-challenge .checks li.failure i { color : var(--color-level-error, #b22); }
+.macro-helper-challenge .what-row { display : flex; gap : 4px; margin : 4px 0; }
+.macro-helper-challenge .actions { display : flex; gap : 4px; margin-top : 4px; }
+.macro-helper-request-card .request-check-title { display : flex; align-items : center; gap : 6px; margin-top : 4px; }
+.macro-helper-request-card .request-check-title strong { flex : 1; }
+.macro-helper-request-card .request-check.success .mark { color : var(--color-level-success, #2a7d2a); }
+.macro-helper-request-card .request-check.failure .mark { color : var(--color-level-error, #b22); }
+.macro-helper-request-card .request-empty { font-style : italic; opacity : 0.8; }
+.macro-helper-request-card button.request-open { width : 100%; margin-top : 4px; }
+.macro-helper-request-form fieldset.checks .check-tabs { display : flex; gap : 3px; margin-bottom : 6px; }
+.macro-helper-request-form fieldset.checks .check-tabs button { flex : 0 0 auto; min-width : 3em; padding : 1px 6px; }
+.macro-helper-request-form fieldset.checks .check-tabs button.active { outline : 2px solid var(--color-border-highlight, #ff6400); }
+.macro-helper-request-form fieldset.checks .check-tabs button.success { color : var(--color-level-success, #2a7d2a); font-weight : bold; }
+.macro-helper-request-form fieldset.checks .check-tabs button.failure { color : var(--color-level-error, #b22); font-weight : bold; }
+.macro-helper-request-form fieldset.checks .check-tabs button.add { min-width : 2em; }
+.macro-helper-request-form fieldset.checks .what-row { display : flex; gap : 4px; margin-bottom : 4px; }
+.macro-helper-request-form fieldset.checks .how { display : flex; align-items : center; gap : 10px; margin-top : 4px; }
+.macro-helper-request-form fieldset.checks .how .remove { margin-left : auto; width : auto; }
+.macro-helper-request-form fieldset.checks .tally { display : flex; gap : 12px; margin-bottom : 4px; }
+.macro-helper-request-form fieldset.checks .tally .wins { color : var(--color-level-success, #2a7d2a); font-weight : bold; }
+.macro-helper-request-form fieldset.checks .tally .losses { color : var(--color-level-error, #b22); font-weight : bold; }
+.macro-helper-request-form fieldset.checks .requested .state { margin-left : 8px; font-weight : bold; }
+.macro-helper-request-form fieldset.checks .requested .state.success { color : var(--color-level-success, #2a7d2a); }
+.macro-helper-request-form fieldset.checks .requested .state.failure { color : var(--color-level-error, #b22); }
+.macro-helper-request-form .form-footer { display : flex; gap : 4px; margin-top : 6px; }
