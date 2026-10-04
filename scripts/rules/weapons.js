@@ -1,6 +1,7 @@
 import { module } from '../module.js';
 import { settings } from '../settings.js';
 import { limits } from './limits.js';
+import { hands } from './hands.js';
 import { usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
 import { giveMode } from '../roll-item/reasons.js';
 
@@ -105,7 +106,28 @@ export class weapons{
     /* In hand : a character's weapon must be equipped (natural weapons and Unarmed Strike always are; monsters'
        stat-block weapons often aren't marked equipped, so they don't count) */
     const natural = (item.system.type?.value === "natural") || ((item.identifier ?? item.system.identifier) === "unarmed-strike");
-    if((actor.type === "character") && !item.system.equipped && !natural){
+    /* Hands : in a hand, not just equipped. Change puts it in (the Hands rules : Two-Handed, Versatile); a two-handed grip
+       needs it in both. They can't overfill, so there's nothing to count */
+    if(hands.manages(actor) && !natural){
+      const held = hands.handOf(actor, item);
+      if(!held){
+        if(change){
+          const slot = hands.freeHand(actor, item) ?? "main";
+          hands.put(actor, item, slot);
+          changed.push(module.format("hands.putInHand", { item : item.name }));
+        }
+        else problems.push(module.format("hands.notInHand", { item : item.name }));
+      }
+      else if(!props.has("two") && (config.attackMode === "twoHanded") && (held !== "both")){
+        if(change){
+          config.attackMode = "oneHanded";
+          roll.options.attackMode = "oneHanded";
+          changed.push(module.format("rules.weapon.oneHanded", { item : item.name }));
+        }
+        else problems.push(module.format("hands.notBothHands", { item : item.name }));
+      }
+    }
+    else if((actor.type === "character") && !item.system.equipped && !natural){
       if(change){ item.update({ "system.equipped" : true }); changed.push(module.format("rules.weapon.equipped", { item : item.name })); }
       else problems.push(module.format("rules.weapon.notEquipped", { item : item.name }));
     }
@@ -113,7 +135,7 @@ export class weapons{
     /* Hands : a character has two. A Two-Handed weapon (a bow, a greatsword) takes both, any other weapon or a shield
        one. What else is equipped must leave room for this weapon; Change puts things away (two-handed weapons first,
        then other weapons, then shields) and holds a Versatile weapon one-handed rather than freeing a hand for it. */
-    if((actor.type === "character") && !natural){
+    if((actor.type === "character") && !natural && !hands.manages(actor)){
       const others = actor.items.filter(i => (i.id !== item.id) && (this.handsOf(i) > 0));
       let held = others.reduce((sum, i) => sum + this.handsOf(i), 0);
 
@@ -144,6 +166,11 @@ export class weapons{
     }
 
     if(props.has("lod") && this.#used(actor, `loading.${item.id}`)) problems.push(module.format("rules.weapon.loading", { item : item.name }));
+    /* Hands : an off-hand attack is with what the left hand holds */
+    if(attackMode.endsWith("offhand") && hands.manages(actor) && (hands.handOf(actor, item) !== "off")){
+      problems.push(module.format("hands.notOffHand", { item : item.name }));
+    }
+    if(attackMode.endsWith("offhand") && !props.has("lgt")) problems.push(module.format("rules.weapon.offhandLight", { item : item.name }));
     if(attackMode.endsWith("offhand") && game.combat?.started){
       const otherLight = actor.items.some(i => (i.id !== item.id) && i.system.properties?.has?.("lgt") && this.#used(actor, `light.${i.id}`));
       if(!otherLight) problems.push(module.format("rules.weapon.light", { item : item.name }));

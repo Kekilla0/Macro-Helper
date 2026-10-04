@@ -3,6 +3,7 @@ import { settings } from '../settings.js';
 import { conditions } from '../rules/conditions.js';
 import { homebrew } from '../rules/homebrew.js';
 import { actions } from '../rules/actions.js';
+import { hands } from '../rules/hands.js';
 import { weapons } from '../rules/weapons.js';
 import { masteries } from '../roll-item/masteries.js';
 import { barbarian } from '../rules/classes/barbarian.js';
@@ -31,6 +32,8 @@ import { findItem } from './actors.js';
  */
 export function hasShieldEquipped(thing){
   const actor = actorOf(thing);
+  /* Hands : a shield in a hand */
+  if(hands.manages(actor)) return hands.heldItems(actor).some(i => (i.type === "equipment") && (i.system.type?.value === "shield"));
   return !!actor?.items?.some(i => (i.type === "equipment") && (i.system.type?.value === "shield") && i.system.equipped);
 }
 
@@ -43,6 +46,8 @@ export function hasShieldEquipped(thing){
 export function isOtherHandFree(item){
   const actor = item?.actor;
   if(!actor?.items) return false;
+  /* Hands : nothing else in them */
+  if(hands.manages(actor)) return !hands.heldItems(actor).some(i => i.id !== item.id);
   if(hasShieldEquipped(actor)) return false;
   return !actor.items.some(i => (i !== item) && (i.id !== item.id) && (i.type === "weapon") && i.system.equipped
     && (i.system.type?.value !== "natural"));
@@ -66,9 +71,10 @@ export function isOtherHandFree(item){
 export function attackModeFor(item, target, { long = true } = {}){
   const modes = (item?.system?.attackModes ?? []).map(m => m.value).filter(Boolean);
   const versatile = !!item?.system?.properties?.has("ver") && modes.includes("oneHanded") && modes.includes("twoHanded");
-  /* Dueling : a Versatile weapon is meant for one hand (its +2 needs it) */
+  /* Dueling : a Versatile weapon is meant for one hand (its +2 needs it). With Hands : two-handed only when in both */
   const dueling = item?.actor?.items?.some?.(i => ["dueling", "fighting-style-dueling"].includes(i.identifier ?? i.system?.identifier));
-  const melee = versatile ? ((isOtherHandFree(item) && !dueling) ? "twoHanded" : "oneHanded")
+  const held = hands.manages(item?.actor) ? hands.handOf(item.actor, item) : null;
+  const melee = versatile ? (held ? ((held === "both") ? "twoHanded" : "oneHanded") : ((isOtherHandFree(item) && !dueling) ? "twoHanded" : "oneHanded"))
     : (modes.find(m => !m.startsWith("thrown")) ?? null);
   if(!modes.includes("thrown")) return versatile ? melee : null;
 

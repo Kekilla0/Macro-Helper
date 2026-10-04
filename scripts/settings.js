@@ -90,6 +90,17 @@ export const GROUPS = {
       featRules : { scope : "world", default : true, type : Boolean },
     },
   },
+  /* Equipment : what the characters hold (Hands) */
+  equipment : {
+    icon : "fa-solid fa-hand",
+    settings : {
+      handsEnabled : { scope : "world", default : true, type : Boolean },
+      handsLight : { scope : "world", default : "timed", type : String,
+        choices : { off : "settings.handsLight.off", light : "settings.handsLight.light", timed : "settings.handsLight.timed" } },
+      handsMain : { scope : "client", default : "right", type : String,
+        choices : { right : "settings.handsMain.right", left : "settings.handsMain.left" } },
+    },
+  },
   /* Roll Requests : the GM asks for checks and saves, the DC set before the rolls */
   requests : {
     icon : "fa-solid fa-dice-d20",

@@ -22,6 +22,8 @@ import { fightingStyles } from './rules/fighting-styles.js';
 import { compendiums } from './rules/compendiums.js';
 import { limits } from './rules/limits.js';
 import { rollRequests } from './requests/requests.js';
+import { hands } from './rules/hands.js';
+import { heldLight } from './rules/held-light.js';
 import { gm } from './gm.js';
 import { feats } from './rules/feats.js';
 import { initiative } from './rules/initiative.js';
@@ -48,6 +50,8 @@ Hooks.once("init", ()=> {
   compendiums.register();
   limits.register();
   rollRequests.register();
+  hands.register();
+  heldLight.register();
   gm.register();
   feats.register();
   initiative.register();

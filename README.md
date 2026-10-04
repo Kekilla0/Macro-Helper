@@ -27,7 +27,7 @@ https://github.com/Kekilla0/Macro-Helper/releases/latest/download/module.json
   - A character's weapon must be equipped. Natural weapons and Unarmed Strike always count as in hand.
   - Two hands: a Two-Handed weapon (a bow, a greatsword) takes both, and any other weapon or a shield takes one. What else is equipped has to leave room for the weapon being used.
   - One Loading shot per turn.
-  - A Light off-hand attack needs a Light main-hand attack first that turn.
+  - The off-hand (extra) attack: only with a Light weapon, after an attack with a different Light weapon that turn (dnd5e leaves out the ability modifier unless it's negative; Two-Weapon Fighting adds it back; with Hands, the weapon must be in the off hand). The Bonus Action it costs waits for the action tracker.
   - Loading and Light are only tracked in combat.
 - **Handling:**
   - *Warn* lets the roll happen.
@@ -263,6 +263,19 @@ The macro runs inside the hook, so until its first `await` it can still change w
 const [combat] = args;
 ChatMessage.create({ content : `It's ${combat.combatant?.name}'s turn.` });
 ```
+
+## Hands (dnd5e)
+
+Settings page **Equipment**: **Hands** (on by default) and **Main Hand** (each player's own: *Right* or *Left*). Two slots on the character sheet, at the bottom corners of the portrait: the **main hand** and the **off hand**, placed as the character faces you (a right-handed character's main hand on your left).
+
+- **Holding something:** drag an item from the character's sheet onto a hand, or right-click a one-handed item in the sheet: **Equip to Main Hand** / **Equip to Off Hand** (instead of dnd5e's Equip; Unequip when it's held). Right-click a hand to empty it; click it to open what it holds.
+  - *Two-Handed* (a greatsword, a bow): takes both hands; whatever they held is let go.
+  - *One-handed*: that hand; the other keeps what it has (a Two-Handed item held there is let go).
+  - *Versatile*: two-handed when the other hand is empty, one-handed as soon as something else is held. With **Dueling** it always stays one-handed.
+  - *Shields, torches, tools, anything carried*: one hand. Armor is worn, not held.
+- **Equipped follows:** what's in a hand is equipped, a weapon or shield that leaves it is unequipped. Ticking *Equipped* on the sheet puts the item in a free hand (and unticking takes it out); with no hand free, **Rule Limits** decides.
+- **Light** (**Held Light**: *Off*, *Light only*, *Light and burn time* by default): a torch, lantern, lamp or candle in a hand lights the character's token (2024: torch 20 ft bright / 20 more dim, hooded lantern 30 / 30, bullseye lantern a 60 ft cone / 60 more, lamp 15 / 30, candle 5 / 5); letting go of it brings the token's own light back. Found by item identifier, since dnd5e's items carry no light data. With burn time, a lit light is a **Lit Torch** (etc.) effect on the character lasting its time on the game clock (torch and candle 1 hour, lanterns and lamp 6 hours on a flask of oil). Put down early, it keeps the time left. When the clock passes its end it burns out, and its owner is whispered: a torch or candle is used up (one of the stack), a lantern or lamp stays in hand dark until it's taken in hand again, which uses a flask of **Oil** from the inventory. Deleting the effect snuffs the light (the time left is kept).
+- **Attacks and rules:** with Hands on, everything that asks what's held asks the hands: weapon handling (a weapon must be *in a hand*, not just equipped; Rule Limits *Change* takes it in hand by the rules above; a two-handed grip needs it in both hands), the Versatile grip, Dueling and Unarmed Fighting ("no other weapon", "no weapon or shield"), Protection (a shield in hand) and Interception (a shield or weapon in hand). An off-hand attack has to be with what the off hand holds. Armor checks (Rage, Defense) still read what's equipped: armor is worn. Attacking with something held that isn't a weapon (a burning torch, as an improvised weapon) is from the main hand (Rule Limits), and it then counts as a weapon in hand until the end of your turn (so it breaks Dueling that turn). A torch's attack doesn't use the torch up.
 
 ## Roll Requests (dnd5e)
 

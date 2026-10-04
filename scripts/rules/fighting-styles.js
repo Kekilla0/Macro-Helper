@@ -9,6 +9,7 @@ import { giveMode } from '../roll-item/reasons.js';
 import { masteries } from '../roll-item/masteries.js';
 import { conditions } from './conditions.js';
 import { limits } from './limits.js';
+import { hands } from './hands.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -90,6 +91,10 @@ export class fightingStyles{
 
   /* Other weapons in hand (natural weapons and Unarmed Strike don't count) */
   static otherWeapons(actor, item){
+    /* Hands : the weapons held */
+    /* Hands : the weapons held, and anything held that was swung as a weapon this turn (a torch) */
+    if(hands.manages(actor)) return hands.heldItems(actor).filter(i => (i.id !== item?.id)
+      && (((i.type === "weapon") && (i.system.type?.value !== "natural")) || hands.wieldedThisTurn(actor, i)));
     return (actor?.items ?? []).filter(i => (i.id !== item?.id) && (i.type === "weapon") && i.system.equipped
       && (i.system.type?.value !== "natural") && (this.idOf(i) !== "unarmed-strike"));
   }
@@ -209,8 +214,8 @@ export class fightingStyles{
   static unmet(style, guard, attackerToken){
     if(attackerToken && !canSee(guard, attackerToken)) return module.format("fightingStyles.cantSee", { name : guard.name });
     const shield = hasShieldEquipped(guard.actor);
-    const weapon = guard.actor.items.some(i => (i.type === "weapon") && i.system.equipped
-      && ["simpleM", "simpleR", "martialM", "martialR"].includes(i.system.type?.value));
+    const inHand = hands.manages(guard.actor) ? hands.heldItems(guard.actor) : guard.actor.items.filter(i => i.system?.equipped);
+    const weapon = inHand.some(i => (i.type === "weapon") && ["simpleM", "simpleR", "martialM", "martialR"].includes(i.system.type?.value));
     if((style === "protection") && !shield) return module.format("fightingStyles.noShield", { name : guard.name });
     if((style === "interception") && !shield && !weapon) return module.format("fightingStyles.noGuard", { name : guard.name });
     return "";
