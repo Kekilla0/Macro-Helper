@@ -1,8 +1,10 @@
 import { module } from '../module.js';
+import { idOf, whisperOwners, wait } from '../helpers/utils.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
 import { patch } from '../patch.js';
+import { uses } from '../uses.js';
 import { initiative } from './initiative.js';
 import { limits } from './limits.js';
 import { tokenOf, getRange } from '../helpers/tokens.js';
@@ -42,15 +44,15 @@ export class familiars{
     /* Anything that gives it an attack later (a macro adding Unarmed Strike to new tokens) : taken away again */
     Hooks.on("createItem", item => this.onItemAdded(item));
     /* Asked at the item, before dnd5e's choice of activity (spell slot / Wild Shape) : storing needs neither */
-    Hooks.once("setup", () => patch.wrap("CONFIG.Item.documentClass.prototype.use", async function(wrapped, config = {}, ...rest){
-      const choice = await familiars.beforeItemUse(this);
+    uses.onItem("familiar", async (item, ctx, next) => {
+      const choice = await this.beforeItemUse(item);
       if(choice === false) return;
-      if(choice) config = { ...config, [module.id] : { ...(config[module.id] ?? {}), familiarChoice : choice } };
-      return wrapped(config, ...rest);
-    }));
+      if(choice) uses.mark(ctx, { familiarChoice : choice });
+      return next();
+    });
     /* dnd5e's own summoning (its chat button, a use our question didn't see) : our compendium, never its browser */
     Hooks.once("setup", () => patch.wrap("CONFIG.DND5E.activityTypes.summon.documentClass.prototype.queryActor", async function(wrapped, ...args){
-      if(!familiars.enabledFor(familiars.idOf(this.item))) return wrapped(...args);
+      if(!familiars.enabledFor(idOf(this.item))) return wrapped(...args);
       const profile = args[0];
       const creatures = (await compendiums.entries(compendiums.FAMILIARS)).filter(a => !profile || fitsProfile(a, profile, this.getRollData?.({ deterministic : true }) ?? {}));
       return creatures.length ? chooseCreature(creatures, { title : this.item.name, prompt : module.i18n("classes.druid.familiarPrompt") }) : wrapped(...args);
@@ -62,9 +64,6 @@ export class familiars{
     gm.handle("wildCompanionDismiss", (data, user) => this.longRestAsGM(data, user));
   }
 
-  static idOf(item){
-    return item?.identifier ?? item?.system?.identifier ?? "";
-  }
 
   /* Wild Companion : Classes. Find Familiar : Spells */
   static enabledFor(id){
@@ -81,7 +80,7 @@ export class familiars{
   /* The item that summoned a creature, if it's a familiar of ours */
   static originOf(actor){
     const origin = fromUuidSync(actor?.getFlag?.("dnd5e", "summon.origin") ?? "", { strict : false });
-    return (origin && this.IDS.includes(this.idOf(origin))) ? origin : null;
+    return (origin && this.IDS.includes(idOf(origin))) ? origin : null;
   }
 
   static async remove(tokens){
@@ -93,7 +92,7 @@ export class familiars{
   /* The summoner's familiars (from these items), as tokens */
   static tokensOf(actor, ids = this.IDS){
     const creatures = dnd5e.registry?.summons?.creatures?.(actor) ?? [];
-    return creatures.filter(c => ids.includes(this.idOf(this.originOf(c))))
+    return creatures.filter(c => ids.includes(idOf(this.originOf(c))))
       .flatMap(c => c.token ? [c.token] : c.getActiveTokens(false, true));
   }
 
@@ -104,7 +103,7 @@ export class familiars{
    * @returns {Promise<{usage : object, flags : object}|false|null>}  false : stop the use; null : dnd5e's own summoning
    */
   static async beforeUse(activity, usage = {}){
-    if((activity?.type !== "summon") || !this.enabledFor(this.idOf(activity.item))) return null;
+    if((activity?.type !== "summon") || !this.enabledFor(idOf(activity.item))) return null;
     /* A familiar out, or one stored : what to do with it (storing, releasing, bringing back spend nothing) */
     const summoner = activity.actor;
     const out = this.tokensOf(this.druidOf(summoner));
@@ -133,7 +132,7 @@ export class familiars{
       ui.notifications.warn(module.i18n("helpers.pick.noToken"));
       return false;
     }
-    const range = (this.idOf(activity.item) === this.WILD_COMPANION) ? this.RANGE : (getRange(activity) || this.RANGE);
+    const range = (idOf(activity.item) === this.WILD_COMPANION) ? this.RANGE : (getRange(activity) || this.RANGE);
     const size = Math.max(1, Math.round(Number(actor?.prototypeToken?.width) || 1));
     const space = await pickSpace(from, { range, size, notice : actor?.name ?? "" });
     if(!space) return false;
@@ -209,9 +208,9 @@ export class familiars{
     if(!game.users.activeGM?.isSelf || !foundry.utils.hasProperty(changes ?? {}, "system.attributes.hp")) return;
     const origin = this.originOf(actor);
     const down = () => (Number(actor.system?.attributes?.hp?.value) || 0) <= 0;
-    if(!origin || !this.enabledFor(this.idOf(origin)) || !down()) return;
+    if(!origin || !this.enabledFor(idOf(origin)) || !down()) return;
     /* After whatever else answers this damage (dnd5e, conditions, hook macros) has finished with it */
-    await new Promise(resolve => setTimeout(resolve, this.DROP_DELAY));
+    await wait(this.DROP_DELAY);
     const tokens = (actor.token ? [actor.token] : actor.getActiveTokens(false, true)).filter(t => t?.parent?.tokens?.has?.(t.id));
     if(!tokens.length || !down()) return;
     await this.remove(tokens);
@@ -225,7 +224,7 @@ export class familiars{
     if(!game.users.activeGM?.isSelf) return;
     const actor = item?.parent;
     const origin = this.originOf(actor);
-    if(!origin || !this.enabledFor(this.idOf(origin)) || !this.attackItems({ items : [item] }).length) return;
+    if(!origin || !this.enabledFor(idOf(origin)) || !this.attackItems({ items : [item] }).length) return;
     await item.delete().catch(error => log.debug("Already gone", error));
   }
 
@@ -243,7 +242,7 @@ export class familiars{
    * @returns {Promise<"new"|false|null>}  "new" : go on to a new summoning; false : done here; null : nothing to ask
    */
   static async beforeItemUse(item){
-    const id = this.idOf(item);
+    const id = idOf(item);
     if(!this.IDS.includes(id) || !this.enabledFor(id) || !item.actor) return null;
     if(!item.system?.activities?.some?.(a => a.type === "summon")) return null;
     const druid = this.druidOf(item.actor);
@@ -338,18 +337,13 @@ export class familiars{
     await this.remove(tokens);
     const pocket = actor.getFlag(module.id, "pocketFamiliar");
     const kept = fromUuidSync(foundry.utils.getProperty(pocket?.data ?? {}, "delta.flags.dnd5e.summon.origin") ?? "", { strict : false });
-    if(pocket && (!kept || (this.idOf(kept) === this.WILD_COMPANION))){
+    if(pocket && (!kept || (idOf(kept) === this.WILD_COMPANION))){
       names.push(module.format("familiars.storedName", { name : pocket.data?.name ?? "" }));
       await this.forget(actor);
     }
     /* Its players hear about it */
     if(names.length){
-      const owners = game.users.filter(u => !u.isGM && actor.testUserPermission(u, "OWNER")).map(u => u.id);
-      await ChatMessage.implementation.create({
-        speaker : ChatMessage.implementation.getSpeaker({ actor }),
-        whisper : [...owners, ...game.users.filter(u => u.isGM).map(u => u.id)],
-        content : `<p>${foundry.utils.escapeHTML(module.format("familiars.longRest", { names : names.join(", ") }))}</p>`,
-      });
+      await whisperOwners(actor, module.format("familiars.longRest", { names : names.join(", ") }));
       log.debug("Wild Companion dismissed", actor.name, names);
     }
     return true;

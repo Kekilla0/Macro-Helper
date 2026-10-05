@@ -1,4 +1,5 @@
 import { module } from '../module.js';
+import { esc } from '../helpers/utils.js';
 import { logger } from '../log.js';
 const log = logger.for(import.meta.url);
 
@@ -93,7 +94,6 @@ export class restChoices{
    */
   static async open(actor, choices = this.choicesFor(actor)){
     if(!choices.length) return;
-    const esc = s => foundry.utils.escapeHTML(String(s ?? ""));
     const rows = choices.map(c => `<div class="form-group ${module.id}-rest-choice">
         <label>${esc(module.i18n(c.label))}</label>
         <div class="form-fields"><span class="summary">${esc(c.summary(actor))}</span>

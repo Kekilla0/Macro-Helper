@@ -1,10 +1,11 @@
 import { module } from '../../module.js';
+import { rollModes } from '../../roll-item/roll-modes.js';
 import { settings } from '../../settings.js';
 import { limits } from '../limits.js';
 import { logger } from '../../log.js';
 import { tokenOf } from '../../helpers/tokens.js';
 import { findItem, addTimedEffect } from '../../helpers/actors.js';
-import { originOf } from '../../helpers/utils.js';
+import { originOf, idOf } from '../../helpers/utils.js';
 import { giveMode } from '../../roll-item/reasons.js';
 import { conditions } from '../conditions.js';
 const log = logger.for(import.meta.url);
@@ -42,7 +43,7 @@ export class barbarian{
     if(game.system.id !== "dnd5e") return;
     Hooks.on("dnd5e.preUseActivity", (activity, usage) => this.onPreUse(activity, usage));
     Hooks.on("dnd5e.postUseActivity", (activity, usage) => this.onUse(activity, usage));
-    Hooks.on("dnd5e.preRollAttackV2", config => this.onPreRollAttack(config));
+    rollModes.add("reckless", config => this.onPreRollAttack(config));
     Hooks.on("dnd5e.rollAttackV2", (rolls, { subject } = {}) => this.onAttack(subject, rolls?.[0]));
     Hooks.on("dnd5e.preRollDamageV2", config => this.rageDamage(config));
     Hooks.on("dnd5e.preRollSavingThrowV2", config => this.dangerSense(config));
@@ -55,9 +56,6 @@ export class barbarian{
     Hooks.on("deleteCombat", combat => this.onCombatEnd(combat));
   }
 
-  static idOf(item){
-    return item?.identifier ?? item?.system?.identifier ?? "";
-  }
 
   /* ---------- Rage ---------- */
 
@@ -66,7 +64,7 @@ export class barbarian{
     if(effect?.getFlag?.(module.id, "rage")) return true;
     const item = (effect?.parent?.documentName === "Item") ? effect.parent
       : (effect?.origin ? fromUuidSync(effect.origin, { strict : false }) : null);
-    return (item?.documentName === "Item") && (this.idOf(item) === this.RAGE);
+    return (item?.documentName === "Item") && (idOf(item) === this.RAGE);
   }
 
   /* The creature's active Rage effects (none : not raging) */
@@ -102,19 +100,19 @@ export class barbarian{
     if((activity.item?.type === "spell") && this.isRaging(actor)){
       if(!limits.allow(module.format("classes.barbarian.noSpells", { name : actor.name }), { who : actor.name, what : activity.item.name })) return false;
     }
-    if((this.idOf(activity.item) === this.RAGE) && this.isRaging(actor)){
+    if((idOf(activity.item) === this.RAGE) && this.isRaging(actor)){
       usage.consume = false;
       usage[module.id] = { ...(usage[module.id] ?? {}), rageExtend : true };
     }
     /* "if you aren't wearing Heavy armor" */
-    else if((this.idOf(activity.item) === this.RAGE) && this.inHeavyArmor(actor)){
+    else if((idOf(activity.item) === this.RAGE) && this.inHeavyArmor(actor)){
       if(!limits.allow(module.format("classes.barbarian.noRageArmor", { name : actor.name }), { who : actor.name, what : activity.item.name })) return false;
     }
   }
 
   static async onUse(activity, usage){
     if(!this.enabled() || !activity?.actor?.isOwner) return;
-    const id = this.idOf(activity.item);
+    const id = idOf(activity.item);
     try {
       if(id === this.RAGE){
         if(usage?.[module.id]?.rageExtend) return await this.keep(this.actorFor(activity), "bonus");
@@ -305,7 +303,7 @@ export class barbarian{
     if(!this.INCAPACITATED.some(s => actor?.statuses?.has(s)) || !findItem(actor, this.DANGER_SENSE)) return;
     const sources = [...(actor.appliedEffects ?? [])].filter(e => [...(e.system?.changes ?? e.changes ?? [])]
       .some(c => (c.key === "system.abilities.dex.save.roll.mode") && (Number(c.value) > 0)));
-    const onlyDangerSense = sources.length && sources.every(e => /danger sense/i.test(e.name) || (this.idOf(e.parent) === this.DANGER_SENSE));
+    const onlyDangerSense = sources.length && sources.every(e => /danger sense/i.test(e.name) || (idOf(e.parent) === this.DANGER_SENSE));
     if(!onlyDangerSense) return;
     for(const roll of config.rolls ?? []) if(roll.options) roll.options.advantage = false;
     config.advantage = false;

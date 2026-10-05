@@ -1,8 +1,10 @@
 import { module } from '../../module.js';
+import { idOf } from '../../helpers/utils.js';
 import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
 import { gm } from '../../gm.js';
 import { patch } from '../../patch.js';
+import { uses } from '../../uses.js';
 import { fitsProfile, chooseCreature, chooseCreatures } from '../../helpers/creatures.js';
 import { compendiums } from '../compendiums.js';
 import { limits } from '../limits.js';
@@ -39,6 +41,16 @@ export class druid{
 
   static register(){
     if(game.system.id !== "dnd5e") return;
+    /* Wild Shape's form, a familiar and its space : chosen first, then dnd5e uses it */
+    uses.onActivity("transform", async (activity, ctx, next) => {
+      const own = await this.beforeUse(activity, ctx.config);
+      if(own === false) return;
+      if(own){
+        uses.flag(ctx, own.flags);
+        ctx.config = own.usage;
+      }
+      return next();
+    });
     Hooks.on("dnd5e.transformActorV2", (actor, source, data, transform) => this.onTransform(actor, data, transform));
     Hooks.on("createActiveEffect", effect => this.onEffect(effect));
     Hooks.on("updateActiveEffect", effect => this.onEffect(effect));
@@ -55,7 +67,7 @@ export class druid{
       const chosen = druid.takeChosen(this);
       if(chosen) return chosen;
       /* Reached without our question (dnd5e's own path) : still our forms, never the compendium browser */
-      if(druid.enabled() && (druid.idOf(this.item) === druid.WILD_SHAPE)) return druid.pickForm(druid.originalOf(this.actor), this.item);
+      if(druid.enabled() && (idOf(this.item) === druid.WILD_SHAPE)) return druid.pickForm(druid.originalOf(this.actor), this.item);
       return wrapped(...args);
     });
     gm.handle("wildShape", (data, user) => this.wildShapeAsGM(data, user));
@@ -69,9 +81,6 @@ export class druid{
     });
   }
 
-  static idOf(item){
-    return item?.identifier ?? item?.system?.identifier ?? "";
-  }
 
   /**
    * Before dnd5e uses an activity (Roll Item's use wrapper) : Wild Shape's form, a familiar and its space.
@@ -80,7 +89,7 @@ export class druid{
    * @returns {Promise<{usage : object, flags : object}|false|null>}  false : stop the use; null : nothing to do here
    */
   static async beforeUse(activity, usage = {}){
-    const id = this.idOf(activity?.item);
+    const id = idOf(activity?.item);
     if((activity?.type === "transform") && (id === this.WILD_SHAPE) && this.enabled()) return this.beforeWildShape(activity, usage);
     if(activity?.type === "summon") return familiars.beforeUse(activity, usage);
     return null;
@@ -95,7 +104,7 @@ export class druid{
   }
 
   static wildShapeItem(actor){
-    return actor?.items?.find(i => this.idOf(i) === this.WILD_SHAPE) ?? null;
+    return actor?.items?.find(i => idOf(i) === this.WILD_SHAPE) ?? null;
   }
 
   static wildShapeActivity(item){
@@ -285,7 +294,7 @@ export class druid{
     if(hp && (had > (Number(hp.temp) || 0))) hp.temp = had;
     const levels = Number(actor.classes?.druid?.system?.levels) || 0;
     const hours = Math.max(1, Math.floor(levels / 2));
-    const item = actor.items.find(i => this.idOf(i) === this.WILD_SHAPE);
+    const item = actor.items.find(i => idOf(i) === this.WILD_SHAPE);
     /* A new form from a form : the old form's Wild Shape effect comes along with its effects; the new use starts a new one */
     data.effects = data.effects.filter(e => !foundry.utils.getProperty(e, `flags.${module.id}.wildShape`));
     data.effects.push({
@@ -403,7 +412,7 @@ export class druid{
 
   /* A Wild Shape use spent while shifted is spent on the form's copy of the item : the Druid's own follows (GM) */
   static async keepUses(item, changes){
-    if(!game.users.activeGM?.isSelf || (this.idOf(item) !== this.WILD_SHAPE)) return;
+    if(!game.users.activeGM?.isSelf || (idOf(item) !== this.WILD_SHAPE)) return;
     if(!foundry.utils.hasProperty(changes ?? {}, "system.uses.spent")) return;
     const actor = item.parent;
     if(!this.isWildShaped(actor)) return;
@@ -459,7 +468,7 @@ export class druid{
     }
     if(!(result?.longRest || (config?.type === "long"))) return;
     const druidActor = this.originalOf(actor);
-    if(!druidActor.items.some(i => this.idOf(i) === this.WILD_COMPANION)) return;
+    if(!druidActor.items.some(i => idOf(i) === this.WILD_COMPANION)) return;
     gm.run("wildCompanionDismiss", { actor : druidActor.uuid }).catch(error => log.error(error));
   }
 

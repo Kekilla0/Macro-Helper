@@ -1,3 +1,5 @@
+import { module } from '../module.js';
+
 /**
  * Wait a number of milliseconds.
  * @param {number} ms
@@ -49,7 +51,6 @@ export function originOf(message){
 export async function chooseOption({ title, options = [], prompt = "", value, icon = "fa-solid fa-list", confirm } = {}){
   if(!options.length) return null;
   if(options.length === 1) return options[0].value;
-  const esc = s => foundry.utils.escapeHTML(String(s ?? ""));
   const chosen = await foundry.applications.api.DialogV2.wait({
     window : { title, icon },
     content : `${prompt ? `<p>${esc(prompt)}</p>` : ""}
@@ -59,4 +60,182 @@ export async function chooseOption({ title, options = [], prompt = "", value, ic
     rejectClose : false,
   });
   return (!chosen || (chosen === "ok")) ? null : chosen;
+}
+
+/**
+ * A document's dnd5e identifier ("wild-shape", "unarmed-strike"), from an item, an index entry or raw data; "" if none.
+ * @param {Item|object} doc
+ * @returns {string}
+ */
+export function idOf(doc){
+  return doc?.identifier ?? doc?.system?.identifier ?? "";
+}
+
+/* ---------- Text ---------- */
+
+/**
+ * Text made safe to put in HTML.
+ * @param {*} value
+ * @returns {string}
+ */
+export function esc(value){
+  return foundry.utils.escapeHTML(String(value ?? ""));
+}
+
+/* ---------- Who gets told ---------- */
+
+/* The GMs' user ids (a whisper to the GM) */
+export function gmIds(){
+  return game.users.filter(u => u.isGM).map(u => u.id);
+}
+
+/**
+ * The user ids that own an actor (GMs count as owners).
+ * @param {Actor} actor
+ * @param {object} [options]
+ * @param {boolean} [options.players=false]  players only, no GMs
+ * @returns {string[]}
+ */
+export function ownerIds(actor, { players = false } = {}){
+  return game.users.filter(u => (!players || !u.isGM) && actor?.testUserPermission(u, "OWNER")).map(u => u.id);
+}
+
+/**
+ * A message whispered to an actor's owners and the GMs, spoken by the actor.
+ * @param {Actor} actor
+ * @param {string} content   HTML; plain text is wrapped in a paragraph (escaped)
+ * @param {object} [data]    more message data (flags...)
+ * @returns {Promise<ChatMessage>}
+ */
+export function whisperOwners(actor, content, data = {}){
+  const html = /^\s*</.test(content) ? content : `<p>${esc(content)}</p>`;
+  return ChatMessage.implementation.create({
+    speaker : ChatMessage.implementation.getSpeaker({ actor }),
+    whisper : [...new Set([...ownerIds(actor), ...gmIds()])],
+    content : html,
+    ...data,
+  });
+}
+
+/**
+ * A table whispered to the GMs (the equipment and Rule Limits logs) : one row per [label key, HTML value].
+ * @param {[string, string][]} rows
+ * @param {object} [options]
+ * @param {string} [options.alias]   who it's from
+ * @returns {Promise<ChatMessage>}
+ */
+export function whisperGMTable(rows, { alias = module.title } = {}){
+  const table = rows.map(([label, value]) => `<tr><th>${module.i18n(label)}</th><td>${value}</td></tr>`).join("");
+  return ChatMessage.implementation.create({
+    content : `<table class="${module.id}-equip-log">${table}</table>`,
+    whisper : gmIds(),
+    speaker : { alias },
+  });
+}
+
+/* ---------- Compendiums ---------- */
+
+/**
+ * Run fn with a compendium unlocked, locking it again after (if it was locked).
+ * @param {CompendiumCollection} pack
+ * @param {Function} fn
+ */
+export async function withUnlocked(pack, fn){
+  const locked = pack.locked;
+  if(locked) await pack.configure({ locked : false });
+  try { return await fn(); }
+  finally { if(locked) await pack.configure({ locked : true }); }
+}
+
+/* ---------- Buttons and rows on rendered messages ---------- */
+
+/**
+ * A button that runs onClick : disabled while it runs; an error is logged and shown as a warning.
+ * @param {object} options
+ * @param {string} options.icon             Font Awesome class ("fa-rotate")
+ * @param {string} [options.label]          what it does : its tooltip and aria label
+ * @param {string} [options.text]           words shown on it (none : icon only)
+ * @param {string} [options.className]
+ * @param {boolean} [options.tooltip=true]  label as a tooltip
+ * @param {boolean} [options.disabled]
+ * @param {boolean} [options.once]          stays disabled after it worked (used up)
+ * @param {(event : Event) => any} options.onClick
+ * @returns {HTMLButtonElement}
+ */
+export function makeButton({ icon, label = "", text = "", className = "", tooltip = true, disabled = false, once = false, onClick }){
+  const button = document.createElement("button");
+  button.type = "button";
+  if(className) button.className = className;
+  if(tooltip && label) button.dataset.tooltip = label;
+  if(label) button.ariaLabel = label;
+  button.disabled = disabled;
+  button.innerHTML = `<i class="fa-solid ${icon}" inert></i>${text ? ` <span>${esc(text)}</span>` : ""}`;
+  button.addEventListener("click", async event => {
+    event.preventDefault();
+    button.disabled = true;
+    let worked = false;
+    try { await onClick(event); worked = true; }
+    catch(error){ console.error(`${module.title} |`, error); ui.notifications.warn(error.message); }
+    finally { if(!(once && worked)) button.disabled = false; }
+  });
+  return button;
+}
+
+/**
+ * A row of buttons on a rendered message : the one already there with this key, or a new one.
+ *   stack : full buttons one under another (div.card-buttons), at the bottom
+ *   icons : dnd5e's icon row, a list of buttons beside an icon (under a roll)
+ * @param {HTMLElement} html                 the message's element
+ * @param {object} options
+ * @param {string} options.key               the row's class ("macro-helper-rerolls")
+ * @param {"stack"|"icons"} [options.layout="stack"]
+ * @param {string} [options.icon]            icons : the row's icon (default a play circle)
+ * @param {HTMLElement|string} [options.into] where it goes : an element, or a selector in html (default the content)
+ * @returns {HTMLElement}  the row : addButton(row, button)
+ */
+export function buttonRow(html, { key, layout = "stack", icon = "fa-circle-play", into } = {}){
+  const found = html.querySelector(`.${key}`);
+  if(found) return found;
+  const parent = ((typeof into === "string") ? html.querySelector(into) : into) ?? html.querySelector(".message-content") ?? html;
+  let row;
+  if(layout === "icons"){
+    row = document.createElement("section");
+    row.className = `icon-row ${key}`;
+    row.innerHTML = `<i class="fa-solid fa-fw ${icon}" inert></i><ul class="unlist"></ul>`;
+  }
+  else {
+    row = document.createElement("div");
+    row.className = `card-buttons ${key}`;
+  }
+  parent.append(row);
+  return row;
+}
+
+/* A button added to a row from buttonRow */
+export function addButton(row, button){
+  const list = row.querySelector(":scope > ul");
+  if(!list) return row.append(button);
+  const li = document.createElement("li");
+  li.append(button);
+  list.append(li);
+}
+
+/**
+ * A short line on a rendered dnd5e card, under its description (once per key).
+ * @param {HTMLElement} html
+ * @param {string} text
+ * @param {object} [options]
+ * @param {string} [options.key]   its class (default "macro-helper-note")
+ * @returns {HTMLElement}
+ */
+export function addNote(html, text, { key = `${module.id}-note` } = {}){
+  const found = html.querySelector(`.${key}`);
+  if(found) return found;
+  const p = document.createElement("p");
+  p.className = `supplement ${key}`;
+  p.innerHTML = `<strong>${esc(text)}</strong>`;
+  const anchor = html.querySelector(".card-content, .description, .card-header");
+  if(anchor) anchor.after(p);
+  else (html.querySelector(".chat-card") ?? html.querySelector(".message-content") ?? html).append(p);
+  return p;
 }

@@ -1,4 +1,5 @@
 import { module } from '../../module.js';
+import { idOf } from '../../helpers/utils.js';
 import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
 import { gm } from '../../gm.js';
@@ -31,12 +32,9 @@ export class bard{
     gm.handle("bardicGive", (data, user) => this.giveAsGM(data, user));
   }
 
-  static idOf(item){
-    return item?.identifier ?? item?.system?.identifier ?? "";
-  }
 
   static isBardic(activity){
-    return this.enabled() && (this.idOf(activity?.item) === this.BARDIC);
+    return this.enabled() && (idOf(activity?.item) === this.BARDIC);
   }
 
   /* Inspire's formula is the die the creature keeps : Roll Item mustn't roll it on the card */
@@ -64,7 +62,7 @@ export class bard{
       const mark = effect.getFlag?.(module.id, "bardic");
       if(mark) return { effect, die : mark.die || "1d6", by : mark.by ?? "" };
       const origin = effect.origin ? fromUuidSync(effect.origin, { strict : false }) : null;
-      if((origin?.documentName === "Item") && (this.idOf(origin) === this.BARDIC) && (origin.actor !== actor)){
+      if((origin?.documentName === "Item") && (idOf(origin) === this.BARDIC) && (origin.actor !== actor)){
         return { effect, die : this.dieOf(origin), by : origin.actor?.name ?? "" };
       }
     }

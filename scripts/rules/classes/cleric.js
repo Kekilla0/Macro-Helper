@@ -1,4 +1,5 @@
 import { module } from '../../module.js';
+import { idOf } from '../../helpers/utils.js';
 import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
 import { tokenOf, getTokensWithin } from '../../helpers/tokens.js';
@@ -29,9 +30,6 @@ export class cleric{
     Hooks.on("updateActiveEffect", effect => this.onClericDown(effect));
   }
 
-  static idOf(item){
-    return item?.identifier ?? item?.system?.identifier ?? "";
-  }
 
   static isUndead(actor){
     const type = actor?.system?.details?.type;
@@ -45,7 +43,7 @@ export class cleric{
    * @returns {Token[]|null}
    */
   static presetTargets(activity){
-    if(!this.enabled() || (this.idOf(activity?.item) !== this.TURN_UNDEAD)) return null;
+    if(!this.enabled() || (idOf(activity?.item) !== this.TURN_UNDEAD)) return null;
     const me = tokenOf(activity.actor);
     if(!me) return null;
     const feet = Number(activity.range?.value || activity.item?.system?.range?.value) || 30;
@@ -57,7 +55,7 @@ export class cleric{
    * by anyone : it is where it is). Instantaneous, so Clear Instant Templates removes it at the end of the turn.
    */
   static async placeEmanation(activity){
-    if(!this.enabled() || (this.idOf(activity?.item) !== this.TURN_UNDEAD) || !canvas.ready) return;
+    if(!this.enabled() || (idOf(activity?.item) !== this.TURN_UNDEAD) || !canvas.ready) return;
     const me = tokenOf(activity.actor);
     if(!me || (me.document.parent !== canvas.scene)) return;
     const feet = Number(activity.range?.value || activity.item?.system?.range?.value) || 30;
@@ -78,7 +76,7 @@ export class cleric{
   /* Turned, from a Cleric's Turn Undead */
   static isTurned(effect){
     const origin = effect?.origin ? fromUuidSync(effect.origin, { strict : false }) : null;
-    return (origin?.documentName === "Item") && (this.idOf(origin) === this.TURN_UNDEAD);
+    return (origin?.documentName === "Item") && (idOf(origin) === this.TURN_UNDEAD);
   }
 
   /* Taking damage ends it */

@@ -1,9 +1,10 @@
 import { module } from '../module.js';
+import { whisperOwners, esc } from '../helpers/utils.js';
 import { settings } from '../settings.js';
 import { limits } from './limits.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
-import { patch } from '../patch.js';
+import { uses } from '../uses.js';
 import { pickTargets } from '../helpers/targets.js';
 import { findItem, usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
 import { spendUses, getAppliedConditions } from '../helpers/items.js';
@@ -69,11 +70,9 @@ export class feats{
     gm.handle("luckyAgainst", (data, user) => this.luckyAgainstAsGM(data, user));
 
     /* Using the Healer feat itself : Battle Medic, sized by the target's Hit Dice */
-    patch.wrap("CONFIG.Item.documentClass.prototype.use", async function(wrapped, config = {}, ...rest){
-      if(!config.chooseActivity && feats.enabled() && ((this.identifier ?? this.system?.identifier) === feats.HEALER)){
-        return feats.battleMedic(this, config.event);
-      }
-      return wrapped(config, ...rest);
+    uses.onItem("healer", (item, ctx, next) => {
+      if(!ctx.config.chooseActivity && this.enabled() && ((item.identifier ?? item.system?.identifier) === this.HEALER)) return this.battleMedic(item, ctx.config.event);
+      return next();
     });
     Hooks.on("updateCombatant", (combatant, changes, options) => this.onInitiative(combatant, changes, options));
     Hooks.on("renderChatMessageHTML", (message, html) => this.wireAlertCard(message, html));
@@ -427,23 +426,18 @@ export class feats{
       return;
     }
 
-    const owners = game.users.filter(u => !u.isGM && actor.testUserPermission(u, "OWNER")).map(u => u.id);
     const rows = allies.map(c => `
       <li class="macro-helper-row">
-        <img class="token" src="${c.img}" alt="">
-        <span class="name">${foundry.utils.escapeHTML?.(c.name) ?? c.name}</span>
+        <img class="token" src="${esc(c.img)}" alt="">
+        <span class="name">${esc(c.name)}</span>
         <span class="result">${c.initiative ?? "—"}</span>
         <button type="button" data-macro-helper-alert="${c.id}"><i class="fa-solid fa-right-left" inert></i> ${module.i18n("feats.alert.swap")}</button>
       </li>`).join("") + `
       <li class="macro-helper-row">
         <button type="button" data-macro-helper-alert=""><i class="fa-solid fa-ban" inert></i> ${module.i18n("feats.alert.keep")}</button>
       </li>`;
-    await ChatMessage.implementation.create({
-      speaker : ChatMessage.implementation.getSpeaker({ actor }),
-      whisper : [...owners, ...game.users.filter(u => u.isGM).map(u => u.id)],
-      content : `<div class="macro-helper-alert"><p><strong>${module.i18n("feats.alert.title")}</strong> : ${module.format("feats.alert.hint", { initiative : combatant.initiative })}</p><ul class="unlist macro-helper-rows">${rows}</ul></div>`,
-      flags : { [module.id] : { alert : { combat : combat.id, combatant : combatant.id, round : combat.round, turn : combat.turn ?? 0, done : false } } },
-    });
+    await whisperOwners(actor, `<div class="macro-helper-alert"><p><strong>${module.i18n("feats.alert.title")}</strong> : ${module.format("feats.alert.hint", { initiative : combatant.initiative })}</p><ul class="unlist macro-helper-rows">${rows}</ul></div>`,
+      { flags : { [module.id] : { alert : { combat : combat.id, combatant : combatant.id, round : combat.round, turn : combat.turn ?? 0, done : false } } } });
     log.debug("Alert swap offered", actor.name, allies.map(c => c.name));
   }
 

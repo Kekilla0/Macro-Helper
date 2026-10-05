@@ -1,4 +1,5 @@
 import { module } from '../module.js';
+import { buttonRow, addButton, makeButton } from '../helpers/utils.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { findItem } from '../helpers/actors.js';
@@ -163,34 +164,14 @@ export class rerolls{
     if(fighter.canSpend(message)) buttons.push({ id : "tacticalSpend", icon : "fa-heart-crack", label : module.i18n("classes.fighter.tacticalSpend") });
     if(!buttons.length) return;
 
-    const row = document.createElement("section");
-    row.className = `icon-row ${module.id}-rerolls`;
-    row.innerHTML = `<i class="fa-solid fa-fw fa-circle-play" inert></i><ul class="unlist"></ul>`;
-    const list = row.querySelector("ul");
+    const row = buttonRow(html, { key : `${module.id}-rerolls`, layout : "icons" });
     for(const b of buttons){
-      const li = document.createElement("li");
-      const button = document.createElement("button");
-      button.type = "button";
+      const run = { lucky : () => this.lucky(message, actor), bardic : () => this.inspire(message, actor),
+        tactical : () => this.tactical(message, actor), tacticalSpend : () => fighter.spendSecondWind(message) }[b.id];
       /* Words on the button, not just an icon : easy to miss otherwise */
-      button.className = `${module.id}-labelled`;
-      button.dataset.tooltip = b.label;
-      button.ariaLabel = b.label;
-      button.innerHTML = `<i class="fa-solid ${b.icon}" inert></i> <span>${foundry.utils.escapeHTML(b.short ?? b.label)}</span>`;
-      button.addEventListener("click", async event => {
-        event.preventDefault();
-        button.disabled = true;
-        try {
-          const run = { lucky : () => this.lucky(message, actor), bardic : () => this.inspire(message, actor),
-            tactical : () => this.tactical(message, actor), tacticalSpend : () => fighter.spendSecondWind(message) }[b.id] ?? (() => this.reroll(message, event));
-          await run();
-        }
-        catch(error){ console.error("Macro Helper | reroll", error); ui.notifications.warn(error.message); }
-        finally { button.disabled = false; }
-      });
-      li.append(button);
-      list.append(li);
+      addButton(row, makeButton({ icon : b.icon, label : b.label, text : b.short ?? b.label, className : `${module.id}-labelled`,
+        onClick : event => (run ? run() : this.reroll(message, event)) }));
     }
-    (html.querySelector(".message-content") ?? html).append(row);
   }
 
   /* Swap the message's d20 roll for another, shown first; initiative moves the combatant too */

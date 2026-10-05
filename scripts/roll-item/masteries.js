@@ -1,4 +1,5 @@
 import { module } from '../module.js';
+import { rollModes } from './roll-modes.js';
 import { giveMode } from './reasons.js';
 import { settings } from '../settings.js';
 import { limits } from '../rules/limits.js';
@@ -42,7 +43,7 @@ export class masteries{
 
   static register(){
     if(game.system.id !== "dnd5e") return;
-    Hooks.on("dnd5e.preRollAttackV2", config => this.onPreRollAttack(config));
+    rollModes.add("masteries", config => this.onPreRollAttack(config));
     Hooks.on("dnd5e.rollAttackV2", rolls => this.onRollAttack(rolls));
     Hooks.on("dnd5e.preRollDamageV2", config => this.onPreRollDamage(config));
   }

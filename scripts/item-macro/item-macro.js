@@ -1,6 +1,6 @@
 import { module } from '../module.js';
 import { settings } from '../settings.js';
-import { patch } from '../patch.js';
+import { uses } from '../uses.js';
 import { logger } from '../log.js';
 import { MacroEditor } from './editor.js';
 import { itemHooks } from './item-hooks.js';
@@ -155,32 +155,21 @@ export class itemMacro{
     Hooks.on("getHeaderControlsActivitySheet", (app, controls)=> controls.push(this.control(app)));
   }
 
+  /* Item Macro's steps on the use (uses.js) : the macro runs before the item's or activity's use, or instead of it */
   static wrapItems(){
-    if(typeof CONFIG.Item.documentClass.prototype.use !== "function")
-      return log.info("Item class has no use(), item macros will not run on use.");
-
-    patch.wrap("CONFIG.Item.documentClass.prototype.use", async function(wrapped, ...args){
-      const [usage, dialog, message] = args;
-      return itemMacro.use(this, wrapped, args, { usage, dialog, message, event : usage?.event });
-    });
+    uses.onItem("itemMacro", (item, ctx, next) => this.#step(item, ctx, next));
   }
 
   static wrapActivities(){
-    const types = CONFIG.DND5E?.activityTypes;
-    if(!types) return;
+    uses.onActivity("itemMacro", (activity, ctx, next) => this.#step(activity, ctx, next));
+  }
 
-    /* Only wrap each use() once, in case a registered type inherits from another */
-    const owners = new Set();
-    for(const [type, { documentClass }] of Object.entries(types)){
-      let proto = documentClass?.prototype;
-      while(proto && !Object.hasOwn(proto, "use")) proto = Object.getPrototypeOf(proto);
-      if(!proto || owners.has(proto)) continue;
-      owners.add(proto);
-
-      patch.wrap(`CONFIG.DND5E.activityTypes.${type}.documentClass.prototype.use`, async function(wrapped, ...args){
-        const [usage, dialog, message] = args;
-        return itemMacro.use(this, wrapped, args, { usage, dialog, message, event : usage?.event });
-      });
-    }
+  static #step(target, ctx, next){
+    const { config : usage, dialog, message } = ctx;
+    const go = (...args) => {
+      if(args.length) [ctx.config = ctx.config, ctx.dialog = ctx.dialog, ctx.message = ctx.message] = args;
+      return next();
+    };
+    return this.use(target, go, [usage, dialog, message], { usage, dialog, message, event : usage?.event });
   }
 }

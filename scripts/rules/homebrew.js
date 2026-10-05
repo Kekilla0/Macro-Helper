@@ -1,4 +1,5 @@
 import { module } from '../module.js';
+import { rollModes } from '../roll-item/roll-modes.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { tokenOf } from '../helpers/tokens.js';
@@ -18,7 +19,7 @@ const log = logger.for(import.meta.url);
 export class homebrew{
   static register(){
     if(game.system.id !== "dnd5e") return;
-    Hooks.on("dnd5e.preRollAttackV2", config => this.onPreRollAttack(config));
+    rollModes.add("flanking", config => this.onPreRollAttack(config));
     Hooks.on("updateCombat", (combat, changes, options) => this.onUpdateCombat(combat, changes, options));
   }
 

@@ -1,4 +1,5 @@
 import { module } from '../module.js';
+import { rollModes } from '../roll-item/roll-modes.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
@@ -6,7 +7,8 @@ import { pickTargets } from '../helpers/targets.js';
 import { tokenOf, isDown } from '../helpers/tokens.js';
 import { addTimedEffect, stabilize } from '../helpers/actors.js';
 import { giveMode } from '../roll-item/reasons.js';
-import { chooseOption } from '../helpers/utils.js';
+import { chooseOption, idOf } from '../helpers/utils.js';
+import { uses } from '../uses.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -48,18 +50,25 @@ export class actions{
     Hooks.on("dnd5e.renderChatMessage", (message, html) => {
       if(message.getFlag?.(module.id, "autoApplied")) html.classList?.add(`${module.id}-auto-applied`);
     });
-    Hooks.on("dnd5e.preRollAttackV2", config => this.onPreRollAttack(config));
+    rollModes.add("help", config => this.onPreRollAttack(config));
     Hooks.on("dnd5e.rollAttackV2", rolls => this.consume(rolls?.[0]));
     Hooks.on("dnd5e.preRollSkillV2", config => this.onPreRollCheck(config, `skill:${config.skill}`));
     Hooks.on("dnd5e.preRollToolV2", config => this.onPreRollCheck(config, `tool:${config.tool}`));
+    /* Help : who and what, chosen and picked before the use; the card shows them */
+    uses.onActivity("action", async (activity, ctx, next) => {
+      const before = await this.beforeUse(activity);
+      if(before === false) return;
+      if(before){
+        uses.flag(ctx, before);
+        uses.mark(ctx, { skipPick : true, before });
+      }
+      return next();
+    });
     gm.handle("help", (data, user) => this.helpAsGM(data, user));
     gm.handle("helpUsed", (data, user) => this.helpUsedAsGM(data, user));
     gm.handle("stabilize", (data, user) => this.stabilizeAsGM(data, user));
   }
 
-  static idOf(item){
-    return item?.identifier ?? item?.system?.identifier ?? "";
-  }
 
   /* Which Help mode an activity is, by its name */
   static helpMode(activity){
@@ -77,7 +86,7 @@ export class actions{
    * @returns {Promise<object|false|null>}
    */
   static async beforeUse(activity){
-    if(!this.enabled() || (this.idOf(activity?.item) !== this.HELP) || !activity.actor?.isOwner) return null;
+    if(!this.enabled() || (idOf(activity?.item) !== this.HELP) || !activity.actor?.isOwner) return null;
     const mode = this.helpMode(activity);
     const near = canvas.scene?.grid.distance ?? 5;
     /* Like Roll Item's picks : the creature you already target, unless Pick Targets is "always" */
@@ -109,7 +118,7 @@ export class actions{
   /* After the use : Dodge, and what Help chose before it */
   static async onUse(activity, usage, results){
     if(!this.enabled() || !activity?.actor?.isOwner) return;
-    const id = this.idOf(activity.item);
+    const id = idOf(activity.item);
     try {
       /* On the token's own actor : an unlinked token opened from the sidebar would otherwise miss it */
       const own = activity.getUsageToken?.()?.actor ?? tokenOf(activity.actor)?.actor ?? activity.actor;

@@ -1,4 +1,6 @@
 import { module } from '../module.js';
+import { esc, whisperGMTable } from '../helpers/utils.js';
+import { rollModes } from '../roll-item/roll-modes.js';
 import { settings } from '../settings.js';
 import { limits } from './limits.js';
 import { hands } from './hands.js';
@@ -37,6 +39,7 @@ export class weapons{
   static register(){
     if(game.system.id !== "dnd5e") return;
     Hooks.on("dnd5e.preRollAttackV2", config => this.onPreRollAttack(config));
+    rollModes.add("heavy", config => this.heavyMode(config));
     Hooks.on("dnd5e.rollAttackV2", (rolls, { subject } = {}) => this.onRollAttack(subject, rolls?.[0]));
     Hooks.on("updateItem", (item, changes, options, userId) => this.logEquip(item, foundry.utils.getProperty(changes ?? {}, "system.equipped"), userId));
     Hooks.on("createItem", (item, options, userId) => item.system?.equipped && this.logEquip(item, true, userId));
@@ -50,7 +53,6 @@ export class weapons{
     const actor = item.actor, combat = game.combat;
     if((equipped === undefined) || !actor || !combat?.started) return;
     if(!combat.combatants.some(c => (c.actor?.uuid === actor.uuid) || (c.actorId === actor.id))) return;
-    const esc = s => foundry.utils.escapeHTML(String(s ?? ""));
     const status = removed ? "rules.weapon.statusRemoved" : equipped ? "rules.weapon.statusEquipped" : "rules.weapon.statusUnequipped";
     const rows = [
       ["rules.weapon.logRound", `${String(combat.round ?? 0).padStart(2, "0")} (${esc(combat.combatant?.name ?? "—")})`],
@@ -61,12 +63,7 @@ export class weapons{
     /* Armor and shields : how long it really takes, for the GM to rule on */
     const time = this.armorTime(item, equipped && !removed);
     if(time) rows.push(["rules.weapon.logTime", `<strong>${time}</strong>`]);
-    const table = rows.map(([label, value]) => `<tr><th>${module.i18n(label)}</th><td>${value}</td></tr>`).join("");
-    await ChatMessage.implementation.create({
-      content : `<table class="${module.id}-equip-log">${table}</table>`,
-      whisper : game.users.filter(u => u.isGM).map(u => u.id),
-      speaker : { alias : module.title },
-    });
+    await whisperGMTable(rows);
   }
 
   /* Returns false (stopping the roll) when the Block setting finds a problem */
@@ -75,6 +72,17 @@ export class weapons{
     if(!config.subject?.actor || !roll) return;
     roll.options ??= {};
     return this.applyWeaponRules(config, roll);
+  }
+
+  /* Heavy : disadvantage for a Small creature (or one too weak), with weapon handling on */
+  static heavyMode(config){
+    const roll = config.rolls?.[0];
+    const activity = config.subject;
+    const item = activity?.item, actor = activity?.actor;
+    if(!roll || (settings.value("weaponRules") === "off") || (item?.type !== "weapon") || !actor) return;
+    const ranged = String(activity.getActionType?.(config.attackMode ?? "") ?? "").startsWith("r");
+    roll.options ??= {};
+    if(this.isHeavyFor(actor, item, ranged)) giveMode(roll, "disadvantage", module.i18n("reasons.heavy"));
   }
 
   static isLegacy(){
@@ -94,9 +102,6 @@ export class weapons{
     const attackMode = config.attackMode ?? "";
     const actionType = String(activity.getActionType?.(attackMode) ?? "");
     const ranged = actionType.startsWith("r");
-
-    /* Heavy */
-    if(this.isHeavyFor(actor, item, ranged)) giveMode(roll, "disadvantage", module.i18n("reasons.heavy"));
 
     /* What's allowed. Change fixes what can be fixed (equipment, Versatile's grip); Loading and Light can't be, they warn */
     const change = mode === "change";

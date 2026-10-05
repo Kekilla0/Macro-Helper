@@ -588,5 +588,17 @@
   "hands.improvisedMain" : "{item} isn't a weapon : attacking with it (an improvised weapon) is from the main hand.",
   "hands.attackedWith" : "Attacked with {item}",
   "classes.monk.noFocus" : "{name} has no {item} left.",
-  "classes.monk.stepFocusName" : "{item} (Focus Point)"
+  "classes.monk.stepFocusName" : "{item} (Focus Point)",
+  "classes.paladin.smite" : "Smite",
+  "classes.paladin.smitePrompt" : "Which smite, and what pays for it?",
+  "classes.paladin.smiteFree" : "{spell} : Paladin's Smite (free)",
+  "classes.paladin.smiteSlot" : "{spell} : level {level} slot ({left} left)",
+  "classes.paladin.smitePact" : "{spell} : Pact slot, level {level} ({left} left)",
+  "classes.paladin.smiteLabel" : "{spell} (level {level})",
+  "classes.paladin.smiteUsed" : "{name} has already smitten this turn (a Bonus Action).",
+  "classes.paladin.noSmite" : "{name} has no smite spell prepared, or nothing left to cast it with.",
+  "classes.paladin.noHit" : "{item} : {name} has no melee hit to smite (use it from the attack card's Smite button).",
+  "classes.paladin.endPoisoned" : "End Poisoned ({name})",
+  "compendiums.summonsFolder" : "Summoned Creatures",
+  "classes.paladin.push" : "Push {name} {feet} ft"
 }

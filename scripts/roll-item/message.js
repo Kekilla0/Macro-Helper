@@ -5,7 +5,7 @@ import { rollItem } from './roll-item.js';
 import { masteries } from './masteries.js';
 import { maneuvers } from './maneuvers.js';
 import { extraD20, rerolls, addDie } from './rerolls.js';
-import { originOf } from '../helpers/utils.js';
+import { originOf, addNote } from '../helpers/utils.js';
 import { conditions } from '../rules/conditions.js';
 import { feats } from '../rules/feats.js';
 
@@ -14,6 +14,20 @@ export const TYPES = {
   attack : `${module.id}.rollItem`,
   save : `${module.id}.save`,
 };
+
+/**
+ * A reroll from one of a card's buttons : the card's activity, when this user may reroll (Rule Limits), with the button
+ * disabled while it works; null : nothing to do.
+ * @param {object} card     the card's system data
+ * @param {HTMLElement} target  the button
+ * @returns {Activity|null}
+ */
+function rerollStart(card, target){
+  const activity = card.parent.getAssociatedActivity({ scaled : true });
+  if(!activity || !limits.mayReroll(card.parent.getAssociatedActor?.()?.name, activity.item?.name ?? card.parent.flavor)) return null;
+  target.disabled = true;
+  return activity;
+}
 
 export function registerMessages(){
   const { AttackMessageData, UsageMessageData } = dnd5e.dataModels.chatMessage;
@@ -623,9 +637,11 @@ export function registerMessages(){
           disadvantage : new BooleanField({ initial : false }),
           why : new StringField({ blank : true, initial : "" }),
         })),
-        /* On-hit save from the same item (Giant Spider's poison), captured when rolled */
+        /* On-hit save from the same item (Giant Spider's poison), captured when rolled; item : another item's (a smite
+           spell's save, added after the hit) */
         rider : new SchemaField({
           id : new StringField({ blank : true, initial : "" }),
+          item : new StringField({ blank : true, initial : "" }),
           ability : new StringField({ blank : true, initial : "" }),
           dc : new NumberField({ integer : true, nullable : true, initial : null }),
           onSave : new StringField({ blank : true, nullable : true, initial : null }),
@@ -852,7 +868,8 @@ export function registerMessages(){
 
     get riderActivity(){
       if(!this.rider?.id) return null;
-      return this.parent.getAssociatedItem({ scaled : true })?.system.activities?.get(this.rider.id) ?? null;
+      const item = this.rider.item ? fromUuidSync(this.rider.item, { strict : false }) : this.parent.getAssociatedItem({ scaled : true });
+      return item?.system?.activities?.get(this.rider.id) ?? null;
     }
 
     /* Save results rolled from this card's save button, by token uuid (same as dnd5e's usage card) */
@@ -1095,10 +1112,8 @@ export function registerMessages(){
 
     /** @this {RollItemMessageData} */
     static async #rerollAttack(event, target){
-      const activity = this.parent.getAssociatedActivity({ scaled : true });
+      const activity = rerollStart(this, target);
       if(!activity) return;
-      if(!limits.mayReroll(this.parent.getAssociatedActor?.()?.name, activity?.item?.name ?? this.parent.flavor)) return;
-      target.disabled = true;
 
       const mode = await rollItem.chooseMode(activity, event);
       if(!mode) return target.disabled = false;
@@ -1139,10 +1154,8 @@ export function registerMessages(){
 
     /** @this {RollItemMessageData} */
     static async #rerollDamage(event, target){
-      const activity = this.parent.getAssociatedActivity({ scaled : true });
+      const activity = rerollStart(this, target);
       if(!activity) return;
-      if(!limits.mayReroll(this.parent.getAssociatedActor?.()?.name, activity?.item?.name ?? this.parent.flavor)) return;
-      target.disabled = true;
 
       /* Multi : new damage for every ray, attacks stay */
       if(this.isMulti){
@@ -1251,11 +1264,10 @@ export function registerMessages(){
 
     /** @this {RollItemMessageData} */
     static async #rerollRay(event, target){
-      const activity = this.parent.getAssociatedActivity({ scaled : true });
       const index = Number(target.dataset.ray);
-      if(!activity || !this.rays[index]) return;
-      if(!limits.mayReroll(this.parent.getAssociatedActor?.()?.name, activity?.item?.name ?? this.parent.flavor)) return;
-      target.disabled = true;
+      if(!this.rays[index]) return;
+      const activity = rerollStart(this, target);
+      if(!activity) return;
 
       const mode = await rollItem.chooseMode(activity, event);
       if(!mode) return target.disabled = false;
@@ -1458,10 +1470,8 @@ export function registerMessages(){
 
     /** @this {RollItemSaveData} */
     static async #rerollDamage(event, target){
-      const activity = this.parent.getAssociatedActivity({ scaled : true });
+      const activity = rerollStart(this, target);
       if(!activity) return;
-      if(!limits.mayReroll(this.parent.getAssociatedActor?.()?.name, activity?.item?.name ?? this.parent.flavor)) return;
-      target.disabled = true;
 
       const keep = this.parent.rolls.filter(r => !(r instanceof DamageRoll));
       const damage = [];
@@ -1474,11 +1484,10 @@ export function registerMessages(){
 
     /** @this {RollItemSaveData} */
     static async #rerollRay(event, target){
-      const activity = this.parent.getAssociatedActivity({ scaled : true });
       const index = Number(target.dataset.ray);
-      if(!activity || !this.rays[index]) return;
-      if(!limits.mayReroll(this.parent.getAssociatedActor?.()?.name, activity?.item?.name ?? this.parent.flavor)) return;
-      target.disabled = true;
+      if(!this.rays[index]) return;
+      const activity = rerollStart(this, target);
+      if(!activity) return;
 
       const damage = await this._rollRay(activity, index);
       if(!damage.length) return target.disabled = false;
@@ -1584,13 +1593,7 @@ export function registerMessages(){
   /* A note the module put on a dnd5e card (Help : who, which skill) : shown under its description */
   Hooks.on("dnd5e.renderChatMessage", (message, html) => {
     const note = message.getFlag?.(module.id, "note");
-    if(!note || ours.has(message.type) || html.querySelector(`.${module.id}-note`)) return;
-    const p = document.createElement("p");
-    p.className = `supplement ${module.id}-note`;
-    p.innerHTML = `<strong>${foundry.utils.escapeHTML(note)}</strong>`;
-    const anchor = html.querySelector(".card-content, .description, .card-header");
-    if(anchor) anchor.after(p);
-    else (html.querySelector(".chat-card") ?? html.querySelector(".message-content") ?? html).append(p);
+    if(note && !ours.has(message.type)) addNote(html, note);
   });
 
   /* Damage / healing applied from a card (conditions.onApplyDamage notes it on the creature) : show it on its row */

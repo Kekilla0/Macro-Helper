@@ -1,7 +1,7 @@
 import { module } from '../module.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
-import { patch } from '../patch.js';
+import { uses } from '../uses.js';
 import { TYPES, registerMessages } from './message.js';
 import { tokenOf, getRange, getTokensInArea } from '../helpers/tokens.js';
 import { pickTargets } from '../helpers/targets.js';
@@ -10,11 +10,9 @@ import { masteries } from './masteries.js';
 import { maneuvers } from './maneuvers.js';
 import { rerolls } from './rerolls.js';
 import { conditions } from '../rules/conditions.js';
-import { actions } from '../rules/actions.js';
 import { bard } from '../rules/classes/bard.js';
 import { cleric } from '../rules/classes/cleric.js';
-import { druid } from '../rules/classes/druid.js';
-import { chooseOption } from '../helpers/utils.js';
+import { chooseOption, wait } from '../helpers/utils.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -460,67 +458,50 @@ export class rollItem{
   static PICK_TYPES = ["heal", "save", "utility"];
 
   /**
-   * With Pick Targets on, a heal / save / effect activity aimed at creatures (Healing Hands, Grapple, Shove, Mage Armor)
-   * has you pick them on the map first, like attacks. Before dnd5e's use, so closing the pick spends nothing, and
-   * the card is made for exactly those targets. Same `use` paths as Item Macro's wrappers, so they chain.
+   * Roll Item's steps on an activity's use (uses.js) :
+   *   presetTargets : targets the activity sets itself, no placement or pick (Turn Undead : the Undead within 30 ft)
+   *   maneuver      : one activity for Grapple and Shove : choose first, the card is that one
+   *   pickTargets   : with Pick Targets on, a heal / save / effect aimed at creatures (Healing Hands, Grapple, Mage
+   *                   Armor) picks them on the map first, like attacks : closing the pick spends nothing, and the card
+   *                   is made for exactly those. Roll Type Normal : dnd5e's own attack card, aimed at the picks.
    */
-  static wrapTargeting(){
-    const types = CONFIG.DND5E?.activityTypes;
-    if(!types) return;
-    const owners = new Set();
-    for(const [type, { documentClass }] of Object.entries(types)){
-      let proto = documentClass?.prototype;
-      while(proto && !Object.hasOwn(proto, "use")) proto = Object.getPrototypeOf(proto);
-      if(!proto || owners.has(proto)) continue;
-      owners.add(proto);
-
-      patch.wrap(`CONFIG.DND5E.activityTypes.${type}.documentClass.prototype.use`, async function(wrapped, usage = {}, ...rest){
-        /* Targets an activity sets itself, no placement or pick (Turn Undead : the Undead within 30 ft) */
-        const preset = cleric.presetTargets(this);
-        if(preset){
-          rollItem.announceTargets(this, preset, { keepEmpty : true });
-          usage = { ...usage, [module.id] : { ...(usage?.[module.id] ?? {}), skipPick : true } };
-        }
-        /* Actions that choose and pick first (Help) : the card then shows who and what */
-        const before = await actions.beforeUse(this);
-        if(before === false) return;
-        if(before){
-          const [dialog = {}, message = {}] = rest;
-          foundry.utils.mergeObject(message, { data : { flags : { [module.id] : before } } });
-          rest = [dialog, message, ...rest.slice(2)];
-          usage = { ...usage, [module.id] : { ...(usage?.[module.id] ?? {}), skipPick : true, before } };
-        }
-        /* One activity for Grapple and Shove : choose first, the card is that one */
-        if(maneuvers.enabled() && maneuvers.isCombined(this) && !usage?.[module.id]?.maneuver){
-          const choice = await maneuvers.choose(this);
-          if(!choice) return;
-          const [dialog = {}, message = {}] = rest;
-          foundry.utils.setProperty(message, `data.flags.${module.id}.maneuver`, choice);
-          rest = [dialog, message, ...rest.slice(2)];
-          usage = { ...usage, [module.id] : { ...(usage?.[module.id] ?? {}), maneuver : choice } };
-        }
-        /* Wild Shape's form, a familiar and its space : chosen first, then dnd5e uses it */
-        const own = await druid.beforeUse(this, usage);
-        if(own === false) return;
-        if(own){
-          const [dialog = {}, message = {}] = rest;
-          foundry.utils.mergeObject(message, { data : { flags : { [module.id] : own.flags } } });
-          rest = [dialog, message, ...rest.slice(2)];
-          usage = own.usage;
-        }
-        /* Roll Type : Normal : dnd5e's own attack card, still aimed at the targets you pick (Pick Targets) */
-        if((this.type === "attack") && !rollItem.modeFor(this, usage) && !usage?.[module.id]?.skipPick){
-          const picked = await rollItem.pickForNormal(this);
-          if(picked === false) return;
-        }
-        const spec = rollItem.pickSpec(this, usage);
-        if(spec){
-          const picks = await pickTargets(this.item, spec);
-          if(!picks.length || !rollItem.announceTargets(this, picks)) return;
-        }
-        return wrapped(usage, ...rest);
-      });
-    }
+  static registerSteps(){
+    uses.onActivity("presetTargets", (activity, ctx, next) => {
+      const preset = cleric.presetTargets(activity);
+      if(preset){
+        rollItem.announceTargets(activity, preset, { keepEmpty : true });
+        uses.mark(ctx, { skipPick : true });
+      }
+      return next();
+    });
+    uses.onActivity("maneuver", async (activity, ctx, next) => {
+      if(maneuvers.enabled() && maneuvers.isCombined(activity) && !ctx.config?.[module.id]?.maneuver){
+        const choice = await maneuvers.choose(activity);
+        if(!choice) return;
+        uses.flag(ctx, { maneuver : choice });
+        uses.mark(ctx, { maneuver : choice });
+      }
+      return next();
+    });
+    uses.onActivity("pickTargets", async (activity, ctx, next) => {
+      if((activity.type === "attack") && !rollItem.modeFor(activity, ctx.config) && !ctx.config?.[module.id]?.skipPick){
+        const picked = await rollItem.pickForNormal(activity);
+        if(picked === false) return;
+      }
+      const spec = rollItem.pickSpec(activity, ctx.config);
+      if(spec){
+        const picks = await pickTargets(activity.item, spec);
+        if(!picks.length || !rollItem.announceTargets(activity, picks)) return;
+      }
+      return next();
+    });
+    /* Attack + save rider items skip dnd5e's activity choice (sheet, hotbar, anything calling item.use) */
+    uses.onItem("fastForward", (item, ctx, next) => {
+      const attack = rollItem.fastForward(item, ctx.config);
+      if(!attack) return next();
+      const { chooseActivity, ...usage } = ctx.config;
+      return attack.use(usage, ctx.dialog, ctx.message);
+    });
   }
 
   /**
@@ -972,21 +953,13 @@ export class rollItem{
     Hooks.on("dnd5e.preUseActivity", rollItem.onPreUse);
     Hooks.on("dnd5e.postUseActivity", rollItem.onPostUse);
 
-    rollItem.wrapTargeting();
+    rollItem.registerSteps();
     Hooks.on("dnd5e.preCreateMeasuredTemplate", activity => rollItem.anchorToSelf(activity));
     Hooks.on("combatTurnChange", (combat, prior, current) => rollItem.clearTemplates(combat, prior, current));
     Hooks.on("deleteCombat", combat => rollItem.clearCombatTemplates(combat));
     Hooks.on("createRegion", region => rollItem.onTemplateCreated(region));
     Hooks.on("dnd5e.preRollDamageV2", config => rollItem.applyDamageTypes(config));
     Hooks.on("dnd5e.preSummonToken", (activity, profile, config) => rollItem.summonOnSide(activity, config));
-
-    /* Attack + save rider items skip dnd5e's activity choice (sheet, hotbar, anything calling item.use) */
-    patch.wrap("CONFIG.Item.documentClass.prototype.use", async function(wrapped, config = {}, dialog = {}, message = {}){
-      const attack = rollItem.fastForward(this, config);
-      if(!attack) return wrapped(config, dialog, message);
-      const { chooseActivity, ...usage } = config;
-      return attack.use(usage, dialog, message);
-    });
 
     Hooks.on("getHeaderControlsActivitySheet", (app, controls)=> {
       if(!["attack", "damage"].includes(app.document?.type)) return;
@@ -1042,7 +1015,7 @@ export class rollItem{
     if(!message) return message;
 
     /* Dice that never report landing (Dice So Nice hiccup) don't leave the card on "Rolling..." */
-    const landed = rolls => Promise.race([this.showDice(rolls, message), new Promise(r => setTimeout(r, 8000))]);
+    const landed = rolls => Promise.race([this.showDice(rolls, message), wait(8000)]);
     try {
       await landed(attacks);
       await message.setFlag(module.id, "reveal", 1);

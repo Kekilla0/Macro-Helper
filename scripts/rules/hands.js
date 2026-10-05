@@ -1,4 +1,5 @@
 import { module } from '../module.js';
+import { idOf, esc } from '../helpers/utils.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { limits } from './limits.js';
@@ -95,9 +96,6 @@ export class hands{
     else options.push(...ours);
   }
 
-  static idOf(item){
-    return item?.identifier ?? item?.system?.identifier ?? "";
-  }
 
   /* ---------- What can be held, and how ---------- */
 
@@ -106,7 +104,7 @@ export class hands{
     if(!item || !["weapon", "equipment", "tool", "consumable", "loot", "container"].includes(item.type)) return false;
     /* Worn, not held */
     if((item.type === "equipment") && ["light", "medium", "heavy", "natural", "clothing", "ring", "vehicle"].includes(item.system.type?.value)) return false;
-    if((item.type === "weapon") && ((item.system.type?.value === "natural") || (this.idOf(item) === "unarmed-strike"))) return false;
+    if((item.type === "weapon") && ((item.system.type?.value === "natural") || (idOf(item) === "unarmed-strike"))) return false;
     return true;
   }
 
@@ -119,7 +117,7 @@ export class hands{
   }
 
   static hasDueling(actor){
-    return !!actor?.items?.some?.(i => ["dueling", "fighting-style-dueling"].includes(this.idOf(i)));
+    return !!actor?.items?.some?.(i => ["dueling", "fighting-style-dueling"].includes(idOf(i)));
   }
 
   /* An item that's "in hand" in dnd5e's sense : weapons and shields (equipped follows the hands) */
@@ -261,7 +259,6 @@ export class hands{
     const portrait = root?.querySelector(".sidebar .portrait") ?? app.element?.querySelector?.(".sidebar .portrait");
     if(!portrait || portrait.querySelector(`.${module.id}-hands`)) return;
     const h = this.of(actor);
-    const esc = s => foundry.utils.escapeHTML(String(s ?? ""));
     const editable = app.isEditable ?? actor.isOwner;
     const slot = name => {
       const item = h[name] ? actor.items.get(h[name]) : null;

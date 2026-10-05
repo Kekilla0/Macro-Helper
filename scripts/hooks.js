@@ -18,6 +18,7 @@ import { restChoices } from './rules/rest-choices.js';
 import { familiars } from './rules/familiars.js';
 import { fighter } from './rules/classes/fighter.js';
 import { monk } from './rules/classes/monk.js';
+import { paladin } from './rules/classes/paladin.js';
 import { weaponMastery } from './rules/weapon-mastery.js';
 import { fightingStyles } from './rules/fighting-styles.js';
 import { compendiums } from './rules/compendiums.js';
@@ -28,11 +29,17 @@ import { heldLight } from './rules/held-light.js';
 import { gm } from './gm.js';
 import { feats } from './rules/feats.js';
 import { initiative } from './rules/initiative.js';
+import { uses } from './uses.js';
+import { itemFixes } from './rules/item-fixes.js';
+import { rollModes } from './roll-item/roll-modes.js';
 const log = logger.for(import.meta.url);
 
 Hooks.once("init", ()=> {
   log.info("Initializing module.");
   settings.register();
+  uses.register();
+  itemFixes.register();
+  rollModes.register();
   api.register();
   rollItem.register();
   conditions.register();
@@ -47,6 +54,7 @@ Hooks.once("init", ()=> {
   familiars.register();
   fighter.register();
   monk.register();
+  paladin.register();
   weaponMastery.register();
   fightingStyles.register();
   compendiums.register();

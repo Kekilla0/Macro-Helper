@@ -1,5 +1,7 @@
 import { module } from '../module.js';
+import { withUnlocked } from '../helpers/utils.js';
 import { logger } from '../log.js';
+import { itemFixes } from './item-fixes.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -30,13 +32,9 @@ export class compendiums{
   };
 
   static register(){
-    /* Dropped in (by this user) : corrected right after (Foundry won't drop embedded effects while creating) */
-    Hooks.on("createItem", (item, options, userId) => { if(userId === game.user.id) this.fix(item); });
-    Hooks.on("createActor", (actor, options, userId) => { if(userId === game.user.id) this.fix(actor); });
-    Hooks.once("ready", async () => {
-      await this.seedActions();
-      await this.repair();
-    });
+    this.registerFixes();
+    Hooks.once("ready", () => this.seedActions());
+    Hooks.on("createActor", actor => this.fileSummon(actor));
   }
 
   static pack(name){
@@ -56,61 +54,45 @@ export class compendiums{
     return [...index].sort((a, b) => (cr(a) - cr(b)) || a.name.localeCompare(b.name));
   }
 
-  /* ---------- Corrected : as they're dropped in, and once on load ---------- */
+  /* ---------- Corrected : as they're dropped in, and once on load (item-fixes.js) ---------- */
 
   static idOf(doc){
     return String(doc?.identifier ?? doc?.system?.identifier ?? "").replace(/^fighting-style-/, "");
   }
 
-  /**
-   * What a compendium document needs changed, or null : { activities : ids to remove, effects : ids, items : ids }.
-   * @param {Item|Actor} doc
-   */
-  static needs(doc){
-    const fix = { activities : [], effects : [], items : [] };
-    if(doc.pack === `${module.id}.${this.FIGHTING_STYLES}`){
-      const id = this.idOf(doc);
-      const activities = [...(doc.system?.activities ?? [])];
-      if(["interception", "protection"].includes(id)){
-        fix.activities = activities.map(a => a.id);
-        fix.effects = doc.effects.map(e => e.id);
-      }
-      /* Always-on bonuses that only sometimes apply : the module adds them when they do */
-      if(["dueling", "archery"].includes(id)) fix.effects = doc.effects.map(e => e.id);
-      if(id === "unarmed-fighting") fix.activities = activities.filter(a => a.type === "attack").map(a => a.id);
-    }
-    if(doc.pack === `${module.id}.${this.FAMILIARS}`){
-      fix.items = doc.items.filter(i => [...(i.system?.activities ?? [])].some(a => a.type === "attack")).map(i => i.id);
-    }
-    return (fix.activities.length || fix.effects.length || fix.items.length) ? fix : null;
+  static registerFixes(){
+    itemFixes.add({ name : "Fighting Styles", where : `pack:${this.FIGHTING_STYLES}`, plan : doc => this.stylePlan(doc) });
+    /* The same feats on a character (Plutonium's own, picked at level-up) */
+    itemFixes.add({ name : "Fighting Styles (characters)", where : "owned", plan : doc => ((doc.type === "feat") ? this.stylePlan(doc) : null) });
+    /* A familiar can't attack */
+    itemFixes.add({ name : "Familiars", where : `pack:${this.FAMILIARS}`, plan : doc => {
+      const items = doc.items.filter(i => [...(i.system?.activities ?? [])].some(a => a.type === "attack")).map(i => i.id);
+      return items.length ? { items } : null;
+    } });
   }
 
-  /* Apply the corrections to a document in one of our compendiums (its compendium must be unlocked) */
-  static async fix(doc){
-    const fix = (doc?.pack?.startsWith(`${module.id}.`)) ? this.needs(doc) : null;
-    if(!fix) return false;
-    const del = globalThis._del ?? new foundry.data.operators.ForcedDeletion();
-    if(fix.activities.length) await doc.update(Object.fromEntries(fix.activities.map(id => [`system.activities.${id}`, del])));
-    if(fix.effects.length) await doc.deleteEmbeddedDocuments("ActiveEffect", fix.effects);
-    if(fix.items.length) await doc.deleteEmbeddedDocuments("Item", fix.items);
-    log.info("Compendium entry corrected", doc.name, fix);
-    return true;
+  /* A Fighting Style feat, corrected : what the module does itself comes off */
+  static stylePlan(doc){
+    const id = this.idOf(doc);
+    const activities = [...(doc.system?.activities ?? [])];
+    /* The attack card's Intercept / Protect buttons do it */
+    if(["interception", "protection"].includes(id)) return { activities : activities.map(a => a.id), effects : doc.effects.map(e => e.id) };
+    /* Always-on bonuses that only sometimes apply : the module adds them when they do */
+    if(["dueling", "archery"].includes(id)) return { effects : doc.effects.map(e => e.id) };
+    if(id === "unarmed-fighting"){
+      const attacks = activities.filter(a => a.type === "attack").map(a => a.id);
+      return attacks.length ? { activities : attacks } : null;
+    }
+    return null;
   }
 
-  /* Once on load (the GM) : anything dropped in before the corrections existed */
-  static async repair(){
-    if(!game.users.activeGM?.isSelf) return;
-    for(const name of [this.FIGHTING_STYLES, this.FAMILIARS]){
-      const pack = this.pack(name);
-      if(!pack) continue;
-      const docs = (await pack.getDocuments()).filter(d => this.needs(d));
-      if(!docs.length) continue;
-      const locked = pack.locked;
-      if(locked) await pack.configure({ locked : false });
-      try { for(const doc of docs) await this.fix(doc); }
-      finally { if(locked) await pack.configure({ locked : true }); }
-      ui.notifications.info(module.format("compendiums.repaired", { count : docs.length, pack : pack.metadata.label }));
-    }
+  /* ---------- Summoned creatures : imported once (dnd5e reuses the copy), kept in one folder ---------- */
+
+  static async fileSummon(actor){
+    if(!game.users.activeGM?.isSelf || !actor?.getFlag?.("dnd5e", "isAutoImported")) return;
+    let folder = game.folders.find(f => (f.type === "Actor") && f.getFlag(module.id, "summons"));
+    folder ??= await Folder.implementation.create({ name : module.i18n("compendiums.summonsFolder"), type : "Actor", flags : { [module.id] : { summons : true } } });
+    if(folder && (actor.folder?.id !== folder.id)) await actor.update({ folder : folder.id });
   }
 
   /* ---------- Actions : filled from examples/items, once ---------- */
@@ -131,10 +113,7 @@ export class compendiums{
       } catch(error){ log.error("Actions compendium", id, error); }
     }
     if(!data.length) return;
-    const locked = pack.locked;
-    if(locked) await pack.configure({ locked : false });
-    try { await Item.implementation.createDocuments(data.map(d => { const c = { ...d }; delete c._id; return c; }), { pack : pack.collection }); }
-    finally { if(locked) await pack.configure({ locked : true }); }
+    await withUnlocked(pack, () => Item.implementation.createDocuments(data.map(d => { const c = { ...d }; delete c._id; return c; }), { pack : pack.collection }));
     log.info("Actions compendium filled", missing);
   }
 }

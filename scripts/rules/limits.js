@@ -1,4 +1,5 @@
 import { module } from '../module.js';
+import { esc, whisperGMTable } from '../helpers/utils.js';
 import { settings } from '../settings.js';
 import { gm } from '../gm.js';
 
@@ -77,7 +78,6 @@ export class limits{
 
   /* One whispered table per entry, like the equipment log : Round (Time), Who, What they did, Status, Rule */
   static async logAsGM({ who = "", what = "", rule = "", status = "allowed" } = {}, user){
-    const esc = s => foundry.utils.escapeHTML(String(s ?? ""));
     const combat = game.combat;
     const when = combat?.started
       ? `${String(combat.round ?? 0).padStart(2, "0")} (${esc(combat.combatant?.name ?? "—")})`
@@ -89,12 +89,7 @@ export class limits{
       ["limits.logStatus", `<strong>${esc(module.i18n(`limits.status.${status}`))}</strong>`],
       ["limits.logRule", esc(rule)],
     ];
-    const table = rows.map(([label, value]) => `<tr><th>${module.i18n(label)}</th><td>${value}</td></tr>`).join("");
-    await ChatMessage.implementation.create({
-      content : `<table class="${module.id}-equip-log">${table}</table>`,
-      whisper : game.users.filter(u => u.isGM).map(u => u.id),
-      speaker : { alias : module.i18n("limits.title") },
-    });
+    await whisperGMTable(rows, { alias : module.i18n("limits.title") });
     return true;
   }
 }

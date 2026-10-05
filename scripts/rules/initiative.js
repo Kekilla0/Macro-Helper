@@ -1,4 +1,5 @@
 import { module } from '../module.js';
+import { esc, makeButton, buttonRow, addButton, gmIds } from '../helpers/utils.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
@@ -43,6 +44,7 @@ export class initiative{
     const round = Number(changes.round) || 0;
     /* Combat began : round 0 to 1 */
     if((round !== 1) || !(settings.value("initiativeMethod") === "auto")) return;
+    await this.linkSummons(combat);
     const ids = combat.combatants.filter(c => (c.initiative === null) && !this.leaderOf(c)).map(c => c.id);
     if(ids.length) await this.roll(combat, ids, "begin");
   }
@@ -52,6 +54,9 @@ export class initiative{
     const combat = combatant?.combat ?? combatant?.parent;
     if(!game.users.activeGM?.isSelf || !combat?.started || !(settings.value("initiativeMethod") === "auto") || (combatant.initiative !== null)) return;
     if(this.leaderOf(combatant)) return;
+    /* A summon (or its summoner) added by hand : linked, the summon follows instead of rolling */
+    await this.linkSummons(combat);
+    if(this.leaderOf(combat.combatants?.get?.(combatant.id) ?? combatant)) return;
     log.debug("Rolling initiative", "joined", combatant.name);
     await combat.rollInitiative([combatant.id], { updateTurn : true });
   }
@@ -108,6 +113,30 @@ export class initiative{
       }
     }
     return true;
+  }
+
+  /* The creature that summoned this one (dnd5e notes the item that summoned it) */
+  static summonerOf(actor){
+    const origin = fromUuidSync(actor?.getFlag?.("dnd5e", "summon.origin") ?? "", { strict : false });
+    return origin?.actor ?? null;
+  }
+
+  /**
+   * Shared Initiative : summons in a combat with their summoner follow it, however they got there (added by hand,
+   * there before combat began). Active GM.
+   * @param {Combat} combat
+   */
+  static async linkSummons(combat){
+    if(!game.users.activeGM?.isSelf || (settings.value("summonInitiative") !== "shared")) return;
+    const updates = [];
+    for(const c of combat.combatants){
+      if(this.leaderOf(c)) continue;
+      const summoner = this.summonerOf(c.actor);
+      const leader = summoner && this.summonerIn(combat, summoner);
+      if(!leader || (leader.id === c.id) || this.leaderOf(leader)) continue;
+      updates.push({ _id : c.id, initiative : (leader.initiative === null) ? null : (leader.initiative - this.SHARED_GAP), [`flags.${module.id}.sharedWith`] : leader.id });
+    }
+    if(updates.length) await combat.updateEmbeddedDocuments("Combatant", updates);
   }
 
   /* Shared Initiative : the summoner's initiative changes (rolled, rerolled, swapped), its summons follow (active GM) */
@@ -167,7 +196,7 @@ export class initiative{
       if(!this.#pending.length) foundry.audio.AudioHelper.play({ src : CONFIG.sounds.dice }, true);
       return;
     }
-    const whisper = combatant.hidden ? game.users.filter(u => u.isGM).map(u => u.id) : null;
+    const whisper = combatant.hidden ? gmIds() : null;
     /* In the colours of the combatant's player (their own dice), the GM's for creatures no player owns */
     const player = (combatant.players ?? []).find(u => u.active && !u.isGM) ?? (combatant.players ?? []).find(u => !u.isGM) ?? game.user;
     return game.dice3d.showForRoll(roll, player, true, whisper);
@@ -224,13 +253,12 @@ export class initiative{
     return ChatMessage.implementation.create({
       speaker : { alias : module.i18n("initiative.title") },
       content, rolls : rolls.map(r => JSON.stringify(r)), sound : null,
-      whisper : hidden ? game.users.filter(u => u.isGM).map(u => u.id) : [],
+      whisper : hidden ? gmIds() : [],
       flags : { [module.id] : { initiative : key }, ...skip },
     });
   }
 
   static #content(combat, rolls, hidden){
-    const esc = s => foundry.utils.escapeHTML(String(s ?? ""));
     const rows = rolls
       .map(roll => ({ roll, combatant : combat.combatants.get(roll.options?.[module.id]?.combatant) }))
       .filter(r => r.combatant)
@@ -269,20 +297,7 @@ export class initiative{
   }
 
   static #button(icon, label, onClick){
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "icon";
-    button.dataset.tooltip = label;
-    button.ariaLabel = label;
-    button.innerHTML = `<i class="fa-solid ${icon}" inert></i>`;
-    button.addEventListener("click", async event => {
-      event.preventDefault();
-      button.disabled = true;
-      try { await onClick(event); }
-      catch(error){ ui.notifications.warn(error.message); }
-      finally { button.disabled = false; }
-    });
-    return button;
+    return makeButton({ icon, label, className : "icon", onClick });
   }
 
   /* The rows : current initiative and order, Reroll for each row's owner and the GM, Alert's swap offer */
@@ -327,14 +342,9 @@ export class initiative{
     }
 
     /* Features on the roll (Uncanny Metabolism), the current round only : full buttons at the card's foot */
-    let feet = null;
     const addFoot = (icon, label, onClick, options) => {
-      if(!feet){
-        feet = document.createElement("div");
-        feet.className = "card-buttons macro-helper-initiative-feet";
-        (html.querySelector(".macro-helper-initiative") ?? html).append(feet);
-      }
-      feet.append(this.footButton(icon, label, onClick, options));
+      const feet = buttonRow(html, { key : `${module.id}-initiative-feet`, into : ".macro-helper-initiative" });
+      addButton(feet, this.footButton(icon, label, onClick, options));
     };
     for(const li of items){
       const combatant = combat.combatants.get(li.dataset.combatant);
@@ -344,19 +354,9 @@ export class initiative{
     }
   }
 
-  /* A full button with its words (the card's foot; dnd5e's own initiative message too) */
+  /* A full button with its words (the card's foot; dnd5e's own initiative message too) : used up once it worked */
   static footButton(icon, label, onClick, { disabled = false } = {}){
-    const button = document.createElement("button");
-    button.type = "button";
-    button.disabled = disabled;
-    button.innerHTML = `<i class="fa-solid ${icon}" inert></i> ${foundry.utils.escapeHTML(label)}`;
-    button.addEventListener("click", async event => {
-      event.preventDefault();
-      button.disabled = true;
-      try { await onClick(event); }
-      catch(error){ ui.notifications.warn(error.message); button.disabled = false; }
-    });
-    return button;
+    return makeButton({ icon, label, text : label, tooltip : false, disabled, once : true, onClick });
   }
 
   /* A fresh initiative roll for one combatant, with advantage / disadvantage chosen like any reroll */

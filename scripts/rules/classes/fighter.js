@@ -1,4 +1,5 @@
 import { module } from '../../module.js';
+import { idOf } from '../../helpers/utils.js';
 import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
 import { addTimedEffect } from '../../helpers/actors.js';
@@ -45,13 +46,10 @@ export class fighter{
     });
   }
 
-  static idOf(item){
-    return item?.identifier ?? item?.system?.identifier ?? "";
-  }
 
   /* A Fighting Style feat's own name ("dueling" for "fighting-style-dueling") */
   static styleId(item){
-    const id = this.idOf(item).replace(/^fighting-style-/, "");
+    const id = idOf(item).replace(/^fighting-style-/, "");
     return this.STYLES.includes(id) ? id : null;
   }
 
@@ -62,7 +60,7 @@ export class fighter{
   /* ---------- Action Surge ---------- */
 
   static async onUse(activity){
-    if(!this.enabled() || (this.idOf(activity?.item) !== this.ACTION_SURGE) || !activity.actor?.isOwner) return;
+    if(!this.enabled() || (idOf(activity?.item) !== this.ACTION_SURGE) || !activity.actor?.isOwner) return;
     const actor = activity.getUsageToken?.()?.actor ?? activity.actor;
     if(actor.effects.some(e => e.getFlag(module.id, "actionSurge"))) return;
     await addTimedEffect(actor, { name : activity.item.name, img : activity.item.img, flags : { [module.id] : { actionSurge : true } } }, { until : "turnEnd", thisTurn : true });
@@ -72,14 +70,14 @@ export class fighter{
   /* ---------- Tactical Mind ---------- */
 
   static secondWindOf(actor){
-    return actor?.items?.find(i => this.idOf(i) === this.SECOND_WIND) ?? null;
+    return actor?.items?.find(i => idOf(i) === this.SECOND_WIND) ?? null;
   }
 
   /* Can the owner roll it on this check : a Fighter with Tactical Mind and a Second Wind use left, not rolled yet */
   static canTactical(message, actor){
     if(!this.enabled() || (message?.type !== "check") || !actor?.isOwner) return false;
     if(message.getFlag(module.id, "tacticalMind")) return false;
-    if(!actor.items.some(i => this.idOf(i) === this.TACTICAL_MIND)) return false;
+    if(!actor.items.some(i => idOf(i) === this.TACTICAL_MIND)) return false;
     return Number(this.secondWindOf(actor)?.system?.uses?.value) > 0;
   }
 
@@ -107,7 +105,7 @@ export class fighter{
    * @returns {string|null}  "<class item id>.<advancement id>"
    */
   static styleOrigin(actor){
-    const feature = actor.items.find(i => (this.idOf(i) === "fighting-style") && i.getFlag("dnd5e", "advancementOrigin"));
+    const feature = actor.items.find(i => (idOf(i) === "fighting-style") && i.getFlag("dnd5e", "advancementOrigin"));
     if(feature) return feature.getFlag("dnd5e", "advancementOrigin");
     const cls = ["fighter", "paladin", "ranger"].map(id => actor.classes?.[id]).find(Boolean);
     return cls ? `${cls.id}.fightingStyle` : null;

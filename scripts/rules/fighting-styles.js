@@ -1,4 +1,6 @@
 import { module } from '../module.js';
+import { idOf, esc, whisperOwners } from '../helpers/utils.js';
+import { rollModes } from '../roll-item/roll-modes.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
@@ -46,6 +48,7 @@ export class fightingStyles{
   static register(){
     if(game.system.id !== "dnd5e") return;
     Hooks.on("dnd5e.preRollAttackV2", config => this.onPreRollAttack(config));
+    rollModes.add("protection", config => this.protectedMode(config));
     Hooks.on("dnd5e.preRollDamageV2", config => this.onPreRollDamage(config));
     Hooks.on("dnd5e.calculateDamage", (actor, damages, options) => this.intercepted(actor, damages, options));
     for(const hook of ["createItem", "updateItem", "deleteItem"]){
@@ -60,14 +63,11 @@ export class fightingStyles{
     gm.handle("protect", (data, user) => this.protectAsGM(data, user));
   }
 
-  static idOf(item){
-    return item?.identifier ?? item?.system?.identifier ?? "";
-  }
 
   /* The creature's Fighting Style feat of this kind */
   static styleOf(actor, style){
     if(!this.enabled()) return null;
-    return actor?.items?.find?.(i => [style, `fighting-style-${style}`].includes(this.idOf(i))) ?? null;
+    return actor?.items?.find?.(i => [style, `fighting-style-${style}`].includes(idOf(i))) ?? null;
   }
 
   /* Its transfer effect is on (Plutonium's Archery / Defense / Dueling) */
@@ -86,7 +86,7 @@ export class fightingStyles{
     const melee = String(item.system.type?.value ?? "").endsWith("M");
     const thrown = mode.startsWith("thrown");
     return { activity, item, actor : activity.actor, mode, props, melee, thrown, twoHanded : props.has("two") || (mode === "twoHanded"),
-      unarmed : this.idOf(item) === "unarmed-strike" };
+      unarmed : idOf(item) === "unarmed-strike" };
   }
 
   /* Other weapons in hand (natural weapons and Unarmed Strike don't count) */
@@ -96,7 +96,7 @@ export class fightingStyles{
     if(hands.manages(actor)) return hands.heldItems(actor).filter(i => (i.id !== item?.id)
       && (((i.type === "weapon") && (i.system.type?.value !== "natural")) || hands.wieldedThisTurn(actor, i)));
     return (actor?.items ?? []).filter(i => (i.id !== item?.id) && (i.type === "weapon") && i.system.equipped
-      && (i.system.type?.value !== "natural") && (this.idOf(i) !== "unarmed-strike"));
+      && (i.system.type?.value !== "natural") && (idOf(i) !== "unarmed-strike"));
   }
 
   static addPart(roll, part){
@@ -119,10 +119,18 @@ export class fightingStyles{
         else if(!this.effectOn(archery) && ranged) this.addPart(roll, "2");
       }
     }
-    /* Protected : Disadvantage while its protector is within 5 ft with a shield */
+  }
+
+  /* Protected : Disadvantage while its protector is within 5 ft with a shield */
+  static protectedMode(config){
+    if(!this.enabled()) return;
+    const roll = config.rolls?.[0];
     const target = conditions.targetOf(config);
     const protector = target && this.protectorOf(target);
-    if(roll && protector) giveMode(roll, "disadvantage", module.format("fightingStyles.protected", { name : protector.name }));
+    if(roll && protector){
+      roll.options ??= {};
+      giveMode(roll, "disadvantage", module.format("fightingStyles.protected", { name : protector.name }));
+    }
   }
 
   /* The token protecting this one now, if it's still within 5 ft, holding a shield */
@@ -193,7 +201,7 @@ export class fightingStyles{
     if(!this.enabled() || (userId && (userId !== game.user.id))) return;
     const actor = item?.parent;
     if((actor?.documentName !== "Actor") || !actor.isOwner) return;
-    const relevant = (item.type === "equipment") || ["defense", "fighting-style-defense"].includes(this.idOf(item));
+    const relevant = (item.type === "equipment") || ["defense", "fighting-style-defense"].includes(idOf(item));
     if(!relevant) return;
     const defense = this.styleOf(actor, "defense");
     if(!defense) return;
@@ -245,8 +253,8 @@ export class fightingStyles{
           }
         }
       }
-      /* Protection : it was attacked */
-      if(!message.getFlag(module.id, `protect.${key}`)){
+      /* Protection : it was attacked (not when the attack already had disadvantage : they don't stack) */
+      if(!message.getFlag(module.id, `protect.${key}`) && !message.system.attackOf?.(ray)?.hasDisadvantage){
         for(const guard of this.guardsNear("protection", target, attackerToken)){
           if(this.offered(this.unmet("protection", guard, attackerToken))){
             buttons.push({ id : `protect|${guard.document.uuid}|${target.document.uuid}`, icon : "fa-shield-halved", label : module.i18n("fightingStyles.protectShort"),
@@ -345,15 +353,9 @@ export class fightingStyles{
     if(!feat) return;
     const grappled = this.grappledBy(actor);
     if(!grappled.length) return;
-    const owners = game.users.filter(u => !u.isGM && actor.testUserPermission(u, "OWNER")).map(u => u.id);
-    const esc = s => foundry.utils.escapeHTML(String(s ?? ""));
-    await ChatMessage.implementation.create({
-      speaker : ChatMessage.implementation.getSpeaker({ actor }),
-      whisper : [...owners, ...game.users.filter(u => u.isGM).map(u => u.id)],
-      content : `<div class="${module.id}-grapple"><p>${esc(module.format("fightingStyles.grappleCard", { name : feat.name }))}</p>
+    await whisperOwners(actor, `<div class="${module.id}-grapple"><p>${esc(module.format("fightingStyles.grappleCard", { name : feat.name }))}</p>
         <div class="card-buttons">${grappled.map(t => `<button type="button" data-macro-helper-grapple="${esc(t.document.uuid)}"><i class="fa-solid fa-hand-fist" inert></i> ${esc(t.name)}</button>`).join("")}</div></div>`,
-      flags : { [module.id] : { grappleDamage : { actor : actor.uuid, item : feat.uuid } } },
-    });
+      { flags : { [module.id] : { grappleDamage : { actor : actor.uuid, item : feat.uuid } } } });
   }
 
   /* A button : the feat's own "Grappled Damage" activity, aimed at that creature (dnd5e's damage card, the GM applies it) */

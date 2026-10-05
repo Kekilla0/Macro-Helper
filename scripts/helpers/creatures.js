@@ -1,4 +1,5 @@
 import { module } from '../module.js';
+import { esc } from './utils.js';
 
 /**
  * Choosing creatures (and other things) from a grid of pictures, and whether a creature fits one of dnd5e's transform /
@@ -39,7 +40,6 @@ export function fitsProfile(actor, profile, rollData = {}){
   return true;
 }
 
-const esc = s => foundry.utils.escapeHTML(String(s ?? ""));
 
 /* A creature as a tile entry : picture, name, CR */
 function entryOf(actor){

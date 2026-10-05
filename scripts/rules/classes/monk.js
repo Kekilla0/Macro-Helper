@@ -1,10 +1,13 @@
 import { module } from '../../module.js';
+import { idOf, buttonRow, addButton, wait, waitFor } from '../../helpers/utils.js';
 import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
 import { hasShieldEquipped } from '../../helpers/items.js';
 import { actions } from '../actions.js';
 import { patch } from '../../patch.js';
+import { uses } from '../../uses.js';
 import { initiative } from '../initiative.js';
+import { itemFixes } from '../item-fixes.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -49,13 +52,17 @@ export class monk{
       if((userId === game.user.id) && foundry.utils.hasProperty(changes ?? {}, `flags.${module.id}.hands`)) this.syncMovement(actor);
     });
     /* Plutonium's Step of the Wind : the free Dash added */
-    Hooks.on("createItem", (item, options, userId) => { if(userId === game.user.id) this.fixStep(item); });
-    Hooks.once("ready", () => this.repair());
+    itemFixes.add({ name : "Step of the Wind", where : "owned", plan : item => { const update = this.stepUpdate(item); return update ? { update } : null; } });
     /* Uncanny Metabolism : on the initiative roll */
     Hooks.on("macro-helper.initiativeFeet", (combatant, add) => this.metabolismFoot(combatant, add));
     /* Used : the cards show it greyed, on every client */
-    Hooks.on("updateItem", item => { if(this.idOf(item) === this.METABOLISM) this.redrawMetabolism(item.actor); });
+    Hooks.on("updateItem", item => { if(idOf(item) === this.METABOLISM) this.redrawMetabolism(item.actor); });
     Hooks.on("dnd5e.renderChatMessage", (message, html) => this.metabolismMessage(message, html));
+    /* Flurry of Blows : the Unarmed Strike, not its own attack */
+    uses.onItem("flurry", (item, ctx, next) => {
+      if(this.isMonk(item.actor) && (idOf(item) === this.FLURRY) && this.unarmedOf(item.actor)) return this.flurry(item, ctx.config, ctx.dialog, ctx.message);
+      return next();
+    });
     Hooks.once("setup", () => {
       /* Martial Arts : the weapon's die and ability, before dnd5e makes its labels and its activities' rolls */
       patch.wrap("CONFIG.Item.dataModels.weapon.prototype.prepareFinalData", function(wrapped, ...args){
@@ -67,17 +74,9 @@ export class monk{
         if((config.ability === undefined) && monk.appliesTo(this.item)) config = { ...config, ability : this.ability };
         return wrapped(config, ...rest);
       });
-      /* Flurry of Blows : the Unarmed Strike, not its own attack */
-      patch.wrap("CONFIG.Item.documentClass.prototype.use", async function(wrapped, ...args){
-        if(monk.isMonk(this.actor) && (monk.idOf(this) === monk.FLURRY) && monk.unarmedOf(this.actor)) return monk.flurry(this, ...args);
-        return wrapped(...args);
-      });
     });
   }
 
-  static idOf(item){
-    return item?.identifier ?? item?.system?.identifier ?? "";
-  }
 
   static isMonk(actor){
     return this.enabled() && !!actor?.classes?.monk;
@@ -91,7 +90,7 @@ export class monk{
 
   /* Unarmed Strike, or a Monk weapon : Simple melee, or Martial melee with Light */
   static monkWeapon(item){
-    if(this.idOf(item) === this.UNARMED) return true;
+    if(idOf(item) === this.UNARMED) return true;
     if(item?.type !== "weapon") return false;
     const type = item.system.type?.value;
     return (type === "simpleM") || ((type === "martialM") && !!item.system.properties?.has?.("lgt"));
@@ -157,14 +156,14 @@ export class monk{
   /* ---------- Flurry of Blows ---------- */
 
   static unarmedOf(actor){
-    return actor?.items?.find?.(i => this.idOf(i) === this.UNARMED) ?? null;
+    return actor?.items?.find?.(i => idOf(i) === this.UNARMED) ?? null;
   }
 
   /* A Focus Point, then the Unarmed Strike two times (three from level 10), each Attack, Grapple or Shove. The first
      closed : the point back; a later one closed : the rest skipped */
   static async flurry(item, config = {}, dialog = {}, message = {}){
     const actor = item.actor;
-    const focus = actor.items.find(i => this.idOf(i) === this.FOCUS);
+    const focus = actor.items.find(i => idOf(i) === this.FOCUS);
     if(focus && !(Number(focus.system.uses?.value) > 0)){
       ui.notifications.warn(module.format("classes.monk.noFocus", { name : actor.name, item : focus.name }));
       return null;
@@ -200,23 +199,17 @@ export class monk{
     try {
       const result = await fn();
       /* Roll Item picks and makes its card after the use : closed (nothing rolled) counts as not used */
-      const card = result?.[module.id]?.card;
-      if(card && !(await card)) return null;
+      if(result?.[module.id]?.card && !(await uses.cardOf(result))) return null;
       /* A card can still be on its way */
-      await new Promise(r => setTimeout(r, 300));
-      const wait = (test, ms) => new Promise(resolve => {
-        const end = Date.now() + ms;
-        const tick = () => (test() || (Date.now() > end)) ? resolve() : setTimeout(tick, 100);
-        tick();
-      });
+      await wait(300);
       for(const message of made){
         const live = game.messages.get(message.id) ?? message;
         /* Roll Item's staged card : attack, then damage (it plays its own dice) */
         if(live.getFlag?.(module.id, "reveal") !== undefined){
-          await wait(() => (game.messages.get(message.id)?.getFlag(module.id, "reveal") ?? 2) >= 2, 15000);
+          await waitFor(() => (game.messages.get(message.id)?.getFlag(module.id, "reveal") ?? 2) >= 2, { timeout : 15000 });
           continue;
         }
-        if(game.dice3d && live.rolls?.length && !live.getFlag?.("dice-so-nice", "skip")) await wait(() => landed.has(message.id), 10000);
+        if(game.dice3d && live.rolls?.length && !live.getFlag?.("dice-so-nice", "skip")) await waitFor(() => landed.has(message.id), { timeout : 10000 });
       }
       return result;
     }
@@ -237,7 +230,7 @@ export class monk{
   static async onUse(activity, usage, results){
     const actor = activity?.actor;
     if(!this.isMonk(actor) || !actor.isOwner) return;
-    const id = this.idOf(activity.item);
+    const id = idOf(activity.item);
     if(![this.PATIENT, this.STEP].includes(id)) return;
     const own = activity.getUsageToken?.()?.actor ?? actor;
     const focus = this.spendsFocus(activity, usage);
@@ -259,7 +252,7 @@ export class monk{
    * @returns {object|null}  the update, null : nothing to change
    */
   static stepUpdate(item){
-    if((item?.type !== "feat") || (this.idOf(item) !== this.STEP)) return null;
+    if((item?.type !== "feat") || (idOf(item) !== this.STEP)) return null;
     const activities = item.system.activities?.contents ?? [...(item.system.activities ?? [])];
     if(activities.length !== 1) return null;
     const paid = activities[0];
@@ -274,27 +267,11 @@ export class monk{
     };
   }
 
-  static async fixStep(item){
-    const update = (item?.parent?.documentName === "Actor") ? this.stepUpdate(item) : null;
-    if(update) await item.update(update);
-  }
-
-  /* The GM, once : Step of the Wind on characters already made */
-  static async repair(){
-    if(!game.users.activeGM?.isSelf) return;
-    for(const actor of game.actors){
-      for(const item of actor.items){
-        const update = this.stepUpdate(item);
-        if(update) await item.update(update).catch(error => log.error(error));
-      }
-    }
-  }
-
   /* ---------- Unarmored Movement ---------- */
 
   static async syncMovement(actor){
     if(!this.isMonk(actor) || !actor.isOwner) return;
-    const item = actor.items.find(i => this.idOf(i) === this.MOVEMENT);
+    const item = actor.items.find(i => idOf(i) === this.MOVEMENT);
     if(!item) return;
     const disabled = !this.unarmored(actor);
     const updates = item.effects.filter(e => e.transfer && (e.disabled !== disabled)).map(e => ({ _id : e.id, disabled }));
@@ -311,7 +288,7 @@ export class monk{
    */
   static metabolismOf(actor, key){
     if(!this.isMonk(actor) || !actor.isOwner) return null;
-    const item = actor.items.find(i => this.idOf(i) === this.METABOLISM);
+    const item = actor.items.find(i => idOf(i) === this.METABOLISM);
     if(!item) return null;
     if(Number(item.system.uses?.value) > 0) return { item, used : false };
     return (item.getFlag(module.id, "usedOn") === key) ? { item, used : true } : null;
@@ -351,11 +328,8 @@ export class monk{
     if(!found) return;
     const latest = game.messages.contents.findLast(m => m.getFlag?.("core", "initiativeRoll") && (m.speaker?.actor === message.speaker?.actor));
     if(latest && (latest.id !== message.id)) return;
-    const content = html.querySelector(".message-content") ?? html;
-    if(content.querySelector(".macro-helper-initiative-feet")) return;
-    const feet = document.createElement("div");
-    feet.className = "card-buttons macro-helper-initiative-feet";
-    feet.append(initiative.footButton("fa-yin-yang", this.metabolismLabel(found.item, actor.name), () => this.useMetabolism(found.item, message.id), { disabled : found.used }));
-    content.append(feet);
+    if(html.querySelector(`.${module.id}-initiative-feet`)) return;
+    addButton(buttonRow(html, { key : `${module.id}-initiative-feet` }),
+      initiative.footButton("fa-yin-yang", this.metabolismLabel(found.item, actor.name), () => this.useMetabolism(found.item, message.id), { disabled : found.used }));
   }
 }

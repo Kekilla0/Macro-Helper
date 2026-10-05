@@ -1,4 +1,5 @@
 import { module } from '../module.js';
+import { idOf, esc, gmIds } from '../helpers/utils.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
@@ -131,7 +132,7 @@ export class rollRequests{
   }
 
   static esc(s){
-    return foundry.utils.escapeHTML(String(s ?? ""));
+    return esc(s);
   }
 
   /* The category picks what the second list offers */
@@ -170,7 +171,7 @@ export class rollRequests{
 
   /* The GM and the creatures' owners */
   static whisperTo(rows){
-    const ids = new Set(game.users.filter(u => u.isGM).map(u => u.id));
+    const ids = new Set(gmIds());
     for(const row of rows){
       const actor = fromUuidSync(row.actor, { strict : false });
       for(const u of game.users) if(actor?.testUserPermission(u, "OWNER")) ids.add(u.id);
@@ -287,7 +288,7 @@ export class rollRequests{
       }
       const inspiration = failed && !entry.bardic && bard.inspirationOf(actor);
       if(inspiration) out.push(button("bardic", "fa-music", module.format("requests.featFor", { feat : module.format("classes.bard.use", { die : inspiration.die }), name : row.name })));
-      const tactical = failed && isCheck && !entry.tactical && fighter.enabled() && actor.items.some(i => fighter.idOf(i) === fighter.TACTICAL_MIND)
+      const tactical = failed && isCheck && !entry.tactical && fighter.enabled() && actor.items.some(i => idOf(i) === fighter.TACTICAL_MIND)
         && (Number(fighter.secondWindOf(actor)?.system?.uses?.value) > 0);
       if(tactical) out.push(button("tactical", "fa-chess-knight", module.format("requests.featFor", { feat : module.i18n("classes.fighter.tactical"), name : row.name })));
     }

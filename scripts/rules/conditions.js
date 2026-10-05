@@ -1,4 +1,5 @@
 import { module } from '../module.js';
+import { rollModes } from '../roll-item/roll-modes.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { tokenOf, distanceBetween, canSee } from '../helpers/tokens.js';
@@ -29,7 +30,7 @@ const log = logger.for(import.meta.url);
 export class conditions{
   static register(){
     if(game.system.id !== "dnd5e") return;
-    Hooks.on("dnd5e.preRollAttackV2", config => this.onPreRollAttack(config));
+    rollModes.add("conditions", config => this.onPreRollAttack(config));
     Hooks.on("dnd5e.rollAttackV2", (rolls, { subject } = {}) => logReasons(subject, rolls?.[0]));
     Hooks.on("dnd5e.applyDamage", (actor, amount, options) => this.onApplyDamage(actor, amount, options));
     Hooks.on("dnd5e.preApplyDamage", (actor, amount, updates, options) => this.onPreApplyDamage(actor, amount, updates, options));

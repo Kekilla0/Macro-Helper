@@ -1,4 +1,5 @@
 import { module } from '../module.js';
+import { idOf, whisperOwners } from '../helpers/utils.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { addLight, removeLight, hasLight } from '../helpers/tokens.js';
@@ -42,12 +43,9 @@ export class heldLight{
     });
   }
 
-  static idOf(item){
-    return item?.identifier ?? item?.system?.identifier ?? "";
-  }
 
   static sourceOf(item){
-    return this.SOURCES[this.idOf(item)] ?? null;
+    return this.SOURCES[idOf(item)] ?? null;
   }
 
   static key(id){
@@ -86,7 +84,7 @@ export class heldLight{
     if(timed){
       if(item.getFlag(module.id, "burnedOut")){
         if(!source.oil) return false;
-        const oil = actor.items.find(i => this.OIL.includes(this.idOf(i)));
+        const oil = actor.items.find(i => this.OIL.includes(idOf(i)));
         if(!oil){
           ui.notifications.warn(module.format("hands.noOil", { item : item.name }));
           return false;
@@ -153,11 +151,7 @@ export class heldLight{
     await item.unsetFlag(module.id, "burnLeft");
     if(source.used) await this.useOne(item);
     else await item.setFlag(module.id, "burnedOut", true);
-    const owners = game.users.filter(u => actor.testUserPermission(u, "OWNER")).map(u => u.id);
-    await ChatMessage.implementation.create({
-      speaker : ChatMessage.implementation.getSpeaker({ actor }), whisper : owners,
-      content : `<p>${foundry.utils.escapeHTML(module.format(source.used ? "hands.burntOut" : "hands.outOfOil", { name : actor.name, item : item.name }))}</p>`,
-    });
+    await whisperOwners(actor, module.format(source.used ? "hands.burntOut" : "hands.outOfOil", { name : actor.name, item : item.name }));
   }
 
   /* The effect deleted by hand : the light goes out, the time left is kept, the item stays in hand */

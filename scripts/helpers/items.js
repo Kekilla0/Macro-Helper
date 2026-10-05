@@ -1,16 +1,13 @@
 import { module } from '../module.js';
 import { settings } from '../settings.js';
 import { conditions } from '../rules/conditions.js';
-import { homebrew } from '../rules/homebrew.js';
-import { actions } from '../rules/actions.js';
 import { hands } from '../rules/hands.js';
-import { weapons } from '../rules/weapons.js';
-import { masteries } from '../roll-item/masteries.js';
-import { barbarian } from '../rules/classes/barbarian.js';
 import { rollItem } from '../roll-item/roll-item.js';
 import { tokenOf, actorOf, distanceBetween, getRange, isOutOfAction } from './tokens.js';
 import { pickTargets, getThreats } from './targets.js';
 import { findItem, usedThisTurn } from './actors.js';
+import { uses } from '../uses.js';
+import { rollModes } from '../roll-item/roll-modes.js';
 
 /**
  * Item helpers.
@@ -399,8 +396,8 @@ export async function useAndApply(item, { activity, to, max, event } = {}){
   if(!results) return null;
 
   /* Roll Item makes its card after the use : wait for it */
-  const made = await results[module.id]?.card;
-  const card = (made?.message ?? made) ?? ((results.message?.documentName === "ChatMessage") ? results.message : null);
+  const made = await uses.cardOf(results);
+  const card = made?.message ?? ((made?.documentName === "ChatMessage") ? made : null);
   const { DamageRoll } = CONFIG.Dice;
   let rolls = (card?.rolls ?? []).filter(r => r instanceof DamageRoll);
   if(!rolls.length && chosen.rollDamage) rolls = (await chosen.rollDamage({ event }, { configure : false }, {})) ?? [];
@@ -602,17 +599,7 @@ export async function setBaseDamage(item, { number, denomination, types, bonus }
 export function predictMode(activity, target, { attackMode, disadvantage = false } = {}){
   const roll = { options : {} };
   const config = { subject : activity, rolls : [roll], attackMode, ability : activity?.ability, [module.id] : { target : target?.document?.uuid } };
-  try {
-    conditions.onPreRollAttack(config);
-    homebrew.onPreRollAttack(config);
-    actions.onPreRollAttack(config);
-    masteries.onPreRollAttack(config);
-    barbarian.onPreRollAttack(config);
-    const ranged = String(activity?.getActionType?.(attackMode) ?? "").startsWith("r");
-    if(weapons.isHeavyFor(activity?.actor, activity?.item, ranged)) roll.options.disadvantage = true;
-  } catch(error){
-    console.warn(`${module.title} | predicting the attack's mode`, error);
-  }
+  rollModes.apply(config);
   const adv = !!roll.options.advantage, dis = !!roll.options.disadvantage || !!disadvantage;
   return (adv && !dis) ? "advantage" : (dis && !adv) ? "disadvantage" : "normal5e";
 }
