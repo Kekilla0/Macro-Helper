@@ -586,5 +586,7 @@
   "hands.notBothHands" : "{item} is held in one hand : a two-handed attack needs both.",
   "rules.weapon.offhandLight" : "{item} isn't Light : only a Light weapon makes the extra (off-hand) attack.",
   "hands.improvisedMain" : "{item} isn't a weapon : attacking with it (an improvised weapon) is from the main hand.",
-  "hands.attackedWith" : "Attacked with {item}"
+  "hands.attackedWith" : "Attacked with {item}",
+  "classes.monk.noFocus" : "{name} has no {item} left.",
+  "classes.monk.stepFocusName" : "{item} (Focus Point)"
 }

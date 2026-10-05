@@ -10,7 +10,7 @@ import { barbarian } from '../rules/classes/barbarian.js';
 import { rollItem } from '../roll-item/roll-item.js';
 import { tokenOf, actorOf, distanceBetween, getRange, isOutOfAction } from './tokens.js';
 import { pickTargets, getThreats } from './targets.js';
-import { findItem } from './actors.js';
+import { findItem, usedThisTurn } from './actors.js';
 
 /**
  * Item helpers.
@@ -74,16 +74,33 @@ export function attackModeFor(item, target, { long = true } = {}){
   /* Dueling : a Versatile weapon is meant for one hand (its +2 needs it). With Hands : two-handed only when in both */
   const dueling = item?.actor?.items?.some?.(i => ["dueling", "fighting-style-dueling"].includes(i.identifier ?? i.system?.identifier));
   const held = hands.manages(item?.actor) ? hands.handOf(item.actor, item) : null;
-  const melee = versatile ? (held ? ((held === "both") ? "twoHanded" : "oneHanded") : ((isOtherHandFree(item) && !dueling) ? "twoHanded" : "oneHanded"))
-    : (modes.find(m => !m.startsWith("thrown")) ?? null);
-  if(!modes.includes("thrown")) return versatile ? melee : null;
+  /* The Light weapon's extra attack : off-hand (no ability modifier) */
+  const offhand = modes.includes("offhand") && isExtraLightAttack(item);
+  const melee = offhand ? "offhand"
+    : versatile ? (held ? ((held === "both") ? "twoHanded" : "oneHanded") : ((isOtherHandFree(item) && !dueling) ? "twoHanded" : "oneHanded"))
+    : (modes.find(m => !m.startsWith("thrown") && !m.endsWith("offhand")) ?? null);
+  if(!modes.includes("thrown")) return (versatile || offhand) ? melee : null;
+  const thrown = (offhand && modes.includes("thrown-offhand")) ? "thrown-offhand" : "thrown";
 
   const from = tokenOf(item), to = tokenOf(target);
-  if(!from || !to) return melee ?? "thrown";
+  if(!from || !to) return melee ?? thrown;
 
   const distance = distanceBetween(from, to);
-  if(distance <= getRange(item)) return melee ?? "thrown";                                  // within reach : stab (or throw a Dart)
-  return (distance <= getRange(item, { thrown : true, long })) ? "thrown" : (melee ?? "thrown"); // beyond reach : throw it
+  if(distance <= getRange(item)) return melee ?? thrown;                                  // within reach : stab (or throw a Dart)
+  return (distance <= getRange(item, { thrown : true, long })) ? thrown : (melee ?? thrown); // beyond reach : throw it
+}
+
+/**
+ * Is an attack with this weapon now the Light extra attack ? A Light weapon (with Hands : in the off hand) after a
+ * different Light weapon attacked this turn (weapon handling remembers it), and not itself already.
+ * @param {Item} item
+ * @returns {boolean}
+ */
+export function isExtraLightAttack(item){
+  const actor = item?.actor;
+  if(!actor || !item.system?.properties?.has?.("lgt") || usedThisTurn(actor, `light.${item.id}`)) return false;
+  if(hands.manages(actor) && (hands.handOf(actor, item) !== "off")) return false;
+  return !!actor.items?.some?.(i => (i.id !== item.id) && i.system?.properties?.has?.("lgt") && usedThisTurn(actor, `light.${i.id}`));
 }
 
 /**
@@ -382,7 +399,8 @@ export async function useAndApply(item, { activity, to, max, event } = {}){
   if(!results) return null;
 
   /* Roll Item makes its card after the use : wait for it */
-  const card = (await results[module.id]?.card) ?? ((results.message?.documentName === "ChatMessage") ? results.message : null);
+  const made = await results[module.id]?.card;
+  const card = (made?.message ?? made) ?? ((results.message?.documentName === "ChatMessage") ? results.message : null);
   const { DamageRoll } = CONFIG.Dice;
   let rolls = (card?.rolls ?? []).filter(r => r instanceof DamageRoll);
   if(!rolls.length && chosen.rollDamage) rolls = (await chosen.rollDamage({ event }, { configure : false }, {})) ?? [];

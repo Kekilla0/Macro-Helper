@@ -326,11 +326,37 @@ export class initiative{
       }
     }
 
+    /* Features on the roll (Uncanny Metabolism), the current round only : full buttons at the card's foot */
+    let feet = null;
+    const addFoot = (icon, label, onClick, options) => {
+      if(!feet){
+        feet = document.createElement("div");
+        feet.className = "card-buttons macro-helper-initiative-feet";
+        (html.querySelector(".macro-helper-initiative") ?? html).append(feet);
+      }
+      feet.append(this.footButton(icon, label, onClick, options));
+    };
     for(const li of items){
       const combatant = combat.combatants.get(li.dataset.combatant);
       if(!combatant?.isOwner) continue;
       li.append(this.#button("fa-rotate", module.i18n("rerolls.reroll"), event => this.rerollRow(combat, combatant, event)));
+      if(info.round === combat.round) Hooks.callAll("macro-helper.initiativeFeet", combatant, addFoot);
     }
+  }
+
+  /* A full button with its words (the card's foot; dnd5e's own initiative message too) */
+  static footButton(icon, label, onClick, { disabled = false } = {}){
+    const button = document.createElement("button");
+    button.type = "button";
+    button.disabled = disabled;
+    button.innerHTML = `<i class="fa-solid ${icon}" inert></i> ${foundry.utils.escapeHTML(label)}`;
+    button.addEventListener("click", async event => {
+      event.preventDefault();
+      button.disabled = true;
+      try { await onClick(event); }
+      catch(error){ ui.notifications.warn(error.message); button.disabled = false; }
+    });
+    return button;
   }
 
   /* A fresh initiative roll for one combatant, with advantage / disadvantage chosen like any reroll */

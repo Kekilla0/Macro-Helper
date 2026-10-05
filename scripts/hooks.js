@@ -17,6 +17,7 @@ import { druid } from './rules/classes/druid.js';
 import { restChoices } from './rules/rest-choices.js';
 import { familiars } from './rules/familiars.js';
 import { fighter } from './rules/classes/fighter.js';
+import { monk } from './rules/classes/monk.js';
 import { weaponMastery } from './rules/weapon-mastery.js';
 import { fightingStyles } from './rules/fighting-styles.js';
 import { compendiums } from './rules/compendiums.js';
@@ -45,6 +46,7 @@ Hooks.once("init", ()=> {
   restChoices.register();
   familiars.register();
   fighter.register();
+  monk.register();
   weaponMastery.register();
   fightingStyles.register();
   compendiums.register();

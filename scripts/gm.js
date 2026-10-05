@@ -108,6 +108,8 @@ export class gm{
     /* "Next turn" : never the turn the effect was made in */
     const done = this.#effects(e => (e.combat === combat.id) && (
       ((e.at === "turnEnd") && (e.actor === ended) && ((priorAt > this.#at(e.round, e.turn)) || (e.thisTurn && (priorAt >= this.#at(e.round, e.turn)))))
+      /* "This turn" and a new round began : that token's turn is over, even when its end was skipped (Next Round) */
+      || ((e.at === "turnEnd") && e.thisTurn && ((current?.round ?? 0) > e.round))
       || (!waitForOrder && (e.at === "turnStart") && (e.actor === started) && (currentAt > this.#at(e.round, e.turn)))
     ));
     for(const effect of done){

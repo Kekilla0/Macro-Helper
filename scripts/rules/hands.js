@@ -34,6 +34,8 @@ export class hands{
     if(game.system.id !== "dnd5e") return;
     Hooks.on("renderActorSheetV2", (app, html) => this.renderSlots(app, html));
     Hooks.on("updateItem", (item, changes, options, userId) => this.onEquip(item, changes, options, userId));
+    /* Gear arrives equipped (Plutonium, dnd5e's starting equipment) : not in a hand, so not equipped */
+    Hooks.on("preCreateItem", (item, data, options) => this.onPreCreate(item, options));
     Hooks.on("deleteItem", (item, options, userId) => this.onDelete(item, userId));
     Hooks.on("dnd5e.getItemContextOptions", (item, options) => this.contextOptions(item, options));
     Hooks.on("dnd5e.preRollAttackV2", config => this.onPreRollAttack(config));
@@ -254,6 +256,7 @@ export class hands{
   static renderSlots(app, html){
     const actor = app.document ?? app.actor;
     if(!this.manages(actor)) return;
+    if(actor.isOwner) this.tidySoon(actor);
     const root = (html instanceof HTMLElement) ? html : html?.[0];
     const portrait = root?.querySelector(".sidebar .portrait") ?? app.element?.querySelector?.(".sidebar .portrait");
     if(!portrait || portrait.querySelector(`.${module.id}-hands`)) return;
@@ -326,8 +329,41 @@ export class hands{
     /* A Versatile item held two-handed makes room for one more */
     const versatileBoth = h.main && (h.main === h.off) && this.isVersatile(actor.items.get(h.main));
     if(versatileBoth && !this.isTwoHanded(item)) return this.save(actor, this.placed(actor, h, item, "off"));
-    if(limits.allow(module.format("hands.full", { name : actor.name, item : item.name }), { who : actor.name, what : module.format("hands.equipped", { item : item.name }) })) return;
+    if(limits.allow(module.format("hands.full", { name : actor.name, item : item.name }), { who : actor.name, what : module.format("hands.equipped", { item : item.name }) })){
+      return this.save(actor, this.placed(actor, h, item, "main"));
+    }
     await item.update({ "system.equipped" : false }, { [module.id] : { hands : true } });
+  }
+
+  /* Equipped held gear arriving on a character : unequipped (the hands decide what's held) */
+  static onPreCreate(item, options = {}){
+    const actor = item?.parent;
+    if(options[module.id]?.hands || !this.manages(actor) || !this.isHeldGear(item) || !this.canHold(item) || !item.system?.equipped) return;
+    item.updateSource({ "system.equipped" : false });
+  }
+
+  static #tidying = new Map();
+
+  /* Weapons and shields equipped but not in a hand (auto-equipped, or from before Hands) */
+  static strays(actor){
+    const held = new Set(this.heldItems(actor).map(i => i.id));
+    return actor.items.filter(i => this.isHeldGear(i) && this.canHold(i) && i.system.equipped && !held.has(i.id));
+  }
+
+  /* The sheet shows the hands : strays unequipped, a moment later (an Equip being put in a hand finishes first) */
+  static tidySoon(actor){
+    if(!this.strays(actor).length) return;
+    clearTimeout(this.#tidying.get(actor.uuid));
+    this.#tidying.set(actor.uuid, setTimeout(() => {
+      this.#tidying.delete(actor.uuid);
+      this.tidy(actor).catch(error => log.error(error));
+    }, 600));
+  }
+
+  static async tidy(actor){
+    const updates = this.strays(actor).map(i => ({ _id : i.id, "system.equipped" : false }));
+    if(updates.length) await actor.updateEmbeddedDocuments("Item", updates, { [module.id] : { hands : true } });
+    log.debug("Hands tidied", actor.name, updates.length);
   }
 
   static async onDelete(item, userId){

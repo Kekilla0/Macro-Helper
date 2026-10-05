@@ -44,7 +44,10 @@ export class actions{
 
   static register(){
     if(game.system.id !== "dnd5e") return;
-    Hooks.on("dnd5e.postUseActivity", (activity, usage) => this.onUse(activity, usage));
+    Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.onUse(activity, usage, results));
+    Hooks.on("dnd5e.renderChatMessage", (message, html) => {
+      if(message.getFlag?.(module.id, "autoApplied")) html.classList?.add(`${module.id}-auto-applied`);
+    });
     Hooks.on("dnd5e.preRollAttackV2", config => this.onPreRollAttack(config));
     Hooks.on("dnd5e.rollAttackV2", rolls => this.consume(rolls?.[0]));
     Hooks.on("dnd5e.preRollSkillV2", config => this.onPreRollCheck(config, `skill:${config.skill}`));
@@ -104,15 +107,15 @@ export class actions{
   }
 
   /* After the use : Dodge, and what Help chose before it */
-  static async onUse(activity, usage){
+  static async onUse(activity, usage, results){
     if(!this.enabled() || !activity?.actor?.isOwner) return;
     const id = this.idOf(activity.item);
     try {
       /* On the token's own actor : an unlinked token opened from the sidebar would otherwise miss it */
       const own = activity.getUsageToken?.()?.actor ?? tokenOf(activity.actor)?.actor ?? activity.actor;
-      if(id === this.DODGE) return await this.dodge(own);
-      if(id === this.DASH) return await this.mark(own, "dash", "actions.dash.mark", "icons/skills/movement/feet-winged-boots-glowing-yellow.webp");
-      if(id === this.DISENGAGE) return await this.mark(own, "disengage", "actions.disengage.mark", "icons/skills/movement/arrow-upward-yellow.webp");
+      if(id === this.DODGE) return await this.dodge(own).then(() => this.autoApplied(results));
+      if(id === this.DASH) return await this.mark(own, "dash", "actions.dash.mark", "icons/skills/movement/feet-winged-boots-glowing-yellow.webp").then(() => this.autoApplied(results));
+      if(id === this.DISENGAGE) return await this.mark(own, "disengage", "actions.disengage.mark", "icons/skills/movement/arrow-upward-yellow.webp").then(() => this.autoApplied(results));
       const help = usage?.[module.id]?.before?.help;
       if((id !== this.HELP) || !help?.target) return;
       if(help.mode === "attack") return await this.assistAttack(activity, help);
@@ -122,6 +125,12 @@ export class actions{
       log.error(error);
       ui.notifications.warn(error.message);
     }
+  }
+
+  /* Applied by the module : the card's effect buttons are greyed out (for its owner and the GM) */
+  static async autoApplied(results){
+    const message = results?.message;
+    if(message?.setFlag && message.isOwner) await message.setFlag(module.id, "autoApplied", true);
   }
 
   /* ---------- Dodge ---------- */

@@ -369,8 +369,12 @@ export class rollItem{
     const area = rollItem.targetArea(activity, results);
 
     switch(usage[module.id]?.mode){
-      case "attack" :
-        return void rollItem.attackAfterUse(activity, usage, area);
+      case "attack" : {
+        /* The pick and card come after dnd5e's use returns : the promise goes on the results (Flurry of Blows waits) */
+        const card = rollItem.attackAfterUse(activity, usage, area);
+        if(results) results[module.id] = { card };
+        return;
+      }
       case "save" :
       case "heal" :
       case "damage" :

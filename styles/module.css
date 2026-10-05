@@ -359,3 +359,8 @@
 .macro-helper-hand > i.fa-hand.flip { transform : scaleX(-1); }
 .macro-helper-hand.both { border-style : double; border-width : 3px; }
 .macro-helper-hand .link { position : absolute; right : 1px; bottom : 1px; font-size : 9px; color : #fff; text-shadow : 0 0 2px #000; }
+
+/* Effects the module applied itself : the card's apply buttons greyed out */
+.chat-message.macro-helper-auto-applied effect-application .apply-button,
+.chat-message.macro-helper-auto-applied effect-application menu.effects button { opacity : 0.45; pointer-events : none; filter : grayscale(1); }
+.chat-message .macro-helper-initiative-feet { display : flex; flex-direction : column; gap : 4px; margin-top : 6px; }
