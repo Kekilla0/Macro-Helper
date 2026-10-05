@@ -540,6 +540,17 @@ export function registerMessages(){
       });
     }
 
+    /* Each box of the card applies once to each creature, on its own : the attack's damage, Hunter's Mark's, a smite's,
+       Graze, the save's... (dnd5e's tray would record them all as one "tray" : the first would block the rest) */
+    get partKey(){
+      const { part = "base", key, ray } = this.dataset;
+      return ["tray", part, key, ray].filter(v => (v !== undefined) && (v !== "")).join("-").replace(/\./g, "-");
+    }
+
+    getMergedOptions(uuid){
+      return { ...super.getMergedOptions(uuid), [module.id] : { part : this.partKey } };
+    }
+
     /* Extra damage added as an alternative (Savage Attacker's second roll) : applying the first roll or the
        alternative keeps that one, the other goes away */
     async _onApplyDamage(event){
@@ -776,10 +787,11 @@ export function registerMessages(){
      * @param {number|null} [options.ray]     which attack on a multi card, null for a single attack
      * @param {boolean} [options.alternative] instead of the attack's damage, not on top : applying one hides the other
      */
-    async addDamage(rolls, { key, label, ray = null, alternative = false } = {}){
+    async addDamage(rolls, { key, label, ray = null, alternative = false, onHit = false, formula = null } = {}){
       if(!rolls?.length || !key) return;
       for(const roll of rolls){
-        roll.options[module.id] = { ...(Number.isInteger(ray) ? { ray } : {}), part : "extra", key, label : label ?? key, alternative };
+        roll.options[module.id] = { ...(Number.isInteger(ray) ? { ray } : {}), part : "extra", key, label : label ?? key, alternative,
+          ...(onHit ? { onHit : true } : {}), ...(formula ? { formula } : {}) };
       }
       await rollItem.showDice(rolls, this.parent);
       const update = { rolls : [...this.parent.rolls, ...rolls].map(r => JSON.stringify(r)) };
@@ -803,10 +815,30 @@ export function registerMessages(){
       if(!result) return null;
       if(result.status === "same") return "same";
       const { updated, extra } = result;
+      await this._swapAttack(ray, old, updated, extra ? [extra] : []);
+      return result.status;
+    }
 
-      /* Crit changed : the damage follows */
+    /**
+     * Debug : this attack's d20 shows a set number (20 : a crit, 1 : a miss); the damage follows a changed crit.
+     * @param {number|null} ray
+     * @param {number} value
+     */
+    async forceD20(ray, value){
+      const old = this.attackOf(ray);
+      if(!old) return null;
+      const updated = Roll.fromData(old.toJSON());
+      const d20 = updated.dice?.[0];
+      if(!d20) return null;
+      d20.results = d20.results.map(r => ({ ...r, result : value }));
+      updated._total = updated._evaluateTotal();
+      await this._swapAttack(ray, old, updated, []);
+      return true;
+    }
+
+    /* An attack roll replaced : a crit gained or lost rolls its damage again */
+    async _swapAttack(ray, old, updated, shown){
       let rolls = this.parent.rolls.map(r => (r === old) ? updated : r);
-      const shown = extra ? [extra] : [];
       if(updated.isCritical !== old.isCritical){
         const activity = this.parent.getAssociatedActivity({ scaled : true });
         const base = Number.isInteger(ray) ? this.rayDamage(ray) : this.damageRolls;
@@ -817,8 +849,18 @@ export function registerMessages(){
           shown.push(...damage);
         }
       }
+      /* Extra boxes rolled from a formula (Hunter's Mark, a smite) : again, doubled or not */
+      if(updated.isCritical !== old.isCritical){
+        const extras = Number.isInteger(ray) ? this.rayDamage(ray, "extra") : this.parent.rolls.filter(r => r instanceof DamageRoll && tagOf(r).part === "extra");
+        for(const roll of extras){
+          const formula = tagOf(roll).formula;
+          if(!formula) continue;
+          const again = await new DamageRoll(formula, {}, { ...roll.options, isCritical : updated.isCritical, configured : false }).evaluate();
+          rolls = rolls.map(r => (r === roll) ? again : r);
+          shown.push(again);
+        }
+      }
       await replaceRolls(this.parent, { rolls, shown });
-      return result.status;
     }
 
     /* A die added to one attack roll (Bardic Inspiration) : the card re-judges the hit */

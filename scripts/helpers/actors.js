@@ -382,14 +382,20 @@ export async function setStatus(thing, status, active = true, { overlay = false 
 
 /**
  * Stabilize a creature at 0 HP : its death saves reset and it's Stable (no more death saves until it takes damage or
- * regains HP). Help's Stabilize, a Healer's Kit... The GM does it when you don't own the creature.
+ * regains HP). Help's Stabilize, a Healer's Kit... A creature you don't own, or the GM's own use : a card with the GM's
+ * Stabilize button instead.
  * @param {Actor|Token|TokenDocument} thing
- * @returns {Promise<boolean>}  true if it's now stable
+ * @param {object} [options]
+ * @param {boolean} [options.confirmed=false]  the GM's button : do it now
+ * @returns {Promise<boolean>}  true if it's now stable (or the GM was asked)
  */
-export async function stabilize(thing){
+export async function stabilize(thing, { confirmed = false } = {}){
   const actor = actorOf(thing);
   if(!actor || (Number(actor.system?.attributes?.hp?.value) > 0)) return false;
-  if(!actor.isOwner) return !!(await gm.run("stabilize", { actor : actor.uuid }));
+  /* Someone else's creature, or the GM's use (the GM owns everything, but wants the click) : the GM's button
+     (confirmed : that button, doing it) */
+  if(!confirmed && (!actor.isOwner || game.user.isGM)) return !!(await gm.ask("stabilize", { actor : actor.uuid },
+    { text : module.format("actions.stabilize.ask", { name : actor.name }), label : module.format("actions.stabilize.askButton", { name : actor.name }) }));
   await actor.update({ "system.attributes.death.success" : 0, "system.attributes.death.failure" : 0 });
   await setStatus(actor, "stable", true);
   ui.notifications.info(module.format("actions.stabilize.done", { name : actor.name }));

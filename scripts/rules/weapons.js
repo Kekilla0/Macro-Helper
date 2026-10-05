@@ -224,6 +224,10 @@ export class weapons{
     if((item?.type !== "weapon") || !actor?.isOwner || (settings.value("weaponRules") === "off")) return;
     const props = item.system.properties ?? new Set();
     if(props.has("lod")) await this.#mark(actor, `loading.${item.id}`);
-    if(props.has("lgt") && !String(roll?.options?.attackMode ?? "").endsWith("offhand")) await this.#mark(actor, `light.${item.id}`);
+    if(props.has("lgt") && !String(roll?.options?.attackMode ?? "").endsWith("offhand")){
+      await this.#mark(actor, `light.${item.id}`);
+      /* Out of combat there are no turns : the last Light weapon attack, for a minute */
+      if(!game.combat?.started) await actor.setFlag(module.id, "lastLight", { item : item.id, at : Date.now() });
+    }
   }
 }

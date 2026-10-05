@@ -162,7 +162,11 @@ export class maneuvers{
 
   /* The button : ask the GM to shove that target */
   static async shove(card, uuid, choice){
-    const notes = await gm.run("shove", { message : card.id, target : uuid, choice });
-    for(const note of notes ?? []) ui.notifications.info(note);
+    const name = fromUuidSync(uuid, { strict : false })?.name ?? "";
+    const what = module.i18n(choice === "push" ? "rollItem.maneuver.push" : "rollItem.maneuver.prone");
+    const notes = await gm.ask("shove", { message : card.id, target : uuid, choice }, { actor : card.getAssociatedActor?.(),
+      text : module.format("rollItem.maneuver.ask", { name : card.getAssociatedActor?.()?.name ?? "", target : name, what }),
+      label : module.format("rollItem.maneuver.askButton", { target : name, what }) });
+    for(const note of (Array.isArray(notes) ? notes : [])) ui.notifications.info(note);
   }
 }

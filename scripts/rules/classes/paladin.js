@@ -44,10 +44,10 @@ export class paladin{
 
   static register(){
     if(game.system.id !== "dnd5e") return;
-    Hooks.on(`${module.id}.cardButtons`, (message, buttons, context) => { this.cardButtons(message, buttons, context); this.pushButtons(message, buttons, context); });
+    Hooks.on(`${module.id}.cardButtons`, (message, buttons, context) => this.cardButtons(message, buttons, context));
+    Hooks.on("dnd5e.renderChatMessage", (message, html) => this.pushButtons(message, html));
     Hooks.on(`${module.id}.cardButton`, (message, id, context) => {
       if(id === "smite") this.smite(message, context?.ray ?? null);
-      if(id?.startsWith?.("smitePush|")) this.push(message, id.split("|")[1]);
     });
     /* A smite spell (or Paladin's Smite) used from the sheet : the latest melee hit */
     uses.onItem("smite", (item, ctx, next) => {
@@ -64,8 +64,14 @@ export class paladin{
     });
     Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.onUse(activity, usage, results));
     Hooks.on("renderChatMessageHTML", (message, html) => this.poisonButton(message, html));
+    Hooks.on("dnd5e.restCompleted", (actor, result) => {
+      if(result?.longRest && actor?.isOwner && actor.getFlag(module.id, "paladinsSmiteUsed")) actor.unsetFlag(module.id, "paladinsSmiteUsed");
+    });
     /* Plutonium's Lay on Hands has no range : a creature you touch */
     itemFixes.add({ name : "Lay on Hands", where : "owned", plan : item => this.layOnHandsFix(item) });
+    /* Plutonium's Paladin's Smite keeps its use on its cast activity too : one use, the item's (as Favored Enemy has it),
+       so its Divine Smite shows it in the spellbook */
+    itemFixes.add({ name : "Paladin's Smite", where : "owned", plan : item => this.smiteFix(item) });
   }
 
   /* ---------- Smites ---------- */
@@ -92,7 +98,9 @@ export class paladin{
     if(!item) return null;
     if(item.system.uses?.max) return (Number(item.system.uses.value) > 0) ? { item, activity : null } : null;
     const activity = item.system.activities?.find?.(a => a.uses?.max) ?? null;
-    return (activity && (Number(activity.uses.value) > 0)) ? { item, activity } : null;
+    if(activity) return (Number(activity.uses.value) > 0) ? { item, activity } : null;
+    /* No uses on it at all (dnd5e's own) : once a Long Rest, counted on the actor */
+    return actor.getFlag(module.id, "paladinsSmiteUsed") ? null : { item, activity : null, counted : true };
   }
 
   /* The spell slots left at a level or higher : { key : "spell2", level, value } (Pact Magic too) */
@@ -200,7 +208,7 @@ export class paladin{
     if(damage){
       const isCritical = !!message.system.attackOf(ray)?.isCritical;
       const roll = await new CONFIG.Dice.DamageRoll(damage.formula, {}, { type : damage.type, types : [damage.type], isCritical, properties : ["mgc"] }).evaluate();
-      await message.system.addDamage([roll], { key : "smite", ray,
+      await message.system.addDamage([roll], { key : "smite", ray, formula : damage.formula,
         label : module.format("classes.paladin.smiteLabel", { spell : choice.spell.name, level : choice.level }) });
     }
     await message.setFlag(module.id, `smite.${masteries.rayKey(ray)}`, choice.spell.id);
@@ -220,6 +228,7 @@ export class paladin{
   static async pay(actor, choice){
     if(choice.free){
       const free = this.freeSmite(actor);
+      if(free?.counted) return actor.setFlag(module.id, "paladinsSmiteUsed", true);
       if(free?.activity) return free.item.update({ [`system.activities.${free.activity.id}.uses.spent`] : (Number(free.activity.uses.spent) || 0) + 1 });
       if(free) return free.item.update({ "system.uses.spent" : (Number(free.item.system.uses.spent) || 0) + 1 });
       return;
@@ -246,12 +255,19 @@ export class paladin{
     return spell ? (this.PUSHES[idOf(spell)] ?? 0) : 0;
   }
 
-  static pushButtons(message, buttons, { ray } = {}){
-    if(!game.user.isGM || !this.enabled() || Number.isInteger(ray) || !this.pushOf(message)) return;
+  /* Under the save on the card, for the GM */
+  static pushButtons(message, html){
+    if(!game.user.isGM || !this.enabled() || (message.type !== TYPES.attack) || !this.pushOf(message)) return;
+    if(!html.querySelector(`.${module.id}-rider`)) return;
+    const row = buttonRow(html, { key : `${module.id}-smite-push`, into : `.${module.id}-rider` });
+    if(row.childElementCount) return;
     for(const [uuid, outcome] of message.system.outcomes ?? []){
-      if((outcome !== "failure") || message.getFlag(module.id, `pushed.${uuid.replaceAll(".", "-")}`)) continue;
+      if(outcome !== "failure") continue;
       const token = fromUuidSync(uuid, { strict : false });
-      if(token) buttons.push({ id : `smitePush|${uuid}`, icon : "fa-arrows-left-right", label : module.format("classes.paladin.push", { name : token.name, feet : this.pushOf(message) }) });
+      if(!token) continue;
+      const done = !!message.getFlag(module.id, `pushed.${uuid.replaceAll(".", "-")}`);
+      addButton(row, makeButton({ icon : "fa-arrows-left-right", once : true, disabled : done,
+        text : module.format("classes.paladin.push", { name : token.name, feet : this.pushOf(message) }), onClick : () => this.push(message, uuid) }));
     }
   }
 
@@ -290,6 +306,23 @@ export class paladin{
     return done ? hit.message : null;
   }
 
+  static smiteFix(item){
+    if(idOf(item) !== this.PALADINS_SMITE) return null;
+    const update = {};
+    for(const activity of item.system.activities ?? []){
+      const targets = activity.consumption?.targets ?? [];
+      if(!activity.uses?.max && !targets.some(t => t.type === "activityUses")) continue;
+      update[`system.activities.${activity.id}.uses`] = { max : "", spent : 0, recovery : [] };
+      update[`system.activities.${activity.id}.consumption.targets`] = [...targets.filter(t => t.type !== "activityUses"), { type : "itemUses", value : "1", target : "", scaling : {} }];
+    }
+    if(!Object.keys(update).length) return null;
+    if(!item.system.uses?.max){
+      update["system.uses.max"] = "1";
+      update["system.uses.recovery"] = [{ period : "lr", type : "recoverAll" }];
+    }
+    return { update };
+  }
+
   /* ---------- Lay on Hands ---------- */
 
   static isRemovePoison(activity){
@@ -312,7 +345,8 @@ export class paladin{
     if(!this.enabled() || !this.isRemovePoison(activity) || !activity.actor?.isOwner) return;
     const target = fromUuidSync(usage?.[module.id]?.poisonTarget ?? "", { strict : false });
     if(!target?.actor) return;
-    if(target.actor.isOwner){
+    /* A player's own creature : at once; anyone else's, or the GM's use : the GM's button on the card */
+    if(target.actor.isOwner && !game.user.isGM){
       await setStatus(target.actor, "poisoned", false);
       await actions.autoApplied(results);
       return;

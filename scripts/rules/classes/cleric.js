@@ -17,6 +17,8 @@ const log = logger.for(import.meta.url);
  */
 export class cleric{
   static TURN_UNDEAD = "turn-undead";
+  /* dnd5e's own : Turn Undead is an activity on Channel Divinity (beside Divine Spark), not an item */
+  static CHANNEL = "channel-divinity-cleric";
   static INCAPACITATED = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
 
   static enabled(){
@@ -31,6 +33,12 @@ export class cleric{
   }
 
 
+  /* Turn Undead : an item of its own, or Channel Divinity's activity of that name */
+  static isTurnUndead(activity){
+    const id = idOf(activity?.item);
+    return (id === this.TURN_UNDEAD) || ((id === this.CHANNEL) && /turn undead/i.test(activity?.name ?? ""));
+  }
+
   static isUndead(actor){
     const type = actor?.system?.details?.type;
     return [type?.value, type?.custom, type?.subtype].some(t => String(t ?? "").toLowerCase().includes("undead"));
@@ -43,7 +51,7 @@ export class cleric{
    * @returns {Token[]|null}
    */
   static presetTargets(activity){
-    if(!this.enabled() || (idOf(activity?.item) !== this.TURN_UNDEAD)) return null;
+    if(!this.enabled() || !this.isTurnUndead(activity)) return null;
     const me = tokenOf(activity.actor);
     if(!me) return null;
     const feet = Number(activity.range?.value || activity.item?.system?.range?.value) || 30;
@@ -55,7 +63,7 @@ export class cleric{
    * by anyone : it is where it is). Instantaneous, so Clear Instant Templates removes it at the end of the turn.
    */
   static async placeEmanation(activity){
-    if(!this.enabled() || (idOf(activity?.item) !== this.TURN_UNDEAD) || !canvas.ready) return;
+    if(!this.enabled() || !this.isTurnUndead(activity) || !canvas.ready) return;
     const me = tokenOf(activity.actor);
     if(!me || (me.document.parent !== canvas.scene)) return;
     const feet = Number(activity.range?.value || activity.item?.system?.range?.value) || 30;
@@ -76,7 +84,8 @@ export class cleric{
   /* Turned, from a Cleric's Turn Undead */
   static isTurned(effect){
     const origin = effect?.origin ? fromUuidSync(effect.origin, { strict : false }) : null;
-    return (origin?.documentName === "Item") && (idOf(origin) === this.TURN_UNDEAD);
+    if(origin?.documentName !== "Item") return false;
+    return (idOf(origin) === this.TURN_UNDEAD) || ((idOf(origin) === this.CHANNEL) && /turn/i.test(effect.name ?? ""));
   }
 
   /* Taking damage ends it */

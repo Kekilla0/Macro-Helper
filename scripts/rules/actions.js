@@ -67,6 +67,8 @@ export class actions{
     gm.handle("help", (data, user) => this.helpAsGM(data, user));
     gm.handle("helpUsed", (data, user) => this.helpUsedAsGM(data, user));
     gm.handle("stabilize", (data, user) => this.stabilizeAsGM(data, user));
+    /* Help's Medicine roll rerolled to a pass : the creature can still be stabilized */
+    Hooks.on("updateChatMessage", (message, changes, options, userId) => this.onStabilizeReroll(message, changes, userId));
   }
 
 
@@ -168,7 +170,10 @@ export class actions{
   static async assistAttack(activity, help){
     const helper = tokenOf(activity.item);
     if(!helper) return;
-    await gm.run("help", { mode : "attack", helper : activity.actor.uuid, side : helper.document.disposition, target : help.target });
+    const target = fromUuidSync(help.target, { strict : false });
+    await gm.ask("help", { mode : "attack", helper : activity.actor.uuid, side : helper.document.disposition, target : help.target },
+      { actor : activity.actor, text : module.format("actions.help.askAttack", { name : activity.actor.name, target : target?.name ?? "" }),
+        label : module.format("actions.help.askAttackButton", { target : target?.name ?? "" }) });
   }
 
   /* An ally of the helper (same side, not the helper) attacking a creature marked by Assist Attack : advantage, used up */
@@ -226,7 +231,10 @@ export class actions{
   }
 
   static async assistCheck(activity, help){
-    await gm.run("help", { mode : "check", helper : activity.actor.uuid, target : help.target, key : help.key, label : help.label });
+    const target = fromUuidSync(help.target, { strict : false });
+    await gm.ask("help", { mode : "check", helper : activity.actor.uuid, target : help.target, key : help.key, label : help.label },
+      { actor : activity.actor, text : module.format("actions.help.askCheck", { name : activity.actor.name, target : target?.name ?? "", check : help.label ?? help.key }),
+        label : module.format("actions.help.askCheckButton", { target : target?.name ?? "" }) });
   }
 
   /* The ally's next check with that skill / tool has advantage, and uses the help up */
@@ -269,7 +277,8 @@ export class actions{
   static async stabilizeAction(activity, help){
     const token = fromUuidSync(help.target, { strict : false });
     if(!token?.actor) return;
-    const [roll] = await activity.actor.rollSkill({ skill : "med", target : 10 }, { configure : false }) ?? [];
+    const [roll] = await activity.actor.rollSkill({ skill : "med", target : 10 }, { configure : false },
+      { data : { flags : { [module.id] : { stabilize : token.uuid } } } }) ?? [];
     if(!roll) return;
     if(roll.total >= 10) await stabilize(token.actor);
     else ui.notifications.info(module.format("actions.stabilize.failed", { name : token.name }));
@@ -281,10 +290,20 @@ export class actions{
     return !!hp && (Number(hp.value) <= 0) && !actor.statuses?.has("dead") && !actor.statuses?.has("stable") && !isDown(tokenOf(actor) ?? actor);
   }
 
+  static async onStabilizeReroll(message, changes, userId){
+    const uuid = message.getFlag?.(module.id, "stabilize");
+    if(!uuid || (userId !== game.user.id) || !("rolls" in (changes ?? {})) || message.getFlag(module.id, "stabilized")) return;
+    if(!((message.rolls?.[0]?.total ?? 0) >= 10)) return;
+    const token = fromUuidSync(uuid, { strict : false });
+    if(!token?.actor) return;
+    if(message.isOwner) await message.setFlag(module.id, "stabilized", true);
+    await stabilize(token.actor);
+  }
+
   static async stabilizeAsGM({ actor : uuid } = {}){
     const actor = fromUuidSync(uuid, { strict : false });
     if(!this.canStabilize(actor)) return false;
-    await stabilize(actor);
+    await stabilize(actor, { confirmed : true });
     return true;
   }
 }

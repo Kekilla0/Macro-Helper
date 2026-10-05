@@ -162,12 +162,18 @@ export class rerolls{
     if(inspiration) buttons.push({ id : "bardic", icon : "fa-music", label : module.format("classes.bard.use", { die : inspiration.die }) });
     if(tactical) buttons.push({ id : "tactical", icon : "fa-chess-knight", label : module.i18n("classes.fighter.tactical") });
     if(fighter.canSpend(message)) buttons.push({ id : "tacticalSpend", icon : "fa-heart-crack", label : module.i18n("classes.fighter.tacticalSpend") });
+    /* Debug (the GM, Debug setting) : the d20 set to 20 or 1 */
+    if(game.user.isGM && settings.value("debug")){
+      buttons.push({ id : "debug20", icon : "fa-bug", label : module.i18n("rollItem.debug.nat20") });
+      buttons.push({ id : "debug1", icon : "fa-bug-slash", label : module.i18n("rollItem.debug.nat1") });
+    }
     if(!buttons.length) return;
 
     const row = buttonRow(html, { key : `${module.id}-rerolls`, layout : "icons" });
     for(const b of buttons){
       const run = { lucky : () => this.lucky(message, actor), bardic : () => this.inspire(message, actor),
-        tactical : () => this.tactical(message, actor), tacticalSpend : () => fighter.spendSecondWind(message) }[b.id];
+        tactical : () => this.tactical(message, actor), tacticalSpend : () => fighter.spendSecondWind(message),
+        debug20 : () => this.force(message, 20), debug1 : () => this.force(message, 1) }[b.id];
       /* Words on the button, not just an icon : easy to miss otherwise */
       addButton(row, makeButton({ icon : b.icon, label : b.label, text : b.short ?? b.label, className : `${module.id}-labelled`,
         onClick : event => (run ? run() : this.reroll(message, event)) }));
@@ -197,6 +203,18 @@ export class rerolls{
     const keep = (mode.advantage && !mode.disadvantage) ? "kh" : (mode.disadvantage && !mode.advantage) ? "kl" : null;
     if(keep) updated = (await extraD20(updated, keep))?.updated ?? updated;
     await this.replace(message, updated, [updated]);
+  }
+
+  /* Debug : the message's d20 shows a set number */
+  static async force(message, value){
+    const [roll] = message.rolls;
+    if(!roll || !game.user.isGM) return;
+    const updated = Roll.fromData(roll.toJSON());
+    const d20 = updated.dice?.[0];
+    if(!d20) return;
+    d20.results = d20.results.map(r => ({ ...r, result : value }));
+    updated._total = updated._evaluateTotal();
+    await this.replace(message, updated, []);
   }
 
   static async lucky(message, actor){

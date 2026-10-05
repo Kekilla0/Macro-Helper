@@ -11,8 +11,9 @@ import { itemFixes } from '../item-fixes.js';
 const log = logger.for(import.meta.url);
 
 /**
- * Monk, levels 1-2 (Classes setting). Unarmored Defense is dnd5e's own AC; Focus Points are Plutonium's "Focus Point"
- * item, which Flurry of Blows, Patient Defense and Step of the Wind spend from.
+ * Monk, levels 1-2 (Classes setting). Unarmored Defense is dnd5e's own AC. Works with either layout : dnd5e's own (one
+ * "Monk's Focus" item holding the Focus Points, with Flurry of Blows, Patient Defense and Step of the Wind as its
+ * activities) or separate items (Plutonium's : a "Focus Point" item, and one item each).
  *
  *   Martial Arts       : while wearing no armor and holding no shield, an Unarmed Strike or Monk weapon (Simple melee,
  *                        Martial melee with Light) uses the better of STR and DEX, and the Martial Arts die instead of
@@ -34,7 +35,9 @@ export class monk{
   static STEP = "step-of-the-wind";
   static MOVEMENT = "unarmored-movement";
   static METABOLISM = "uncanny-metabolism";
-  static FOCUS = "focus-point";
+  /* Where the Focus Points are : dnd5e's Monk's Focus, or a Focus Point item */
+  static FOCUS = ["monks-focus", "focus-point"];
+  static POOL = "monks-focus";
   static UNARMED = "unarmed-strike";
 
   static enabled(){
@@ -51,16 +54,22 @@ export class monk{
     Hooks.on("updateActor", (actor, changes, options, userId) => {
       if((userId === game.user.id) && foundry.utils.hasProperty(changes ?? {}, `flags.${module.id}.hands`)) this.syncMovement(actor);
     });
-    /* Plutonium's Step of the Wind : the free Dash added */
+    /* Step of the Wind with only its Focus Point use : the free Dash added (dnd5e's and Plutonium's) */
     itemFixes.add({ name : "Step of the Wind", where : "owned", plan : item => { const update = this.stepUpdate(item); return update ? { update } : null; } });
     /* Uncanny Metabolism : on the initiative roll */
     Hooks.on("macro-helper.initiativeFeet", (combatant, add) => this.metabolismFoot(combatant, add));
     /* Used : the cards show it greyed, on every client */
     Hooks.on("updateItem", item => { if(idOf(item) === this.METABOLISM) this.redrawMetabolism(item.actor); });
     Hooks.on("dnd5e.renderChatMessage", (message, html) => this.metabolismMessage(message, html));
-    /* Flurry of Blows : the Unarmed Strike, not its own attack */
+    /* Flurry of Blows : the Unarmed Strike, not its own attack (an item of its own, or Monk's Focus's activity) */
     uses.onItem("flurry", (item, ctx, next) => {
       if(this.isMonk(item.actor) && (idOf(item) === this.FLURRY) && this.unarmedOf(item.actor)) return this.flurry(item, ctx.config, ctx.dialog, ctx.message);
+      return next();
+    });
+    uses.onActivity("flurry", (activity, ctx, next) => {
+      if(this.isMonk(activity.actor) && (idOf(activity.item) === this.POOL) && (this.kindOf(activity) === this.FLURRY) && this.unarmedOf(activity.actor)){
+        return this.flurry(activity.item, ctx.config, ctx.dialog, ctx.message);
+      }
       return next();
     });
     Hooks.once("setup", () => {
@@ -163,7 +172,7 @@ export class monk{
      closed : the point back; a later one closed : the rest skipped */
   static async flurry(item, config = {}, dialog = {}, message = {}){
     const actor = item.actor;
-    const focus = actor.items.find(i => idOf(i) === this.FOCUS);
+    const focus = this.focusOf(actor);
     if(focus && !(Number(focus.system.uses?.value) > 0)){
       ui.notifications.warn(module.format("classes.monk.noFocus", { name : actor.name, item : focus.name }));
       return null;
@@ -221,6 +230,23 @@ export class monk{
 
   /* ---------- Focus : Patient Defense, Step of the Wind ---------- */
 
+  /* The item holding the Focus Points */
+  static focusOf(actor){
+    return actor?.items?.find?.(i => this.FOCUS.includes(idOf(i))) ?? null;
+  }
+
+  /**
+   * Which Focus feature an activity is : its own item's identifier (separate items), or on Monk's Focus by its name.
+   * @returns {string|null}  FLURRY, PATIENT, STEP or null
+   */
+  static kindOf(activity){
+    const id = idOf(activity?.item);
+    if([this.FLURRY, this.PATIENT, this.STEP].includes(id)) return id;
+    if(id !== this.POOL) return null;
+    const name = String(activity.name ?? "").toLowerCase();
+    return name.includes("flurry") ? this.FLURRY : name.includes("patient") ? this.PATIENT : name.includes("step of the wind") ? this.STEP : null;
+  }
+
   /* A Focus Point spent by this use (its activity spends from the Focus Point item) */
   static spendsFocus(activity, usage){
     if(usage?.consume === false) return false;
@@ -230,7 +256,7 @@ export class monk{
   static async onUse(activity, usage, results){
     const actor = activity?.actor;
     if(!this.isMonk(actor) || !actor.isOwner) return;
-    const id = idOf(activity.item);
+    const id = this.kindOf(activity);
     if(![this.PATIENT, this.STEP].includes(id)) return;
     const own = activity.getUsageToken?.()?.actor ?? actor;
     const focus = this.spendsFocus(activity, usage);
@@ -252,18 +278,21 @@ export class monk{
    * @returns {object|null}  the update, null : nothing to change
    */
   static stepUpdate(item){
-    if((item?.type !== "feat") || (idOf(item) !== this.STEP)) return null;
+    if((item?.type !== "feat") || ![this.STEP, this.POOL].includes(idOf(item))) return null;
     const activities = item.system.activities?.contents ?? [...(item.system.activities ?? [])];
-    if(activities.length !== 1) return null;
-    const paid = activities[0];
+    /* Its own item : every activity is it; on Monk's Focus : by name */
+    const steps = (idOf(item) === this.STEP) ? activities : activities.filter(a => this.kindOf(a) === this.STEP);
+    if(steps.length !== 1) return null;
+    const paid = steps[0];
     if(!(paid.consumption?.targets ?? []).some(t => t.type === "itemUses")) return null;
     const source = foundry.utils.deepClone(paid.toObject?.() ?? paid);
     const id = foundry.utils.randomID();
+    const name = (idOf(item) === this.STEP) ? item.name : (paid.name || item.name);
     return {
-      "system.uses.max" : "",
-      "system.uses.spent" : 0,
-      [`system.activities.${paid.id}.name`] : module.format("classes.monk.stepFocusName", { item : item.name }),
-      [`system.activities.${id}`] : { ...source, _id : id, name : item.name, effects : [], consumption : { ...(source.consumption ?? {}), targets : [] }, sort : (source.sort ?? 0) + 1 },
+      /* Its own item (Plutonium's) : its uses were the Focus Points' copy */
+      ...((idOf(item) === this.STEP) ? { "system.uses.max" : "", "system.uses.spent" : 0 } : {}),
+      [`system.activities.${paid.id}.name`] : module.format("classes.monk.stepFocusName", { item : name }),
+      [`system.activities.${id}`] : { ...source, _id : id, name, effects : [], consumption : { ...(source.consumption ?? {}), targets : [] }, sort : (source.sort ?? 0) + 1 },
     };
   }
 

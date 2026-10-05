@@ -364,3 +364,15 @@
 .chat-message.macro-helper-auto-applied effect-application .apply-button,
 .chat-message.macro-helper-auto-applied effect-application menu.effects button { opacity : 0.45; pointer-events : none; filter : grayscale(1); }
 .chat-message .macro-helper-initiative-feet { display : flex; flex-direction : column; gap : 4px; margin-top : 6px; }
+/* Prepared Spells window : a column per spell level, each scrolling past 10 spells */
+.macro-helper-prepared-columns { display : flex; gap : 10px; overflow-x : auto; align-items : flex-start; }
+.macro-helper-prepared-column { flex : 0 0 220px; display : flex; flex-direction : column; }
+.macro-helper-prepared-column h4 { margin : 0 0 4px; border-bottom : 1px solid var(--color-border-light-2, #999); }
+.macro-helper-prepared-list { display : flex; flex-direction : column; gap : 2px; max-height : calc(10 * 28px); overflow-y : auto; }
+.macro-helper-prepared-row { display : flex; align-items : center; gap : 6px; min-height : 26px; }
+.macro-helper-prepared-row .name { flex : 1; overflow : hidden; text-overflow : ellipsis; white-space : nowrap; }
+/* The original choices in a swap window (Prepared Spells, Weapon Mastery, Wild Shape forms) */
+.macro-helper-creature.original { outline : 2px solid var(--color-warm-2, #c9a227); outline-offset : -2px; position : relative; }
+.macro-helper-creature.original .macro-helper-original-badge { position : absolute; top : 2px; right : 4px; color : var(--color-warm-2, #c9a227); }
+.macro-helper-prepared-row.original { background : rgba(201, 162, 39, 0.15); border-radius : 3px; }
+.macro-helper-prepared-row .macro-helper-original-badge { color : var(--color-warm-2, #c9a227); }

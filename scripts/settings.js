@@ -27,6 +27,8 @@ export const GROUPS = {
         choices : { open : "settings.cardDescriptions.open", collapsed : "settings.cardDescriptions.collapsed" } },
       /* Any area a dnd5e activity places, Roll Item or not */
       clearAreas : { scope : "world", default : true, type : Boolean },
+      ammoRecovery : { scope : "world", default : "half", type : String,
+        choices : { off : "settings.ammoRecovery.off", half : "settings.ammoRecovery.half", halfRoll : "settings.ammoRecovery.halfRoll" } },
     },
   },
   /* Helpers → Methods : which kinds of document get the helpers as methods (token.distanceTo(other)...) */
@@ -119,6 +121,7 @@ export const GROUPS = {
         choices : { circle : "settings.rangeShape.circle", square : "settings.rangeShape.square" } },
       homebrewPush : { scope : "world", default : false, type : Boolean },
       homebrewInitiative : { scope : "world", default : false, type : Boolean },
+      homebrewAmmoSearch : { scope : "world", default : false, type : Boolean },
       homebrewFlanking : { scope : "world", default : "off", type : String,
         choices : { off : "settings.homebrewFlanking.off", advantage : "settings.homebrewFlanking.advantage", bonus : "settings.homebrewFlanking.bonus" } },
     },

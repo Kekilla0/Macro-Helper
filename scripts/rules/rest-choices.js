@@ -7,7 +7,10 @@ const log = logger.for(import.meta.url);
  * Rest Choices : the things a character may change when it finishes a rest or gains a level (Wild Shape's known forms,
  * Weapon Mastery, a Fighting Style...), in one window that opens for the player afterwards. Each feature registers a
  * choice; only the ones the character has are shown. The character sheet's header has a Rest Choices button too :
- * what's free any time (filling up to the limit) needs no rest.
+ * what's free any time (filling up to the limit) needs no rest. dnd5e's Short / Long Rest window lists the choices that
+ * rest would bring, each ticked : after the rest, each ticked one's own window opens in turn (the next when the last is
+ * closed), no summary window; an unticked one isn't granted or opened (its values stay). Resting without that window,
+ * or gaining a level : the summary window, as before.
  *
  * A choice : {
  *   id, label (i18n key), rest : "long" | "short" | "level",
@@ -28,12 +31,16 @@ export class restChoices{
   static register(){
     if(game.system.id !== "dnd5e") return;
     Hooks.on("dnd5e.restCompleted", (actor, result, config) => this.onRest(actor, result, config));
+    /* dnd5e's rest windows : the choices that rest brings, as checkboxes (their values arrive with the rest's config) */
+    Hooks.on("renderShortRestDialog", (app, html) => this.restBoxes(app, html, "short"));
+    Hooks.on("renderLongRestDialog", (app, html) => this.restBoxes(app, html, "long"));
     /* The GM rested or levelled the character : its player's client opens the window (not waited on) */
-    CONFIG.queries[`${module.id}.restChoicesOpen`] = ({ actor : uuid, choices = [] } = {}) => {
+    CONFIG.queries[`${module.id}.restChoicesOpen`] = ({ actor : uuid, choices = [], sequence = false } = {}) => {
       const actor = fromUuidSync(uuid ?? "", { strict : false });
       if(!actor?.isOwner) return false;
       const list = choices.map(id => this.#choices.get(id)).filter(Boolean);
-      this.open(actor, list.length ? list : undefined);
+      if(sequence) this.sequence(actor, list);
+      else this.open(actor, list.length ? list : undefined);
       return true;
     };
     /* The class's level before the change, to tell a level gained */
@@ -55,12 +62,39 @@ export class restChoices{
     return [...this.#choices.values()].filter(c => (!rest || (c.rest === rest)) && c.applies(actor));
   }
 
+  /* The choices a rest brings (a long rest counts as a short one too) */
+  static forRest(actor, rest){
+    return [...this.#choices.values()].filter(c => ((c.rest === rest) || ((rest === "long") && (c.rest === "short"))) && c.applies(actor));
+  }
+
   static async onRest(actor, result, config){
     if(!actor?.isOwner) return;
     const rest = (result?.longRest || (config?.type === "long")) ? "long" : "short";
-    /* A long rest counts as a short one too */
-    const choices = [...this.#choices.values()].filter(c => ((c.rest === rest) || ((rest === "long") && (c.rest === "short"))) && c.applies(actor));
+    let choices = this.forRest(actor, rest);
+    /* Chosen in dnd5e's rest window : only the ticked ones, each its own window in turn */
+    const picked = config?.[module.id]?.restChoices;
+    if(picked?.shown) return this.grantAndOpen(actor, choices.filter(c => picked[c.id] === true), { sequence : true });
     await this.grantAndOpen(actor, choices);
+  }
+
+  /* The rest window's checkboxes : one per choice that rest brings, ticked */
+  static restBoxes(app, html, rest){
+    const actor = app.actor ?? app.options?.document;
+    const root = (html instanceof HTMLElement) ? html : (app.element ?? html?.[0]);
+    if(!actor || (actor.type === "group") || !actor.isOwner || !root || root.querySelector(`.${module.id}-rest-boxes`)) return;
+    const choices = this.forRest(actor, rest);
+    if(!choices.length) return;
+    const section = root.querySelector("section.flexcol") ?? root.querySelector("form") ?? root;
+    const fieldset = document.createElement("fieldset");
+    fieldset.className = `${module.id}-rest-boxes`;
+    fieldset.innerHTML = `<legend>${esc(module.i18n("restChoices.restLegend"))}</legend>
+      <input type="hidden" name="${module.id}.restChoices.shown" value="true">
+      ${choices.map(c => `<div class="form-group">
+          <label>${esc(module.i18n(c.label))}</label>
+          <div class="form-fields"><input type="checkbox" name="${module.id}.restChoices.${esc(c.id)}" checked></div>
+          <p class="hint">${esc(c.summary(actor))}</p>
+        </div>`).join("")}`;
+    section.append(fieldset);
   }
 
   /* A class's level going up (by the user who changed it) : its level choices */
@@ -74,7 +108,7 @@ export class restChoices{
     await this.grantAndOpen(item.actor, choices);
   }
 
-  static async grantAndOpen(actor, choices){
+  static async grantAndOpen(actor, choices, { sequence = false } = {}){
     if(!choices.length) return;
     for(const choice of choices){
       try { await choice.grant?.(actor); }
@@ -82,9 +116,17 @@ export class restChoices{
     }
     /* The player's window : here for a player; from the GM, on an owning player's client when one is online, else here */
     const player = game.user.isGM ? game.users.find(u => !u.isGM && u.active && actor.testUserPermission(u, "OWNER")) : null;
-    if(!player) return this.open(actor, choices);
-    player.query(`${module.id}.restChoicesOpen`, { actor : actor.uuid, choices : choices.map(c => c.id) }, { timeout : 10000 })
+    if(!player) return sequence ? this.sequence(actor, choices) : this.open(actor, choices);
+    player.query(`${module.id}.restChoicesOpen`, { actor : actor.uuid, choices : choices.map(c => c.id), sequence }, { timeout : 10000 })
       .catch(error => log.debug("Rest Choices on the player's client", error));
+  }
+
+  /* Each choice's own window, one after the other (the next once the last is closed) */
+  static async sequence(actor, choices){
+    for(const choice of choices){
+      try { await choice.open?.(actor); }
+      catch(error){ log.error(choice.id, error); }
+    }
   }
 
   /**

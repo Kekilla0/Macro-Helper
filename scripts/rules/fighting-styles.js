@@ -135,11 +135,12 @@ export class fightingStyles{
 
   /* The token protecting this one now, if it's still within 5 ft, holding a shield */
   static protectorOf(target){
-    const mark = target.actor?.effects?.find(e => e.getFlag(module.id, "protection"));
-    if(!mark) return null;
-    const by = fromUuidSync(mark.getFlag(module.id, "protection").token ?? "", { strict : false })?.object;
-    if(!by || (distanceBetween(by, target) > 5) || !hasShieldEquipped(by.actor)) return null;
-    return by;
+    const uuid = target?.document?.uuid ?? target?.uuid;
+    for(const by of canvas.tokens?.placeables ?? []){
+      const mark = by.actor?.effects?.find?.(e => e.getFlag(module.id, "protection")?.target === uuid);
+      if(mark && (distanceBetween(by, target) <= 5) && hasShieldEquipped(by.actor)) return by;
+    }
+    return null;
   }
 
   /* ---------- Damage : Dueling, Great Weapon, Thrown Weapon, Two-Weapon, Unarmed ---------- */
@@ -214,7 +215,10 @@ export class fightingStyles{
 
   /* The user's tokens with this style, near a creature : within 5 ft, not it, not the attacker */
   static guardsNear(style, target, attackerToken){
+    const side = t => t?.document?.disposition;
     return (canvas.tokens?.placeables ?? []).filter(t => t.actor?.isOwner && (t !== target) && (t !== attackerToken)
+      /* Shielding its own side from the other : not a creature an ally attacks */
+      && (side(target) === side(t)) && (!attackerToken || (side(attackerToken) !== side(t)))
       && this.styleOf(t.actor, style) && (distanceBetween(t, target) <= 5));
   }
 
@@ -328,9 +332,10 @@ export class fightingStyles{
     if(message.getFlag(module.id, key)) return [module.i18n("fightingStyles.done")];
     const result = await message.system.addD20(ray, "kl");
     await message.setFlag(module.id, key, true);
-    await addTimedEffect(target.actor, {
-      name : module.format("fightingStyles.protectedMark", { name : guard.name }), img : "icons/equipment/shield/heater-steel-worn.webp",
-      flags : { [module.id] : { protection : { token : guard.uuid } } },
+    /* On the protector (its player's own token), naming who it protects : nothing changes on the creature itself */
+    await addTimedEffect(guard.actor, {
+      name : module.format("fightingStyles.protectingMark", { name : target.name }), img : "icons/equipment/shield/heater-steel-worn.webp",
+      flags : { [module.id] : { protection : { token : guard.uuid, target : target.uuid } } },
     }, { of : guard.actor, until : "turnStart" });
     return (result === "same") ? [module.i18n("feats.lucky.same")] : [];
   }

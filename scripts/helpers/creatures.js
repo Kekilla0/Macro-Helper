@@ -47,9 +47,9 @@ function entryOf(actor){
 }
 
 /* One tile : picture, name, a detail line (CR, weapon type) */
-function tile(entry, input){
-  return `<label class="${module.id}-creature" data-uuid="${esc(entry.value)}">
-      ${input}
+function tile(entry, input, { original = false } = {}){
+  return `<label class="${module.id}-creature${original ? " original" : ""}" data-uuid="${esc(entry.value)}"${original ? ` data-tooltip="${esc(module.i18n("creatures.original"))}"` : ""}>
+      ${input}${original ? `<span class="${module.id}-original-badge"><i class="fa-solid fa-bookmark" inert></i></span>` : ""}
       ${entry.img ? `<img src="${esc(entry.img)}" alt="">` : ""}
       <span class="name">${esc(entry.label)}</span>
       ${entry.detail ? `<span class="cr">${esc(entry.detail)}</span>` : ""}
@@ -122,7 +122,9 @@ export async function chooseSet(entries, { known = [], max, swaps = Infinity, ti
   /* Known ones no longer offered (deleted, moved out of the folder) don't count against the swaps */
   known = known.filter(value => entries.some(e => e.value === value));
   swaps += Math.max(0, known.length - max);
-  const grid = entries.map(e => tile(e, `<input type="checkbox" name="creature" value="${esc(e.value)}"${known.includes(e.value) ? " checked" : ""}>`)).join("");
+  /* The original choices are marked, so what was there before stays visible as boxes change */
+  const grid = entries.map(e => tile(e, `<input type="checkbox" name="creature" value="${esc(e.value)}"${known.includes(e.value) ? " checked" : ""}>`,
+    { original : known.includes(e.value) })).join("");
   const status = `<p class="${module.id}-creature-status"></p>`
     + (allowPast ? `<label class="${module.id}-past"><input type="checkbox" name="past"> ${esc(module.i18n("creatures.past"))}</label>` : "");
   const result = await foundry.applications.api.DialogV2.wait({

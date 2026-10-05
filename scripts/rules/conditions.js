@@ -31,6 +31,8 @@ export class conditions{
   static register(){
     if(game.system.id !== "dnd5e") return;
     rollModes.add("conditions", config => this.onPreRollAttack(config));
+    /* An effect on a creature named like a condition but without its status : the status added (its token icon, the rules) */
+    Hooks.on("preCreateActiveEffect", effect => { this.statusFromName(effect); this.showOnToken(effect); });
     Hooks.on("dnd5e.rollAttackV2", (rolls, { subject } = {}) => logReasons(subject, rolls?.[0]));
     Hooks.on("dnd5e.applyDamage", (actor, amount, options) => this.onApplyDamage(actor, amount, options));
     Hooks.on("dnd5e.preApplyDamage", (actor, amount, updates, options) => this.onPreApplyDamage(actor, amount, updates, options));
@@ -39,6 +41,33 @@ export class conditions{
     Hooks.on("updateActor", (actor, changes) => this.onHPChange(actor, changes));
     /* A rest is well past any reaction to a hit : forget it */
     Hooks.on("dnd5e.restCompleted", actor => clearLastDamage(actor));
+  }
+
+  /* An effect named like a condition, put on a creature (Shove's "Prone", Thunderous Smite's) : the condition itself
+     (the rules), and the condition's own icon on the token instead of its item's picture (a fist, a spell) */
+  static statusFromName(effect){
+    if(effect?.parent?.documentName !== "Actor") return;
+    const name = String(effect.name ?? "").trim().toLowerCase();
+    const status = name && CONFIG.statusEffects.find(s => game.i18n.localize(s.name ?? "").toLowerCase() === name);
+    if(!status) return;
+    const change = {};
+    if(!effect.statuses?.has?.(status.id)) change.statuses = [...(effect.statuses ?? []), status.id];
+    if(status.img && (effect.img !== status.img)) change.img = status.img;
+    if(Object.keys(change).length) effect.updateSource(change);
+  }
+
+  /* An effect put on a creature shows on its token, even without a duration (Foundry otherwise hides those); one
+     without a picture gets its item's, else a plain one. Effects a creature's own items carry aren't touched */
+  static showOnToken(effect){
+    if((effect?.parent?.documentName !== "Actor") || effect.transfer) return;
+    const SHOW = CONST.ACTIVE_EFFECT_SHOW_ICON;
+    const change = {};
+    if(SHOW && (effect.showIcon === SHOW.CONDITIONAL)) change.showIcon = SHOW.ALWAYS;
+    if(!effect.img){
+      const origin = effect.origin ? fromUuidSync(effect.origin, { strict : false }) : null;
+      change.img = origin?.img ?? "icons/svg/aura.svg";
+    }
+    if(Object.keys(change).length) effect.updateSource(change);
   }
 
   static onPreRollAttack(config){

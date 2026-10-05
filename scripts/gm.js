@@ -1,12 +1,16 @@
 import { module } from './module.js';
 import { logger } from './log.js';
 import { settings } from './settings.js';
+import { esc, buttonRow, addButton, makeButton } from './helpers/utils.js';
 const log = logger.for(import.meta.url);
 
 /**
  * Things only the GM's client can do for everyone.
  *
- * Queries : a player's client asks the active GM to do something it isn't allowed to (move an enemy, put an effect on it).
+ * Asking : a change to a creature its player doesn't own (a mark, a condition, a move) is the GM's to make : ask() posts
+ * a card with a button only the GM sees, which runs the registered handler for the player who asked.
+ *
+ * Queries : a player's client asks the active GM to do something it isn't allowed to (bookkeeping : a log, a card).
  * Each query is registered by the feature that needs it, and its handler checks the request itself (who asked, from
  * which chat card...), so players can't use it to do anything else. On the GM's own client it just runs.
  *
@@ -47,7 +51,46 @@ export class gm{
     return target.query(`${module.id}.${name}`, data, { timeout });
   }
 
+  /**
+   * Ask the GM to make a change to a creature the player doesn't own : a chat card with the GM's button, which runs the
+   * registered handler (as run() would) for the player who asked. The GM's own use gets the card too : nothing changes
+   * on another creature without the GM's click.
+   * @param {string} name     a registered handler
+   * @param {object} data     JSON-serializable
+   * @param {object} options
+   * @param {string} options.text    the card's line (what's asked)
+   * @param {string} options.label   the GM's button
+   * @param {Actor} [options.actor]  who's asking (the card's speaker)
+   * @returns {Promise<ChatMessage>}  the card
+   */
+  static async ask(name, data, { text, label, actor = null } = {}){
+    const handler = this.#handlers.get(name);
+    if(!handler) throw new Error(`Macro Helper | no GM handler "${name}"`);
+    return ChatMessage.implementation.create({
+      speaker : actor ? ChatMessage.implementation.getSpeaker({ actor }) : { alias : module.title },
+      content : `<p>${esc(text)}</p>`,
+      flags : { [module.id] : { gmAsk : { name, data, label, done : false } } },
+    });
+  }
+
+  /* The GM's button on an ask() card */
+  static #askButton(message, html){
+    const ask = message.getFlag?.(module.id, "gmAsk");
+    if(!ask || !game.user.isGM) return;
+    const row = buttonRow(html, { key : `${module.id}-gm-ask` });
+    if(row.childElementCount) return;
+    addButton(row, makeButton({ icon : "fa-gavel", text : ask.label, once : true, disabled : !!ask.done,
+      onClick : async () => {
+        const handler = this.#handlers.get(ask.name);
+        if(!handler) return;
+        const result = await handler(ask.data, message.author ?? game.user);
+        for(const note of (Array.isArray(result) ? result : [])) ui.notifications.info(note);
+        await message.setFlag(module.id, "gmAsk", { ...ask, done : true });
+      } }));
+  }
+
   static register(){
+    Hooks.on("renderChatMessageHTML", (message, html) => this.#askButton(message, html));
     Hooks.on("combatTurnChange", (combat, prior, current)=> this.expire(combat, prior, current));
     Hooks.on("deleteCombat", combat => this.expireCombat(combat));
   }

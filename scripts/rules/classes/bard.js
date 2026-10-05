@@ -2,7 +2,6 @@ import { module } from '../../module.js';
 import { idOf } from '../../helpers/utils.js';
 import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
-import { gm } from '../../gm.js';
 import { tokenOf } from '../../helpers/tokens.js';
 import { masteries } from '../../roll-item/masteries.js';
 const log = logger.for(import.meta.url);
@@ -11,7 +10,8 @@ const log = logger.for(import.meta.url);
  * Bard, levels 1-2 (Class Rules setting). Expertise and Jack of All Trades are dnd5e's own (from the items' data).
  *
  *   Bardic Inspiration : "Inspire" (a Bonus Action, 60 ft) marks another creature as Inspired, with the Bard's die
- *                        (@scale.bard.inspiration : d6), for an hour; one die at a time. The GM's client marks it.
+ *                        (@scale.bard.inspiration : d6), for an hour : dnd5e's own Apply on the card's effect (the GM's,
+ *                        for a creature its player doesn't own).
  *                        When the Inspired creature fails a D20 Test (a missed attack, a failed save or check), its
  *                        owner gets a button : the die is rolled and added to that roll (the card re-judges it), and
  *                        the mark goes. Saves and checks from the sheet and on card rows, attack cards.
@@ -26,10 +26,8 @@ export class bard{
   static register(){
     if(game.system.id !== "dnd5e") return;
     Hooks.on(`${module.id}.targets`, (activity, tokens) => this.onTargets(activity, tokens));
-    Hooks.on("dnd5e.postUseActivity", activity => this.onUse(activity));
     Hooks.on(`${module.id}.cardButtons`, (message, buttons, context) => this.cardButtons(message, buttons, context));
     Hooks.on(`${module.id}.cardButton`, (message, id, context) => this.cardClicked(message, id, context));
-    gm.handle("bardicGive", (data, user) => this.giveAsGM(data, user));
   }
 
 
@@ -92,37 +90,9 @@ export class bard{
     }
   }
 
-  static async onUse(activity){
-    if(!this.isBardic(activity) || !activity.actor?.isOwner) return;
-    const me = tokenOf(activity.actor);
-    const die = this.dieOf(activity.item);
-    for(const token of game.user.targets){
-      if((token === me) || !token.actor) continue;
-      await gm.run("bardicGive", { bard : activity.actor.uuid, item : activity.item.uuid, effect : activity.effects?.[0]?._id ?? null,
-        target : token.document.uuid, die });
-    }
-  }
 
-  /* The GM marks the creature : the asker must own the Bard */
-  static async giveAsGM({ bard : bardUuid, item : itemUuid, effect : effectId, target : targetUuid, die } = {}, user){
-    const bard = fromUuidSync(bardUuid, { strict : false });
-    const item = fromUuidSync(itemUuid, { strict : false });
-    const target = fromUuidSync(targetUuid, { strict : false })?.actor;
-    if(!bard || !target) return null;
-    if(!user?.isGM && !bard.testUserPermission(user, "OWNER")) throw new Error("Only the Bard's owner can inspire.");
-    if(this.inspirationOf(target)) return null;
-    const source = (effectId && item?.effects?.get(effectId)) || null;
-    const data = foundry.utils.mergeObject(source?.toObject() ?? { name : module.i18n("classes.bard.inspired"), img : item?.img }, {
-      origin : itemUuid, transfer : false, disabled : false, showIcon : CONST.ACTIVE_EFFECT_SHOW_ICON?.ALWAYS ?? 2,
-      duration : { value : 3600, units : "seconds" }, start : { time : game.time.worldTime },
-      description : module.format("classes.bard.markHint", { die, name : bard.name }),
-      flags : { [module.id] : { bardic : { die, by : bard.name, bard : bardUuid } } },
-    });
-    delete data._id;
-    await target.createEmbeddedDocuments("ActiveEffect", [data]);
-    log.debug("Bardic Inspiration", bard.name, "->", target.name, die);
-    return true;
-  }
+
+
 
   /* ---------- Using it : attack cards ---------- */
 

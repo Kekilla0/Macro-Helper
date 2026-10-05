@@ -21,6 +21,7 @@ export class uses{
     item : [
       "flurry",        // Monk : Flurry of Blows uses the Unarmed Strike instead
       "smite",         // Paladin : a smite spell from the sheet smites the latest melee hit
+      "huntersMark",   // Ranger : Hunter's Mark / Favored Enemy : pay, pick, mark (or move the mark)
       "familiar",      // Familiars : Store / Summon New / Release, before dnd5e's choice of activity
       "itemMacro",     // Item Macro : a macro run before (or instead of) the use
       "healer",        // Feats : the Healer feat's Battle Medic
@@ -28,6 +29,7 @@ export class uses{
     ],
     activity : [
       "itemMacro",     // Item Macro : a macro on the activity
+      "flurry",        // Monk : Monk's Focus's Flurry of Blows uses the Unarmed Strike instead
       "presetTargets", // Roll Item : targets the activity sets itself (Turn Undead)
       "action",        // Default Actions : choose and pick first (Help)
       "maneuver",      // Roll Item : Grapple or Shove, for the one activity that does both

@@ -88,15 +88,22 @@ export function attackModeFor(item, target, { long = true } = {}){
 }
 
 /**
- * Is an attack with this weapon now the Light extra attack ? A Light weapon (with Hands : in the off hand) after a
- * different Light weapon attacked this turn (weapon handling remembers it), and not itself already.
+ * Is an attack with this weapon the off-hand (Light extra) attack ? With Hands : a Light weapon in the off hand, always
+ * (the hand says what it's for). Without : a Light weapon after a different Light weapon attacked this turn (out of
+ * combat, within the last minute), and not itself already.
  * @param {Item} item
  * @returns {boolean}
  */
 export function isExtraLightAttack(item){
   const actor = item?.actor;
-  if(!actor || !item.system?.properties?.has?.("lgt") || usedThisTurn(actor, `light.${item.id}`)) return false;
-  if(hands.manages(actor) && (hands.handOf(actor, item) !== "off")) return false;
+  if(!actor || !item.system?.properties?.has?.("lgt")) return false;
+  if(hands.manages(actor)) return hands.handOf(actor, item) === "off";
+  if(usedThisTurn(actor, `light.${item.id}`)) return false;
+  /* Out of combat : a different Light weapon attacked within the last minute */
+  if(!game.combat?.started){
+    const last = actor.getFlag?.(module.id, "lastLight");
+    return !!last && (last.item !== item.id) && ((Date.now() - (Number(last.at) || 0)) < 60000);
+  }
   return !!actor.items?.some?.(i => (i.id !== item.id) && i.system?.properties?.has?.("lgt") && usedThisTurn(actor, `light.${i.id}`));
 }
 

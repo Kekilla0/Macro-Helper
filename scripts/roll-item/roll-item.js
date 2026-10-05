@@ -12,7 +12,7 @@ import { rerolls } from './rerolls.js';
 import { conditions } from '../rules/conditions.js';
 import { bard } from '../rules/classes/bard.js';
 import { cleric } from '../rules/classes/cleric.js';
-import { chooseOption, wait } from '../helpers/utils.js';
+import { chooseOption, wait, makeButton } from '../helpers/utils.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -954,6 +954,8 @@ export class rollItem{
     Hooks.on("dnd5e.postUseActivity", rollItem.onPostUse);
 
     rollItem.registerSteps();
+    /* Debug (the GM, Debug setting) : make an attack a crit or a miss, beside its reroll buttons */
+    Hooks.on("dnd5e.renderChatMessage", (message, html) => rollItem.debugButtons(message, html));
     Hooks.on("dnd5e.preCreateMeasuredTemplate", activity => rollItem.anchorToSelf(activity));
     Hooks.on("combatTurnChange", (combat, prior, current) => rollItem.clearTemplates(combat, prior, current));
     Hooks.on("deleteCombat", combat => rollItem.clearCombatTemplates(combat));
@@ -970,6 +972,25 @@ export class rollItem{
         onClick : ()=> rollItem.editCount(app.document),
       });
     });
+  }
+
+  /* The GM's debug buttons : a crit (d20 to 20) or a miss (d20 to 1), next to the attack's (or each ray's) reroll */
+  static debugButtons(message, html){
+    if(!game.user.isGM || !settings.value("debug") || !message.system?.forceD20) return;
+    /* Each in its own list item, in line after the reroll buttons (crit, then miss) */
+    const add = (button, ray) => {
+      let anchor = button?.closest("li");
+      if(!anchor || anchor.parentElement?.querySelector(`:scope > .${module.id}-debug`)) return;
+      for(const [value, icon, key] of [[20, "fa-bug", "rollItem.debug.crit"], [1, "fa-bug-slash", "rollItem.debug.miss"]]){
+        const li = document.createElement("li");
+        li.className = `${module.id}-debug`;
+        li.append(makeButton({ icon, label : module.i18n(key), className : "icon", onClick : () => message.system.forceD20(ray, value) }));
+        anchor.after(li);
+        anchor = li;
+      }
+    };
+    add(html.querySelector('[data-action="rerollDamage"]') ?? html.querySelector('[data-action="rerollAttack"]'), null);
+    html.querySelectorAll('[data-action="rerollRay"][data-ray]').forEach(button => add(button, Number(button.dataset.ray)));
   }
 
   /* ---------- Cards ---------- */
