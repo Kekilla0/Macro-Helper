@@ -67,14 +67,15 @@ export class warlock{
     Hooks.on("deleteActiveEffect", effect => this.onConcentrationEnd(effect));
     Hooks.on("updateActor", (actor, changes) => this.onDown(actor, changes));
     /* Devil's Sight : its detection mode, and on the tokens of creatures that have it */
-    Hooks.once("setup", () => {
+    /* At init : tokens are prepared with the world, before setup */
+    {
       warlock.registerDevilsSight();
       patch.wrap("CONFIG.Token.documentClass.prototype._prepareDetectionModes", function(wrapped, ...args){
         try { if(warlock.enabled() && this.actor?.items?.some?.(i => idOf(i) === warlock.DEVILS_SIGHT)) this.detectionModes.devilsSight ??= { enabled : true, range : warlock.DEVILS_RANGE }; }
         catch(error){ log.debug("Devil's Sight", error); }
         return wrapped(...args);
       });
-    });
+    }
     /* Magical Cunning with every Pact slot there : nothing to regain */
     Hooks.on("dnd5e.preUseActivity", activity => this.cunningCheck(activity));
     /* An invocation put on a cantrip : which one, as it's picked */

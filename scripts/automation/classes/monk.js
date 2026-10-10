@@ -47,6 +47,9 @@ export class monk{
   static register(){
     if(game.system.id !== "dnd5e") return;
     Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.onUse(activity, usage, results));
+    /* Patient Defense / Step of the Wind : the Default Actions' marks are put on instead of the item's own effects
+       (dnd5e's Monk's Focus carries a Dodging effect that never ends) */
+    Hooks.on(`${module.id}.selfEffects`, activity => !(this.enabled() && [...this.FOCUS, this.PATIENT, this.STEP].includes(idOf(activity?.item))));
     for(const hook of ["createItem", "updateItem", "deleteItem"]){
       Hooks.on(hook, (item, ...rest) => { if(rest.at(-1) === game.user.id) this.syncMovement(item?.parent); });
     }
@@ -72,7 +75,9 @@ export class monk{
       }
       return next();
     });
-    Hooks.once("setup", () => {
+    /* At init (not setup : Foundry prepares the world's actors before setup, so their weapons would miss it until
+       something prepared them again) */
+    {
       /* Martial Arts : the weapon's die and ability, before dnd5e makes its labels and its activities' rolls */
       patch.wrap("CONFIG.Item.dataModels.weapon.prototype.prepareFinalData", function(wrapped, ...args){
         try { monk.martialArts(this); } catch(error){ log.error(error); }
@@ -83,7 +88,7 @@ export class monk{
         if((config.ability === undefined) && monk.appliesTo(this.item)) config = { ...config, ability : this.ability };
         return wrapped(config, ...rest);
       });
-    });
+    }
   }
 
 
@@ -131,11 +136,12 @@ export class monk{
     if(!item || !base) return;
     /* Prepared again without being rebuilt : start from the weapon's own */
     const original = this.#original.get(system);
-    if(!original) this.#original.set(system, { number : base.number, denomination : base.denomination, formula : base.custom?.formula });
+    if(!original) this.#original.set(system, { number : base.number, denomination : base.denomination, formula : base.custom?.formula, bonus : base.bonus });
     else {
       base.number = original.number;
       base.denomination = original.denomination;
       if(base.custom) base.custom.formula = original.formula;
+      base.bonus = original.bonus;
     }
     const attacks = (system.activities?.contents ?? [...(system.activities ?? [])]).filter(a => (a.type === "attack") && a.attack?.abilities);
     for(const activity of attacks) for(const ability of this.#added.get(activity) ?? []) activity.attack.abilities.delete(ability);
@@ -150,6 +156,8 @@ export class monk{
       else if(Number(own[2]) < faces) base.custom.formula = formula.replace(own[0], `1d${faces}`);
     }
     else if((Number(base.denomination) || 0) < faces){
+      /* dnd5e's own Unarmed Strike has no die : its flat 1 is in the bonus ("1 + @mod"), and the die replaces it */
+      if(!(Number(base.denomination) > 0) && (typeof base.bonus === "string")) base.bonus = base.bonus.replace(/^\s*\d+(?![\dd.])\s*(\+\s*)?/i, "");
       base.number = 1;
       base.denomination = faces;
     }

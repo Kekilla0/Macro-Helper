@@ -33,7 +33,9 @@ jobs:
           cat module.json
 
       - name: Zip the module
-        run: zip -r module.zip module.json LICENSE README.md lang scripts styles templates
+        # packs : the module's compendiums (module.json declares them); examples : the Actions compendium fills
+        # itself from examples/items the first time the GM loads a world
+        run: zip -r module.zip module.json LICENSE README.md lang scripts styles templates packs examples
 
       - name: Attach module.json and module.zip to the release
         uses: ncipollo/release-action@v1

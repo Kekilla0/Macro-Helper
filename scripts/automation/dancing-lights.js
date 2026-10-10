@@ -15,8 +15,8 @@ const log = logger.for(import.meta.url);
  *   Cast   : four lights or one glowing Medium form, then where each goes on the map (within the spell's range, each
  *            light within 20 ft of another; over a creature is fine). Esc after the first : no more lights. Closing
  *            before the first : nothing cast.
- *   Lights : tokens made by the GM's client, nothing drawn but their light (Dim Light in a 10 ft radius), on the caster's side, owned by
- *            its players (moved by hand : the spell's Move Lights). Not creatures : no combat, no sheet to fill in
+ *   Lights : tokens made by the GM's client, nothing drawn but their light (Dim Light in a 10 ft radius), Neutral (no
+ *            one's ally : not a creature beside a target for Sneak Attack or flanking), owned by the caster's players (moved by hand : the spell's Move Lights). Not creatures : no combat, no sheet to fill in
  *            (one "Dancing Light" actor in the summons folder stands behind them all).
  *   Ending : with the spell's Concentration; casting it again replaces them; a light moved beyond the spell's range
  *            (from the caster) vanishes.
@@ -40,6 +40,17 @@ export class dancingLights{
     gm.handle("dancingLights", (data, user) => this.createAsGM(data, user));
     Hooks.on("deleteActiveEffect", effect => this.onConcentrationEnd(effect));
     Hooks.on("updateToken", (token, changes) => this.onMove(token, changes));
+    /* Lights made before they were Neutral */
+    Hooks.once("ready", () => this.neutralAsGM());
+  }
+
+  static async neutralAsGM(){
+    if(!game.users.activeGM?.isSelf) return;
+    const NEUTRAL = CONST.TOKEN_DISPOSITIONS.NEUTRAL;
+    for(const scene of game.scenes){
+      const updates = scene.tokens.filter(t => t.getFlag(module.id, "dancingLight") && (t.disposition !== NEUTRAL)).map(t => ({ _id : t.id, disposition : NEUTRAL }));
+      if(updates.length) await scene.updateEmbeddedDocuments("Token", updates).catch(error => log.debug(error));
+    }
   }
 
   /* Ours to do : the spell, its summon, nothing for dnd5e to summon */
@@ -70,7 +81,7 @@ export class dancingLights{
     if(!result || ((result?.[module.id]?.card) && !(await uses.cardOf(result)))) return result;
     try {
       await gm.run("dancingLights", { item : activity.item.uuid, scene : from.document.parent.id, points, form, range,
-        caster : from.document.uuid, disposition : from.document.disposition ?? 1 });
+        caster : from.document.uuid });
     } catch(error){
       log.error(error);
       ui.notifications.warn(error.message);
@@ -120,7 +131,7 @@ export class dancingLights{
     return game.scenes.contents.flatMap(s => s.tokens.filter(t => t.getFlag(module.id, "dancingLight")?.actor === casterActorUuid));
   }
 
-  static async createAsGM({ item : itemUuid, scene : sceneId, points = [], form = "lights", range, caster : casterUuid, disposition = 1 } = {}, user){
+  static async createAsGM({ item : itemUuid, scene : sceneId, points = [], form = "lights", range, caster : casterUuid } = {}, user){
     const item = fromUuidSync(itemUuid ?? "", { strict : false });
     const actor = item?.actor;
     const scene = game.scenes.get(sceneId);
@@ -147,7 +158,7 @@ export class dancingLights{
       const token = await base.getTokenDocument({
         x : point.x + offset, y : point.y + offset, width : size, height : size, name : item.name,
         /* Just the light : the token itself isn't drawn (still there to grab and move) */
-        texture : { src : this.ICON }, alpha : 0, disposition,
+        texture : { src : this.ICON }, alpha : 0, disposition : CONST.TOKEN_DISPOSITIONS.NEUTRAL,
         light : { dim : 10, bright : 0, color : "#ffd27a", alpha : 0.4, animation : { type : "torch", speed : 2, intensity : 2 } },
         delta : { ownership : { default : CONST.DOCUMENT_OWNERSHIP_LEVELS.NONE, ...owners } },
         flags : { [module.id] : { dancingLight : { actor : actor.uuid, caster : casterUuid ?? null, concentration : concentration?.uuid ?? null, range : Number(range) || this.RANGE } } },

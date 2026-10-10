@@ -230,6 +230,7 @@
   "spells.ritual.normal" : "Cast normally (a spell slot)",
   "spells.ritual.ritual" : "Cast as a Ritual (+10 minutes, no slot)",
   "spells.ritual.note" : "Cast as a Ritual (10 minutes longer, no spell slot)",
+  "weapons.outOfRange" : "{weapon} : {names} beyond its reach or range ({range} ft).",
   "spells.outOfRange" : "{spell} : {names} out of its range ({range} ft).",
   "spells.noHealing" : "{name} can't regain Hit Points ({effect}).",
   "actions.kit.note" : "Stabilize {name} (Healer's Kit : no check).",

@@ -6,6 +6,8 @@ import { limits } from './limits.js';
 import { hands } from './hands.js';
 import { usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
 import { giveMode } from '../roll-item/reasons.js';
+import { uses } from '../uses.js';
+import { tokenOf, distanceBetween, getRange } from '../helpers/tokens.js';
 
 /**
  * Weapon properties, from the weapon's data and dnd5e's rules version (Modern 2024 / Legacy 2014) :
@@ -14,6 +16,8 @@ import { giveMode } from '../roll-item/reasons.js';
  *   Loading      : one shot per turn from that weapon, whatever the number of attacks (in combat)
  *   Light        : an off-hand attack needs an attack with a different Light weapon first this turn (in combat)
  *   In hand      : a character's weapon must be equipped (natural weapons and Unarmed Strike always are)
+ *   Range        : with no map pick (Pick Targets off, or Roll Item off), a target beyond the weapon's reach (melee),
+ *                  its long range (ranged), or its long thrown range (a weapon that can be thrown) follows Rule Limits
  * Heavy changes the roll; the rest are what you're allowed to do. The Weapon Property Rules setting warns (default),
  * blocks the roll, changes what can be changed (equips the weapon, takes a shield off for a Two-Handed weapon, holds a
  * Versatile weapon one-handed with a shield; Loading and Light can't be changed, they warn), or turns them all off.
@@ -46,6 +50,27 @@ export class weapons{
     Hooks.on("deleteItem", (item, options, userId) => item.system?.equipped && this.logEquip(item, false, userId, true));
     /* Rule Fixes' Offer a Fix : the Fix button on its card, for the creature's owners */
     Hooks.on("renderChatMessageHTML", (message, html) => this.fixButton(message, html));
+    uses.onActivity("weaponRange", (activity, ctx, next) => this.rangeStep(activity, ctx, next));
+  }
+
+  /* ---------- Range (Rule Limits, no pick : the pick holds to it itself) ---------- */
+
+  static async rangeStep(activity, ctx, next){
+    const item = activity?.item;
+    if((limits.mode() === "off") || (activity?.type !== "attack") || (item?.type !== "weapon")) return next();
+    if(settings.value("rollItem") && (settings.value("rollItemPick") !== "off")) return next();
+    const attacker = tokenOf(activity.actor);
+    const targets = [...(game.user.targets ?? [])].filter(t => t !== attacker);
+    if(!attacker || !targets.length) return next();
+    const props = item.system.properties;
+    const ranged = item.system.attackType === "ranged";
+    const thrown = !ranged && !!props?.has?.("thr");
+    const range = Math.max(getRange(item), (ranged || thrown) ? getRange(item, { long : true, thrown }) : 0);
+    if(!(range > 0) || !Number.isFinite(range)) return next();
+    const out = targets.filter(t => distanceBetween(attacker, t) > range);
+    if(out.length && !limits.allow(module.format("weapons.outOfRange", { weapon : item.name, names : out.map(t => t.name).join(", "), range }),
+      { who : activity.actor.name, what : item.name })) return;
+    return next();
   }
 
   /* Equipping / unequipping (or adding something already equipped) during a combat : a note only the GM sees,
