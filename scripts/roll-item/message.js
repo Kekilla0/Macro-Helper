@@ -1,13 +1,8 @@
 import { module } from '../module.js';
 import { settings } from '../settings.js';
-import { limits } from '../rules/limits.js';
 import { rollItem } from './roll-item.js';
-import { masteries } from './masteries.js';
-import { maneuvers } from './maneuvers.js';
 import { extraD20, rerolls, addDie } from './rerolls.js';
 import { originOf, addNote } from '../helpers/utils.js';
-import { conditions } from '../rules/conditions.js';
-import { feats } from '../rules/feats.js';
 
 /* Declared in module.json documentTypes.ChatMessage, Foundry prefixes them with the module id */
 export const TYPES = {
@@ -24,7 +19,7 @@ export const TYPES = {
  */
 function rerollStart(card, target){
   const activity = card.parent.getAssociatedActivity({ scaled : true });
-  if(!activity || !limits.mayReroll(card.parent.getAssociatedActor?.()?.name, activity.item?.name ?? card.parent.flavor)) return null;
+  if(!activity || !rerolls.mayReroll(card.parent.getAssociatedActor?.()?.name, activity.item?.name ?? card.parent.flavor)) return null;
   target.disabled = true;
   return activity;
 }
@@ -37,11 +32,35 @@ export function registerMessages(){
   /* Shared markup for damage boxes, one per damage type : {{> "macro-helper.damage-rows" damage }} */
   foundry.applications.handlebars.loadTemplates({
     [`${module.id}.damage-rows`] : `${module.path}/templates/damage-rows.hbs`,
-    [`${module.id}.mastery`] : `${module.path}/templates/mastery.hbs`,
     [`${module.id}.extras`] : `${module.path}/templates/extras.hbs`,
     [`${module.id}.rows`] : `${module.path}/templates/rows.hbs`,
     [`${module.id}.cover`] : `${module.path}/templates/cover.hbs`,
+    [`${module.id}.faces`] : `${module.path}/templates/card-faces.hbs`,
+    [`${module.id}.card-face`] : `${module.path}/templates/card-face.hbs`,
   });
+
+  /**
+   * What else went into the use, shown under the item's description like its own header (macro-helper.cardFaces :
+   * Metamagic) : faces.push({ name, img, subtitle, uuid, description }). A uuid without a description shows that
+   * item's (its name and image too, when not given).
+   * @param {ChatMessage} message
+   * @returns {Promise<object[]>}
+   */
+  const facesOf = async message => {
+    if(!message?.isContentVisible) return [];
+    const faces = [];
+    Hooks.callAll(`${module.id}.cardFaces`, message, faces);
+    for(const face of faces){
+      const item = face.uuid ? fromUuidSync(face.uuid, { strict : false }) : null;
+      face.name ??= item?.name ?? "";
+      face.img ??= item?.img ?? "icons/svg/aura.svg";
+      if(face.description || !item) continue;
+      face.description = (await Promise.resolve(item.system?.getCardData?.()).catch(() => null))?.description
+        || await foundry.applications.ux.TextEditor.implementation.enrichHTML(item.system?.description?.value ?? "", { relativeTo : item, rollData : item.getRollData?.() }).catch(() => "")
+        || null;
+    }
+    return faces;
+  };
 
   /**
    * DM screen (Roll Item setting) : players see an NPC's card but not its numbers (the d20, totals, damage) : only
@@ -65,6 +84,28 @@ export function registerMessages(){
   /* ---------- Rows : one per target, its save then its damage / healing (save cards, and on-hit saves) ---------- */
 
   /**
+   * How a save message turned out : its d20 against the DC; rules change it through macro-helper.saveOutcome
+   * (message, outcome) : an automatic failure sets success false and auto to its reason.
+   * @returns {{ total : number, success : boolean, auto : string|null }|null}  null when it has no d20 roll
+   */
+  const saveOutcome = save => {
+    const [roll] = save?.rolls ?? [];
+    if(!(roll instanceof CONFIG.Dice.D20Roll)) return null;
+    const outcome = { total : roll.total, success : !!(roll.isSuccess || save.system?.forceSuccess), auto : null };
+    Hooks.callAll(`${module.id}.saveOutcome`, save, outcome);
+    return outcome;
+  };
+
+  /**
+   * A button a rule or item macro added (macro-helper.cardButtons, or a card section's) : tell it it was clicked,
+   * macro-helper.cardButton (message, id, { ray, event, button }). data-ray : the attack on a multi card.
+   */
+  const cardButton = (message, event, button) => {
+    const ray = (button.dataset.ray === "" || button.dataset.ray === undefined) ? null : Number(button.dataset.ray);
+    Hooks.callAll(`${module.id}.cardButton`, message, button.dataset.id, { ray, event, button });
+  };
+
+  /**
    * Save results by token uuid, for the saves linked to a card : total + success from the save messages, and for
    * saves the GM rolled privately (DM screen) the success the GM recorded on the card.
    * @returns {Map<string, { total : number|null, success : boolean }>}
@@ -72,7 +113,7 @@ export function registerMessages(){
   const saveResultsOf = message => {
     const results = new Map();
     for(const save of message.getAssociatedRolls?.("save") ?? []){
-      const outcome = conditions.saveOutcome(save);
+      const outcome = saveOutcome(save);
       const uuid = save.getAssociatedToken()?.uuid;
       if(!outcome || !uuid) continue;
       /* Cover set (or changed) after a DEX save was rolled from a row : the total and its success follow */
@@ -95,13 +136,16 @@ export function registerMessages(){
       for(const descriptor of message.system?.targets ?? []){
         if(results.has(descriptor.token)) continue;
         const { actor } = TargetsField.resolve(descriptor);
-        const autos = abilities.map(a => conditions.autoFailOf(actor, a));
+        const autos = abilities.map(a => { const found = []; Hooks.callAll(`${module.id}.autoFail`, actor, a, found); return found[0] ?? null; });
         if(autos.every(Boolean)) results.set(descriptor.token, { total : null, success : false, auto : autos[0] });
       }
     }
     for(const [key, value] of Object.entries(message.getFlag(module.id, "saves") ?? {})){
       if(!results.has(keyUuid(key))) results.set(keyUuid(key), { total : null, success : !!value?.success });
     }
+    /* Rules can settle a row without a roll (macro-helper.rowResults : Careful Spell's automatic success) : set
+       results.set(tokenUuid, { total : null, success, auto : reason, noDamage }) */
+    Hooks.callAll(`${module.id}.rowResults`, message, results);
     return results;
   };
 
@@ -116,7 +160,8 @@ export function registerMessages(){
   const appliedOn = (message, tokenUuid, parts = ["rows"]) => {
     const actor = tokenUuid ? fromUuidSync(tokenUuid, { strict : false })?.actor : null;
     const here = actor?.getFlag?.(module.id, `applied.${message.id}`) ?? {};
-    const found = parts.filter(p => Number.isFinite(here[p]));
+    /* "tray" : any of the card's damage boxes (each its own "tray-<part>..." key) */
+    const found = Object.keys(here).filter(k => Number.isFinite(here[k]) && parts.some(p => (k === p) || ((p === "tray") && k.startsWith("tray-"))));
     if(!found.length) return null;
     const amount = found.reduce((sum, p) => sum + here[p], 0);
     const hide = !game.user.isGM && settings.value("rollItemDmScreen") && !actor.hasPlayerOwner;
@@ -170,14 +215,13 @@ export function registerMessages(){
     if((ability === "dex") && has("dexteritySaveDisadvantage")) dis.push(...named("dexteritySaveDisadvantage"));
     if(has("abilitySaveDisadvantage")) dis.push(...named("abilitySaveDisadvantage"));
     if((CONFIG.DND5E.abilities[ability]?.type === "physical") && has("physicalSaveDisadvantage")) dis.push(...named("physicalSaveDisadvantage"));
-    const trait = feats.saveTraitFor(actor, message);
-    if(trait) adv.push(trait.name);
+    /* Rules add their reasons (Brave against Frightened...), and name effects that give nothing right now */
+    const ignore = new Set();
+    Hooks.callAll(`${module.id}.saveHint`, message, actor, ability, { adv, dis, ignore });
     /* Effects that set the save's roll mode (Danger Sense, Rage...) */
     const key = `system.abilities.${ability}.save.roll.mode`;
-    const incapacitated = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned"].some(st => actor.statuses?.has(st));
     for(const effect of actor.appliedEffects ?? []){
-      /* Danger Sense gives nothing while Incapacitated (classes/barbarian.js) */
-      if(incapacitated && /danger sense/i.test(effect.name ?? "")) continue;
+      if(ignore.has(effect)) continue;
       for(const change of [...(effect.system?.changes ?? effect.changes ?? [])]){
         if(change.key !== key) continue;
         if(Number(change.value) > 0) adv.push(effect.name);
@@ -255,6 +299,8 @@ export function registerMessages(){
 
   /* Full damage on a failure, onSave (half / none) on a success */
   const multiplierFor = (result, onSave) => {
+    /* A rule's "no damage" (Careful Spell, where a success would take half) */
+    if(result?.noDamage) return 0;
     if(!result?.success) return 1;
     return (onSave === "none") ? 0 : (onSave === "half") ? 0.5 : 1;
   };
@@ -277,7 +323,7 @@ export function registerMessages(){
       const hideTotal = !game.user.isGM && dmScreen && !actor?.hasPlayerOwner;
       const multiplier = multiplierFor(result, onSave);
       const labelKey = isHeal ? "rollItem.row.heal" : (multiplier === 0) ? "rollItem.row.none" : (multiplier === 0.5) ? "rollItem.row.half" : "rollItem.row.full";
-      /* The save's own message (hidden in the log by dnd5e's chat card summary) : reroll / Lucky it from here */
+      /* The save's own message (hidden in the log by dnd5e's chat card summary) : reroll it, or what rules offer, from here */
       const saveOptions = result?.message ? rerolls.optionsFor(result.message) : null;
       /* Total cover : out of it (no save, nothing applied) */
       const cover = coverOf(message, descriptor.token);
@@ -288,8 +334,7 @@ export function registerMessages(){
         img : shown.img,
         saveMessage : result?.message?.id ?? "",
         canReroll : !!saveOptions?.reroll && !result?.auto,
-        lucky : (saveOptions?.lucky && !result?.auto) ? module.format("feats.lucky.adv", { name : saveOptions.lucky.name, left : saveOptions.lucky.system.uses.value }) : null,
-        inspire : (saveOptions?.inspiration && !result?.auto && !result?.success) ? module.format("classes.bard.use", { die : saveOptions.inspiration.die }) : null,
+        rerollButtons : result?.auto ? [] : (saveOptions?.buttons ?? []).map(({ id, icon, label }) => ({ id, icon, label })),
         applied : appliedOn(message, descriptor.token, ["rows"]),
         saves : (hasSave && !result && owner) ? abilities.map(ability => ({
           ability, label : `${String(CONFIG.DND5E.abilities[ability]?.abbreviation ?? ability).toUpperCase()} ${dc ?? ""}`.trim(),
@@ -297,7 +342,7 @@ export function registerMessages(){
         })) : [],
         pending : hasSave && !result,
         result : result ? {
-          total : result.auto ? module.format("rollItem.row.autoFail", { condition : result.auto })
+          total : result.auto ? module.format(result.success ? "rollItem.row.autoSuccess" : "rollItem.row.autoFail", { condition : result.auto })
             : (hideTotal || (result.total === null)) ? "?" : result.total,
           success : result.success,
           /* The dice behind it (not behind the DM screen) */
@@ -313,12 +358,15 @@ export function registerMessages(){
 
   /* A row's effect button (GM) : on a failure all of them, on a success those that apply anyway; applied once */
   const effectRow = (message, uuid, { hasSave, result, effects }) => {
-    if(!game.user.isGM || !hasSave || !result || !effects.length) return {};
+    if(!game.user.isGM || !hasSave || !result) return {};
     const due = effects.filter(e => !result.success || e.onSave);
-    if(!due.length) return {};
     const names = due.map(e => e.doc.name).join(", ");
-    if(message.getFlag(module.id, `effects.${uuidKey(uuid)}`)) return { effectApplied : names };
-    return { effectApply : module.format("rollItem.row.applyEffect", { names }) };
+    /* Rules can change the GM's button (macro-helper.rowEffect : Shove shows the shover's choice, nothing until then) */
+    const row = { show : due.length > 0, names, done : !!message.getFlag(module.id, `effects.${uuidKey(uuid)}`) };
+    Hooks.callAll(`${module.id}.rowEffect`, message, uuid, row, { success : !!result.success, effects : due.map(e => e.doc) });
+    if(!row.show) return {};
+    if(row.done) return { effectApplied : row.names };
+    return { effectApply : module.format("rollItem.row.applyEffect", { names : row.names }) };
   };
 
   /* The GM applies a row's effects to its creature */
@@ -330,12 +378,9 @@ export function registerMessages(){
     const result = saveResultsOf(message).get(uuid);
     if(!actor || !result) return;
     const due = effectsOf(activity).filter(e => !result.success || e.onSave);
+    /* Rules may stop it or do it themselves (macro-helper.preApplyEffects : Grapple on a creature too big; Shove) */
+    if(Hooks.call(`${module.id}.preApplyEffects`, message, actor, due.map(e => e.doc), { uuid, button }) === false) return;
     if(!due.length) return;
-    /* Grapple : only a creature no more than one size larger than the grappler */
-    const grappler = message.getAssociatedActor?.();
-    if((maneuvers.ofCard(message) === "grapple") && grappler && !maneuvers.fits(actor, grappler)){
-      if(!limits.allow(module.format("rollItem.maneuver.tooBig", { name : actor.name, action : module.i18n("rollItem.maneuver.grapple") }), { who : grappler.name, what : `Grapple ${actor.name}` })) return;
-    }
     const data = due.map(({ doc }) => {
       const d = foundry.utils.mergeObject(doc.toObject(), { origin : activity.item?.uuid ?? doc.parent?.uuid, transfer : false, disabled : false,
         start : { time : game.time.worldTime, ...(game.combat?.started ? { combat : game.combat.id, round : game.combat.round, turn : game.combat.turn ?? 0 } : {}) },
@@ -382,24 +427,18 @@ export function registerMessages(){
     }
   };
 
-  /* A row's save rerolled / Lucky'd : the save message itself (dnd5e's summary hides it in the log) */
+  /* A row's save rerolled, or a rule's button on it (Lucky) : the save message itself (dnd5e's summary hides it in the log) */
   const rowReroll = async (event, button) => {
     const save = game.messages.get(button.dataset.message);
-    if(save) await rerolls.reroll(save, event);
-  };
-  const rowLucky = async (event, button) => {
-    const save = game.messages.get(button.dataset.message);
-    if(save) await rerolls.lucky(save, save.getAssociatedActor?.());
+    if(!save) return;
+    if(!button.dataset.id) return rerolls.reroll(save, event);
+    await rerolls.optionsFor(save).buttons.find(b => b.id === button.dataset.id)?.run(event);
   };
   /* Apply effect on a row : the rider's activity on an attack card, the card's own on a save card */
   async function RowEffect(event, button){
     const activity = this.riderActivity ?? this.parent.getAssociatedActivity({ scaled : true });
     await applyRowEffects(this.parent, button, { activity, targets : this.targets });
   }
-  const rowInspire = async (event, button) => {
-    const save = game.messages.get(button.dataset.message);
-    if(save) await rerolls.inspire(save, save.getAssociatedActor?.());
-  };
 
   /* A row's damage / healing : only the target's owner (or the GM) can apply it, sized by its save */
   const applyRow = async (message, button, { rolls = [], targets = [] } = {}) => {
@@ -466,8 +505,38 @@ export function registerMessages(){
     return message.update({ rolls : rolls.filter(Boolean).map(r => JSON.stringify(r)), system });
   };
 
+  /**
+   * Roll the lowest dice of some of a card's damage rolls again, keeping the new results (Empowered Spell).
+   * @param {ChatMessage} message
+   * @param {DamageRoll[]} rolls   rolls of the message (the same objects)
+   * @param {number} n             how many dice
+   * @returns {Promise<number>}    dice rolled again
+   */
+  const rerollLowest = async (message, rolls, n) => {
+    const entries = [];
+    rolls.forEach((roll, ri) => (roll.dice ?? []).forEach((die, di) => die.results.forEach((r, k) => {
+      if((r.active !== false) && !r.discarded) entries.push({ ri, di, k, value : r.result, faces : die.faces });
+    })));
+    entries.sort((a, b) => a.value - b.value);
+    const chosen = entries.slice(0, Math.max(0, n));
+    if(!chosen.length) return 0;
+    const updated = rolls.map(r => r.constructor.fromData(r.toJSON()));
+    const shown = [];
+    for(const e of chosen){
+      const again = await new Roll(`1d${e.faces}`).evaluate();
+      updated[e.ri].dice[e.di].results[e.k].result = again.total;
+      shown.push(again);
+    }
+    for(const roll of updated) roll._total = roll._evaluateTotal();
+    const all = message.rolls.map(r => { const i = rolls.indexOf(r); return (i >= 0) ? updated[i] : r; });
+    await replaceRolls(message, { rolls : all, shown });
+    return chosen.length;
+  };
+
   /* Rolls on our cards are tagged options[module.id] = { ray, part }, untagged rolls are ray 0 / "base" */
   const tagOf = roll => ({ ray : 0, part : "base", ...(roll.options?.[module.id] ?? {}) });
+  /* A flag key for one attack : its index on a multi card, "single" otherwise */
+  const rayKey = ray => Number.isInteger(ray) ? String(ray) : "single";
   const tag = (rolls, data) => { for(const roll of rolls) roll.options[module.id] = { ...tagOf(roll), ...data }; return rolls; };
 
   /**
@@ -547,8 +616,31 @@ export function registerMessages(){
       return ["tray", part, key, ray].filter(v => (v !== undefined) && (v !== "")).join("-").replace(/\./g, "-");
     }
 
+    /* Applied to every target the card has (for this box) : open, its numbers showing, the Apply button done. Another
+       creature can still get it by selecting it (dnd5e's tray applies to the selection then) */
+    connectedCallback(){
+      super.connectedCallback();
+      const message = this.#message;
+      const button = this.applyButton;
+      if(!message?.system || !button) return;
+      const ray = ("ray" in this.dataset) ? Number(this.dataset.ray) : null;
+      const targets = (Number.isInteger(ray) && message.system.rayTarget) ? [message.system.rayTarget(ray)].filter(Boolean) : (message.system.targets ?? []);
+      if(!targets.length) return;
+      const done = targets.every(t => {
+        const actor = TargetsField.resolve(t).actor;
+        return Number.isFinite(actor?.getFlag?.(module.id, `applied.${message.id}.${this.partKey}`));
+      });
+      if(!done) return;
+      this.open = true;
+      button.disabled = true;
+      const label = button.querySelector("span");
+      if(label) label.textContent = module.i18n("rollItem.apply.applied");
+    }
+
     getMergedOptions(uuid){
-      return { ...super.getMergedOptions(uuid), [module.id] : { part : this.partKey } };
+      const options = super.getMergedOptions(uuid);
+      /* dnd5e passes its card as originatingMessage; Roll Item's own applies (and the rules reading them) use origin */
+      return { ...options, origin : options.origin ?? this.#message ?? options.originatingMessage, [module.id] : { part : this.partKey } };
     }
 
     /* Extra damage added as an alternative (Savage Attacker's second roll) : applying the first roll or the
@@ -560,7 +652,7 @@ export function registerMessages(){
       if(!message?.isOwner || !["base", "extra"].includes(part) || !message.system?.alternativesOf) return;
       const ray = ("ray" in this.dataset) ? Number(this.dataset.ray) : null;
       if(!message.system.alternativesOf(ray).length) return;
-      await message.setFlag(module.id, `choice.${masteries.rayKey(ray)}`, (part === "extra") ? this.dataset.key : "base");
+      await message.setFlag(module.id, `choice.${rayKey(ray)}`, (part === "extra") ? this.dataset.key : "base");
     }
 
     matches(roll){
@@ -619,14 +711,11 @@ export function registerMessages(){
         applyHits : RollItemMessageData.#applyHits,
         rollRiderSave : RollItemMessageData.#rollRiderSave,
         rerollRiderDamage : RollItemMessageData.#rerollRiderDamage,
-        useMastery : RollItemMessageData.#useMastery,
         cardButton : RollItemMessageData.#cardButton,
         rowSave : RollItemMessageData.#rowSave,
         rowApply : RollItemMessageData.#rowApply,
         setCover : RollItemMessageData.#setCover,
         rowReroll : rowReroll,
-        rowLucky : rowLucky,
-        rowInspire : rowInspire,
         rowEffect : RowEffect,
       },
     }, { inplace : false }));
@@ -677,12 +766,17 @@ export function registerMessages(){
       return this.parent.rolls.filter(r => r instanceof DamageRoll && tagOf(r).part === "base");
     }
 
-    /* Graze's damage for a miss (masteries.js) */
-    get grazeRolls(){
-      return this.parent.rolls.filter(r => r instanceof DamageRoll && tagOf(r).part === "graze");
+    /**
+     * Rolls rules added to an attack (rollItem.addRolls : Graze's damage), all of them or one part's.
+     * @param {number|null} ray   the attack's index on a multi card, null for a single attack
+     * @param {string} [part]
+     */
+    addedRollsOf(ray, part){
+      const all = (Number.isInteger(ray) ? this.rayRolls(ray) : this.parent.rolls).filter(r => r instanceof DamageRoll && tagOf(r).added);
+      return part ? all.filter(r => tagOf(r).part === part) : all;
     }
 
-    /* ---------- Weapon mastery (masteries.js) : ray is the attack's index on a multi card, null for a single attack ---------- */
+    /* ---------- One attack : ray is the attack's index on a multi card, null for a single attack ---------- */
 
     attackOf(ray){
       return Number.isInteger(ray) ? this.rayAttack(ray) : this.attackRoll;
@@ -703,42 +797,29 @@ export function registerMessages(){
       return this.targetsOf(ray).filter(t => hitsAC(attack, t.ac)).map(t => TargetsField.resolve(t).token).filter(Boolean);
     }
 
-    masteryUsed(ray){
-      return !!this.parent.getFlag(module.id, `mastery.${masteries.rayKey(ray)}`);
-    }
-
-    /* The mastery part of the card for one attack : Graze's damage on a miss, or the button for a hit */
-    masteryContext(ray){
-      const key = this.masteryOf(ray);
-      if(!key || !masteries.enabled() || !this.parent.isContentVisible) return null;
+    /* The targets of one attack, and those it hit (card descriptors) */
+    targetHits(ray){
       const attack = this.attackOf(ray);
       const targets = this.targetsOf(ray);
-      const hits = targets.filter(t => hitsAC(attack, t.ac));
-      const missed = targets.length > hits.length;
+      return { targets, hits : targets.filter(t => hitsAC(attack, t.ac)) };
+    }
 
-      const grazeRolls = Number.isInteger(ray) ? this.rayDamage(ray, "graze") : this.grazeRolls;
-      const graze = (grazeRolls.length && (missed || !targets.length))
-        ? { ...damageContext(this.parent, grazeRolls), showTray : this.canApply, onMiss : !targets.length }
-        : null;
+    /* Damage boxes for rolls, as the card draws them (for a rule's card section) */
+    damageContextOf(rolls){
+      return damageContext(this.parent, rolls, { hidden : hidesNumbers(this.parent) });
+    }
 
-      /* Cleave is another attack : its roller's. The rest change the target (Prone, moved, an effect) : outcomes the
-         GM decides on, so only the GM sees those buttons. Cleave's own extra attack can't Cleave again. */
-      const isCleave = !!attack?.options?.[module.id]?.noMod;
-      const mayUse = (key === "cleave") ? (this.parent.isOwner && !isCleave) : game.user.isGM;
-      const canUse = mayUse && masteries.ACTIONS.includes(key);
-      const action = (canUse && hits.length) ? {
-        label : masteries.buttonLabel(key, this.parent.getAssociatedActor(), attack),
-        used : this.masteryUsed(ray),
-      } : null;
-      if(!graze && !action) return null;
-
-      return {
-        key, graze, action,
-        label : masteries.label(key),
-        icon : masteries.ICONS[key] ?? "fa-star",
-        ray : Number.isInteger(ray) ? ray : "",
-        hasRay : Number.isInteger(ray),
-      };
+    /**
+     * Sections rules add under an attack (a weapon mastery's button, Graze's damage) : macro-helper.cardSections
+     * (message, sections, { ray }) : push { partial, context, applies }. partial : a Handlebars partial the rule
+     * loaded; context : what it's drawn with; applies : it has damage Apply Hits deals (rolls tagged onMiss).
+     * Its buttons use data-action="cardButton" data-id="..." : macro-helper.cardButton tells the rule.
+     */
+    sectionsContext(ray){
+      if(!this.parent.isContentVisible) return [];
+      const sections = [];
+      Hooks.callAll(`${module.id}.cardSections`, this.parent, sections, { ray });
+      return sections.filter(s => s?.partial);
     }
 
     /* ---------- Extensions : extra damage and buttons added by item macros (stage hooks) ---------- */
@@ -764,7 +845,7 @@ export function registerMessages(){
 
     /* Which damage was applied when there are alternatives : "base", an extra key, or null while all are on offer */
     choiceOf(ray){
-      return this.parent.getFlag(module.id, `choice.${masteries.rayKey(ray)}`) ?? null;
+      return this.parent.getFlag(module.id, `choice.${rayKey(ray)}`) ?? null;
     }
 
     /**
@@ -772,6 +853,45 @@ export function registerMessages(){
      * @param {number|null} [ray=null]
      * @returns {Promise<DamageRoll[]>}
      */
+    /**
+     * Roll the lowest n dice of an attack's own damage again, keeping the new results (Empowered Spell).
+     * @param {number} n
+     * @param {number|null} [ray=null]
+     */
+    async rerollLowestDamage(n, ray = null){
+      return rerollLowest(this.parent, Number.isInteger(ray) ? this.rayDamage(ray) : this.damageRolls, n);
+    }
+
+    /**
+     * Roll an attack's d20 again, the new roll kept (Seeking Spell); its damage follows a crit gained or lost.
+     * @param {number|null} [ray=null]
+     */
+    async rerollAttackRoll(ray = null){
+      const old = this.attackOf(ray);
+      if(!old) return null;
+      const updated = await old.reroll();
+      await this._swapAttack(ray, old, updated, [updated]);
+      return updated;
+    }
+
+    /**
+     * Change the damage type of an attack's own damage, once rolled (a pact weapon's Necrotic, Psychic or Radiant).
+     * @param {string} type
+     * @param {number|null} [ray=null]
+     */
+    async setDamageType(type, ray = null){
+      const rolls = Number.isInteger(ray) ? this.rayDamage(ray) : this.damageRolls;
+      if(!rolls.length) return;
+      const all = this.parent.rolls.map(r => {
+        if(!rolls.includes(r)) return r;
+        const copy = r.constructor.fromData(r.toJSON());
+        copy.options.type = type;
+        if(copy.options.types) copy.options.types = [type];
+        return copy;
+      });
+      return this.parent.update({ rolls : all.map(r => JSON.stringify(r)) });
+    }
+
     async rollDamage(ray = null){
       const activity = this.parent.getAssociatedActivity({ scaled : true });
       return activity ? rollItem.rollDamage(activity, this.attackOf(ray)) : [];
@@ -978,12 +1098,15 @@ export function registerMessages(){
       const rolls = this.parent.rolls;
       const rendered = context.rolls;
       context.cover = coverContext(this.parent, this.targets);
+      context.note = this.parent.getFlag(module.id, "note") ?? null;
       /* The item's description, as dnd5e's own cards show it (folds under the header) */
       if(this.parent.isContentVisible){
         const activity = this.parent.getAssociatedActivity?.();
         const item = activity?.item ?? this.parent.getAssociatedItem?.();
         context.description = (await Promise.resolve(item?.system?.getCardData?.({ activity })).catch(() => null))?.description || null;
       }
+      /* And what else went into it (Metamagic), each folding under its own header */
+      context.faces = await facesOf(this.parent);
 
 
       /* Only whoever can update the message (roller / GM) can reroll it */
@@ -1036,7 +1159,7 @@ export function registerMessages(){
             damage : (damage.length || !visible) ? damageContext(this.parent, damage, { hidden }) : null,
             /* Damage is rolled either way; APPLY only shows on a hit (a reroll that hits brings it back) */
             showTray : canApply && (damage.length > 0) && hit,
-            mastery : this.masteryContext(i),
+            sections : this.sectionsContext(i),
             extras : this.extrasContext(i),
           };
         }));
@@ -1045,7 +1168,7 @@ export function registerMessages(){
           const choice = this.choiceOf(ray.index);
           if(choice && (choice !== "base")){ ray.damage = null; ray.showTray = false; }
         }
-        context.applyHits = canApply && context.rays.some(r => (r.hit && r.showTray) || r.mastery?.graze);
+        context.applyHits = canApply && context.rays.some(r => (r.hit && r.showTray) || r.sections.some(s => s.applies));
         return this._hideUnrevealed(context);
       }
 
@@ -1059,7 +1182,7 @@ export function registerMessages(){
       /* Damage is rolled either way; APPLY only shows on a hit (a reroll that hits brings it back) */
       if(damage.length) context.damage = { ...damageContext(this.parent, damage, { hidden }), showTray : this.canApply && this.isHitOn(null) };
 
-      context.mastery = this.masteryContext(null);
+      context.sections = this.sectionsContext(null);
       context.extras = this.extrasContext(null);
       const choice = this.choiceOf(null);
       if(choice && (choice !== "base")) context.damage = null;
@@ -1073,7 +1196,7 @@ export function registerMessages(){
     /**
      * Damage after the attack (rollItem.attackCard) : leave out what hasn't been rolled on screen yet.
      *   reveal 0 : nothing but "Rolling..." (no attack totals, no hit / miss on the targets)
-     *   reveal 1 : the attack(s), not the damage, masteries, rider or buttons
+     *   reveal 1 : the attack(s), not the damage, rules' sections, rider or buttons
      */
     _hideUnrevealed(context){
       const reveal = rollItem.revealOf(this.parent);
@@ -1081,14 +1204,14 @@ export function registerMessages(){
 
       context.pending = true;
       context.damage = null;
-      context.mastery = null;
+      context.sections = [];
       context.extras = null;
       context.rider = null;
       context.applyHits = false;
       context.buttons = null;
       context.effects = [];
       context.rays = (context.rays ?? []).map(ray => ({
-        ...ray, damage : null, showTray : false, mastery : null, extras : null, canReroll : false,
+        ...ray, damage : null, showTray : false, sections : [], extras : null, canReroll : false,
         ...(reveal < 1 ? { attack : "", hit : true, target : ray.target ? { ...ray.target, showResult : false } : null } : {}),
       }));
       if(reveal < 1){
@@ -1182,13 +1305,14 @@ export function registerMessages(){
       }, mode);
       if(!attack) return target.disabled = false;
 
-      /* Cleave's extra attack stays one, and Graze follows the new attack */
-      if(this.attackRoll?.options?.[module.id]?.noMod) attack.options[module.id] = { ...(attack.options[module.id] ?? {}), noMod : true };
-      const graze = tag(await masteries.grazeRolls(activity, attack, this.damageRolls), { part : "graze" });
+      /* The attack's tags stay (Cleave's extra attack), and rules' added rolls follow the new attack (Graze) */
+      const tags = this.attackRoll?.options?.[module.id]?.tags;
+      if(tags) attack.options[module.id] = { ...(attack.options[module.id] ?? {}), tags };
+      const added = await rollItem.addedRolls(activity, attack, this.damageRolls);
 
       const { ability, ammunition, attackMode, mastery } = attack.options;
       await replaceRolls(this.parent, {
-        rolls : [attack, ...this.damageRolls, ...graze, ...this.riderRolls],
+        rolls : [attack, ...this.damageRolls, ...added, ...this.riderRolls],
         shown : [attack],
         system : { ability, ammunition, mastery, mode : attackMode },
       });
@@ -1205,7 +1329,7 @@ export function registerMessages(){
         for(const i of this.rays.keys()){
           const attack = this.rayAttack(i);
           const damage = tag(await rollItem.rollDamage(activity, attack), { ray : i });
-          replaced.set(i, [attack, ...damage, ...this.rayDamage(i, "graze"), ...this.rayDamage(i, "extra")]);
+          replaced.set(i, [attack, ...damage, ...this.addedRollsOf(i), ...this.rayDamage(i, "extra")]);
           shown.push(...damage);
         }
         if(!shown.length) return target.disabled = false;
@@ -1215,19 +1339,19 @@ export function registerMessages(){
       const damage = await rollItem.rollDamage(activity, this.attackRoll);
       if(!damage.length) return target.disabled = false;
 
-      await replaceRolls(this.parent, { rolls : [this.attackRoll, ...damage, ...this.grazeRolls, ...this.extraRolls(null), ...this.riderRolls], shown : damage });
+      await replaceRolls(this.parent, { rolls : [this.attackRoll, ...damage, ...this.addedRollsOf(null), ...this.extraRolls(null), ...this.riderRolls], shown : damage });
     }
 
     /** @this {RollItemMessageData} */
     static async #rerollRiderDamage(event, target){
       const save = this.riderActivity;
       if(!save) return;
-      if(!limits.mayReroll(this.parent.getAssociatedActor?.()?.name, save.item?.name)) return;
+      if(!rerolls.mayReroll(this.parent.getAssociatedActor?.()?.name, save.item?.name)) return;
       target.disabled = true;
 
       const damage = tag(await rollItem.rollDamage(save, null), { part : "save" });
       if(!damage.length) return target.disabled = false;
-      await replaceRolls(this.parent, { rolls : [this.attackRoll, ...this.damageRolls, ...this.grazeRolls, ...this.extraRolls(null), ...damage], shown : damage });
+      await replaceRolls(this.parent, { rolls : [this.attackRoll, ...this.damageRolls, ...this.addedRollsOf(null), ...this.extraRolls(null), ...damage], shown : damage });
     }
 
     /**
@@ -1266,11 +1390,9 @@ export function registerMessages(){
       }
     }
 
-    /* A button an item macro added (macro-helper.cardButtons) : tell it it was clicked (macro-helper.cardButton) */
     /** @this {RollItemMessageData} */
     static async #cardButton(event, target){
-      const ray = (target.dataset.ray === "" || target.dataset.ray === undefined) ? null : Number(target.dataset.ray);
-      Hooks.callAll(`${module.id}.cardButton`, this.parent, target.dataset.id, { ray, event });
+      cardButton(this.parent, event, target);
     }
 
     /* The on-hit save, from a row (rollRowSave / applyRow) */
@@ -1289,19 +1411,6 @@ export function registerMessages(){
     /** @this {RollItemMessageData} */
     static async #rowApply(event, target){
       await applyRow(this.parent, target, { rolls : this.riderRolls, targets : this.targets });
-    }
-
-    /* The mastery button : data-ray is the attack on a multi card, empty for a single attack */
-    /** @this {RollItemMessageData} */
-    static async #useMastery(event, target){
-      const ray = (target.dataset.ray === "" || target.dataset.ray === undefined) ? null : Number(target.dataset.ray);
-      target.disabled = true;
-      try { await masteries.use(this.parent, ray, event); }
-      catch(error){
-        console.error("Macro Helper | mastery", error);
-        ui.notifications.warn(error.message);
-      }
-      finally { target.disabled = this.masteryUsed(ray); }
     }
 
     /** @this {RollItemMessageData} */
@@ -1324,7 +1433,8 @@ export function registerMessages(){
       const byActor = new Map();
       for(const i of this.rays.keys()){
         const hit = rollItem.isHit(this.rayAttack(i));
-        let rolls = hit ? this.rayDamage(i) : (masteries.enabled() ? this.rayDamage(i, "graze") : []);
+        /* A miss : what rules added for one (Graze) */
+        let rolls = hit ? this.rayDamage(i) : this.addedRollsOf(i).filter(r => tagOf(r).onMiss);
         if(hit){
           const choice = this.choiceOf(i);
           const extras = this.extraRolls(i);
@@ -1357,13 +1467,11 @@ export function registerMessages(){
         rerollRay : RollItemSaveData.#rerollRay,
         applyRays : RollItemSaveData.#applyRays,
         rerollFormula : RollItemSaveData.#rerollFormula,
-        shove : RollItemSaveData.#shove,
+        cardButton : RollItemSaveData.#cardButton,
         rowSave : RollItemSaveData.#rowSave,
         rowApply : RollItemSaveData.#rowApply,
         setCover : RollItemSaveData.#setCover,
         rowReroll : rowReroll,
-        rowLucky : rowLucky,
-        rowInspire : rowInspire,
         rowEffect : RowEffect,
       },
     }, { inplace : false }));
@@ -1394,6 +1502,11 @@ export function registerMessages(){
 
     get isMulti(){
       return this.rays.length > 1;
+    }
+
+    /* Roll the lowest n dice of the card's damage again, keeping the new results (Empowered Spell) */
+    async rerollLowestDamage(n){
+      return rerollLowest(this.parent, this.damageRolls, n);
     }
 
     get damageRolls(){
@@ -1462,6 +1575,7 @@ export function registerMessages(){
       if(context.content) return context;
       context.cover = coverContext(this.parent, this.parent.getAssociatedActivity()?.type === "save" ? this.targets : []);
       context.note = this.parent.getFlag(module.id, "note") ?? null;
+      context.faces = await facesOf(this.parent);
 
       context.formula = await this._prepareFormulaContext();
 
@@ -1499,8 +1613,10 @@ export function registerMessages(){
         }
       }
 
-      /* Shove : Prone or Push 5 ft for each target that failed its save */
-      context.shove = maneuvers.shoveContext(this.parent);
+      /* Sections rules add (Shove : Prone or Push 5 ft for each target that failed its save), as on attack cards */
+      context.sections = [];
+      if(this.parent.isContentVisible) Hooks.callAll(`${module.id}.cardSections`, this.parent, context.sections, { ray : null });
+      context.sections = context.sections.filter(s => s?.partial);
 
       return context;
     }
@@ -1568,17 +1684,9 @@ export function registerMessages(){
       await applyRow(this.parent, target, { rolls : this.damageRolls, targets : this.targets });
     }
 
-    /* Shove's choice for one target : data-target is its token uuid, data-choice "prone" or "push" */
     /** @this {RollItemSaveData} */
-    static async #shove(event, target){
-      const { target : uuid, choice } = target.dataset;
-      target.disabled = true;
-      try { await maneuvers.shove(this.parent, uuid, choice); }
-      catch(error){
-        console.error("Macro Helper | Shove", error);
-        ui.notifications.warn(error.message);
-        target.disabled = false;
-      }
+    static async #cardButton(event, target){
+      cardButton(this.parent, event, target);
     }
 
     /* Each instance onto its own target, instances without a target go to the selected tokens */
@@ -1636,6 +1744,20 @@ export function registerMessages(){
   Hooks.on("dnd5e.renderChatMessage", (message, html) => {
     const note = message.getFlag?.(module.id, "note");
     if(note && !ours.has(message.type)) addNote(html, note);
+  });
+
+  /* dnd5e's own cards (Roll Item off, or a card it doesn't make) : the faces rules add, under the description */
+  Hooks.on("dnd5e.renderChatMessage", async (message, html) => {
+    if(ours.has(message.type) || html.querySelector(`.${module.id}-face`)) return;
+    const faces = await facesOf(message);
+    if(!faces.length) return;
+    const card = html.querySelector(".chat-card");
+    const anchor = card?.querySelector(":scope > .card-description, :scope > .card-flavor, :scope > .card-header");
+    if(!anchor || html.querySelector(`.${module.id}-face`)) return;
+    anchor.insertAdjacentHTML("afterend", await foundry.applications.handlebars.renderTemplate(`${module.path}/templates/card-faces.hbs`, { faces }));
+    if(settings.value("collapseCards") || game.settings.get("dnd5e", "autoCollapseItemCards")){
+      html.querySelectorAll(`.${module.id}-face .card-header, .${module.id}-face .card-description`).forEach(el => el.classList.add("collapsed"));
+    }
   });
 
   /* Damage / healing applied from a card (conditions.onApplyDamage notes it on the creature) : show it on its row */

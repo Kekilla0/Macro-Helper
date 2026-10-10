@@ -27,7 +27,9 @@
         </div>
     </section>
     {{/if}}
+    {{> "macro-helper.faces" }}
     {{> "macro-helper.cover" }}
+    {{#if note}}<p class="supplement macro-helper-note"><strong>{{ note }}</strong></p>{{/if}}
 
     {{#if mastery}}
     <p class="supplement">
@@ -168,7 +170,7 @@
     {{/if}}
 
     {{#with extras}}{{> "macro-helper.extras" }}{{/with}}
-    {{#with mastery}}{{> "macro-helper.mastery" }}{{/with}}
+    {{#each sections}}{{> (lookup . "partial") context }}{{/each}}
 </div>
 {{/each}}
 
@@ -184,8 +186,8 @@
 {{!-- Added by item macros (stage hooks) : extra damage boxes, card buttons (Savage Attacker...) --}}
 {{#with extras}}{{> "macro-helper.extras" }}{{/with}}
 
-{{!-- Weapon mastery : Graze's damage on a miss, or the button for a hit (Topple, Push, Sap, Slow, Vex, Cleave) --}}
-{{#with mastery}}{{> "macro-helper.mastery" }}{{/with}}
+{{!-- Sections rules add (macro-helper.cardSections) : a weapon mastery's button, Graze's damage on a miss --}}
+{{#each sections}}{{> (lookup . "partial") context }}{{/each}}
 
 {{!-- Effects the attack applies (Guiding Bolt, Ray of Frost) --}}
 {{#if effects.length}}

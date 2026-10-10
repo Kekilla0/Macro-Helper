@@ -19,23 +19,36 @@ const log = logger.for(import.meta.url);
 export class uses{
   static ORDER = {
     item : [
+      "wildShapeCast", // Druid : a spell while in Wild Shape (Rule Limits; Change : leave the form, then cast)
       "flurry",        // Monk : Flurry of Blows uses the Unarmed Strike instead
       "smite",         // Paladin : a smite spell from the sheet smites the latest melee hit
       "huntersMark",   // Ranger : Hunter's Mark / Favored Enemy : pay, pick, mark (or move the mark)
+      "sneak",         // Rogue : Sneak Attack from the sheet : the latest qualifying hit
+      "hex",           // Warlock : Hex : pay, ability, pick, curse (or move it)
+      "fontOfMagic",   // Sorcerer : Font of Magic : the conversion window
+      "arcaneRecovery",// Wizard : Arcane Recovery from the sheet : the slot window
       "familiar",      // Familiars : Store / Summon New / Release, before dnd5e's choice of activity
       "itemMacro",     // Item Macro : a macro run before (or instead of) the use
       "healer",        // Feats : the Healer feat's Battle Medic
       "fastForward",   // Roll Item : one attack with its riders skips dnd5e's choice of activity
     ],
     activity : [
+      "offScene",      // Roll Item : no token on the scene being viewed : no targets (it can't see them)
       "itemMacro",     // Item Macro : a macro on the activity
+      "ritual",        // Spells : cast as a Ritual (no slot, 10 minutes longer) or normally
+      "metamagic",     // Sorcerer : Metamagic chosen and paid before a Sorcerer spell is cast (Distant : the range picked)
       "flurry",        // Monk : Monk's Focus's Flurry of Blows uses the Unarmed Strike instead
-      "presetTargets", // Roll Item : targets the activity sets itself (Turn Undead)
+      "presetTargets", // Cleric : Turn Undead targets the Undead within 30 ft itself (no pick)
       "action",        // Default Actions : choose and pick first (Help)
-      "maneuver",      // Roll Item : Grapple or Shove, for the one activity that does both
+      "maneuver",      // Maneuvers : Grapple or Shove, for the one activity that does both
       "transform",     // Druid : Wild Shape's form, a familiar and its space
       "layOnHands",    // Paladin : Remove Poison picks the creature it touches
+      "hide",          // Rogue : Cunning Action's Hide asks the GM first; used only once allowed
+      "healersKit",    // Default Actions : the Healer's Kit's Stabilize picks a creature at 0 HP first
+      "dancingLights", // Spells : Dancing Lights : four lights or one form, where each goes
+      "pactWeapon",    // Warlock : Forge Pact Weapon : bond a weapon or conjure one
       "pickTargets",   // Roll Item : pick targets on the map (Pick Targets)
+      "spellRange",    // Spells : no pick, Rule Limits on : targets out of the spell's range follow Rule Limits
     ],
   };
 

@@ -34,10 +34,12 @@ export class SettingsMenu extends HandlebarsApplicationMixin(ApplicationV2){
     footer : { template : "templates/generic/form-footer.hbs" },
   };
 
-  /* GMs see every setting of the group, players only their own client settings */
+  /* GMs see every setting of the group, players only their own client settings; a setting whose feature is off (needs)
+     isn't shown, nor to players one they aren't allowed (players) */
   get keys(){
     const all = Object.entries(GROUPS[this.constructor.GROUP]?.settings ?? {});
-    return all.filter(([, data]) => game.user.isGM || ((data.scope === "client") && (!data.players || settings.value(data.players))))
+    return all.filter(([, data]) => (!data.needs || settings.value(data.needs))
+      && (game.user.isGM || ((data.scope === "client") && (!data.players || settings.value(data.players)))))
       .map(([key]) => key);
   }
 
@@ -71,8 +73,11 @@ export class SettingsMenu extends HandlebarsApplicationMixin(ApplicationV2){
     context.submenus = (GROUPS[this.constructor.GROUP]?.submenus ?? [])
       .filter(sub => game.user.isGM || Object.values(GROUPS[sub]?.settings ?? {}).some(s => s.scope === "client"))
       .map(sub => ({ key : sub, icon : GROUPS[sub].icon, name : `settings.${sub}.menu.title`, label : `settings.${sub}.menu.label`, hint : `settings.${sub}.menu.hint` }));
+    /* My Settings : the GM's pages, one button each (no hints) */
+    context.server = game.user.isGM ? (GROUPS[this.constructor.GROUP]?.server ?? [])
+      .map(group => ({ key : group, icon : GROUPS[group].icon, label : `settings.${group}.menu.title` })) : [];
     /* A player with nothing to set here (Allow Players to Edit off) */
-    context.empty = !all.length && !context.submenus.length;
+    context.empty = !all.length && !context.submenus.length && !context.server.length;
     context.buttons = [{ type : "submit", icon : "fa-solid fa-floppy-disk", label : "SETTINGS.Save" }];
     return context;
   }

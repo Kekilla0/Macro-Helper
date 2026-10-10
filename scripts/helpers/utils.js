@@ -26,6 +26,18 @@ export async function waitFor(condition, { interval = 100, timeout = 20000 } = {
 }
 
 /**
+ * The item an effect came from : its origin is the item, or one of the item's activities (dnd5e's effect tray
+ * Apply sets the activity).
+ * @param {ActiveEffect} effect
+ * @returns {Item|null}
+ */
+export function originItem(effect){
+  const origin = effect?.origin ? fromUuidSync(effect.origin, { strict : false }) : null;
+  if(!origin) return null;
+  return (origin.documentName === "Item") ? origin : (origin.item ?? null);
+}
+
+/**
  * The chat card a message came from (a save rolled from a save card...). dnd5e's message models turn
  * system.origin into the card itself, data that hasn't gone through them keeps its id : either works.
  * @param {ChatMessage|object} message

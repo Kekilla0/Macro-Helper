@@ -6,7 +6,7 @@ import * as actors from './helpers/actors.js';
 import * as items from './helpers/items.js';
 import * as utils from './helpers/utils.js';
 import * as creatures from './helpers/creatures.js';
-import { restChoices } from './rules/rest-choices.js';
+import { restChoices } from './automation/rest-choices.js';
 import { rollRequests } from './requests/requests.js';
 
 /* Public functions for macros : MacroHelper.x(...) or game.modules.get("macro-helper").api.x(...) */

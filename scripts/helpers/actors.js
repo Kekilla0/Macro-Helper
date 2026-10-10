@@ -167,8 +167,9 @@ export async function rollSave(thing, ability, dc){
 
 /**
  * Put an effect on a creature that lasts until the start or end of someone's next turn (a weapon mastery, a spell's
- * "until the start of your next turn"). The active GM removes it then; out of combat it stays until removed or used up.
- * Needs permission to change the creature (its owner or the GM).
+ * "until the start of your next turn"). The active GM removes it then. Made out of combat : it waits for that turn in a
+ * combat that begins, else ends after 30 seconds of game time. The same effect (name and origin) already there lasts
+ * from now instead of being added twice. Needs permission to change the creature (its owner or the GM).
  * @param {Actor|Token|TokenDocument} thing   who gets the effect
  * @param {object} data                       ActiveEffect data (name, img, system.changes, statuses, flags...)
  * @param {object} [options]
@@ -177,17 +178,30 @@ export async function rollSave(thing, ability, dc){
  * @param {boolean} [options.thisTurn=false]          "turnEnd" : the end of the turn going on now, not the next one
  * @returns {Promise<ActiveEffect|null>}
  */
-export async function addTimedEffect(thing, data, { of, until = "turnStart", thisTurn = false } = {}){
+export function addTimedEffect(thing, data, { of, until = "turnStart", thisTurn = false } = {}){
   const actor = actorOf(thing);
-  if(!actor?.isOwner) return null;
-  const expires = gm.stamp(actorOf(of) ?? actor, until);
-  /* "Until the end of this turn" (Action Surge, Dash) : not the next one */
-  if(expires && thisTurn) expires.thisTurn = true;
-  /* Shown on the token : Foundry only shows effects with a duration unless told to */
-  const effect = foundry.utils.mergeObject({ showIcon : CONST.ACTIVE_EFFECT_SHOW_ICON?.ALWAYS ?? 2, flags : { [module.id] : { expires } } }, data, { inplace : false });
-  const [created] = await actor.createEmbeddedDocuments("ActiveEffect", [effect]);
-  return created ?? null;
+  if(!actor?.isOwner) return Promise.resolve(null);
+  /* One at a time per creature : two clicks at once (a player's and the GM's) find the first one instead of adding twice */
+  const key = actor.uuid;
+  const run = (timedQueue.get(key) ?? Promise.resolve()).then(async () => {
+    const expires = gm.timedStamp(actorOf(of) ?? actor, until);
+    /* "Until the end of this turn" (Action Surge, Dash) : not the next one */
+    if(expires && thisTurn) expires.thisTurn = true;
+    /* Already there (the same effect from the same source) : it lasts from now instead, never twice */
+    const same = actor.effects.find(e => (e.name === data.name) && ((e.origin ?? null) === (data.origin ?? null)) && e.getFlag(module.id, "expires") !== undefined);
+    if(same){
+      await same.setFlag(module.id, "expires", expires);
+      return same;
+    }
+    /* Shown on the token : Foundry only shows effects with a duration unless told to */
+    const effect = foundry.utils.mergeObject({ showIcon : CONST.ACTIVE_EFFECT_SHOW_ICON?.ALWAYS ?? 2, flags : { [module.id] : { expires } } }, data, { inplace : false });
+    const [created] = await actor.createEmbeddedDocuments("ActiveEffect", [effect]);
+    return created ?? null;
+  });
+  timedQueue.set(key, run.catch(() => {}));
+  return run;
 }
+const timedQueue = new Map();
 
 /* ---------- Last damage ---------- */
 

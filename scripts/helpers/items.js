@@ -1,13 +1,13 @@
 import { module } from '../module.js';
 import { settings } from '../settings.js';
-import { conditions } from '../rules/conditions.js';
-import { hands } from '../rules/hands.js';
+import { conditions } from '../automation/conditions.js';
+import { hands } from '../automation/hands.js';
 import { rollItem } from '../roll-item/roll-item.js';
 import { tokenOf, actorOf, distanceBetween, getRange, isOutOfAction } from './tokens.js';
 import { pickTargets, getThreats } from './targets.js';
 import { findItem, usedThisTurn } from './actors.js';
 import { uses } from '../uses.js';
-import { rollModes } from '../roll-item/roll-modes.js';
+import { rollModes } from '../automation/roll-modes.js';
 
 /**
  * Item helpers.
@@ -171,11 +171,12 @@ function attackFailed(item, message, error){
  * @param {string|Activity} [options.activity]       attack activity, or its id / name, default the first
  * @param {boolean} [options.used=false]             dnd5e has already used the activity : don't refuse it for having no uses left
  * @param {Function} [options.filter]              only tokens that pass (token) => boolean can be picked (Cleave : next to the first)
+ * @param {number} [options.rangeMultiplier=1]     a stretched range (Distant Spell : double, Touch becomes 30 ft)
  * @returns {Promise<{ attack : Activity, targets : Token[], attackMode : Function, disadvantage : Function }|null>}
  *          null if cancelled or refused (with a notification saying why)
  */
 export async function pickAttack(item, { count = 1, disposition = "nonAlly", within = Infinity, long = true, confirm = "auto",
-  clearTargets = true, strict = true, threatened : threatRule = true, repeat = false, activity, used = false, filter } = {}){
+  clearTargets = true, strict = true, threatened : threatRule = true, repeat = false, activity, used = false, filter , rangeMultiplier = 1} = {}){
   const fail = (message, error) => attackFailed(item, message, error);
 
   try {
@@ -200,9 +201,12 @@ export async function pickAttack(item, { count = 1, disposition = "nonAlly", wit
 
     /* Range : thrown weapons reach as far as they can be thrown */
     const thrown = canThrow(item);
-    const range = Math.max(getRange(attack, { long }), thrown ? getRange(item, { thrown : true, long }) : 0);
+    /* Stretched (Distant Spell) : double, Touch 30 ft */
+    const touch = ((attack?.range?.override ? attack.range : item.system.range) ?? {}).units === "touch";
+    const stretch = feet => (rangeMultiplier > 1) ? (touch ? Math.max(feet, 30) : feet * rangeMultiplier) : feet;
+    const range = stretch(Math.max(getRange(attack, { long }), thrown ? getRange(item, { thrown : true, long }) : 0));
     /* Normal range : beyond it (up to range) is long range, shown red on the map and attacked with disadvantage */
-    const normalRange = Math.max(getRange(attack), thrown ? getRange(item, { thrown : true }) : 0);
+    const normalRange = stretch(Math.max(getRange(attack), thrown ? getRange(item, { thrown : true }) : 0));
     if(!(range > 0)) return fail(module.i18n("helpers.attack.noRange"));
 
     /* Running out : with strict (the default) nobody attacks with what they don't have, dnd5e itself only warns */

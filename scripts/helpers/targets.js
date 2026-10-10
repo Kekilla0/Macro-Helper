@@ -385,9 +385,13 @@ function pickOnMap(from, feet, candidates, { count, numberAllowed, within, confi
  * @param {number} [options.range=5]  in feet
  * @param {number} [options.size=1]   the space's width in squares (a Large creature : 2)
  * @param {string} [options.notice]   a line for the banner ("Owl")
+ * @param {boolean} [options.occupied=false]  a creature's space will do too (a light hovering over it)
+ * @param {(space : {x : number, y : number}) => string} [options.check]  why else a space won't do ("" : it will)
+ * @param {string} [options.banner]  the banner's title, keys (another wording : "Click where the light goes")
+ * @param {string} [options.keys]
  * @returns {Promise<{x : number, y : number}|null>}  the space's top-left corner (canvas pixels), null if cancelled
  */
-export async function pickSpace(origin, { range = 5, size = 1, notice = "" } = {}){
+export async function pickSpace(origin, { range = 5, size = 1, notice = "", occupied = false, check = null, banner : title = null, keys = null } = {}){
   const from = tokenOf(origin);
   if(!from) return warn(module.i18n("helpers.pick.noToken")) && null;
   const highlight = highlightRange(from, range, { showSelf : false });
@@ -397,9 +401,9 @@ export async function pickSpace(origin, { range = 5, size = 1, notice = "" } = {
   banner.className = `${module.id}-pick-banner`;
   document.body.append(banner);
   const status = message => {
-    banner.innerHTML = `<strong>${module.i18n("helpers.space.banner")}</strong>`
+    banner.innerHTML = `<strong>${Handlebars.escapeExpression(title ?? module.i18n("helpers.space.banner"))}</strong>`
       + (notice ? `<span class="picks">${Handlebars.escapeExpression(notice)}</span>` : "")
-      + `<span>${module.i18n("helpers.space.keys")}</span>`
+      + `<span>${Handlebars.escapeExpression(keys ?? module.i18n("helpers.space.keys"))}</span>`
       + (message ? `<span class="warning">${message}</span>` : "");
   };
 
@@ -415,7 +419,9 @@ export async function pickSpace(origin, { range = 5, size = 1, notice = "" } = {
   const problem = ({ x, y }) => {
     const space = { document : { x, y, width : size, height : size, elevation : from.document.elevation ?? 0 } };
     if(distanceBetween(from, space) > range) return module.i18n("helpers.space.tooFar");
-    if(!isSpaceFree(x, y, size)) return module.i18n("helpers.space.occupied");
+    if(!occupied && !isSpaceFree(x, y, size)) return module.i18n("helpers.space.occupied");
+    const other = check?.({ x, y }) ?? "";
+    if(other) return other;
     const center = { x : x + (size * grid / 2), y : y + (size * grid / 2) };
     let blocked = false;
     try { blocked = !!CONFIG.Canvas.polygonBackends.move.testCollision(from.center, center, { type : "move", mode : "any" }); }

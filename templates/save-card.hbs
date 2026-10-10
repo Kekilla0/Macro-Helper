@@ -3,7 +3,7 @@
 {{#if content}}
 {{{ content }}}
 {{else}}
-{{> "dnd5e.card-face" }}
+{{> "macro-helper.card-face" }}
 {{/if}}
 
 {{#if note}}<p class="supplement macro-helper-note"><strong>{{ note }}</strong></p>{{/if}}
@@ -72,27 +72,8 @@
 <div class="card-summary" data-message-id="{{ id }}" data-target-uuid="{{ token.uuid }}">{{{ html }}}</div>
 {{/each}}
 
-{{!-- Shove : for each target that failed, the shover picks Prone or a 5 ft push --}}
-{{#if shove.length}}
-<div class="macro-helper-shove">
-    {{#each shove}}
-    <section class="icon-row">
-        <i class="fa-fw fa-solid fa-hand" inert></i>
-        <span class="name">{{ name }}</span>
-        <div class="card-buttons">
-            <button type="button" data-action="shove" data-target="{{ uuid }}" data-choice="prone" {{ disabled done }}>
-                <i class="fa-solid {{#if prone}}fa-check{{else}}fa-person-falling{{/if}}" inert></i>
-                <span>{{ localize "rollItem.maneuver.prone" }}</span>
-            </button>
-            <button type="button" data-action="shove" data-target="{{ uuid }}" data-choice="push" {{ disabled done }}>
-                <i class="fa-solid {{#if push}}fa-check{{else}}fa-arrow-right{{/if}}" inert></i>
-                <span>{{ localize "rollItem.maneuver.push" }}</span>
-            </button>
-        </div>
-    </section>
-    {{/each}}
-</div>
-{{/if}}
+{{!-- Sections rules add (macro-helper.cardSections) : Shove's Prone / Push for each target that failed --}}
+{{#each sections}}{{> (lookup . "partial") context }}{{/each}}
 
 {{!-- Apply damage, halves/negates for targets that saved --}}
 {{#if damage.showTray}}

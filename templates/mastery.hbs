@@ -1,9 +1,9 @@
-{{!-- Weapon mastery for one attack, context from message.js masteryContext :
+{{!-- Weapon mastery for one attack, context from masteries.js cardSection :
       { key, label, icon, ray, hasRay, graze : damage context | null, action : { label, used } | null } --}}
 <div class="macro-helper-mastery" data-mastery="{{ key }}">
     {{#if action}}
     <div class="card-buttons">
-        <button type="button" data-action="useMastery" data-ray="{{ ray }}" {{ disabled action.used }}>
+        <button type="button" data-action="cardButton" data-id="mastery" data-ray="{{ ray }}" {{ disabled action.used }}>
             <i class="fa-solid {{#if action.used}}fa-check{{else}}{{ icon }}{{/if}}" inert></i>
             <span>{{ action.label }}</span>
         </button>

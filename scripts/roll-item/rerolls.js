@@ -2,10 +2,6 @@ import { module } from '../module.js';
 import { buttonRow, addButton, makeButton } from '../helpers/utils.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
-import { findItem } from '../helpers/actors.js';
-import { spendUses } from '../helpers/items.js';
-import { bard } from '../rules/classes/bard.js';
-import { fighter } from '../rules/classes/fighter.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -74,8 +70,12 @@ export async function extraD20(roll, keep){
  *   No dialog     : with the Advantage setting on keys or neither, they roll straight away (keys still count); on
  *                   "ask", dnd5e's own dialog is the asking.
  *   Reroll        : the roller and the GM; replaces the roll, with advantage / disadvantage chosen the same way.
- * Reroll and Lucky buttons go on their messages, and on our cards' rows for the saves they link.
- *   Lucky (n)     : the owner of a creature with the Lucky feat and a Luck Point left; a second d20, the higher kept.
+ * Reroll buttons go on their messages, and on our cards' rows for the saves they link.
+ * Rules plug in through hooks (Roll Item knows none of them) :
+ *   macro-helper.rerollButtons (message, buttons, { actor, roll }) : push { id, icon, label, run() } (Lucky, Bardic
+ *                                Inspiration, Tactical Mind); shown beside Reroll, on the message and on card rows
+ *   macro-helper.rerollable (message) : return false when the test can't be changed at all (an automatic failure)
+ *   macro-helper.preReroll (who, what) : return false to stop a reroll (Rule Limits)
  * A save rolled from one of our cards (a row, an on-hit rider) is linked to it : the card re-reads the result, so its
  * ✓/✗ and Apply follow. Rerolled initiative moves the combatant in the tracker too.
  */
@@ -124,59 +124,47 @@ export class rerolls{
     return ["save", "check"].includes(message.type) || this.isInitiative(message);
   }
 
-  static luckyOf(actor){
-    const feat = actor && findItem(actor, "lucky");
-    return (feat && (Number(feat.system.uses?.value) > 0)) ? feat : null;
+  /* May this reroll happen : false when a rule stops it (Rule Limits) */
+  static mayReroll(who, what){
+    return Hooks.call(`${module.id}.preReroll`, who, what) !== false;
   }
 
   /**
-   * Which buttons a d20 message offers this user : Reroll (the roller and the GM), Lucky (the owner of a creature with
-   * the Lucky feat and a point left, once, not on a roll that already has advantage). Also used by our cards' rows.
+   * Which buttons a d20 message offers this user : Reroll (the roller and the GM), and what rules add (rerollButtons).
+   * Also used by our cards' rows.
    * @param {ChatMessage} message
-   * @returns {{ reroll : boolean, lucky : Item|null, actor : Actor|null }}
+   * @returns {{ reroll : boolean, buttons : object[], actor : Actor|null }}
    */
   static optionsFor(message){
     const [roll] = message?.rolls ?? [];
     const actor = message?.getAssociatedActor?.() ?? null;
-    /* An automatic failure fails whatever is rolled */
-    if(message?.getFlag?.(module.id, "autoFail")) return { reroll : false, lucky : null, inspiration : null, tactical : false, actor };
+    if(Hooks.call(`${module.id}.rerollable`, message) === false) return { reroll : false, buttons : [], actor };
     const reroll = !!(message?.isOwner || game.user.isGM);
-    const feat = actor?.isOwner && settings.value("featRules") && this.luckyOf(actor);
-    const lucky = (feat && !message.getFlag(module.id, "lucky") && (Number(roll?.options?.advantageMode ?? 0) !== 1)) ? feat : null;
-    /* Bardic Inspiration : the creature's owner, on a failed test (not initiative), once */
-    const inspired = actor?.isOwner && !this.isInitiative(message) && !message.getFlag(module.id, "bardic") && bard.failed(roll)
-      ? bard.inspirationOf(actor) : null;
-    /* Tactical Mind : the Fighter's owner, on a failed ability check, once (nothing spent until the GM says it worked) */
-    const tactical = bard.failed(roll) && fighter.canTactical(message, actor);
-    return { reroll, lucky, inspiration : inspired, tactical, actor };
+    const buttons = [];
+    Hooks.callAll(`${module.id}.rerollButtons`, message, buttons, { actor, roll });
+    return { reroll, buttons : buttons.filter(b => b?.id && b?.label && (typeof b.run === "function")), actor };
   }
 
   /* The buttons, styled like an attack card's (icon buttons in an icon row) */
   static addButtons(message, html){
     if(!settings.value("rollItem") || !this.isTest(message) || !message.isContentVisible) return;
     if(html.querySelector(`.${module.id}-rerolls`)) return;
-    const { reroll, lucky, inspiration, tactical, actor } = this.optionsFor(message);
+    const { reroll, buttons : added } = this.optionsFor(message);
     const buttons = [];
-    if(reroll) buttons.push({ id : "reroll", icon : "fa-rotate", label : module.i18n("rerolls.reroll") });
-    if(lucky) buttons.push({ id : "lucky", icon : "fa-clover", label : module.format("feats.lucky.adv", { name : lucky.name, left : lucky.system.uses.value }) });
-    if(inspiration) buttons.push({ id : "bardic", icon : "fa-music", label : module.format("classes.bard.use", { die : inspiration.die }) });
-    if(tactical) buttons.push({ id : "tactical", icon : "fa-chess-knight", label : module.i18n("classes.fighter.tactical") });
-    if(fighter.canSpend(message)) buttons.push({ id : "tacticalSpend", icon : "fa-heart-crack", label : module.i18n("classes.fighter.tacticalSpend") });
+    if(reroll) buttons.push({ id : "reroll", icon : "fa-rotate", label : module.i18n("rerolls.reroll"), run : event => this.reroll(message, event) });
+    buttons.push(...added);
     /* Debug (the GM, Debug setting) : the d20 set to 20 or 1 */
     if(game.user.isGM && settings.value("debug")){
-      buttons.push({ id : "debug20", icon : "fa-bug", label : module.i18n("rollItem.debug.nat20") });
-      buttons.push({ id : "debug1", icon : "fa-bug-slash", label : module.i18n("rollItem.debug.nat1") });
+      buttons.push({ id : "debug20", icon : "fa-bug", label : module.i18n("rollItem.debug.nat20"), run : () => this.force(message, 20) });
+      buttons.push({ id : "debug1", icon : "fa-bug-slash", label : module.i18n("rollItem.debug.nat1"), run : () => this.force(message, 1) });
     }
     if(!buttons.length) return;
 
     const row = buttonRow(html, { key : `${module.id}-rerolls`, layout : "icons" });
     for(const b of buttons){
-      const run = { lucky : () => this.lucky(message, actor), bardic : () => this.inspire(message, actor),
-        tactical : () => this.tactical(message, actor), tacticalSpend : () => fighter.spendSecondWind(message),
-        debug20 : () => this.force(message, 20), debug1 : () => this.force(message, 1) }[b.id];
       /* Words on the button, not just an icon : easy to miss otherwise */
       addButton(row, makeButton({ icon : b.icon, label : b.label, text : b.short ?? b.label, className : `${module.id}-labelled`,
-        onClick : event => (run ? run() : this.reroll(message, event)) }));
+        onClick : event => b.run(event) }));
     }
   }
 
@@ -194,8 +182,7 @@ export class rerolls{
   /* A fresh roll; advantage / disadvantage chosen now adds a second d20 (cancelling with any already on it) */
   static async reroll(message, event){
     if(!(message.isOwner || game.user.isGM)) return;
-    const { limits } = await import('../rules/limits.js');
-    if(!limits.mayReroll(message.getAssociatedActor?.()?.name ?? message.speaker?.alias, message.flavor || message.rolls?.[0]?.formula)) return;
+    if(!this.mayReroll(message.getAssociatedActor?.()?.name ?? message.speaker?.alias, message.flavor || message.rolls?.[0]?.formula)) return;
     const mode = await this.modeFor(event);
     if(!mode) return;
     const [roll] = message.rolls;
@@ -215,36 +202,6 @@ export class rerolls{
     d20.results = d20.results.map(r => ({ ...r, result : value }));
     updated._total = updated._evaluateTotal();
     await this.replace(message, updated, []);
-  }
-
-  static async lucky(message, actor){
-    const feat = actor?.isOwner && this.luckyOf(actor);
-    if(!feat || !message.isOwner) return;
-    const result = await extraD20(message.rolls[0], "kh");
-    if(!result) return;
-    if(result.status === "same") return ui.notifications.info(module.i18n("feats.lucky.same"));
-    await this.replace(message, result.updated, result.extra ? [result.extra] : []);
-    await spendUses(feat, 1, { warn : false });
-    await message.setFlag(module.id, "lucky", true);
-  }
-
-  /* Bardic Inspiration on a save / check message : its die added to the roll, the mark gone */
-  static async inspire(message, actor){
-    const inspiration = bard.inspirationOf(actor);
-    if(!inspiration || !message.isOwner) return;
-    const { updated, extra } = await addDie(message.rolls[0], inspiration.die);
-    await this.replace(message, updated, [extra]);
-    await message.setFlag(module.id, "bardic", true);
-    if(inspiration.effect.isOwner) await inspiration.effect.delete();
-  }
-
-  /* Tactical Mind : 1d10 added to the check, nothing spent (the GM spends Second Wind if it then succeeds) */
-  static async tactical(message, actor){
-    if(!fighter.canTactical(message, actor) || !message.isOwner) return;
-    const { updated, extra } = await addDie(message.rolls[0], "1d10");
-    await this.replace(message, updated, [extra]);
-    const target = updated.options?.target;
-    await message.setFlag(module.id, "tacticalMind", { spent : false, success : Number.isFinite(target) ? (updated.total >= target) : null });
   }
 
   /* The initiative in the tracker follows a rerolled initiative message */

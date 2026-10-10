@@ -397,7 +397,7 @@ export function getTokensInArea(area, { includeHidden = false, filter } = {}){
  * @returns {Promise<boolean>}
  */
 export async function addLight(thing, light = {}, { key = "light" } = {}){
-  const doc = tokenOf(thing)?.document;
+  const doc = tokenDocOf(thing);
   if(!doc?.canUserModify(game.user, "update")) return false;
   const lights = doc.getFlag(module.id, "lights") ?? {};
   const before = lights.before ?? doc.light.toObject();
@@ -416,7 +416,7 @@ export async function addLight(thing, light = {}, { key = "light" } = {}){
  * @returns {Promise<boolean>}  false if that source wasn't lighting it
  */
 export async function removeLight(thing, { key = "light" } = {}){
-  const doc = tokenOf(thing)?.document;
+  const doc = tokenDocOf(thing);
   const lights = doc?.getFlag(module.id, "lights");
   if(!lights?.[key] || !doc.canUserModify(game.user, "update")) return false;
   const { before, [key] : _, ...rest } = lights;
@@ -436,7 +436,12 @@ export async function removeLight(thing, { key = "light" } = {}){
  * @returns {boolean}
  */
 export function hasLight(thing, key = "light"){
-  return !!tokenOf(thing)?.document?.getFlag(module.id, `lights.${key}`);
+  return !!tokenDocOf(thing)?.getFlag(module.id, `lights.${key}`);
+}
+
+/* A token's document : a TokenDocument as it is (on any scene), else the token on the canvas (tokenOf) */
+function tokenDocOf(thing){
+  return (thing?.documentName === "Token") ? thing : (tokenOf(thing)?.document ?? null);
 }
 
 /**
@@ -515,7 +520,8 @@ export function canSee(viewer, target){
   /* Vision setting : off, conditions only (Blinded / Invisible, no walls or light), full sight */
   let mode = "full";
   let enabled = true;
-  try { enabled = game.settings.get(module.id, "rollItemEnabled") !== false; } catch { enabled = true; }
+  /* A rule : System Automation's switch (not Roll Item's) turns it off */
+  try { enabled = game.settings.get(module.id, "automationEnabled") !== false; } catch { enabled = true; }
   try { mode = enabled ? game.settings.get(module.id, "vision") : "off"; }
   catch { try { mode = game.settings.get(module.id, "visionRules") ? "full" : "off"; } catch { mode = "off"; } }
   if(mode === "off") return true;

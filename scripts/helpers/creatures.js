@@ -3,7 +3,7 @@ import { esc } from './utils.js';
 
 /**
  * Choosing creatures (and other things) from a grid of pictures, and whether a creature fits one of dnd5e's transform /
- * summon profiles. The creatures come from Macro Helper's compendiums (rules/compendiums.js) : index entries or actors.
+ * summon profiles. The creatures come from Macro Helper's compendiums (automation/compendiums.js) : index entries or actors.
  */
 
 /* A creature's challenge rating as a number (¼ = 0.25) */

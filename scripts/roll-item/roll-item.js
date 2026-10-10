@@ -6,13 +6,8 @@ import { TYPES, registerMessages } from './message.js';
 import { tokenOf, getRange, getTokensInArea } from '../helpers/tokens.js';
 import { pickTargets } from '../helpers/targets.js';
 import { pickAttack, attackModeFor } from '../helpers/items.js';
-import { masteries } from './masteries.js';
-import { maneuvers } from './maneuvers.js';
 import { rerolls } from './rerolls.js';
-import { conditions } from '../rules/conditions.js';
-import { bard } from '../rules/classes/bard.js';
-import { cleric } from '../rules/classes/cleric.js';
-import { chooseOption, wait, makeButton } from '../helpers/utils.js';
+import { chooseOption, wait, makeButton, originItem } from '../helpers/utils.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -35,16 +30,17 @@ export class rollItem{
    *                                     (long range...). Combines with the advantage keys like dnd5e : both = a normal roll.
    * @param {Token[]} [options.targets]  attack these, one attack each in order (the same token twice = two attacks at it),
    *                                     instead of spreading `count` over your targets. `count` defaults to their number.
-   * @param {boolean} [options.cleave]   the Cleave mastery's extra attack : its damage leaves out a positive ability modifier
+   * @param {object}  [options.tags]    marks a rule puts on the attack ({ noMod : true } : Cleave's extra attack), kept on
+   *                                     rerolls and handed to its damage roll (config["macro-helper"].tags)
    */
-  static async roll(item, { activity, event, count, attackMode, disadvantage, targets, cleave } = {}){
+  static async roll(item, { activity, event, count, attackMode, disadvantage, targets, tags } = {}){
     const target = this.getActivity(item, activity);
     if(!target) return ui.notifications.warn(module.format("rollItem.warn.noAttack", { name : item?.name ?? "" }));
 
     /* Saves / heals go through dnd5e's use workflow (spell slots, uses, templates, effects), flagged so we take over the card */
     if(target.type !== "attack") return target.use({ event, [module.id] : { mode : target.type } });
 
-    return this.rollActivity(target, { event, count, attackMode, disadvantage, targets, cleave });
+    return this.rollActivity(target, { event, count, attackMode, disadvantage, targets, tags });
   }
 
   /* A per-attack option for one target : a fixed value, or chosen per target by a function */
@@ -89,9 +85,9 @@ export class rollItem{
    * @param {string|Function} [options.attackMode]    see roll()
    * @param {boolean|Function} [options.disadvantage]  see roll()
    * @param {Token[]} [options.targets]                 see roll()
-   * @param {boolean} [options.cleave]                  see roll()
+   * @param {object}  [options.tags]                    see roll()
    */
-  static async rollActivity(activity, { event, scaling = 0, count, attackMode, disadvantage, targets, cleave } = {}){
+  static async rollActivity(activity, { event, scaling = 0, count, attackMode, disadvantage, targets, tags, note, cardFlags } = {}){
     if(!this.ready("attack")) return;
 
     /* Advantage / disadvantage for the whole card : the keys held, or asked now (targets are already chosen) */
@@ -110,11 +106,10 @@ export class rollItem{
     const config = this.attackConfig({ attackMode, disadvantage }, target);
     const roll = await this.rollAttack(activity, event, config, mode);
     if(!roll) return;
-    if(cleave) roll.options[module.id] = { ...(roll.options[module.id] ?? {}), noMod : true };
+    if(tags) roll.options[module.id] = { ...(roll.options[module.id] ?? {}), tags };
     const damage = await this.rollDamage(activity, roll);
-    /* Graze : its damage for a miss, the card shows it when the attack misses */
-    const graze = await masteries.grazeRolls(activity, roll, damage);
-    for(const r of graze) r.options[module.id] = { part : "graze" };
+    /* Rolls rules add to the attack (Graze's damage for a miss) */
+    const added = await this.addedRolls(activity, roll, damage);
 
     /* Extra damage from the same item (a monster's charge, a second damage activity) : rolled with the attack into
        boxes of its own, each with its APPLY once the attack hits (crits like the attack) */
@@ -132,11 +127,44 @@ export class rollItem{
     } : null;
 
     const why = this.disadvantageOf(config);
-    const message = await this.attackCard(activity, [roll, ...damage, ...graze, ...extras, ...riderDamage], { scaling, rider,
+    const message = await this.attackCard(activity, [roll, ...damage, ...added, ...extras, ...riderDamage], { scaling, rider, note, cardFlags,
       disadvantage : !!why, disadvantageWhy : (typeof why === "string") ? why : "" });
     log.debug("Rolled", activity.item.name, { roll, damage, rider, riderDamage });
 
     return { attack : roll, damage, riderDamage, isCritical : roll.isCritical, isFumble : roll.isFumble, message };
+  }
+
+  static #addRolls = [];
+
+  /**
+   * A rule adding rolls to every attack Roll Item makes (Graze's damage for a miss), rolled with it and again when the
+   * attack is rerolled. Each roll keeps the tag the rule gives it in options["macro-helper"] : { part, label, onMiss }
+   * (part : any name but "base", "extra" and "save"; onMiss : applied by Apply Hits on a miss). The card shows them
+   * where the rule's card section puts them (macro-helper.cardSections).
+   * @param {Function} fn  async (activity, attack, damage) => Roll[]
+   */
+  static addRolls(fn){
+    this.#addRolls.push(fn);
+  }
+
+  /* The rolls rules add to this attack, tagged (and with the ray's index on a multi-attack card) */
+  static async addedRolls(activity, attack, damage, ray){
+    const rolls = [];
+    for(const fn of this.#addRolls){
+      try {
+        for(const roll of (await fn(activity, attack, damage)) ?? []){
+          const tag = roll.options[module.id] ?? {};
+          roll.options[module.id] = { ...tag, part : tag.part ?? "added", added : true, ...(Number.isInteger(ray) ? { ray } : {}) };
+          rolls.push(roll);
+        }
+      } catch(error){ log.error("Added rolls", error); }
+    }
+    return rolls;
+  }
+
+  /* Is this save a rider on the item's attack : rules say no for alternatives to it (Grapple, Shove) */
+  static isRider(activity){
+    return Hooks.call(`${module.id}.isRider`, activity) !== false;
   }
 
   /* The item's other damage activities, rolled for this attack (tagged as extras that only apply on a hit) */
@@ -157,9 +185,9 @@ export class rollItem{
    * which is how dnd5e builds on-hit riders : Giant Spider Bite, Giant Poisonous Snake Bite, Wolf Bite, Ghoul Claws.
    */
   static findRider(activity){
-    /* Grapple / Shove (Unarmed Strike, apart or as one "Grapple/Shove") are alternatives to the attack, never riders */
+    /* Rules can say a save is no rider (macro-helper.isRider : Grapple and Shove are alternatives to the attack) */
     const saves = activity?.item?.system.activities?.getByType("save")
-      .filter(a => (a.id !== activity.id) && !maneuvers.isManeuver(a)) ?? [];
+      .filter(a => (a.id !== activity.id) && this.isRider(a)) ?? [];
     /* 2014 monsters mark the rider "special", 2024 ones (Ghoul Claw) leave it as an action : the item's one save rides it */
     return saves.find(a => a.activation?.type === "special") ?? ((saves.length === 1) ? saves[0] : null);
   }
@@ -178,7 +206,7 @@ export class rollItem{
     const attacks = usable.filter(a => a.type === "attack");
     if(attacks.length !== 1 || usable.length < 2) return null;
     const saves = usable.filter(a => a.type === "save");
-    if((saves.length > 1) || saves.some(s => maneuvers.isManeuver(s))) return null;
+    if((saves.length > 1) || saves.some(s => !this.isRider(s))) return null;
     return usable.every(a => (a === attacks[0]) || (a.type === "damage") || (a === saves[0])) ? attacks[0] : null;
   }
 
@@ -250,10 +278,9 @@ export class rollItem{
     const attack = await this.rollAttack(activity, event, config, mode);
     if(!attack) return null;
     const damage = await this.rollDamage(activity, attack);
-    const graze = await masteries.grazeRolls(activity, attack, damage);
+    const added = await this.addedRolls(activity, attack, damage, index);
     for(const roll of [attack, ...damage]) roll.options[module.id] = { ...(roll.options[module.id] ?? {}), ray : index };
-    for(const roll of graze) roll.options[module.id] = { ray : index, part : "graze" };
-    return [attack, ...damage, ...graze];
+    return [attack, ...damage, ...added];
   }
 
   static async rollRays(activity, count, { event, scaling = 0, attackMode, disadvantage, targets : tokens, mode } = {}){
@@ -274,7 +301,7 @@ export class rollItem{
         why : (typeof why === "string") ? why : "",
       });
     }
-    const message = await this.attackCard(activity, rolls, { scaling, rays });
+    const message = await this.attackCard(activity, rolls, { scaling, rays, note, cardFlags });
     log.debug("Rolled rays", activity.item.name, { rolls, rays });
 
     return { rolls, message };
@@ -339,8 +366,8 @@ export class rollItem{
   static modeFor(activity, usage){
     /* Utility activities only have something to roll when they define a formula */
     if(activity?.type === "utility" && !activity.roll?.formula) return null;
-    /* A formula that names a die to keep, not one to roll now (Bardic Inspiration's die is rolled when it's used) */
-    if(bard.keepsDie(activity)) return null;
+    /* Rules can keep Roll Item off an activity (macro-helper.preRollItem : Bardic Inspiration's die is rolled when used) */
+    if(Hooks.call(`${module.id}.preRollItem`, activity, usage) === false) return null;
     let mode = usage?.[module.id]?.mode;
     const setting = this.DEFAULT_MODES[activity?.type];
     if(!mode && setting && settings.value(setting)) mode = activity.type;
@@ -361,8 +388,6 @@ export class rollItem{
   static onPostUse(activity, usage, results){
     /* What the use spent and placed, in case it's cancelled before its card (cancelUse) */
     rollItem.#lastUse = { uuid : activity.uuid, results, at : Date.now() };
-    /* Turn Undead's circle round the Cleric, for everyone to see */
-    cleric.placeEmanation(activity);
     /* An area placed by the use : whoever is inside becomes the targets, before any card is made */
     const area = rollItem.targetArea(activity, results);
 
@@ -394,21 +419,25 @@ export class rollItem{
   static async attackAfterUse(activity, usage, area = null){
     const event = usage.event;
     const scaling = activity.item.getFlag("dnd5e", "scaling") ?? 0;
+    /* What rules noted on the use : a note for the card, a stretched range (Distant Spell) */
+    const note = usage?.[module.id]?.note ?? null;
+    const cardFlags = usage?.[module.id]?.cardFlags ?? null;
+    const rangeMultiplier = Number(usage?.[module.id]?.rangeMultiplier) || 1;
     /* An area already chose the targets */
-    if(area) return this.rollActivity(activity, { event, scaling, targets : area.length ? area : undefined });
+    if(area) return this.rollActivity(activity, { event, scaling, note, cardFlags, targets : area.length ? area : undefined });
     const pick = settings.value("rollItemPick");
     const attacker = tokenOf(activity.item);
     if((pick === "off") || !canvas.ready || !attacker || (attacker.document.parent !== canvas.scene)){
-      return this.rollActivity(activity, { event, scaling });
+      return this.rollActivity(activity, { event, scaling, note, cardFlags });
     }
 
     const count = this.countFor(activity);
-    const picked = await pickAttack(activity.item, { activity, count, repeat : count > 1, clearTargets : pick === "always", used : true });
+    const picked = await pickAttack(activity.item, { activity, count, repeat : count > 1, clearTargets : pick === "always", used : true, rangeMultiplier });
     if(!picked) return this.cancelUse(activity);
     const { targets, attackMode, disadvantage } = picked;
     if(!this.announceTargets(activity, targets)) return this.cancelUse(activity);
     /* Fewer picks than rays : the rays are spread over the picks (3 rays, A and B -> A A B) */
-    return this.rollActivity(activity, { event, scaling, count : Math.max(count, targets.length), targets, attackMode, disadvantage });
+    return this.rollActivity(activity, { event, scaling, note, cardFlags, count : Math.max(count, targets.length), targets, attackMode, disadvantage });
   }
 
   /**
@@ -416,12 +445,12 @@ export class rollItem{
    * (range, long range, ammunition), then dnd5e makes its card for them.
    * @returns {Promise<boolean|null>}  false : the pick was closed (nothing used); null : nothing to pick here
    */
-  static async pickForNormal(activity){
+  static async pickForNormal(activity, usage = {}){
     const pick = settings.value("rollItemPick");
     const attacker = tokenOf(activity.item);
     if(!settings.value("rollItem") || (pick === "off") || !canvas.ready || !attacker || (attacker.document.parent !== canvas.scene)) return null;
     const picked = await pickAttack(activity.item, { activity, count : this.countFor(activity), repeat : this.countFor(activity) > 1,
-      clearTargets : pick === "always", used : false });
+      clearTargets : pick === "always", used : false, rangeMultiplier : Number(usage?.[module.id]?.rangeMultiplier) || 1 });
     if(!picked?.targets?.length) return false;
     return this.announceTargets(activity, picked.targets);
   }
@@ -458,34 +487,27 @@ export class rollItem{
   static PICK_TYPES = ["heal", "save", "utility"];
 
   /**
-   * Roll Item's steps on an activity's use (uses.js) :
-   *   presetTargets : targets the activity sets itself, no placement or pick (Turn Undead : the Undead within 30 ft)
-   *   maneuver      : one activity for Grapple and Shove : choose first, the card is that one
+   * Roll Item's steps on an activity's use (uses.js). Rules add their own before these (Turn Undead's preset targets mark
+   * skipPick; Grapple / Shove's choice) :
+   *   offScene      : a creature with no token on the scene being viewed can't see anything there to target : it rolls
+   *                   without targets (yours are let go, with a notice), and nothing is picked.
    *   pickTargets   : with Pick Targets on, a heal / save / effect aimed at creatures (Healing Hands, Grapple, Mage
    *                   Armor) picks them on the map first, like attacks : closing the pick spends nothing, and the card
    *                   is made for exactly those. Roll Type Normal : dnd5e's own attack card, aimed at the picks.
    */
   static registerSteps(){
-    uses.onActivity("presetTargets", (activity, ctx, next) => {
-      const preset = cleric.presetTargets(activity);
-      if(preset){
-        rollItem.announceTargets(activity, preset, { keepEmpty : true });
-        uses.mark(ctx, { skipPick : true });
+    uses.onActivity("offScene", (activity, ctx, next) => {
+      if(!settings.value("rollItem") || !canvas.ready || !activity?.actor || tokenOf(activity.actor)) return next();
+      if(game.user.targets.size){
+        canvas.tokens.setTargets([]);
+        ui.notifications.info(module.format("rollItem.offScene", { name : activity.actor.name }));
       }
-      return next();
-    });
-    uses.onActivity("maneuver", async (activity, ctx, next) => {
-      if(maneuvers.enabled() && maneuvers.isCombined(activity) && !ctx.config?.[module.id]?.maneuver){
-        const choice = await maneuvers.choose(activity);
-        if(!choice) return;
-        uses.flag(ctx, { maneuver : choice });
-        uses.mark(ctx, { maneuver : choice });
-      }
+      uses.mark(ctx, { skipPick : true });
       return next();
     });
     uses.onActivity("pickTargets", async (activity, ctx, next) => {
       if((activity.type === "attack") && !rollItem.modeFor(activity, ctx.config) && !ctx.config?.[module.id]?.skipPick){
-        const picked = await rollItem.pickForNormal(activity);
+        const picked = await rollItem.pickForNormal(activity, ctx.config);
         if(picked === false) return;
       }
       const spec = rollItem.pickSpec(activity, ctx.config);
@@ -517,6 +539,38 @@ export class rollItem{
     if(activity.match?.disposition || ("disposition" in config.tokenUpdates)) return;
     const token = activity.getUsageToken?.()?.document ?? (activity.actor.isToken ? activity.actor.token : activity.actor.prototypeToken);
     if(token?.disposition !== undefined) config.tokenUpdates.disposition = token.disposition;
+  }
+
+  /**
+   * A self-only activity's effects (Armor of Shadows' Mage Armor) : put on its user by the client that used it (its
+   * owner), since dnd5e only lets players apply them from the card with its Allow Player Effects Tray setting. Tied to
+   * the item's Concentration when there is one. Rules that put on the item's effect themselves say so :
+   * Hooks "macro-helper.selfEffects" (activity) returning false (Rage, Dodge, Innate Sorcery, Blade Ward); an item that
+   * already has an effect on the creature (its own, switched on, too) is skipped.
+   */
+  static async selfEffects(activity, results){
+    if(!settings.value("rollItem") || !this.isSelfOnly(activity) || !activity?.effects?.length) return;
+    if(Hooks.call(`${module.id}.selfEffects`, activity) === false) return;
+    const actor = activity.getUsageToken?.()?.actor ?? activity.actor;
+    if(!actor?.isOwner) return;
+    await wait(400);
+    const item = activity.item;
+    const fromItem = e => !e.disabled && ((e.parent === item) || (originItem(e) === item) || ((originItem(e)?.id === item.id) && (originItem(e)?.parent === item.parent)));
+    if([...(actor.allApplicableEffects?.() ?? actor.effects)].some(fromItem)) return;
+    const concentration = actor.effects.find(e => e.statuses?.has?.(CONFIG.specialStatusEffects.CONCENTRATING) && (e.getFlag("dnd5e", "item")?.id === item.id));
+    const data = [];
+    for(const { _id } of activity.effects){
+      const effect = item.effects.get(_id);
+      if(!effect) continue;
+      const copy = foundry.utils.mergeObject(effect.toObject(), { origin : activity.uuid, transfer : false, disabled : false,
+        start : { time : game.time.worldTime }, ...(concentration ? { flags : { dnd5e : { dependentOn : concentration.uuid } } } : {}) }, { inplace : false });
+      delete copy._id;
+      data.push(copy);
+    }
+    if(!data.length) return;
+    await actor.createEmbeddedDocuments("ActiveEffect", data);
+    if(results?.message?.setFlag && results.message.isOwner) await results.message.setFlag(module.id, "autoApplied", true).catch(() => {});
+    log.debug("Self effects", actor.name, item.name, data.length);
   }
 
   static isSelfOnly(activity){
@@ -734,13 +788,17 @@ export class rollItem{
     const type = target.affects?.type || activity.target?.affects?.type || "";
     if(["self", "space", "object"].includes(type)) return null;
 
-    const range = this.activityRange(activity);
+    let range = this.activityRange(activity);
+    /* Distant Spell (Metamagic) : twice the range, Touch becomes 30 ft */
+    const multiplier = Number(usage?.[module.id]?.rangeMultiplier) || 1;
+    if(multiplier > 1) range = (activity.range?.units === "touch") ? 30 : (range * multiplier);
     if(!(range > 0)) return null;
 
     const disposition = ["ally", "willing"].includes(type) ? "ally"
       : ((type === "enemy") || ["save", "damage"].includes(activity.type)) ? "nonAlly" : "any";
     return {
-      count : this.targetCount(activity, target),
+      /* More creatures a rule allows (usage extraTargets : Twinned Spell) */
+      count : this.targetCount(activity, target) + (Number(usage?.[module.id]?.extraTargets) || 0),
       range, disposition,
       includeSelf : disposition === "ally" || disposition === "any",
       useTargets : pick !== "always",
@@ -842,10 +900,10 @@ export class rollItem{
     const config = {
       ability, attackMode,
       ammunition : activity.actor?.items.get(ammunition),
-      /* A crit, or a hit on a Paralyzed / Unconscious target from within 5 ft (conditions.autoCrit) */
-      isCritical : !!(attack?.isCritical || conditions.autoCrit(activity, attack)),
-      /* Cleave's extra attack : masteries.onPreRollDamage takes a positive ability modifier off */
-      ...(attack?.options?.[module.id]?.noMod ? { [module.id] : { noMod : true } } : {}),
+      /* A crit; rules make others one in preDamage (a hit on a Paralyzed target from within 5 ft) */
+      isCritical : !!attack?.isCritical,
+      /* The attack's tags (Cleave's extra attack : no positive ability modifier) */
+      ...(attack?.options?.[module.id]?.tags ? { [module.id] : { tags : attack.options[module.id].tags } } : {}),
     };
 
     /* A damage part with several types (Divine Spark : necrotic or radiant) : which one */
@@ -872,11 +930,19 @@ export class rollItem{
     if((asked.uuid === activity.uuid) && ((Date.now() - asked.at) < 10000)) return true;
     /* A cast spell's activity is a scaled copy : remember the answer on the real item */
     const item = activity.actor?.items?.get(activity.item.id) ?? activity.item;
-    const parts = (typeof activity._getDamageParts === "function") ? activity._getDamageParts({}) : (activity.damage?.parts ?? []);
+    /* Only activities with damage (a utility has none : dnd5e's _getDamageParts would throw) */
+    if(!activity.damage && (activity.type === "utility")) return true;
+    let parts = activity.damage?.parts ?? [];
+    try { if(typeof activity._getDamageParts === "function") parts = activity._getDamageParts({}) ?? parts; }
+    catch(error){ log.debug("Damage parts", activity.item?.name, error); }
     const chosenTypes = {};
     for(const [index, part] of [...parts].entries()){
       const types = [...(part?.types ?? [])];
       if(types.length < 2) continue;
+      /* A rule settles it without asking (macro-helper.damageType : a pact weapon's normal type, changed on the card) */
+      const preset = {};
+      Hooks.callAll(`${module.id}.damageType`, activity, { index, types, preset });
+      if(preset.type && types.includes(preset.type)){ chosenTypes[index] = preset.type; continue; }
       const key = `last.${activity.id}.damageType.${index}`;
       const chosen = await chooseOption({
         title : activity.item.name, icon : "fa-solid fa-burst", prompt : module.i18n("rollItem.damageType"),
@@ -947,11 +1013,10 @@ export class rollItem{
   static register(){
     if(game.system.id !== "dnd5e") return;
     registerMessages();
-    masteries.register();
-    maneuvers.register();
     rerolls.register();
     Hooks.on("dnd5e.preUseActivity", rollItem.onPreUse);
     Hooks.on("dnd5e.postUseActivity", rollItem.onPostUse);
+    Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => rollItem.selfEffects(activity, results));
 
     rollItem.registerSteps();
     /* Debug (the GM, Debug setting) : make an attack a crit or a miss, beside its reroll buttons */
@@ -1000,7 +1065,7 @@ export class rollItem{
    * @param {Roll[]} rolls  attack roll(s) + damage rolls, multi-ray rolls tagged with options[module.id].ray
    * @param {object[]} [rays]  one { target : tokenUuid } per ray when rolling more than one attack
    */
-  static async attackCard(activity, rolls, { scaling = 0, rays = [], rider = null, disadvantage = false, disadvantageWhy = "" } = {}){
+  static async attackCard(activity, rolls, { scaling = 0, rays = [], rider = null, disadvantage = false, disadvantageWhy = "", note = null, cardFlags = null } = {}){
     /* The card is going out : nothing left to cancel */
     this.#lastUse = { uuid : null, results : null, at : 0 };
     const attack = rolls.find(r => r instanceof CONFIG.Dice.D20Roll);
@@ -1017,6 +1082,9 @@ export class rollItem{
         ability, ammunition, mastery, scaling, rays, rider, disadvantage, disadvantageWhy,
         mode : attackMode,
       },
+      /* A note a rule put on the use (Metamagic : which option, its points) */
+      /* and what rules record about it (usage cardFlags : Metamagic's option, casting time, components) */
+      ...((note || cardFlags) ? { flags : { [module.id] : { ...(cardFlags ?? {}), ...(note ? { note } : {}) } } } : {}),
     };
     ChatMessage.implementation.applyMode(messageData, CONFIG.Dice.BasicRoll.getMessageMode());
 
@@ -1030,7 +1098,7 @@ export class rollItem{
     const staged = settings.value("rollItemStaged") && attacks.length && damage.length;
     if(!staged) return await ChatMessage.implementation.create(messageData);
 
-    messageData.flags = { [module.id] : { reveal : 0 } };
+    messageData.flags = { ...(messageData.flags ?? {}), [module.id] : { ...(messageData.flags?.[module.id] ?? {}), reveal : 0 } };
     if(game.dice3d) messageData.flags["dice-so-nice"] = { skip : true };
     const message = await ChatMessage.implementation.create(messageData);
     if(!message) return message;

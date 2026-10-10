@@ -211,6 +211,12 @@
   overflow-y: auto;
   padding-inline-end: 4px;
 }
+/* My Settings : the GM's pages, two buttons a row */
+.macro-helper-settings .macro-helper-server-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
 
 
 /* Cover chips (GM only), compact at the top of a card */
@@ -376,3 +382,6 @@
 .macro-helper-creature.original .macro-helper-original-badge { position : absolute; top : 2px; right : 4px; color : var(--color-warm-2, #c9a227); }
 .macro-helper-prepared-row.original { background : rgba(201, 162, 39, 0.15); border-radius : 3px; }
 .macro-helper-prepared-row .macro-helper-original-badge { color : var(--color-warm-2, #c9a227); }
+/* Font of Magic window : a row of slot levels each way */
+.macro-helper-font-row { display : flex; flex-wrap : wrap; gap : 6px; margin-bottom : 8px; }
+.macro-helper-font-row button { flex : 0 0 auto; min-width : 70px; line-height : 1.2; padding : 4px 8px; }

@@ -23,16 +23,11 @@
             <i class="fa-solid fa-rotate" inert></i>
         </button>
         {{/if}}
-        {{#if lucky}}
-        <button type="button" class="icon" data-action="rowLucky" data-message="{{ saveMessage }}" data-tooltip="{{ lucky }}" aria-label="{{ lucky }}">
-            <i class="fa-solid fa-clover" inert></i>
+        {{#each rerollButtons}}
+        <button type="button" class="icon" data-action="rowReroll" data-message="{{ ../saveMessage }}" data-id="{{ id }}" data-tooltip="{{ label }}" aria-label="{{ label }}">
+            <i class="fa-solid {{ icon }}" inert></i>
         </button>
-        {{/if}}
-        {{#if inspire}}
-        <button type="button" class="icon" data-action="rowInspire" data-message="{{ saveMessage }}" data-tooltip="{{ inspire }}" aria-label="{{ inspire }}">
-            <i class="fa-solid fa-music" inert></i>
-        </button>
-        {{/if}}
+        {{/each}}
         {{#with apply}}
         <button type="button" class="apply" data-action="rowApply" data-target="{{ ../uuid }}" data-multiplier="{{ multiplier }}">
             <i class="fa-solid fa-reply-all fa-flip-horizontal" inert></i> {{ localize label }}

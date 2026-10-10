@@ -35,5 +35,13 @@
     </div>
     {{/each}}
     {{#each settings}}{{> setting}}{{/each}}
+    {{#if server.length}}
+    <h3 class="border">{{ localize "settings.player.server" }}</h3>
+    <div class="macro-helper-server-buttons">
+        {{#each server}}
+        <button type="button" data-submenu="{{ key }}"><i class="{{ icon }}" inert></i> {{ localize label }}</button>
+        {{/each}}
+    </div>
+    {{/if}}
     {{#if empty}}<p class="hint">{{ localize "settings.menu.empty" }}</p>{{/if}}
 </section>
