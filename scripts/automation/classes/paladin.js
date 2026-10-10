@@ -63,7 +63,8 @@ export class paladin{
       return next();
     });
     Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.onUse(activity, usage, results));
-    Hooks.on("renderChatMessageHTML", (message, html) => this.poisonButton(message, html));
+    /* dnd5e's render (after it rebuilds its own usage card's content, which would drop the button) */
+    Hooks.on("dnd5e.renderChatMessage", (message, html) => this.poisonButton(message, html));
     Hooks.on("dnd5e.restCompleted", (actor, result) => {
       if(result?.longRest && actor?.isOwner && actor.getFlag(module.id, "paladinsSmiteUsed")) actor.unsetFlag(module.id, "paladinsSmiteUsed");
     });
@@ -99,7 +100,10 @@ export class paladin{
     if(item.system.uses?.max) return (Number(item.system.uses.value) > 0) ? { item, activity : null } : null;
     const activity = item.system.activities?.find?.(a => a.uses?.max) ?? null;
     if(activity) return (Number(activity.uses.value) > 0) ? { item, activity } : null;
-    /* No uses on it at all (dnd5e's own) : once a Long Rest, counted on the actor */
+    /* dnd5e's own : the use is on the Divine Smite it grants (once a Long Rest, with its "free casting" activity) */
+    const granted = actor.items.find(i => (i.type === "spell") && (idOf(i) === this.DIVINE) && (Number(i.system.uses?.max) > 0));
+    if(granted) return (Number(granted.system.uses.value) > 0) ? { item : granted, activity : null } : null;
+    /* No uses anywhere : once a Long Rest, counted on the actor */
     return actor.getFlag(module.id, "paladinsSmiteUsed") ? null : { item, activity : null, counted : true };
   }
 

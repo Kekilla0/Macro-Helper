@@ -2,6 +2,7 @@ import { module } from '../module.js';
 import { rollModes } from './roll-modes.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
+import { patch } from '../patch.js';
 import { tokenOf, distanceBetween, canSee } from '../helpers/tokens.js';
 import { clearLastDamage, isKilledOutright } from '../helpers/actors.js';
 import { giveMode, noteReason, conditionName, logReasons } from '../roll-item/reasons.js';
@@ -26,6 +27,9 @@ const log = logger.for(import.meta.url);
  * reaction uses it (clearLastDamage) or it rests, and what a card last applied to it (shown on the card's row).
  *
  * Every attack's advantage / disadvantage reasons are logged once rolled (roll-item/reasons.js).
+ *
+ * Toggling a condition off (token HUD, sheet) also removes the effects that carry only that condition (Shove's or
+ * Thunderous Smite's "Prone"), not just dnd5e's own : otherwise the toggle adds a second one.
  */
 export class conditions{
   static register(){
@@ -39,6 +43,9 @@ export class conditions{
     Hooks.on(`${module.id}.preDamage`, (activity, config, attack) => { if(this.autoCrit(activity, attack)) config.isCritical = true; });
     /* An effect on a creature named like a condition but without its status : the status added (its token icon, the rules) */
     Hooks.on("preCreateActiveEffect", effect => { this.statusFromName(effect); this.showOnToken(effect); });
+    patch.wrap("CONFIG.Actor.documentClass.prototype.toggleStatusEffect", async function(wrapped, statusId, options = {}){
+      return conditions.toggleOff(this, statusId, options, wrapped);
+    });
     Hooks.on("dnd5e.rollAttackV2", (rolls, { subject } = {}) => logReasons(subject, rolls?.[0]));
     Hooks.on("dnd5e.applyDamage", (actor, amount, options) => this.onApplyDamage(actor, amount, options));
     Hooks.on("dnd5e.preApplyDamage", (actor, amount, updates, options) => this.onPreApplyDamage(actor, amount, updates, options));
@@ -60,6 +67,17 @@ export class conditions{
     if(!effect.statuses?.has?.(status.id)) change.statuses = [...(effect.statuses ?? []), status.id];
     if(status.img && (effect.img !== status.img)) change.img = status.img;
     if(Object.keys(change).length) effect.updateSource(change);
+  }
+
+  /* Off (or a toggle while it's on) : the effects carrying only this condition go too, then dnd5e's own if it has one */
+  static async toggleOff(actor, statusId, options, wrapped){
+    if(options?.active === true) return wrapped(statusId, options);
+    const own = CONFIG.statusEffects[statusId]?._id;
+    const others = actor.effects.filter(e => (e.id !== own) && (e.statuses?.size === 1) && e.statuses.has(statusId));
+    if(!others.length) return wrapped(statusId, options);
+    await actor.deleteEmbeddedDocuments("ActiveEffect", others.map(e => e.id));
+    if(own && actor.effects.has(own)) await wrapped(statusId, { ...options, active : false });
+    return false;
   }
 
   /* An effect put on a creature shows on its token, even without a duration (Foundry otherwise hides those); one

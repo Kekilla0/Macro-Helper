@@ -49,6 +49,7 @@ export class uses{
       "pactWeapon",    // Warlock : Forge Pact Weapon : bond a weapon or conjure one
       "pickTargets",   // Roll Item : pick targets on the map (Pick Targets)
       "spellRange",    // Spells : no pick, Rule Limits on : targets out of the spell's range follow Rule Limits
+      "weaponRange",   // Weapons : no pick, Rule Limits on : targets beyond the weapon's reach / range follow Rule Limits
     ],
   };
 

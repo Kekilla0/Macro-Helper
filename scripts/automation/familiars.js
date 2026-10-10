@@ -89,7 +89,7 @@ export class familiars{
     const forms = await this.specialForms(activity);
     if(forms.some(a => a.uuid === uuid)) return true;
     const doc = fromUuidSync(uuid, { strict : false }) ?? await fromUuid(uuid).catch(() => null);
-    return !!doc && forms.some(a => a.name === doc.name);
+    return !!doc?.name && forms.some(a => a.name === doc.name);
   }
 
   /* The special forms an activity names itself (Pact of the Chain's), and a Pact Warlock's on Find Familiar : creatures */
@@ -99,8 +99,10 @@ export class familiars{
     for(const source of sources){
       for(const profile of source?.profiles ?? []){
         if(!profile?.uuid || found.has(profile.uuid)) continue;
-        /* Plutonium's creatures resolve synchronously only (fromUuid finds nothing for them on a player's client) */
-        const actor = fromUuidSync(profile.uuid, { strict : false }) ?? await fromUuid(profile.uuid).catch(() => null);
+        /* Plutonium's creatures resolve synchronously only (fromUuid finds nothing for them on a player's client); a
+           compendium's (dnd5e's own Pact of the Chain) give only an index entry that way : loaded */
+        let actor = fromUuidSync(profile.uuid, { strict : false });
+        if(actor?.documentName !== "Actor") actor = await fromUuid(profile.uuid).catch(() => null) ?? actor;
         if(actor?.documentName === "Actor") found.set(profile.uuid, actor);
       }
     }

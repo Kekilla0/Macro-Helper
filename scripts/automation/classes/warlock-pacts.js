@@ -50,7 +50,8 @@ export class pacts{
     if(game.system.id !== "dnd5e") return;
     /* ---------- Blade ---------- */
     itemFixes.add({ name : "Pact of the Blade", where : "owned", plan : item => this.bladeFix(item) });
-    Hooks.once("setup", () => {
+    /* At init (not setup : the world's actors are prepared before setup) */
+    {
       patch.wrap("CONFIG.Item.dataModels.weapon.prototype.prepareFinalData", function(wrapped, ...args){
         try { pacts.pactAbilities(this); } catch(error){ log.error(error); }
         return wrapped(...args);
@@ -59,7 +60,7 @@ export class pacts{
         if((config.ability === undefined) && pacts.isPactWeapon(this.item)) config = { ...config, ability : this.ability };
         return wrapped(config, ...rest);
       });
-    });
+    }
     Hooks.on(`${module.id}.damageType`, (activity, { types, preset }) => {
       if(this.isPactWeapon(activity?.item)) preset.type = types.find(t => !this.PACT_TYPES.includes(t)) ?? types[0];
     });
@@ -325,7 +326,7 @@ export class pacts{
 
   /**
    * The Book of Shadows row : a new book when it's gone, its empty places filled (free), one spell replaced per
-   * Warlock level gained (the GM : freely; past that, Rule Limits Off / Warn ask and tell the GM).
+   * Warlock level gained, the GM's changes counted too (past that, Rule Limits Off / Warn ask and tell the GM).
    */
   static async openBook(actor){
     const book = this.bookOf(actor) ?? await this.makeBook(actor);
@@ -343,10 +344,11 @@ export class pacts{
     /* Full : replace one (a level gained) */
     const spells = this.spellsIn(actor, book);
     if(!spells.length) return;
-    const swaps = game.user.isGM ? Infinity : (Number(actor.getFlag(module.id, "bookSwaps")) || 0);
+    const swaps = Number(actor.getFlag(module.id, "bookSwaps")) || 0;
     let past = false;
     if(!(swaps > 0)){
-      if(!limits.canGoPast()) return ui.notifications.info(module.format("classes.warlock.bookFull", { name : actor.name }));
+      /* The GM may still go past, after the same question */
+      if(!limits.canGoPast() && !game.user.isGM) return ui.notifications.info(module.format("classes.warlock.bookFull", { name : actor.name }));
       past = await foundry.applications.api.DialogV2.confirm({ window : { title : book.name },
         content : `<p>${esc(module.format("classes.warlock.bookPast", { name : actor.name }))}</p>`, rejectClose : false });
       if(!past) return;
@@ -362,7 +364,7 @@ export class pacts{
     if(!chosen) return;
     await old.delete();
     const added = await this.addToBook(actor, chosen, book);
-    if(Number.isFinite(swaps)) await actor.setFlag(module.id, "bookSwaps", Math.max(0, swaps - 1));
-    if(past) await limits.tellGM({ who : actor.name, what : module.format("classes.warlock.bookSwapped", { from : old.name, to : added?.name ?? "" }), rule : module.i18n("classes.warlock.bookRule") });
+    await actor.setFlag(module.id, "bookSwaps", Math.max(0, swaps - 1));
+    if(past && !game.user.isGM) await limits.tellGM({ who : actor.name, what : module.format("classes.warlock.bookSwapped", { from : old.name, to : added?.name ?? "" }), rule : module.i18n("classes.warlock.bookRule") });
   }
 }
