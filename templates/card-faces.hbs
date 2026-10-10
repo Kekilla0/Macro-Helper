@@ -1,0 +1,27 @@
+{{!-- What else went into the use (macro-helper.cardFaces : a Metamagic option), each laid out like the item's own header,
+      its description folding under it (each in a chat-card of its own : dnd5e's toggle opens the nearest one's) --}}
+{{#each faces}}
+<div class="chat-card macro-helper-face">
+    <section class="card-header {{#unless description}}no-description{{/unless}}"{{#if description}} data-action="toggleDescription"{{/if}}>
+        <div class="item-icon"{{#if uuid}} data-action="showDocument" data-uuid="{{ uuid }}"{{/if}}>
+            <img class="gold-icon" src="{{ img }}" alt="{{ name }}">
+        </div>
+        <div class="name-stacked">
+            <span class="title">{{ name }}</span>
+            {{#if subtitle}}
+            <span class="subtitle">{{ subtitle }}</span>
+            {{/if}}
+        </div>
+        {{#if description}}
+        <div class="chevron"><i class="fa-solid fa-chevron-down" inert></i></div>
+        {{/if}}
+    </section>
+    {{#if description}}
+    <section class="card-description collapsible">
+        <div class="collapsible-content">
+            <div class="wrapper">{{{ description }}}</div>
+        </div>
+    </section>
+    {{/if}}
+</div>
+{{/each}}

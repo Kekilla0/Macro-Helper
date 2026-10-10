@@ -1,2 +1,2 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Compendium databases (LevelDB) : byte for byte, never line-ending converted
+packs/** binary

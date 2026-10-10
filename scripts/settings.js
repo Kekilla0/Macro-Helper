@@ -7,43 +7,152 @@ const log = logger.for(import.meta.url);
  * Settings per feature. Foundry has no settings folders, so each group gets its own sub-menu
  * under Macro Helper (a button in Configure Settings that opens just that feature's settings).
  * Keys are unchanged from when they were flat, so saved values carry over.
+ * World settings are the GM's and apply to everyone, on GM-only pages. Each user's own (client) settings are on one
+ * page, My Settings, which shows only those whose feature the GM has on (needs : a setting that must be on; players :
+ * one more that must be on for players).
  */
 export const GROUPS = {
+  /* Each user's own choices, for the features the GM has on */
+  player : {
+    icon : "fa-solid fa-user-gear",
+    /* Server Settings : a button for each GM page (no hints), for the GM */
+    server : ["helpers", "itemMacro", "hookMacros", "rollItem", "automation", "requests"],
+    settings : {
+      rollItemPick : { scope : "client", default : "always", type : String, needs : "rollItem",
+        choices : { off : "settings.rollItemPick.off", empty : "settings.rollItemPick.empty", always : "settings.rollItemPick.always" } },
+      handsMain : { scope : "client", default : "right", type : String, needs : "handsEnabled",
+        choices : { right : "settings.handsMain.right", left : "settings.handsMain.left" } },
+      /* Players only see it when they may edit item macros */
+      itemMacroTitleBar : { scope : "client", default : true, type : Boolean, requiresReload : true, needs : "itemMacro", players : "itemMacroPlayers" },
+    },
+  },
   helpers : {
     icon : "fa-solid fa-toolbox",
     settings : {
-      helperMethods : { scope : "world", default : true, type : Boolean, requiresReload : true },
-      rangeShape : { scope : "world", default : "circle", type : String,
-        choices : { circle : "settings.rangeShape.circle", square : "settings.rangeShape.square" } },
-      conditionAttacks : { scope : "world", default : true, type : Boolean },
+      /* Any dnd5e card, Roll Item or not */
+      cardDescriptions : { scope : "world", default : "collapsed", type : String,
+        choices : { open : "settings.cardDescriptions.open", collapsed : "settings.cardDescriptions.collapsed" } },
+      /* Which kinds of document get the helpers as methods (token.distanceTo(other)...) */
+      methodsActor : { scope : "world", default : true, type : Boolean, requiresReload : true },
+      methodsToken : { scope : "world", default : true, type : Boolean, requiresReload : true },
+      methodsItem : { scope : "world", default : true, type : Boolean, requiresReload : true },
     },
   },
   itemMacro : {
     icon : "fa-solid fa-code",
     settings : {
       itemMacro : { scope : "world", default : true, type : Boolean, requiresReload : true },
-      itemMacroTitleBar : { scope : "client", default : true, type : Boolean, requiresReload : true },
+      itemMacroPlayers : { scope : "world", default : true, type : Boolean },
     },
   },
   hookMacros : {
     icon : "fa-solid fa-link",
     settings : {
       hookMacros : { scope : "world", default : true, type : Boolean, requiresReload : true },
+      hookMacrosPlayers : { scope : "world", default : false, type : Boolean },
     },
   },
+  /* Roll Item : the item rolled from its own data, on one card */
   rollItem : {
     icon : "fa-solid fa-dice-d20",
     settings : {
-      rollItem : { scope : "world", default : true, type : Boolean },
-      rollItemDefault : { scope : "world", default : false, type : Boolean },
-      rollItemSaves : { scope : "world", default : false, type : Boolean },
-      rollItemHeals : { scope : "world", default : false, type : Boolean },
-      rollItemDamage : { scope : "world", default : false, type : Boolean },
-      rollItemUtility : { scope : "world", default : false, type : Boolean },
-      rollItemPick : { scope : "client", default : "off", type : String,
-        choices : { off : "settings.rollItemPick.off", empty : "settings.rollItemPick.empty", always : "settings.rollItemPick.always" } },
-      rollItemMultiattack : { scope : "world", default : false, type : Boolean },
-      rollItemHotkeys : { scope : "client", default : true, type : Boolean },
+      /* top : shown above the page's buttons */
+      rollItemEnabled : { scope : "world", default : true, type : Boolean, top : true },
+      dmScreen : { scope : "world", default : false, type : Boolean },
+      rollType : { scope : "world", default : "quick", type : String,
+        choices : { normal : "settings.rollType.normal", quick : "settings.rollType.quick" } },
+      rollItemAdvantage : { scope : "world", default : "keys", type : String,
+        choices : { prompt : "settings.rollItemAdvantage.prompt", keys : "settings.rollItemAdvantage.keys", none : "settings.rollItemAdvantage.none" } },
+      areaTargets : { scope : "world", default : true, type : Boolean },
+    },
+  },
+  /* System Automation : the rules the module applies. Its switch turns all of them off at once */
+  automation : {
+    icon : "fa-solid fa-gears",
+    submenus : ["rules", "characters", "equipment", "combat", "homebrew"],
+    settings : {
+      automationEnabled : { scope : "world", default : true, type : Boolean, top : true },
+      weaponRules : { scope : "world", default : "warn", type : String,
+        choices : { off : "settings.weaponRules.off", warn : "settings.weaponRules.warn", block : "settings.weaponRules.block" } },
+      ruleFixes : { scope : "world", default : "off", type : String,
+        choices : { off : "settings.ruleFixes.off", offer : "settings.ruleFixes.offer", auto : "settings.ruleFixes.auto" } },
+    },
+  },
+  /* System Automation → Rules : on rolls and actions */
+  rules : {
+    icon : "fa-solid fa-scale-balanced",
+    nested : true,
+    settings : {
+      conditions : { scope : "world", default : "full", type : String,
+        choices : { off : "settings.conditions.off", attacks : "settings.conditions.attacks", full : "settings.conditions.full" } },
+      vision : { scope : "world", default : "full", type : String,
+        choices : { off : "settings.vision.off", conditions : "settings.vision.conditions", full : "settings.vision.full" } },
+      masteryRules : { scope : "world", default : true, type : Boolean },
+      actionRules : { scope : "world", default : true, type : Boolean },
+    },
+  },
+  /* System Automation → Characters : classes, species, feats, spells */
+  characters : {
+    icon : "fa-solid fa-user-shield",
+    nested : true,
+    settings : {
+      classRules : { scope : "world", default : true, type : Boolean },
+      speciesRules : { scope : "world", default : true, type : Boolean },
+      featRules : { scope : "world", default : true, type : Boolean },
+      spellRules : { scope : "world", default : true, type : Boolean },
+    },
+  },
+  /* System Automation → Equipment : what the characters hold (Hands), light, ammunition */
+  equipment : {
+    icon : "fa-solid fa-hand",
+    nested : true,
+    settings : {
+      handsEnabled : { scope : "world", default : true, type : Boolean },
+      handsLight : { scope : "world", default : "timed", type : String,
+        choices : { off : "settings.handsLight.off", light : "settings.handsLight.light", timed : "settings.handsLight.timed" } },
+      ammoRecovery : { scope : "world", default : "half", type : String,
+        choices : { off : "settings.ammoRecovery.off", half : "settings.ammoRecovery.half" } },
+    },
+  },
+  /* System Automation → Combat : initiative, summons, instantaneous areas */
+  combat : {
+    icon : "fa-solid fa-swords",
+    nested : true,
+    settings : {
+      initiativeMethod : { scope : "world", default : "player", type : String,
+        choices : { player : "settings.initiativeMethod.player", auto : "settings.initiativeMethod.auto" } },
+      initiativeMessages : { scope : "world", default : "individual", type : String,
+        choices : { individual : "settings.initiativeMessages.individual", compact : "settings.initiativeMessages.compact" } },
+      summonInitiative : { scope : "world", default : "roll", type : String,
+        choices : { roll : "settings.summonInitiative.roll", shared : "settings.summonInitiative.shared" } },
+      /* Any area a dnd5e activity places, Roll Item or not */
+      clearAreas : { scope : "world", default : true, type : Boolean },
+    },
+  },
+  /* System Automation → Homebrew : table rules that aren't RAW, all off by default */
+  homebrew : {
+    icon : "fa-solid fa-flask",
+    nested : true,
+    settings : {
+      rangeShape : { scope : "world", default : "square", type : String,
+        choices : { circle : "settings.rangeShape.circle", square : "settings.rangeShape.square" } },
+      homebrewPush : { scope : "world", default : false, type : Boolean },
+      homebrewInitiative : { scope : "world", default : false, type : Boolean },
+      homebrewAmmoRecovery : { scope : "world", default : "rules", type : String,
+        choices : { rules : "settings.homebrewAmmoRecovery.rules", oddRoll : "settings.homebrewAmmoRecovery.oddRoll", hits : "settings.homebrewAmmoRecovery.hits" } },
+      homebrewAmmoSearch : { scope : "world", default : false, type : Boolean },
+      homebrewFlanking : { scope : "world", default : "off", type : String,
+        choices : { off : "settings.homebrewFlanking.off", advantage : "settings.homebrewFlanking.advantage", bonus : "settings.homebrewFlanking.bonus" } },
+    },
+  },
+  /* Roll Requests : the GM asks for checks and saves, the DC set before the rolls */
+  requests : {
+    icon : "fa-solid fa-dice-d20",
+    settings : {
+      requestsEnabled : { scope : "world", default : true, type : Boolean, requiresReload : true },
+      requestsDmScreen : { scope : "world", default : true, type : Boolean },
+      requestsMessages : { scope : "world", default : "compact", type : String,
+        choices : { compact : "settings.requestsMessages.compact", individual : "settings.requestsMessages.individual" } },
     },
   },
 };
@@ -53,8 +162,91 @@ const GENERAL = {
   debug : { scope : "world", config : true, default : false, type : Boolean },
 };
 
+/* The settings that replaced these : the code still asks for the old names, answered from the new dropdowns.
+   Where a new setting isn't there (an old world before its carry-over), the old one answers. */
+const RAW = key => game.settings.get(module.id, key);
+/* Enable Roll Item : off turns off everything on its page */
+const ENABLED = () => { try { return RAW("rollItemEnabled") !== false; } catch { return true; } };
+/* Enable System Automation : off turns off every rule (each setting below then reads as off) */
+const AUTO = () => { try { return RAW("automationEnabled") !== false; } catch { return true; } };
+const from = (key, test, old) => () => {
+  if(!ENABLED()) return false;
+  try { return test(RAW(key)); } catch { return RAW(old); }
+};
+const quick = old => from("rollType", v => v === "quick", old);
+/* A System Automation dropdown read as a switch : off with it */
+const auto = (key, test, old) => () => {
+  if(!AUTO()) return false;
+  try { return test(RAW(key)); } catch { return RAW(old); }
+};
+/* An automation switch : off with System Automation; on where neither it nor an old setting is saved yet */
+const rule = (key, old) => () => {
+  if(!AUTO()) return false;
+  try { return RAW(key) !== false; } catch { try { return old ? RAW(old) !== false : true; } catch { return true; } }
+};
+const VIRTUAL = {
+  /* Roll Item at all (any Roll Type) : picks, template help, reroll buttons, sheet rolls without dialog, macros */
+  rollItem : () => ENABLED() && (() => { try { RAW("rollType"); return true; } catch { return RAW("rollItem"); } })(),
+  /* Roll Item's own cards (Roll Type : Quick) */
+  rollItemDefault : quick("rollItemDefault"),
+  rollItemSaves : quick("rollItemSaves"),
+  rollItemHeals : quick("rollItemHeals"),
+  rollItemDamage : quick("rollItemDamage"),
+  rollItemUtility : quick("rollItemUtility"),
+  /* Damage after the attack dice land : only when there are dice to watch (Dice So Nice) */
+  rollItemStaged : () => ENABLED() && !!game.modules.get("dice-so-nice")?.active,
+  rollItemDmScreen : from("dmScreen", v => v === true, "rollItemDmScreen"),
+  /* A Helpers setting : not tied to Enable Roll Item */
+  collapseCards : () => { try { return RAW("cardDescriptions") === "collapsed"; } catch { return RAW("collapseCards"); } },
+  rollItemTemplateTargets : from("areaTargets", v => v === true, "rollItemTemplateTargets"),
+  /* System Automation → Combat */
+  clearTemplates : () => AUTO() && (() => { try { return RAW("clearAreas") === true; } catch { return RAW("clearTemplates"); } })(),
+  conditionAttacks : auto("conditions", v => v !== "off", "conditionAttacks"),
+  downedRules : auto("conditions", v => v === "full", "downedRules"),
+  visionRules : auto("vision", v => v !== "off", "visionRules"),
+  rollItemMasteries : rule("masteryRules", "rollItemMasteries"),
+  /* Default Actions : Dash, Disengage, Dodge, Help, and the Unarmed Strike's Grapple / Shove */
+  rollItemManeuvers : rule("actionRules", "rollItemManeuvers"),
+  actionRules : rule("actionRules"),
+  speciesRules : rule("speciesRules", "traitRules"),
+  featRules : rule("featRules", "traitRules"),
+  spellRules : rule("spellRules"),
+  /* System Automation's own keys : off with it */
+  /* Rule Limits : "change" was Block + Fix Automatically (settings version 6) */
+  weaponRules : () => (AUTO() ? ((RAW("weaponRules") === "change") ? "block" : RAW("weaponRules")) : "off"),
+  ruleFixes : () => (AUTO() ? (() => { try { return (RAW("weaponRules") === "change") ? "auto" : RAW("ruleFixes"); } catch { return "off"; } })() : "off"),
+  classRules : rule("classRules"),
+  vision : () => (AUTO() ? RAW("vision") : "off"),
+};
+
+/* The rest of System Automation's settings, as they read while it's off */
+const AUTOMATION_OFF = {
+  conditions : "off", masteryRules : false, handsEnabled : false, handsLight : "off", ammoRecovery : "off",
+  initiativeMethod : "player", initiativeMessages : "individual", summonInitiative : "roll", clearAreas : false,
+  homebrewPush : false, homebrewInitiative : false, homebrewAmmoSearch : false, homebrewAmmoRecovery : "rules", homebrewFlanking : "off",
+};
+
+/* The old Roll Item switches, hidden : read once by the carry-over */
+const LEGACY = {
+  rollItem : true, rollItemDefault : false, rollItemSaves : false, rollItemHeals : false, rollItemDamage : false,
+  rollItemUtility : false, collapseCards : true, clearTemplates : true, rollItemMasteries : true, rollItemManeuvers : true,
+  rollItemStaged : true, rollItemTemplateTargets : true, rollItemDmScreen : false, conditionAttacks : true,
+  downedRules : true, visionRules : true,
+};
+
+/* A group, or a page it opens, has a setting players choose for themselves */
+const hasClient = group => Object.values(GROUPS[group]?.settings ?? {}).some(s => s.scope === "client")
+  || (GROUPS[group]?.submenus ?? []).some(sub => hasClient(sub));
+
 export class settings{
   static value(key){
+    if(VIRTUAL[key]) return VIRTUAL[key]();
+    if((key in AUTOMATION_OFF) && !AUTO()) return AUTOMATION_OFF[key];
+    return game.settings.get(module.id, key);
+  }
+
+  /* The stored value itself (the settings pages show what's saved, not what's in effect) */
+  static stored(key){
     return game.settings.get(module.id, key);
   }
 
@@ -74,18 +266,86 @@ export class settings{
   static register(){
     log.info("Registering all settings.");
 
-    for(const [group, { icon, settings : groupSettings }] of Object.entries(GROUPS)){
+    for(const [group, { icon, settings : groupSettings, nested }] of Object.entries(GROUPS)){
+      /* A nested page opens from its parent page's button, not from Configure Settings */
+      if(nested){
+        for(const [key, data] of Object.entries(groupSettings)) settings.#register(key, { ...data, config : false });
+        continue;
+      }
       game.settings.registerMenu(module.id, `${group}Menu`, {
         name : `settings.${group}.menu.title`,
         label : `settings.${group}.menu.label`,
         hint : `settings.${group}.menu.hint`,
         icon,
         type : SettingsMenu.for(group),
-        restricted : false,   // players can still change their own client settings in it
+        /* GM only, unless it (or a page it opens) has a setting players choose for themselves */
+        restricted : !hasClient(group),
       });
       for(const [key, data] of Object.entries(groupSettings)) settings.#register(key, { ...data, config : false });
     }
 
     for(const [key, data] of Object.entries(GENERAL)) settings.#register(key, data);
+    /* Settings that were replaced : still registered (hidden) so their saved values can be read once */
+    for(const key of ["helperMethods", "autoInitiative", "compactInitiative"]){
+      settings.#register(key, { scope : "world", config : false, default : null, type : Boolean });
+    }
+    /* Roll Item dropdowns that were replaced again (NPC Numbers -> DM Screen, Damage Timing -> Dice So Nice) */
+    for(const key of ["npcNumbers", "damageTiming", "weaponExtras", "areas"]){
+      settings.#register(key, { scope : "world", config : false, default : null, type : String });
+    }
+    settings.#register("traitRules", { scope : "world", config : false, default : null, type : Boolean });
+    for(const [key, value] of Object.entries(LEGACY)){
+      settings.#register(key, { scope : "world", config : false, default : value, type : Boolean });
+    }
+    /* Which settings migrations the world has had */
+    settings.#register("settingsVersion", { scope : "world", config : false, default : 0, type : Number });
+  }
+
+  /**
+   * The active GM carries old settings over to the ones that replaced them, once :
+   *   Methods on Tokens, Actors & Items (one switch) -> Helpers → Methods (one per kind)
+   *   Auto-Roll Initiative -> Initiative Method ; Compact Initiative -> Initiative Messages
+   */
+  static async migrate(){
+    if(!game.users.activeGM?.isSelf) return;
+    const version = Number(settings.value("settingsVersion")) || 0;
+    const old = key => { try { return game.settings.get(module.id, key); } catch { return null; } };
+    const stored = key => !!game.settings.storage?.get?.("world")?.some?.(s => s.key === `${module.id}.${key}`);
+    const moves = [];
+    if(version < 1){
+      if(old("helperMethods") === false) moves.push(["methodsActor", false], ["methodsToken", false], ["methodsItem", false]);
+      if(old("autoInitiative") === true) moves.push(["initiativeMethod", "auto"]);
+      if(old("compactInitiative") === true) moves.push(["initiativeMessages", "compact"]);
+    }
+    /* Roll Item's switches -> its dropdowns (only for worlds that had changed them : others take the new defaults) */
+    if((version < 2) && Object.keys(LEGACY).some(stored)){
+      const types = ["rollItemDefault", "rollItemSaves", "rollItemHeals", "rollItemDamage", "rollItemUtility"];
+      moves.push(["rollType", (old("rollItem") && types.some(t => old(t))) ? "quick" : "normal"]);
+      moves.push(["dmScreen", !!old("rollItemDmScreen")]);
+      moves.push(["cardDescriptions", old("collapseCards") ? "collapsed" : "open"]);
+      moves.push(["areaTargets", !!old("rollItemTemplateTargets")], ["clearAreas", !!old("clearTemplates")]);
+      moves.push(["conditions", old("downedRules") ? "full" : old("conditionAttacks") ? "attacks" : "off"]);
+      moves.push(["vision", old("visionRules") ? "full" : "off"]);
+      moves.push(["masteryRules", !!old("rollItemMasteries")]);
+      if(old("rollItemManeuvers") === false) moves.push(["actionRules", false]);
+    }
+    /* NPC Numbers (dropdown) -> DM Screen (switch) */
+    if((version === 2) && stored("npcNumbers")) moves.push(["dmScreen", old("npcNumbers") === "hide"]);
+    /* Weapon Extras / Species & Feats / Areas (dropdowns) -> one switch each */
+    if((version >= 2) && (version < 4)){
+      if(stored("weaponExtras")){
+        moves.push(["masteryRules", old("weaponExtras") !== "off"]);
+        if(old("weaponExtras") !== "both") moves.push(["actionRules", false]);
+      }
+      if(stored("traitRules") && (old("traitRules") === false)) moves.push(["speciesRules", false], ["featRules", false]);
+      if(stored("areas")) moves.push(["areaTargets", old("areas") !== "leave"], ["clearAreas", old("areas") === "clear"]);
+    }
+    /* Ammunition Recovery's "odd one by 1d2" -> Homebrew's Recovering Ammunition (the 2024 rule stays on Equipment) */
+    if((version < 5) && (old("ammoRecovery") === "halfRoll")) moves.push(["ammoRecovery", "half"], ["homebrewAmmoRecovery", "oddRoll"]);
+    /* Rule Limits' "Change" -> Rule Limits Block + Rule Fixes Fix Automatically */
+    if((version < 6) && (old("weaponRules") === "change")) moves.push(["weaponRules", "block"], ["ruleFixes", "auto"]);
+    for(const [key, value] of moves) await settings.change(key, value);
+    if(version < 6) await settings.change("settingsVersion", 6);
+    if(moves.length) log.info("Settings carried over", moves);
   }
 }

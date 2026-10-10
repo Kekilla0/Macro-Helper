@@ -1,9 +1,12 @@
 {{!-- dnd5e usage-card.hbs, with the damage-card.hbs roll + tray added below the card face --}}
+{{> "macro-helper.cover" }}
 {{#if content}}
 {{{ content }}}
 {{else}}
-{{> "dnd5e.card-face" }}
+{{> "macro-helper.card-face" }}
 {{/if}}
+
+{{#if note}}<p class="supplement macro-helper-note"><strong>{{ note }}</strong></p>{{/if}}
 
 {{!-- Damage, already rolled, one box per damage type --}}
 {{#with damage}}{{> "macro-helper.damage-rows" }}{{/with}}
@@ -61,10 +64,16 @@
 </div>
 {{/each}}
 
+{{!-- One row per target : its save (button, then the result), then its damage / healing by that result --}}
+{{#if rows.length}}{{> "macro-helper.rows" }}{{/if}}
+
 {{!-- Save results (dnd5e "Chat Card Summary" setting) --}}
 {{#each summaries}}
 <div class="card-summary" data-message-id="{{ id }}" data-target-uuid="{{ token.uuid }}">{{{ html }}}</div>
 {{/each}}
+
+{{!-- Sections rules add (macro-helper.cardSections) : Shove's Prone / Push for each target that failed --}}
+{{#each sections}}{{> (lookup . "partial") context }}{{/each}}
 
 {{!-- Apply damage, halves/negates for targets that saved --}}
 {{#if damage.showTray}}

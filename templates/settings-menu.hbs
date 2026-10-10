@@ -1,6 +1,5 @@
 {{!-- One feature's settings, context from settings-menu.js : settings [{ key, id, name, hint, value, isBoolean, choices, world, disabled }] --}}
-<section class="macro-helper-settings-list">
-    {{#each settings}}
+{{#*inline "setting"}}
     <div class="form-group">
         <label for="{{ id }}">{{ localize name }}</label>
         <div class="form-fields">
@@ -14,10 +13,35 @@
             <input type="text" id="{{ id }}" name="{{ key }}" value="{{ value }}" {{ disabled disabled }}>
             {{/if}}
         </div>
+        {{#if hint}}
         <p class="hint">
             {{ localize hint }}
             {{#unless world}}<em>{{ localize "settings.menu.client" }}</em>{{/unless}}
         </p>
+        {{else unless world}}
+        <p class="hint"><em>{{ localize "settings.menu.client" }}</em></p>
+        {{/if}}
+    </div>
+{{/inline}}
+<section class="macro-helper-settings-list">
+    {{#each top}}{{> setting}}{{/each}}
+    {{#each submenus}}
+    <div class="form-group">
+        <label>{{ localize name }}</label>
+        <div class="form-fields">
+            <button type="button" data-submenu="{{ key }}"><i class="{{ icon }}" inert></i> {{ localize label }}</button>
+        </div>
+        <p class="hint">{{ localize hint }}</p>
     </div>
     {{/each}}
+    {{#each settings}}{{> setting}}{{/each}}
+    {{#if server.length}}
+    <h3 class="border">{{ localize "settings.player.server" }}</h3>
+    <div class="macro-helper-server-buttons">
+        {{#each server}}
+        <button type="button" data-submenu="{{ key }}"><i class="{{ icon }}" inert></i> {{ localize label }}</button>
+        {{/each}}
+    </div>
+    {{/if}}
+    {{#if empty}}<p class="hint">{{ localize "settings.menu.empty" }}</p>{{/if}}
 </section>

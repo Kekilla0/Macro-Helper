@@ -1,0 +1,23 @@
+{{!-- Weapon mastery for one attack, context from masteries.js cardSection :
+      { key, label, icon, ray, hasRay, graze : damage context | null, action : { label, used } | null } --}}
+<div class="macro-helper-mastery" data-mastery="{{ key }}">
+    {{#if action}}
+    <div class="card-buttons">
+        <button type="button" data-action="cardButton" data-id="mastery" data-ray="{{ ray }}" {{ disabled action.used }}>
+            <i class="fa-solid {{#if action.used}}fa-check{{else}}{{ icon }}{{/if}}" inert></i>
+            <span>{{ action.label }}</span>
+        </button>
+    </div>
+    {{/if}}
+
+    {{#if graze}}
+    <section class="icon-row ray-header">
+        <i class="fa-fw fa-solid {{ icon }}" inert></i>
+        <span class="roboto-upper">{{ label }}{{#if graze.onMiss}} · {{ localize "rollItem.mastery.onMiss" }}{{/if}}</span>
+    </section>
+    {{#with graze}}{{> "macro-helper.damage-rows" }}{{/with}}
+    {{#if graze.showTray}}
+    <macro-helper-damage class="dnd5e2" data-part="graze" {{#if hasRay}}data-ray="{{ ray }}"{{/if}}></macro-helper-damage>
+    {{/if}}
+    {{/if}}
+</div>

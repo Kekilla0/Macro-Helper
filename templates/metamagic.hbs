@@ -1,0 +1,16 @@
+{{!-- Careful / Heightened Spell on a save card, context from sorcerer.js cardSection : { label, icon, hint, rows : [{ uuid, name, on, disabled }] } --}}
+<div class="macro-helper-metamagic">
+    <section class="icon-row ray-header">
+        <i class="fa-fw fa-solid {{ icon }}" inert></i>
+        <span class="roboto-upper">{{ label }}</span>
+    </section>
+    <p class="hint">{{ hint }}</p>
+    <div class="card-buttons">
+        {{#each rows}}
+        <button type="button" data-action="cardButton" data-id="metamagicRow" data-target="{{ uuid }}" {{ disabled disabled }}>
+            <i class="fa-solid {{#if on}}fa-square-check{{else}}fa-square{{/if}}" inert></i>
+            <span>{{ name }}</span>
+        </button>
+        {{/each}}
+    </div>
+</div>

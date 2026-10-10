@@ -34,8 +34,13 @@ export class SettingsMenu extends HandlebarsApplicationMixin(ApplicationV2){
     footer : { template : "templates/generic/form-footer.hbs" },
   };
 
+  /* GMs see every setting of the group, players only their own client settings; a setting whose feature is off (needs)
+     isn't shown, nor to players one they aren't allowed (players) */
   get keys(){
-    return Object.keys(GROUPS[this.constructor.GROUP]?.settings ?? {});
+    const all = Object.entries(GROUPS[this.constructor.GROUP]?.settings ?? {});
+    return all.filter(([, data]) => (!data.needs || settings.value(data.needs))
+      && (game.user.isGM || ((data.scope === "client") && (!data.players || settings.value(data.players)))))
+      .map(([key]) => key);
   }
 
   static config(key){
@@ -44,23 +49,47 @@ export class SettingsMenu extends HandlebarsApplicationMixin(ApplicationV2){
 
   async _prepareContext(options){
     const context = await super._prepareContext(options);
-    context.settings = this.keys.map(key => {
+    const all = this.keys.map(key => {
       const config = SettingsMenu.config(key);
       const isBoolean = (config.type === Boolean) || (config.type instanceof foundry.data.fields.BooleanField);
       return {
         key,
         id : `${this.id}-${key}`,
         name : config.name,
-        hint : config.hint,
-        value : settings.value(key),
+        /* Settings with no hint text show no hint line */
+        hint : (config.hint && game.i18n.has(config.hint)) ? config.hint : "",
+        value : settings.stored(key),
         isBoolean,
         choices : config.choices ?? null,
         world : config.scope === "world",
         disabled : (config.scope === "world") && !game.user.isGM,
+        top : !!GROUPS[this.constructor.GROUP].settings[key]?.top,
       };
     });
+    /* A page's on/off (Enable Roll Item) goes above its buttons, the rest below */
+    context.top = all.filter(s => s.top);
+    context.settings = all.filter(s => !s.top);
+    /* Buttons opening nested pages (Helpers → Methods), for those who can change them */
+    context.submenus = (GROUPS[this.constructor.GROUP]?.submenus ?? [])
+      .filter(sub => game.user.isGM || Object.values(GROUPS[sub]?.settings ?? {}).some(s => s.scope === "client"))
+      .map(sub => ({ key : sub, icon : GROUPS[sub].icon, name : `settings.${sub}.menu.title`, label : `settings.${sub}.menu.label`, hint : `settings.${sub}.menu.hint` }));
+    /* My Settings : the GM's pages, one button each (no hints) */
+    context.server = game.user.isGM ? (GROUPS[this.constructor.GROUP]?.server ?? [])
+      .map(group => ({ key : group, icon : GROUPS[group].icon, label : `settings.${group}.menu.title` })) : [];
+    /* A player with nothing to set here (Allow Players to Edit off) */
+    context.empty = !all.length && !context.submenus.length && !context.server.length;
     context.buttons = [{ type : "submit", icon : "fa-solid fa-floppy-disk", label : "SETTINGS.Save" }];
     return context;
+  }
+
+  _onRender(context, options){
+    super._onRender?.(context, options);
+    for(const button of this.element.querySelectorAll("[data-submenu]")){
+      button.addEventListener("click", event => {
+        event.preventDefault();
+        new (SettingsMenu.for(button.dataset.submenu))().render({ force : true });
+      });
+    }
   }
 
   /** @this {SettingsMenu} */
@@ -71,7 +100,7 @@ export class SettingsMenu extends HandlebarsApplicationMixin(ApplicationV2){
     for(const key of this.keys){
       const config = SettingsMenu.config(key);
       if((config.scope === "world") && !game.user.isGM) continue;
-      if(!(key in data) || (data[key] === settings.value(key))) continue;
+      if(!(key in data) || (data[key] === settings.stored(key))) continue;
 
       await settings.change(key, data[key]);
       if(config.requiresReload){

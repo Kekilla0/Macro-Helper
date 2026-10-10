@@ -1,6 +1,35 @@
 {{!-- dnd5e attack-card.hbs, with the damage-card.hbs roll + tray appended --}}
 <div class="chat-card">
-    {{> "dnd5e.card-header" }}
+    {{!-- dnd5e's card header, with the item's description folding under it (dnd5e card-face.hbs) --}}
+    {{#with header}}
+    <section class="card-header {{#unless ../description}}no-description{{/unless}}"{{#if ../description}} data-action="toggleDescription"{{/if}}>
+        <div class="item-icon" data-action="showDocument" data-uuid="{{ item.uuid }}">
+            <img class="gold-icon" src="{{ item.img }}" alt="{{ item.name }}">
+        </div>
+        {{#if activity.uuid}}
+        <div class="activity-icon">{{ dnd5e-icon activity.img alt=activity.name classes="gold-icon" }}</div>
+        {{/if}}
+        <div class="name-stacked">
+            <span class="title">{{ item.name }}</span>
+            {{#if subtitle}}
+            <span class="subtitle">{{ subtitle }}</span>
+            {{/if}}
+        </div>
+        {{#if ../description}}
+        <div class="chevron"><i class="fa-solid fa-chevron-down" inert></i></div>
+        {{/if}}
+    </section>
+    {{/with}}
+    {{#if description}}
+    <section class="card-description collapsible">
+        <div class="collapsible-content">
+            <div class="wrapper">{{{ description }}}</div>
+        </div>
+    </section>
+    {{/if}}
+    {{> "macro-helper.faces" }}
+    {{> "macro-helper.cover" }}
+    {{#if note}}<p class="supplement macro-helper-note"><strong>{{ note }}</strong></p>{{/if}}
 
     {{#if mastery}}
     <p class="supplement">
@@ -75,6 +104,7 @@
                     <option value="{{ token }}">{{ name }}</option>
                 </datalist>
             </target-pill>
+            {{#with applied}}<span class="macro-helper-applied {{#if healing}}healing{{else}}damage{{/if}}" data-tooltip="{{ localize "rollItem.row.applied" }}">{{ text }}</span>{{/with}}
         </li>
         {{/each}}
     </ul>
@@ -83,6 +113,14 @@
 
 {{!-- Attack --}}
 {{> "dnd5e.card-rolls" }}
+
+{{!-- Damage after the attack : the dice are still rolling --}}
+{{#if pending}}
+<section class="icon-row macro-helper-pending">
+    <i class="fa-fw fa-solid fa-dice fa-beat-fade" inert></i>
+    <span class="roboto-upper">{{ localize "rollItem.rolling" }}</span>
+</section>
+{{/if}}
 
 {{!-- Multiple attacks : each one laid out like a single attack card (target, attack, damage, apply) --}}
 {{#each rays}}
@@ -114,6 +152,7 @@
                         <option value="{{ token }}">{{ name }}</option>
                     </datalist>
                 </target-pill>
+                {{#with applied}}<span class="macro-helper-applied {{#if healing}}healing{{else}}damage{{/if}}" data-tooltip="{{ localize "rollItem.row.applied" }}">{{ text }}</span>{{/with}}
             </li>
         </ul>
     </section>
@@ -129,6 +168,9 @@
     {{#if showTray}}
     <macro-helper-damage class="dnd5e2" data-ray="{{ index }}" data-part="base"></macro-helper-damage>
     {{/if}}
+
+    {{#with extras}}{{> "macro-helper.extras" }}{{/with}}
+    {{#each sections}}{{> (lookup . "partial") context }}{{/each}}
 </div>
 {{/each}}
 
@@ -140,6 +182,12 @@
 <macro-helper-damage class="dnd5e2" data-part="base"></macro-helper-damage>
 {{/if}}
 {{/with}}
+
+{{!-- Added by item macros (stage hooks) : extra damage boxes, card buttons (Savage Attacker...) --}}
+{{#with extras}}{{> "macro-helper.extras" }}{{/with}}
+
+{{!-- Sections rules add (macro-helper.cardSections) : a weapon mastery's button, Graze's damage on a miss --}}
+{{#each sections}}{{> (lookup . "partial") context }}{{/each}}
 
 {{!-- Effects the attack applies (Guiding Bolt, Ray of Frost) --}}
 {{#if effects.length}}
@@ -158,6 +206,12 @@
         <span class="roboto-upper">{{ name }}</span>
     </section>
 
+    {{#if rows.length}}
+    {{!-- One row per target hit : its save (no dialog), then the save's damage sized by it --}}
+    <section class="icon-row"><span class="pill transparent"><span class="label">{{ label }}</span></span></section>
+    {{#with damage}}{{> "macro-helper.damage-rows" }}{{/with}}
+    {{> "macro-helper.rows" }}
+    {{else}}
     <section class="icon-row">
         <i class="fa-fw fa-solid fa-circle-play" aria-label="{{ localize "DND5E.CHATMESSAGE.Row.Actions" }}"></i>
         <ul class="unlist pills">
@@ -178,6 +232,7 @@
 
     {{#if damage.showTray}}
     <macro-helper-damage class="dnd5e2" data-part="save"></macro-helper-damage>
+    {{/if}}
     {{/if}}
 
     {{#if effects.length}}
