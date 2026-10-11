@@ -19,6 +19,7 @@ const log = logger.for(import.meta.url);
 export class uses{
   static ORDER = {
     item : [
+      "castingBusy",   // Casting : a long cast under way : using anything else asks, then fails the cast
       "wildShapeCast", // Druid : a spell while in Wild Shape (Rule Limits; Change : leave the form, then cast)
       "flurry",        // Monk : Flurry of Blows uses the Unarmed Strike instead
       "smite",         // Paladin : a smite spell from the sheet smites the latest melee hit
@@ -33,10 +34,15 @@ export class uses{
       "fastForward",   // Roll Item : one attack with its riders skips dnd5e's choice of activity
     ],
     activity : [
+      "castingBusy",   // Casting : a long cast under way : using anything else asks, then fails the cast
       "offScene",      // Roll Item : no token on the scene being viewed : no targets (it can't see them)
       "itemMacro",     // Item Macro : a macro on the activity
       "ritual",        // Spells : cast as a Ritual (no slot, 10 minutes longer) or normally
+      "castLevel",     // Spells : a levelled spell aimed at creatures asks its slot level first (the pick counts upcast targets)
+      "longCast",      // Casting : 1 minute or more (or a Ritual) : begun with Concentration, cast from its card later
+      "slotPerTurn",   // Casting : a second spell slot this turn follows Rule Limits
       "metamagic",     // Sorcerer : Metamagic chosen and paid before a Sorcerer spell is cast (Distant : the range picked)
+      "components",    // Components : V (not Silenced), S (a free hand), M (a focus, or a pouch and a free hand) : Rule Limits
       "flurry",        // Monk : Monk's Focus's Flurry of Blows uses the Unarmed Strike instead
       "presetTargets", // Cleric : Turn Undead targets the Undead within 30 ft itself (no pick)
       "action",        // Default Actions : choose and pick first (Help)

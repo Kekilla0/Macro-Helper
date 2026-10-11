@@ -44,6 +44,8 @@ import { maneuvers } from './automation/maneuvers.js';
 import { spells } from './automation/spells.js';
 import { repeating } from './automation/repeating.js';
 import { dancingLights } from './automation/dancing-lights.js';
+import { casting } from './automation/casting.js';
+import { components } from './automation/components.js';
 const log = logger.for(import.meta.url);
 
 Hooks.once("init", ()=> {
@@ -78,6 +80,8 @@ Hooks.once("init", ()=> {
   spells.register();
   repeating.register();
   dancingLights.register();
+  casting.register();
+  components.register();
   weaponMastery.register();
   fightingStyles.register();
   compendiums.register();

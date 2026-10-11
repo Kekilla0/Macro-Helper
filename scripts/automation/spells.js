@@ -8,6 +8,7 @@ import { limits } from './limits.js';
 import { conditions } from './conditions.js';
 import { actions } from './actions.js';
 import { itemFixes } from './item-fixes.js';
+import { patch } from '../patch.js';
 import { chooseOption } from '../helpers/utils.js';
 import { TYPES } from '../roll-item/message.js';
 const log = logger.for(import.meta.url);
@@ -34,6 +35,14 @@ const log = logger.for(import.meta.url);
  *   Armor of Agathys: cast, the caster is marked (an effect : the Cold damage, 5 a slot level) for its hour, until its
  *                     Temporary Hit Points are gone. A melee attack card that hits a marked creature (with Temporary HP
  *                     left as it's made) gets the GM's button : that damage to the attacker.
+ *   Emanations      : an area that comes from the caster (Detect Magic, Word of Radiance; dnd5e's "Emanation") is
+ *                     always made, round the caster's token with no click, and follows it (dnd5e attaches it). It
+ *                     shows on the map for everyone and goes with the spell (its Concentration, or the end of the
+ *                     turn for an instantaneous one : Clear Instant Areas). The caster isn't in it.
+ *   Casting level   : a levelled spell aimed at creatures (no area) asks its slot level first, before its targets are
+ *                     picked, so the pick knows how many (dnd5e's own window then can't change it). "One additional
+ *                     creature for each spell slot level above N" in its text adds those targets (Bless, Command...),
+ *                     with or without a pick; with no pick, more targets than that follow Rule Limits.
  *   Rituals         : a spell with the Ritual tag you have prepared : cast normally (a slot, a higher level allowed) or
  *                     as a Ritual (10 minutes longer, no slot, its own level). A Wizard with Ritual Adept casts the
  *                     rituals in its spellbook (its Wizard spells) without preparing them : as a Ritual only. The card
@@ -73,6 +82,18 @@ export class spells{
     Hooks.on("dnd5e.preRollAttackV2", config => this.bladeWardPenalty(config));
     uses.onActivity("spellRange", (activity, ctx, next) => this.rangeStep(activity, ctx, next));
     uses.onActivity("ritual", (activity, ctx, next) => this.ritualStep(activity, ctx, next));
+    uses.onActivity("castLevel", (activity, ctx, next) => this.castLevelStep(activity, ctx, next));
+    /* Emanations : made, round the caster, no placing */
+    Hooks.on("dnd5e.preUseActivity", (activity, usage) => this.emanationMade(activity, usage));
+    Hooks.on("dnd5e.preCreateMeasuredTemplate", (activity, config) => this.emanationOrigin(activity, config));
+    Hooks.on("deleteActiveEffect", effect => this.emanationEnded(effect));
+    Hooks.once("setup", () => patch.wrap("dnd5e.canvas.TemplatePlacement.place", function(wrapped, config, ...rest){
+      return spells.emanationPlacement(config) ?? wrapped(config, ...rest);
+    }));
+    /* The level chosen first : dnd5e's window keeps it */
+    Hooks.on("renderActivityUsageDialog", (app, html) => this.lockSlot(app, html));
+    /* Upcasting adds targets : Roll Item's pick counts them */
+    Hooks.on(`${module.id}.targetCount`, (activity, usage, data) => { data.count += this.upcastTargets(activity, usage); });
     Hooks.on("dnd5e.postUseActivity", (activity, usage) => this.agathysCast(activity, usage));
     Hooks.on("updateActor", (actor, changes) => this.agathysGone(actor, changes));
     Hooks.on("createChatMessage", (message, options, userId) => { if(userId === game.user.id) this.agathysCard(message); });
@@ -336,6 +357,132 @@ export class spells{
     return next();
   }
 
+  /* ---------- Emanations ---------- */
+
+  static isEmanation(activity){
+    const template = activity?.target?.template ?? {};
+    return !!template.type && (CONFIG.DND5E.areaTargetTypes?.[template.type]?.template === "emanation") && !template.stationary;
+  }
+
+  /* Always made (dnd5e only offers it when the activity asks to place its area) */
+  static emanationMade(activity, usage){
+    if(!this.enabled() || !usage || !this.isEmanation(activity)) return;
+    const token = tokenOf(activity.actor);
+    if(!token || (token.document.parent !== canvas.scene)) return;
+    usage.create = { ...(usage.create ?? {}), measuredTemplate : true };
+  }
+
+  /* Whose token it comes from, for the placement */
+  static emanationOrigin(activity, config){
+    if(!this.enabled() || !this.isEmanation(activity) || !config?.shapes?.every?.(s => s.type === "emanation")) return;
+    const token = tokenOf(activity.actor);
+    if(token && (token.document.parent === canvas.scene)) config[module.id] = { token : token.document.id };
+  }
+
+  /* The spell's Concentration ended : its emanations go too (dnd5e doesn't tie areas to it), by the active GM */
+  static async emanationEnded(effect){
+    if(!this.enabled() || !game.users.activeGM?.isSelf) return;
+    if(!effect?.statuses?.has?.(CONFIG.specialStatusEffects?.CONCENTRATING ?? "concentrating")) return;
+    const flag = effect.getFlag("dnd5e", "item");
+    const actor = effect.parent;
+    const uuid = flag?.uuid ?? (flag?.id ? actor?.items?.get?.(flag.id)?.uuid : null);
+    if(!uuid) return;
+    for(const scene of game.scenes){
+      const ids = scene.regions.filter(r => (r.getFlag("dnd5e", "item") === uuid) && r.shapes.some(s => s.type === "emanation")).map(r => r.id);
+      if(ids.length) await scene.deleteEmbeddedDocuments("Region", ids).catch(error => log.debug(error));
+    }
+  }
+
+  /* dnd5e's placement for an emanation : its shape round that token, without asking where (dnd5e attaches it) */
+  static emanationPlacement(config){
+    const id = config?.[module.id]?.token;
+    if(!id || !canvas.scene?.tokens?.get(id)) return null;
+    const perUnit = canvas.scene.grid.size / canvas.scene.grid.distance;
+    const shape = canvas.grid.isHexagonal ? CONST.TOKEN_SHAPES.ELLIPSE_1 : CONST.TOKEN_SHAPES.RECTANGLE_1;
+    return Promise.resolve(config.shapes.map(s => ({ x : 0, y : 0, rotation : 0, type : "emanation", radius : (Number(s.size) || 0) * perUnit,
+      base : { x : 0, y : 0, rotation : 0, width : 1, height : 1, type : "token", shape }, token : id })));
+  }
+
+  /* ---------- Casting level (before the targets) ---------- */
+
+  /* A levelled spell paid with a slot, aimed at creatures without an area, its level not already set (a ritual, a scroll) */
+  static asksLevel(activity, config = {}){
+    const item = activity?.item;
+    if((item?.type !== "spell") || !(Number(item.system.level) > 0) || !activity.requiresSpellSlot) return false;
+    if((config.scaling === false) || config.spell?.slot || item.getFlag?.("dnd5e", "spellLevel")) return false;
+    if((config.consume === false) || (config.consume?.spellSlot === false)) return false;
+    const target = activity.target?.override ? activity.target : (item.system.target ?? activity.target ?? {});
+    if(target.template?.type || activity.target?.template?.type) return false;
+    return !["self", "space", "object", ""].includes(target.affects?.type ?? "");
+  }
+
+  /* The slots it can be cast with, as dnd5e's window offers them : { key, level, label } (spell slots, Pact slots) */
+  static slotOptions(activity){
+    const item = activity.item, actor = activity.actor;
+    const base = Number(item.system.level) || 1;
+    const method = CONFIG.DND5E.spellcasting?.[item.system.method];
+    const out = [];
+    for(const [key, slot] of Object.entries(actor?.system?.spells ?? {})){
+      if(!(Number(slot?.max) > 0) || !slot.type || (Number(slot.level) < base) || !(Number(slot.value) > 0)) continue;
+      if(method?.exclusive?.spells && (item.system.method !== slot.type)) continue;
+      if(CONFIG.DND5E.spellcasting?.[slot.type]?.exclusive?.slots && (item.system.method !== slot.type)) continue;
+      const model = CONFIG.DND5E.spellcasting?.[slot.type];
+      const label = game.i18n.format(`DND5E.SpellLevel${slot.type.capitalize()}`, { level : model?.isSingleLevel ? slot.level : slot.label, n : slot.value });
+      out.push({ key, level : Number(slot.level), label });
+    }
+    return out.sort((a, b) => a.level - b.level);
+  }
+
+  static async castLevelStep(activity, ctx, next){
+    if(!this.enabled() || !this.asksLevel(activity, ctx.config)) return next();
+    const options = this.slotOptions(activity);
+    /* None left : dnd5e's own window says so; one way only : nothing to ask */
+    if(options.length > 1){
+      const key = await chooseOption({ title : activity.item.name, icon : "fa-solid fa-wand-sparkles", prompt : module.i18n("spells.castLevel.prompt"),
+        options : options.map(o => ({ value : o.key, label : o.label })), value : options[0].key });
+      if(!key) return;
+      this.setSlot(ctx, activity, options.find(o => o.key === key));
+    }
+    else if(options.length === 1) this.setSlot(ctx, activity, options[0]);
+    return next();
+  }
+
+  static setSlot(ctx, activity, option){
+    ctx.config = { ...ctx.config, spell : { ...(ctx.config?.spell ?? {}), slot : option.key }, scaling : Math.max(0, option.level - (Number(activity.item.system.level) || 1)) };
+    uses.mark(ctx, { castLevel : option.level });
+  }
+
+  /* dnd5e's usage window : the level already chosen is shown, not changed */
+  static lockSlot(app, html){
+    if(!app?.config?.[module.id]?.castLevel) return;
+    const select = (html instanceof HTMLElement ? html : html?.[0])?.querySelector?.('[name="spell.slot"]');
+    if(select){ select.disabled = true; select.dataset.tooltip = module.i18n("spells.castLevel.locked"); }
+  }
+
+  /* "You can target one additional creature for each spell slot level above 1" : how many more at the level cast */
+  static upcastTargets(activity, usage = {}){
+    const item = activity?.item;
+    if((item?.type !== "spell") || !(Number(item.system.level) > 0)) return 0;
+    const level = Number(activity.actor?.system?.spells?.[usage?.spell?.slot]?.level) || 0;
+    if(!level) return 0;
+    const text = String(item.system.description?.value ?? "").replace(/<[^>]+>/g, " ");
+    const m = /\b(one|two|three|\d+) additional (?:[a-z]+ )?(?:creatures?|targets?|beasts?|humanoids?|undead|allies|ally)\b[^.]*?\bfor each (?:spell )?slot level above (\d+)/i.exec(text);
+    if(!m) return 0;
+    const per = { one : 1, two : 2, three : 3 }[m[1].toLowerCase()] ?? Number(m[1]);
+    return Math.max(0, level - Number(m[2])) * (per || 1);
+  }
+
+  /* How many creatures it may target at the level cast (its count, upcasting, Twinned Spell); null : no count */
+  static allowedTargets(activity, usage = {}){
+    const target = activity.target?.override ? activity.target : (activity.item?.system?.target ?? activity.target ?? {});
+    const raw = target?.affects?.count;
+    if(!raw) return null;
+    let count = Number(raw);
+    if(!Number.isFinite(count)){ try { count = dnd5e.utils.simplifyBonus(raw, activity.getRollData?.() ?? {}); } catch { return null; } }
+    if(!(count > 0)) return null;
+    return Math.floor(count) + this.upcastTargets(activity, usage) + (Number(usage?.[module.id]?.extraTargets) || 0);
+  }
+
   /* ---------- Range (Rule Limits, no pick) ---------- */
 
   /* Will a pick on the map choose the targets (and hold them to the range) ? */
@@ -363,6 +510,10 @@ export class spells{
     if(!caster || !targets.length || (range === null)) return next();
     const out = targets.filter(t => distanceBetween(caster, t) > range);
     if(out.length && !limits.allow(module.format("spells.outOfRange", { spell : activity.item.name, names : out.map(t => t.name).join(", "), range }),
+      { who : activity.actor.name, what : activity.item.name })) return;
+    /* More creatures than the level cast allows */
+    const allowed = this.allowedTargets(activity, ctx.config);
+    if((allowed !== null) && (targets.length > allowed) && !limits.allow(module.format("spells.tooManyTargets", { spell : activity.item.name, n : targets.length, allowed }),
       { who : activity.actor.name, what : activity.item.name })) return;
     return next();
   }

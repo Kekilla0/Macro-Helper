@@ -662,14 +662,17 @@ export class rollItem{
 
   /**
    * After dnd5e places an activity's template(s) : target the tokens inside, so the card, its save buttons and its
-   * trays are for exactly them. The caster counts too, except for their own cone or line (its point isn't in its area).
+   * trays are for exactly them. The caster counts too, except for their own cone or line (its point isn't in its area)
+   * or emanation (2024 : an emanation leaves out the creature it comes from).
    * With the Template Targeting setting.
    * @returns {Token[]|null}  the tokens inside, null when nothing was placed (or the setting is off)
    */
   static targetArea(activity, results){
     const templates = results?.templates ?? [];
     if(!templates.length || !settings.value("rollItem") || !settings.value("rollItemTemplateTargets") || !canvas.ready) return null;
-    const caster = this.isFromSelf(activity) ? tokenOf(activity.item) : null;
+    const template = activity?.target?.template ?? {};
+    const emanation = (CONFIG.DND5E.areaTargetTypes?.[template.type]?.template === "emanation") && !template.stationary;
+    const caster = (this.isFromSelf(activity) || emanation) ? tokenOf(activity.item) : null;
     const inside = [...new Set(templates.flatMap(t => getTokensInArea(t)))].filter(t => t !== caster);
     this.announceTargets(activity, inside, { keepEmpty : true });
     log.debug("Area targets", activity.item?.name, inside.map(t => t.name));
@@ -796,9 +799,12 @@ export class rollItem{
 
     const disposition = ["ally", "willing"].includes(type) ? "ally"
       : ((type === "enemy") || ["save", "damage"].includes(activity.type)) ? "nonAlly" : "any";
+    /* More creatures a rule allows : usage extraTargets (Twinned Spell); Hooks "macro-helper.targetCount" (activity,
+       usage, { count }) adds to it (a spell's upcast targets) */
+    const counted = { count : this.targetCount(activity, target) + (Number(usage?.[module.id]?.extraTargets) || 0) };
+    Hooks.callAll(`${module.id}.targetCount`, activity, usage, counted);
     return {
-      /* More creatures a rule allows (usage extraTargets : Twinned Spell) */
-      count : this.targetCount(activity, target) + (Number(usage?.[module.id]?.extraTargets) || 0),
+      count : counted.count,
       range, disposition,
       includeSelf : disposition === "ally" || disposition === "any",
       useTargets : pick !== "always",
