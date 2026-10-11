@@ -8,6 +8,11 @@ import { idOf, originItem, chooseOption } from '../helpers/utils.js';
 import { giveMode } from '../roll-item/reasons.js';
 import { usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
 import { limits } from './limits.js';
+import { tokenOf, canSee } from '../helpers/tokens.js';
+import { getAppliedConditions } from '../helpers/items.js';
+import { pickTargets } from '../helpers/targets.js';
+import { getRange, addLight, removeLight } from '../helpers/tokens.js';
+import { rollItem } from '../roll-item/roll-item.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -21,13 +26,22 @@ const log = logger.for(import.meta.url);
  *   noInvisible : true            being Invisible gives it nothing (Starry Wisp)
  *   reduceDamage : { type, dice, oncePerTurn }   damage of that type it takes is reduced by the dice (Resistance)
  *   nextAttackAgainst : "advantage"  the next attack roll against it has it, then the effect ends (Guiding Bolt)
- *   attackersMode : "advantage"   attack rolls against it have it (Faerie Fire)
- *   attackersOfTypes : { types, mode }   attacks by those creature types against it have it (Protection from Evil and Good)
+ *   attackersMode : "advantage"   attack rolls against it have it, from an attacker who can see it (Faerie Fire)
+ *   attackersOfTypes : { types, mode, resist }   attacks by those creature types against it have it; with resist, their
+ *                                 Charmed / Frightened : an automatic success on the save, advantage when it already is
+ *                                 (Protection from Evil and Good)
  *   onlyAgainstOrigin : "disadvantage"   its attacks on anyone but the caster have it (Compelled Duel)
  *   noReactions : true            it can't take Reactions (Rule Limits) (Arms of Hadar)
+ *   sanctuary : true              targeted by an attack or a damaging spell : the attacker makes a WIS save (the
+ *                                 caster's spell DC) first; failed, it targets again (the same creature : nothing
+ *                                 happens). It ends when this creature attacks or casts a spell (Sanctuary)
  *
  * Choices : a spell whose effects are options (Guidance : a skill, Resistance : a damage type) asks which when cast,
  * then puts that one on its target (yours : at once; anyone else's : the GM's button), tied to the Concentration.
+ *
+ * Buffs : a spell's utility or healing activity with effects (Bless, Shield of Faith, Longstrider, Heroism, Mage Armor
+ * on someone else...) puts them on its targets the same way when cast (dnd5e's tray stays on the card too). Self-only
+ * ones are Roll Item's (selfEffects); saves and attacks apply theirs from their rows and trays.
  */
 export class spellEffects{
   /* The rule a spell's effect carries, by the spell's identifier */
@@ -35,12 +49,13 @@ export class spellEffects{
     "vicious-mockery" : { nextAttack : "disadvantage" },
     "chill-touch" : { noHealing : true },
     "blade-ward" : { attackersMinus : "1d4" },
-    "starry-wisp" : { noInvisible : true },
+    "starry-wisp" : { noInvisible : true, glow : { dim : 10, color : "#cfe3ff" } },
     "guiding-bolt" : { nextAttackAgainst : "advantage" },
-    "faerie-fire" : { attackersMode : "advantage", noInvisible : true },
-    "protection-from-evil-and-good" : { attackersOfTypes : { types : ["aberration", "celestial", "elemental", "fey", "fiend", "undead"], mode : "disadvantage" } },
+    "faerie-fire" : { attackersMode : "advantage", noInvisible : true, glow : { dim : 10, color : "#d9b3ff" } },
+    "protection-from-evil-and-good" : { attackersOfTypes : { types : ["aberration", "celestial", "elemental", "fey", "fiend", "undead"], mode : "disadvantage", resist : ["charmed", "frightened"] } },
     "compelled-duel" : { onlyAgainstOrigin : "disadvantage" },
     "arms-of-hadar" : { noReactions : true },
+    "sanctuary" : { sanctuary : true },
   };
   /* Spells whose effects are a choice : the question, and the rule the chosen one carries */
   static CHOICES = {
@@ -55,6 +70,12 @@ export class spellEffects{
   static register(){
     if(game.system.id !== "dnd5e") return;
     Hooks.on("preCreateActiveEffect", effect => this.giveRule(effect));
+    /* Any effect from a spell its caster concentrates on (a save card's row, dnd5e's tray) : ends with that Concentration */
+    Hooks.on("preCreateActiveEffect", effect => this.tieToConcentration(effect));
+    /* Effects that shed light (Starry Wisp, Faerie Fire) : on the creature's tokens while they last (the active GM) */
+    Hooks.on("createActiveEffect", effect => { this.glow(effect, true); this.revealInvisible(effect, true); });
+    Hooks.on("deleteActiveEffect", effect => { this.glow(effect, false); this.revealInvisible(effect, false); });
+    Hooks.on("updateActiveEffect", (effect, changes) => { if("disabled" in (changes ?? {})) this.glow(effect, !effect.disabled); });
     rollModes.add("spellEffects", config => this.attackRules(config));
     /* The roll exists (not rolled yet) once dnd5e has built it : the penalty to attackers goes in then */
     Hooks.on("dnd5e.postAttackRollConfiguration", (rolls, config) => this.attackPenalty(rolls, config));
@@ -63,9 +84,17 @@ export class spellEffects{
     Hooks.on("dnd5e.calculateDamage", (actor, damages, options) => this.reduceDamage(actor, damages, options));
     uses.onActivity("spellChoice", (activity, ctx, next) => this.choiceStep(activity, ctx, next));
     Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.applyChoice(activity, usage, results));
+    Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.applyBuffs(activity, usage, results));
     gm.handle("spellEffect", data => this.applyAsGM(data));
     gm.handle("spellEffectEnd", data => this.endAsGM(data));
+    Hooks.on("dnd5e.preRollSavingThrowV2", (config, dialog, message) => this.protectedSave(config, message));
+    Hooks.on(`${module.id}.saveOutcome`, (save, outcome) => {
+      const auto = save?.getFlag?.(module.id, "autoSuccess");
+      if(auto && outcome){ outcome.success = true; outcome.auto = auto; }
+    });
     uses.onActivity("noReactions", (activity, ctx, next) => this.reactionStep(activity, ctx, next));
+    rollItem.addTargetCheck((activity, tokens) => this.sanctuaryCheck(activity, tokens));
+    Hooks.on("dnd5e.postUseActivity", activity => this.sanctuaryEnds(activity));
   }
 
   /* ---------- The rules ---------- */
@@ -74,6 +103,56 @@ export class spellEffects{
     if(!this.enabled() || (effect?.parent?.documentName !== "Actor") || effect.getFlag?.(module.id, "rule")) return;
     const rule = this.RULES[idOf(originItem(effect))];
     if(rule) effect.updateSource({ [`flags.${module.id}.rule`] : rule });
+  }
+
+  /* Dim Light round the creature while the effect lasts (each effect its own light, the token's own back after) */
+  static async glow(effect, on){
+    const glow = effect?.getFlag?.(module.id, "rule")?.glow;
+    const actor = effect?.parent;
+    if(!glow || (actor?.documentName !== "Actor") || !game.users.activeGM?.isSelf) return;
+    const tokens = actor.isToken ? [actor.token] : actor.getActiveTokens(false, true);
+    const key = `glow-${effect.id}`;
+    for(const token of tokens){
+      if(on) await addLight(token, { dim : glow.dim ?? 10, bright : glow.bright ?? 0, color : glow.color ?? null, alpha : 0.35 }, { key }).catch(error => log.debug(error));
+      else await removeLight(token, { key }).catch(error => log.debug(error));
+    }
+  }
+
+  static tieToConcentration(effect){
+    if(!this.enabled() || (effect?.parent?.documentName !== "Actor") || effect.getFlag?.("dnd5e", "dependentOn")) return;
+    if(effect.statuses?.has?.(CONFIG.specialStatusEffects?.CONCENTRATING ?? "concentrating") || effect.getFlag?.(module.id, "casting")) return;
+    const spell = originItem(effect);
+    if((spell?.type !== "spell") || !spell.system?.duration?.concentration) return;
+    const concentration = spell.actor?.effects?.find?.(e => e.statuses?.has?.(CONFIG.specialStatusEffects?.CONCENTRATING ?? "concentrating") && (e.getFlag("dnd5e", "item")?.id === spell.id));
+    if(concentration) effect.updateSource({ "flags.dnd5e.dependentOn" : concentration.uuid });
+  }
+
+  /* Can't benefit from Invisible (Faerie Fire, Starry Wisp) : its Invisible effects are switched off while this lasts (an
+     Invisibility spell isn't ended, it just does nothing), and back on after; the token shows again (the active GM) */
+  static async revealInvisible(effect, on){
+    const actor = effect?.parent;
+    if(!effect?.getFlag?.(module.id, "rule")?.noInvisible || (actor?.documentName !== "Actor") || !game.users.activeGM?.isSelf) return;
+    if(on){
+      /* A GM-hidden token (hiding, unseen) is shown : it's outlined in light now (hidden again when it ends) */
+      const tokens = actor.isToken ? [actor.token] : actor.getActiveTokens(false, true).map(t => t.document ?? t);
+      const unhid = tokens.filter(t => t?.hidden);
+      for(const token of unhid) await token.update({ hidden : false }).catch(error => log.debug(error));
+      if(unhid.length) await effect.setFlag(module.id, "unhid", unhid.map(t => t.uuid)).catch(() => {});
+      const invisible = actor.effects.filter(e => (e !== effect) && !e.disabled && e.statuses?.has?.("invisible"));
+      if(!invisible.length) return;
+      await actor.updateEmbeddedDocuments("ActiveEffect", invisible.map(e => ({ _id : e.id, disabled : true }))).catch(error => log.debug(error));
+      await effect.setFlag(module.id, "revealed", invisible.map(e => e.id)).catch(() => {});
+    }
+    else {
+      /* Another such effect still on it : it stays shown */
+      if(this.withRule(actor, "noInvisible").some(e => e.id !== effect.id)) return;
+      for(const uuid of effect.getFlag(module.id, "unhid") ?? []){
+        const token = fromUuidSync(uuid, { strict : false });
+        if(token && !token.hidden) await token.update({ hidden : true }).catch(error => log.debug(error));
+      }
+      const ids = (effect.getFlag(module.id, "revealed") ?? []).filter(id => actor.effects.has(id));
+      if(ids.length) await actor.updateEmbeddedDocuments("ActiveEffect", ids.map(id => ({ _id : id, disabled : false }))).catch(error => log.debug(error));
+    }
   }
 
   /* An actor's effects carrying a rule (active ones) */
@@ -110,7 +189,11 @@ export class spellEffects{
       giveMode(roll, effect.getFlag(module.id, "rule").nextAttackAgainst, module.format("spellEffects.reasonTarget", { effect : effect.name }));
       used.push(effect.uuid);
     }
-    for(const effect of this.withRule(theirs, "attackersMode")) giveMode(roll, effect.getFlag(module.id, "rule").attackersMode, module.format("spellEffects.reasonTarget", { effect : effect.name }));
+    /* Only from an attacker who can see it (magical darkness, a Blinded attacker : no) */
+    const seen = !!target && (!tokenOf(actor) || canSee(tokenOf(actor), target));
+    for(const effect of this.withRule(theirs, "attackersMode")){
+      if(seen) giveMode(roll, effect.getFlag(module.id, "rule").attackersMode, module.format("spellEffects.reasonTarget", { effect : effect.name }));
+    }
     const type = actor.system?.details?.type?.value ?? actor.system?.details?.race ?? "";
     for(const effect of this.withRule(theirs, "attackersOfTypes")){
       const { types = [], mode = "disadvantage" } = effect.getFlag(module.id, "rule").attackersOfTypes ?? {};
@@ -154,6 +237,66 @@ export class spellEffects{
     return !!effect;
   }
 
+  /* A save against a creature type it's protected from, putting a condition on it (Protection from Evil and Good) :
+     an automatic success (marked, still rolled), or advantage when it already has that condition */
+  static protectedSave(config, message){
+    const actor = config?.subject;
+    const effects = this.withRule(actor, "attackersOfTypes").filter(e => e.getFlag(module.id, "rule").attackersOfTypes?.resist?.length);
+    if(!effects.length || !this.enabled()) return;
+    const card = game.messages.get(message?.data?.system?.origin);
+    const source = card?.getAssociatedActor?.();
+    if(!card || !source) return;
+    const type = source.system?.details?.type?.value ?? "";
+    const applied = getAppliedConditions(card);
+    for(const effect of effects){
+      const { types = [], resist = [] } = effect.getFlag(module.id, "rule").attackersOfTypes;
+      const against = resist.filter(c => applied.has(c));
+      if(!types.includes(type) || !against.length) continue;
+      if(against.some(c => actor.statuses?.has(c))){ config.advantage = true; log.debug("Save advantage", actor.name, effect.name); }
+      else { foundry.utils.setProperty(message, `data.flags.${module.id}.autoSuccess`, effect.name); log.debug("Automatic save success", actor.name, effect.name); }
+      return;
+    }
+  }
+
+  /* ---------- Sanctuary ---------- */
+
+  /* An attack roll, or a spell that deals damage */
+  static harmful(activity){
+    if(activity?.type === "attack") return true;
+    const damaging = (activity?.type === "save") || (activity?.type === "damage");
+    return damaging && (activity.item?.type === "spell") && !!(activity.damage?.parts?.length);
+  }
+
+  /* Its targets : a warded one makes the attacker save first; failed, a new target (or nothing) */
+  static async sanctuaryCheck(activity, tokens){
+    if(!this.enabled() || !this.harmful(activity)) return tokens;
+    const attacker = activity.actor;
+    const out = [];
+    for(const token of tokens){
+      const ward = this.withRule(token.actor, "sanctuary")[0];
+      if(!ward || (token.actor === attacker)){ out.push(token); continue; }
+      const caster = originItem(ward)?.actor;
+      const dc = Number(caster?.system?.attributes?.spell?.dc) || 13;
+      const rolled = await attacker.rollSavingThrow({ ability : "wis", target : dc }, { configure : false });
+      const roll = Array.isArray(rolled) ? rolled[0] : rolled;
+      if(roll && (roll.total >= dc)){ out.push(token); continue; }
+      ui.notifications.info(module.format("spellEffects.sanctuaryFailed", { name : attacker.name, target : token.name }));
+      /* Target again : a different creature goes on; the same one, or none : the attack or spell is lost */
+      const [other] = await pickTargets(activity.item, { count : 1, range : getRange(activity) || Infinity, disposition : "any", includeSelf : false, useTargets : false });
+      if(other && (other !== token)) out.push(other);
+      else ui.notifications.info(module.format("spellEffects.sanctuaryLost", { name : attacker.name, target : token.name }));
+    }
+    return out;
+  }
+
+  /* The warded creature attacks or casts a spell : its Sanctuary ends */
+  static async sanctuaryEnds(activity){
+    const actor = activity?.actor;
+    if(!this.enabled() || !actor?.isOwner || !((activity.type === "attack") || (activity.item?.type === "spell"))) return;
+    const wards = this.withRule(actor, "sanctuary");
+    if(wards.length) await actor.deleteEmbeddedDocuments("ActiveEffect", wards.map(e => e.id)).catch(() => {});
+  }
+
   /* A Reaction while it can't take one (Arms of Hadar) : Rule Limits */
   static async reactionStep(activity, ctx, next){
     if(!this.enabled() || (activity?.activation?.type !== "reaction")) return next();
@@ -172,7 +315,14 @@ export class spellEffects{
     ui.notifications.info(module.format("spellEffects.noHealing", { name : actor.name, effect : this.withRule(actor, "noHealing")[0]?.name ?? "" }));
   }
 
-  /* Damage of a type it's protected from : less by the dice (once a turn in combat) */
+  /* Out of combat there are no turns : once a minute of game time (one hit, unless the GM moves the clock) */
+  static usedLately(effect){
+    if(game.combat?.started) return false;
+    const at = effect.getFlag(module.id, "usedAt");
+    return Number.isFinite(at) && ((game.time.worldTime - at) < 60);
+  }
+
+  /* Damage of a type it's protected from : less by the dice (once a turn in combat, once a minute out of it) */
   static reduceDamage(actor, damages, options){
     if(!Array.isArray(damages) || !this.enabled()) return;
     for(const effect of this.withRule(actor, "reduceDamage")){
@@ -180,7 +330,7 @@ export class spellEffects{
       const hit = damages.find(d => (d.type === type) && (Number(d.value) > 0));
       if(!hit) continue;
       const key = `reduce-${effect.id}`;
-      if(oncePerTurn && usedThisTurn(actor, key)) continue;
+      if(oncePerTurn && (usedThisTurn(actor, key) || this.usedLately(effect))) continue;
       /* Rolled here (damage is worked out synchronously) : NdM dice, the same random source as Foundry's */
       const [, n = "1", faces = "4"] = /(\d*)d(\d+)/i.exec(dice) ?? [];
       let total = 0;
@@ -189,7 +339,10 @@ export class spellEffects{
       const off = Math.min(total, Number(hit.value));
       hit.value = Number(hit.value) - off;
       if(Number.isFinite(damages.amount)) damages.amount = Math.max(0, damages.amount - off);
-      if(oncePerTurn) markUsedThisTurn(actor, key).catch(() => {});
+      if(oncePerTurn){
+        markUsedThisTurn(actor, key).catch(() => {});
+        if(!game.combat?.started && effect.isOwner) effect.setFlag(module.id, "usedAt", game.time.worldTime).catch(() => {});
+      }
       ChatMessage.implementation.create({ speaker : ChatMessage.implementation.getSpeaker({ actor }),
         content : `<p>${module.format("spellEffects.reduced", { name : actor.name, effect : effect.name, n : total, dice, type : CONFIG.DND5E.damageTypes?.[type]?.label ?? type })}</p>` }).catch(() => {});
     }
@@ -219,13 +372,9 @@ export class spellEffects{
     return next();
   }
 
-  /* Cast : the chosen effect on each target (none targeted : the caster), tied to the spell's Concentration */
-  static async applyChoice(activity, usage, results){
-    const id = usage?.[module.id]?.spellChoice;
-    if(!id || !results || !activity?.actor?.isOwner) return;
+  /* An item effect as it lands from this cast : its duration, tied to the spell's Concentration, its rule */
+  static effectData(activity, effect, rule = null){
     const item = activity.item, caster = activity.actor;
-    const effect = item.effects.get(id);
-    if(!effect) return;
     const concentration = caster.effects.find(e => e.statuses?.has?.("concentrating") && (e.getFlag("dnd5e", "item")?.id === item.id));
     const data = effect.toObject();
     delete data._id;
@@ -233,21 +382,60 @@ export class spellEffects{
     const duration = activity.duration?.getEffectData?.();
     if(duration) data.duration = duration;
     foundry.utils.setProperty(data, "flags.dnd5e.dependentOn", concentration?.uuid ?? null);
-    const rule = this.CHOICES[idOf(item)]?.rule?.(effect);
     if(rule) foundry.utils.setProperty(data, `flags.${module.id}.rule`, rule);
-    const targets = [...(game.user.targets ?? [])].map(t => t.actor).filter(Boolean);
-    for(const actor of (targets.length ? targets : [caster])){
-      if(actor.isOwner && !game.user.isGM) await actor.createEmbeddedDocuments("ActiveEffect", [data]);
-      else await gm.ask("spellEffect", { actor : actor.uuid, data }, { actor : caster,
-        text : module.format("spellEffects.ask", { name : caster.name, effect : effect.name, target : actor.name }),
-        label : module.format("spellEffects.askButton", { effect : effect.name, target : actor.name }) });
+    return data;
+  }
+
+  /* Effects onto creatures : yours at once (a player's own), anyone else's (and the GM's own uses) the GM's button */
+  static async give(caster, actors, effects){
+    for(const actor of actors){
+      const datas = effects.map(e => e.data);
+      /* Yours (or you're the GM) : on it now; someone else's : the GM's button */
+      if(actor.isOwner) await actor.createEmbeddedDocuments("ActiveEffect", datas);
+      else {
+        const names = effects.map(e => e.name).join(", ");
+        await gm.ask("spellEffect", { actor : actor.uuid, data : datas }, { actor : caster,
+          text : module.format("spellEffects.ask", { name : caster.name, effect : names, target : actor.name }),
+          label : module.format("spellEffects.askButton", { effect : names, target : actor.name }) });
+      }
     }
+  }
+
+  /* Cast : the chosen effect on each target (none targeted : the caster), tied to the spell's Concentration */
+  static async applyChoice(activity, usage, results){
+    const id = usage?.[module.id]?.spellChoice;
+    if(!id || !results || !activity?.actor?.isOwner) return;
+    const effect = activity.item.effects.get(id);
+    if(!effect) return;
+    const rule = this.CHOICES[idOf(activity.item)]?.rule?.(effect);
+    const targets = [...(game.user.targets ?? [])].map(t => t.actor).filter(Boolean);
+    await this.give(activity.actor, targets.length ? targets : [activity.actor], [{ name : effect.name, data : this.effectData(activity, effect, rule) }]);
+  }
+
+  /* Cast : a buff's effects on its targets (not self-only : Roll Item does those; not a choice spell) */
+  static async applyBuffs(activity, usage, results){
+    if(!this.enabled() || !results || !activity?.actor?.isOwner || (activity.item?.type !== "spell")) return;
+    if(!["utility", "heal"].includes(activity.type) || usage?.[module.id]?.spellChoice || this.CHOICES[idOf(activity.item)]) return;
+    const effects = (activity.effects ?? []).map(p => activity.item.effects.get(p._id)).filter(e => e && !e.transfer && (e.type !== "enchantment"));
+    if(!effects.length) return;
+    /* Range Self (Disguise Self) : the caster's own, put on by Roll Item; never on whoever happens to be targeted */
+    if(this.selfOnly(activity)) return;
+    const targets = [...(game.user.targets ?? [])].filter(t => t.actor).map(t => t.actor);
+    if(!targets.length) return;
+    await this.give(activity.actor, targets, effects.map(e => ({ name : e.name, data : this.effectData(activity, e, this.RULES[idOf(activity.item)] ?? null) })));
+  }
+
+  /* Range Self, no other target : Roll Item puts its effects on the caster itself */
+  static selfOnly(activity){
+    const range = activity?.range?.override ? activity.range : (activity?.item?.system?.range ?? {});
+    const type = (activity?.target?.override ? activity.target : (activity?.item?.system?.target ?? {}))?.affects?.type ?? "";
+    return (range.units === "self") || (type === "self");
   }
 
   static async applyAsGM({ actor : uuid, data } = {}){
     const actor = fromUuidSync(uuid, { strict : false });
     if(!actor || !data) return false;
-    await actor.createEmbeddedDocuments("ActiveEffect", [data]);
+    await actor.createEmbeddedDocuments("ActiveEffect", Array.isArray(data) ? data : [data]);
     return true;
   }
 }

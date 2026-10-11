@@ -502,6 +502,8 @@ export class spells{
 
   static async rangeStep(activity, ctx, next){
     if((limits.mode() === "off") || (activity?.item?.type !== "spell") || this.picks()) return next();
+    /* Targets a rule set itself (an area round the target, a leap) : not the caster's to hold to range or count */
+    if(ctx.config?.[module.id]?.useTargets) return next();
     /* An area : its template finds who's in it */
     if(activity.target?.template?.type || activity.item.system?.target?.template?.type) return next();
     const caster = tokenOf(activity.actor);

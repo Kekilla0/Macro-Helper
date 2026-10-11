@@ -73,18 +73,21 @@ export function originOf(message){
  * @param {string} [options.confirm]  the button's label
  * @returns {Promise<string|null>}  the chosen value, null when closed
  */
-export async function chooseOption({ title, options = [], prompt = "", value, icon = "fa-solid fa-list", confirm } = {}){
+export async function chooseOption({ title, options = [], prompt = "", value, icon = "fa-solid fa-list", confirm, remember = null } = {}){
   if(!options.length) return null;
-  if(options.length === 1) return options[0].value;
+  if((options.length === 1) && !remember) return options[0].value;
+  /* With remember (a label) : a "don't ask again" box, and the answer comes back as { value, remember } */
   const chosen = await foundry.applications.api.DialogV2.wait({
     window : { title, icon },
     content : `${prompt ? `<p>${esc(prompt)}</p>` : ""}
-      <select name="choice" autofocus>${options.map(o => `<option value="${esc(o.value)}"${o.value === value ? " selected" : ""}>${esc(o.label)}</option>`).join("")}</select>`,
+      <select name="choice" autofocus>${options.map(o => `<option value="${esc(o.value)}"${o.value === value ? " selected" : ""}>${esc(o.label)}</option>`).join("")}</select>
+      ${remember ? `<label class="checkbox"><input type="checkbox" name="remember"> ${esc(remember)}</label>` : ""}`,
     buttons : [{ action : "ok", label : confirm ?? game.i18n.localize("Confirm"), icon : "fa-solid fa-check", default : true,
-      callback : (event, button) => button.form.elements.choice.value }],
+      callback : (event, button) => remember ? { value : button.form.elements.choice.value, remember : !!button.form.elements.remember?.checked } : button.form.elements.choice.value }],
     rejectClose : false,
   });
-  return (!chosen || (chosen === "ok")) ? null : chosen;
+  if(!chosen || (chosen === "ok")) return null;
+  return chosen;
 }
 
 /**

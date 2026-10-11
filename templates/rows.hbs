@@ -1,10 +1,12 @@
-{{!-- One row per target : its save (a button per ability for its owner / the GM, then the result), then its damage
-      or healing sized by that result. Context : rows from message.js buildRows. --}}
+{{!-- One row per target : its picture and name on the left; on the right its save (a button per ability for its owner /
+      the GM, then the result), rerolls, and its damage / healing sized by that result, then its effects and what rules
+      add (macro-helper.rowButtons). The right side wraps but stays right. Context : rows from message.js buildRows. --}}
 <ul class="unlist macro-helper-rows">
     {{#each rows}}
     <li class="macro-helper-row">
         <img class="token" src="{{ img }}" alt="">
         <span class="name">{{ name }}</span>
+        <span class="macro-helper-row-actions">
         {{#each saves}}
         <button type="button" class="save" data-action="rowSave" data-target="{{ ../uuid }}" data-ability="{{ ability }}"
                 data-tooltip="{{ hint }}" aria-label="{{ hint }}">
@@ -44,6 +46,12 @@
         {{#if effectApplied}}
         <span class="applied healing" data-tooltip="{{ localize "rollItem.row.applied" }}"><i class="fa-solid fa-check" inert></i> {{ effectApplied }}</span>
         {{/if}}
+        {{#each ruleButtons}}
+        <button type="button" class="apply" data-action="rowRule" data-target="{{ ../uuid }}" data-id="{{ id }}"{{#if disabled}} disabled{{/if}}>
+            <i class="fa-solid {{ icon }}" inert></i> {{ label }}
+        </button>
+        {{/each}}
+        </span>
     </li>
     {{/each}}
 </ul>

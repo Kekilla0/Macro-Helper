@@ -6,6 +6,7 @@ import { limits } from './limits.js';
 import { esc, buttonRow, addButton, makeButton } from '../helpers/utils.js';
 import { usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
 import { components } from './components.js';
+import { gm } from '../gm.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -15,9 +16,9 @@ const log = logger.for(import.meta.url);
  *                      Limits (in combat; cantrips, rituals and free castings don't count).
  *   Long casts       : a spell whose casting time is 1 minute or more, or one cast as a Ritual (10 minutes more), is
  *                      begun, not cast : the caster concentrates on it ("Casting : <spell>", ending any other
- *                      Concentration, after asking) and a card follows the cast. Its owner's Finish Casting button
- *                      casts it once the time has passed on the world clock (in combat, rounds pass it); the GM's
- *                      Pass the Time button moves the clock on. The slot and the targets are spent / picked at the
+ *                      Concentration, after asking) and a card follows the cast. Its Finish Casting button casts it :
+ *                      its owner's once the time has passed on the world clock (in combat, rounds pass it); the
+ *                      GM's moves the clock on first if it hasn't. The slot and the targets are spent / picked at the
  *                      end. It fails, nothing spent, when the Concentration breaks, or the caster does anything
  *                      else : any other use (an action, Bonus Action, Reaction, attack or spell, from the sheet or a
  *                      card) asks first, then fails it. Moving and rolls asked for (saves, checks) don't.
@@ -39,6 +40,7 @@ export class casting{
     uses.onItem("castingBusy", (item, ctx, next) => this.busyStep(item?.actor, ctx, next));
     uses.onActivity("castingBusy", (activity, ctx, next) => this.busyStep(activity?.actor, ctx, next));
     uses.onActivity("longCast", (activity, ctx, next) => this.longStep(activity, ctx, next));
+    gm.handle("longCastDone", (data, user) => this.doneAsGM(data, user));
     Hooks.on("deleteActiveEffect", (effect, options, userId) => { if(userId === game.user.id) this.onCastingEnded(effect, options); });
     Hooks.on("dnd5e.renderChatMessage", (message, html) => this.cardButtons(message, html));
     /* ---------- Durations ---------- */
@@ -111,8 +113,11 @@ export class casting{
     /* Its components are needed from the start (checked again when it's cast) */
     const missing = components.problems(activity, ctx.config);
     if(missing.length && !limits.allow(missing.join(" "), { who : actor.name, what : activity.item.name })) return;
-    /* Concentration while casting : any other ends, after asking */
-    const others = actor.effects.filter(e => e.statuses?.has?.(CONFIG.specialStatusEffects?.CONCENTRATING ?? "concentrating"));
+    /* Concentration while casting : any other ends, after asking (one whose time ran out just goes) */
+    const concentrating = actor.effects.filter(e => e.statuses?.has?.(CONFIG.specialStatusEffects?.CONCENTRATING ?? "concentrating"));
+    const stale = concentrating.filter(e => e.disabled || e.duration?.expired || (Number.isFinite(e.duration?.secondsRemaining) && (e.duration.secondsRemaining <= 0)));
+    if(stale.length) await actor.deleteEmbeddedDocuments("ActiveEffect", stale.map(e => e.id)).catch(error => log.debug(error));
+    const others = concentrating.filter(e => !stale.includes(e));
     if(others.length){
       const ok = await foundry.applications.api.DialogV2.confirm({ window : { title : activity.item.name },
         content : `<p>${esc(module.format("casting.endsConcentration", { spell : activity.item.name, names : others.map(e => e.name).join(", ") }))}</p>`, rejectClose : false });
@@ -187,8 +192,21 @@ export class casting{
     const row = buttonRow(html, { key : `${module.id}-long-cast` });
     if(row.childElementCount) return;
     if(actor.isOwner) addButton(row, makeButton({ icon : "fa-wand-sparkles", text : module.i18n("casting.finish"), onClick : () => this.finish(message) }));
-    if(game.user.isGM && (game.time.worldTime < data.end)) addButton(row, makeButton({ icon : "fa-hourglass-half", text : module.i18n("casting.passTime"), once : true,
-      onClick : () => game.time.advance(data.end - game.time.worldTime) }));
+  }
+
+  /* The card's state (finished, failed), by its owner or the GM */
+  static async markDone(message, state){
+    if(message.isOwner) return message.setFlag(module.id, "longCast.done", state);
+    return gm.run("longCastDone", { message : message.id, state });
+  }
+
+  static async doneAsGM({ message : id, state } = {}, user){
+    const message = game.messages.get(id);
+    const data = message?.getFlag(module.id, "longCast");
+    const actor = fromUuidSync(data?.actor ?? "", { strict : false });
+    if(!data || !actor?.testUserPermission(user, "OWNER")) return false;
+    await message.setFlag(module.id, "longCast.done", state);
+    return true;
   }
 
   /* Finish Casting : the time passed, the spell is cast (its slot, its targets) */
@@ -196,14 +214,23 @@ export class casting{
     const data = message.getFlag(module.id, "longCast");
     const actor = fromUuidSync(data?.actor ?? "", { strict : false });
     const effect = actor?.effects?.get?.(data?.effect);
-    if(!effect) return;
+    /* Already finished (someone else pressed it) or failed */
+    if(!effect){
+      ui.notifications.info(module.format("casting.gone", { spell : data?.spell ?? "" }));
+      if(data && !data.done) await this.markDone(message, "gone").catch(error => log.debug(error));
+      return;
+    }
     const left = data.end - game.time.worldTime;
-    if(left > 0) return ui.notifications.info(module.format("casting.notYet", { spell : data.spell, time : this.timeLabel(left) }));
+    /* The GM's Finish Casting moves the clock on; a player's waits for it */
+    if(left > 0){
+      if(!game.user.isGM) return ui.notifications.info(module.format("casting.notYet", { spell : data.spell, time : this.timeLabel(left) }));
+      await game.time.advance(left);
+    }
     const casting = effect.getFlag(module.id, "casting");
     const activity = fromUuidSync(casting.activity ?? "", { strict : false });
-    if(!activity) return;
+    if(!activity || !actor.effects.get(effect.id)) return;
     await effect.delete({ [module.id] : { castFinished : true } });
-    if(message.isOwner) await message.setFlag(module.id, "longCast.done", "finished");
+    await this.markDone(message, "finished").catch(error => log.debug(error));
     const config = foundry.utils.deepClone(casting.config ?? {});
     config[module.id] = { ...(config[module.id] ?? {}), longCastDone : true };
     return activity.use(config);

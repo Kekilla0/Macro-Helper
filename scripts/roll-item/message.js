@@ -283,7 +283,9 @@ export function registerMessages(){
       const targets = foundry.utils.deepClone(message.system._source.targets ?? []);
       const target = targets.find(t => t.token === uuid);
       base = prior ? prior.base : (target?.ac ?? null);
-      const ac = (level === "total") ? rollItem.TOTAL_COVER_AC : (Number.isFinite(base) ? base + COVER[level] : base);
+      /* AC raised on this card (Shield) stays on top of the cover */
+      const bonus = Number(message.getFlag(module.id, `acBonus.${key}`)) || 0;
+      const ac = (level === "total") ? rollItem.TOTAL_COVER_AC : (Number.isFinite(base) ? base + COVER[level] + bonus : base);
       if(target) target.ac = ac;
       update["system.targets"] = targets;
       const rays = message.system.rays ?? [];
@@ -360,8 +362,24 @@ export function registerMessages(){
         apply : (hasRolls && owner && (!hasSave || result) && !appliedOn(message, descriptor.token, ["rows"])) ? { multiplier, label : labelKey } : null,
         /* The save's effects (Turned, Paralyzed...) : the GM applies them once it's rolled, to those they apply to */
         ...effectRow(message, descriptor.token, { hasSave, result, effects }),
+        /* Buttons rules add to this creature's row (Thunderwave's push) : macro-helper.rowButtons */
+        ruleButtons : ruleButtonsOf(message, descriptor.token, { result, owner }),
       };
     });
+  };
+
+  /**
+   * Buttons rules add to a creature's row : Hooks "macro-helper.rowButtons" (message, tokenUuid, buttons, { result, owner })
+   * push { id, label, icon, disabled }; a click calls "macro-helper.rowButton" (message, tokenUuid, id, { event, button }).
+   */
+  const ruleButtonsOf = (message, uuid, { result = null, owner = false } = {}) => {
+    const buttons = [];
+    Hooks.callAll(`${module.id}.rowButtons`, message, uuid, buttons, { result, owner });
+    return buttons.filter(b => b?.id && b?.label).map(({ id, label, icon = "fa-hand-pointer", disabled = false }) => ({ id, label, icon, disabled }));
+  };
+  const rowRule = (event, button) => {
+    const message = game.messages.get(button.closest("[data-message-id]")?.dataset.messageId);
+    if(message) Hooks.callAll(`${module.id}.rowButton`, message, button.dataset.target, button.dataset.id, { event, button });
   };
 
   /* A row's effect button (GM) : on a failure all of them, on a success those that apply anyway; applied once */
@@ -725,6 +743,7 @@ export function registerMessages(){
         setCover : RollItemMessageData.#setCover,
         rowReroll : rowReroll,
         rowEffect : RowEffect,
+        rowRule : rowRule,
       },
     }, { inplace : false }));
 
@@ -1001,6 +1020,24 @@ export function registerMessages(){
       return true;
     }
 
+    /**
+     * One target's AC raised for this card (Shield, GM) : its hits and misses follow, on top of any cover.
+     * @returns {Promise<boolean>}
+     */
+    async raiseAC(uuid, amount){
+      const message = this.parent;
+      const target = (this._source.targets ?? []).find(t => t.token === uuid);
+      if(!game.user.isGM || !target || !Number.isFinite(target.ac)) return false;
+      const key = uuidKey(uuid);
+      const cover = message.getFlag(module.id, `cover.${key}`);
+      await message.update({
+        [`flags.${module.id}.acBonus.${key}`] : (Number(message.getFlag(module.id, `acBonus.${key}`)) || 0) + (Number(amount) || 0),
+        [`flags.${module.id}.cover.${key}`] : { level : cover?.level ?? "none", base : cover ? cover.base : target.ac },
+      });
+      await setCover(message, uuid, cover?.level ?? "none", { attack : true });
+      return true;
+    }
+
     /* The extra boxes for one attack, and the buttons item macros add to it (macro-helper.cardButtons) */
     extrasContext(ray){
       if(!this.parent.isContentVisible) return null;
@@ -1107,6 +1144,9 @@ export function registerMessages(){
       const rendered = context.rolls;
       context.cover = coverContext(this.parent, this.targets);
       context.note = this.parent.getFlag(module.id, "note") ?? null;
+      /* A title a rule gave the card (Command : Halt) */
+      const title = this.parent.getFlag(module.id, "title");
+      if(title && context.item) context.item = { name : title, img : context.item.img, uuid : context.item.uuid };
       /* The item's description, as dnd5e's own cards show it (folds under the header) */
       if(this.parent.isContentVisible){
         const activity = this.parent.getAssociatedActivity?.();
@@ -1481,6 +1521,7 @@ export function registerMessages(){
         setCover : RollItemSaveData.#setCover,
         rowReroll : rowReroll,
         rowEffect : RowEffect,
+        rowRule : rowRule,
       },
     }, { inplace : false }));
 
@@ -1583,6 +1624,9 @@ export function registerMessages(){
       if(context.content) return context;
       context.cover = coverContext(this.parent, this.parent.getAssociatedActivity()?.type === "save" ? this.targets : []);
       context.note = this.parent.getFlag(module.id, "note") ?? null;
+      /* A title a rule gave the card (Command : Halt) */
+      const title = this.parent.getFlag(module.id, "title");
+      if(title && context.item) context.item = { name : title, img : context.item.img, uuid : context.item.uuid };
       context.faces = await facesOf(this.parent);
 
       context.formula = await this._prepareFormulaContext();

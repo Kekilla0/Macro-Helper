@@ -32,6 +32,9 @@ export class uses{
       "itemMacro",     // Item Macro : a macro run before (or instead of) the use
       "healer",        // Feats : the Healer feat's Battle Medic
       "byHealth",      // Spells : Toll the Dead uses its healthy / hurt activity for its target
+      "illusion",      // Spell actions : Disguise Self, Silent Image : straight to their Use (Study is for others); the image's space
+      "afterAttack",   // Spell actions : Ice Knife goes to its attack (its shard's save comes after)
+      "sustained",     // Spell actions : Witch Bolt again at the same creature : its later turns' damage
       "fastForward",   // Roll Item : one attack with its riders skips dnd5e's choice of activity
     ],
     activity : [
@@ -45,7 +48,9 @@ export class uses{
       "slotPerTurn",   // Casting : a second spell slot this turn follows Rule Limits
       "metamagic",     // Sorcerer : Metamagic chosen and paid before a Sorcerer spell is cast (Distant : the range picked)
       "components",    // Components : V (not Silenced), S (a free hand), M (a focus, or a pouch and a free hand) : Rule Limits
+      "spellCommand",  // Spell actions : Command : which command, before the targets
       "spellChoice",   // Spell effects : Guidance's skill, Resistance's damage type, asked before the targets
+      "enchantProfile",// Spell actions : Shillelagh's enchantment by caster level, True Strike's by the weapon
       "flurry",        // Monk : Monk's Focus's Flurry of Blows uses the Unarmed Strike instead
       "presetTargets", // Cleric : Turn Undead targets the Undead within 30 ft itself (no pick)
       "action",        // Default Actions : choose and pick first (Help)
@@ -55,6 +60,8 @@ export class uses{
       "hide",          // Rogue : Cunning Action's Hide asks the GM first; used only once allowed
       "healersKit",    // Default Actions : the Healer's Kit's Stabilize picks a creature at 0 HP first
       "dancingLights", // Spells : Dancing Lights : four lights or one form, where each goes
+      "spellMessage",  // Spell actions : Message : who hears it and what, from a list (no pick)
+      "placedSummon",  // Spell actions : Mage Hand : its caster picks the space, the GM makes it
       "spellLight",    // Spell actions : Light on a token or a square, Produce Flame in hand
       "spareTheDying", // Spell actions : Spare the Dying picks a creature at 0 HP first
       "pactWeapon",    // Warlock : Forge Pact Weapon : bond a weapon or conjure one

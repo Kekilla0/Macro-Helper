@@ -84,6 +84,12 @@ export class rerolls{
     if(game.system.id !== "dnd5e") return;
     /* dnd5e rebuilds its roll messages after core's render hook : add the buttons once it's done */
     Hooks.on("dnd5e.renderChatMessage", (message, html) => this.addButtons(message, html));
+    /* Debug (the GM, Debug setting) : the d20 set to 20 or 1, small icons by the reroll (save card rows too) */
+    Hooks.on(`${module.id}.rerollButtons`, (message, buttons) => {
+      if(!game.user.isGM || !settings.value("debug")) return;
+      buttons.push({ id : "debug20", icon : "fa-bug", label : module.i18n("rollItem.debug.nat20"), iconOnly : true, run : () => this.force(message, 20) });
+      buttons.push({ id : "debug1", icon : "fa-bug-slash", label : module.i18n("rollItem.debug.nat1"), iconOnly : true, run : () => this.force(message, 1) });
+    });
     for(const hook of ["AbilityCheck", "SavingThrow", "DeathSave", "Concentration"]){
       Hooks.on(`dnd5e.preRoll${hook}V2`, (config, dialog) => this.skipDialog(config, dialog));
     }
@@ -153,17 +159,13 @@ export class rerolls{
     const buttons = [];
     if(reroll) buttons.push({ id : "reroll", icon : "fa-rotate", label : module.i18n("rerolls.reroll"), run : event => this.reroll(message, event) });
     buttons.push(...added);
-    /* Debug (the GM, Debug setting) : the d20 set to 20 or 1 */
-    if(game.user.isGM && settings.value("debug")){
-      buttons.push({ id : "debug20", icon : "fa-bug", label : module.i18n("rollItem.debug.nat20"), run : () => this.force(message, 20) });
-      buttons.push({ id : "debug1", icon : "fa-bug-slash", label : module.i18n("rollItem.debug.nat1"), run : () => this.force(message, 1) });
-    }
     if(!buttons.length) return;
 
     const row = buttonRow(html, { key : `${module.id}-rerolls`, layout : "icons" });
     for(const b of buttons){
-      /* Words on the button, not just an icon : easy to miss otherwise */
-      addButton(row, makeButton({ icon : b.icon, label : b.label, text : b.short ?? b.label, className : `${module.id}-labelled`,
+      /* Words on the button, not just an icon : easy to miss otherwise (the GM's debug ones : just the icon) */
+      if(b.iconOnly) addButton(row, makeButton({ icon : b.icon, label : b.label, className : "icon", onClick : event => b.run(event) }));
+      else addButton(row, makeButton({ icon : b.icon, label : b.label, text : b.short ?? b.label, className : `${module.id}-labelled`,
         onClick : event => b.run(event) }));
     }
   }

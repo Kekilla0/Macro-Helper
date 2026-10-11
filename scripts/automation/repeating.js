@@ -17,7 +17,9 @@ const log = logger.for(import.meta.url);
  *     damage : "1d6[fire]",                                  taken first, at that turn (Searing Smite, Ensnaring Strike)
  *     onFail : "unconscious",                                a failed roll turns it into that condition for the rest
  *                                                            of its duration, with no more rolls (Sleep)
- *     endsOnDamage : true }                                  it ends when the creature takes damage (Sleep)
+ *     endsOnDamage : true,                                   it ends when the creature takes damage (Sleep)
+ *     tempHP : 3 }                                           temporary Hit Points it gains at that turn : the caster's
+ *                                                            spellcasting modifier (Heroism); a button for its owner
  * The items carry a template (TABLE, put on their effects by an item fix), so the effect has it however it's applied
  * (a save card's row, dnd5e's effect tray); the rest is filled in as it lands on the creature. At that turn (combat),
  * the active GM posts a card : the affected creature's owner rolls (and takes the damage) from it; a success ends the
@@ -35,6 +37,8 @@ export class repeating{
     "chill-touch" : { label : "time", of : "caster" },
     /* 2024 Sleep : Incapacitated, the save again at the end of its next turn; failed : Unconscious; damage wakes it */
     "sleep" : { label : "end", roll : { type : "save", ability : "wis" }, onFail : "unconscious", endsOnDamage : true },
+    /* 2024 Heroism : temporary Hit Points equal to the caster's spellcasting modifier at the start of each of its turns */
+    "heroism" : { label : "start", tempHP : "spellcasting" },
   };
 
   static enabled(){
@@ -61,7 +65,7 @@ export class repeating{
     if(!entry) return null;
     const updateEffects = (item.effects?.contents ?? [...(item.effects ?? [])]).filter(e => !e.getFlag?.(module.id, "repeat"))
       .map(e => ({ _id : e.id, [`flags.${module.id}.repeat`] : { template : true, label : entry.label, roll : entry.roll ?? null, damage : entry.damage ?? null, of : entry.of ?? "target",
-        onFail : entry.onFail ?? null, endsOnDamage : !!entry.endsOnDamage } }));
+        onFail : entry.onFail ?? null, endsOnDamage : !!entry.endsOnDamage, tempHP : entry.tempHP ?? null } }));
     return updateEffects.length ? { updateEffects } : null;
   }
 
@@ -86,6 +90,8 @@ export class repeating{
       damage : repeat.damage ? `${dice}${repeat.damage.die}[${repeat.damage.type}]` : null,
       onFail : repeat.onFail ?? null,
       endsOnDamage : !!repeat.endsOnDamage,
+      /* The caster's spellcasting modifier, now (at least 1) */
+      tempHP : (repeat.tempHP === "spellcasting") ? Math.max(1, Number(caster?.system?.abilities?.[caster?.system?.attributes?.spellcasting]?.mod) || 0) : (Number(repeat.tempHP) || null),
     };
     /* Replaced whole (the template's own keys don't stay behind) */
     const flags = foundry.utils.deepClone(effect._source?.flags ?? effect.flags ?? {});
@@ -125,10 +131,11 @@ export class repeating{
     const what = [];
     if(repeat.damage) what.push(module.format("repeating.damage", { damage : repeat.damage.replace(/\[(\w+)\]/, " $1") }));
     if(repeat.roll) what.push(this.rollLabel(repeat.roll));
+    if(repeat.tempHP) what.push(module.format("repeating.tempHP", { n : repeat.tempHP }));
     return ChatMessage.implementation.create({
       speaker : ChatMessage.implementation.getSpeaker({ actor }),
       content : `<p>${esc(module.format(`repeating.${repeat.label}`, { name : actor.name, effect : effect.name }))}${what.length ? ` ${esc(what.join(" · "))}` : ""}</p>`,
-      flags : { [module.id] : { repeatCard : { actor : actor.uuid, effect : effect.uuid, damageDone : !repeat.damage, rolled : false } } },
+      flags : { [module.id] : { repeatCard : { actor : actor.uuid, effect : effect.uuid, damageDone : !repeat.damage, rolled : false, tempDone : !repeat.tempHP } } },
     });
   }
 
@@ -154,6 +161,14 @@ export class repeating{
       disabled : !!data.damageDone, onClick : () => this.takeDamage(message, actor, repeat) }));
     if(repeat?.roll) addButton(row, makeButton({ icon : "fa-dice-d20", text : this.rollLabel(repeat.roll), once : true,
       disabled : !!data.rolled, onClick : () => this.roll(message, actor, effect, repeat) }));
+    /* Its owner or the GM : whichever presses it first */
+    if(repeat?.tempHP) addButton(row, makeButton({ icon : "fa-shield-heart", text : module.format("repeating.gainTempHP", { n : repeat.tempHP }), once : true,
+      disabled : !!data.tempDone, onClick : () => this.gainTempHP(message, actor, repeat) }));
+  }
+
+  static async gainTempHP(message, actor, repeat){
+    await actor.applyTempHP(Number(repeat.tempHP) || 0);
+    if(message.isOwner) await message.setFlag(module.id, "repeatCard.tempDone", true);
   }
 
   static async takeDamage(message, actor, repeat){

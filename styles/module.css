@@ -105,10 +105,32 @@
   gap: 4px;
   margin-block: 6px;
 }
+/* A row : the creature on the left (picture, name), everything about it on the right, vertically centred; the right side
+   wraps onto more lines but stays right */
 .chat-message .macro-helper-row {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+.chat-message .macro-helper-row-actions .result {
+  font-weight: bold;
+  font-size: var(--font-size-14, 14px);
+  white-space: nowrap;
+}
+.chat-message .macro-helper-row-actions button.apply,
+.chat-message .macro-helper-row-actions button.save {
+  padding: 0 5px;
+  font-size: var(--font-size-12, 12px);
+}
+.chat-message .macro-helper-row-actions {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 3px 4px;
+  margin-left: auto;
+  min-width: 0;
 }
 .chat-message .macro-helper-row img.token {
   width: 24px;
@@ -117,7 +139,8 @@
   flex: none;
 }
 .chat-message .macro-helper-row .name {
-  flex: 1;
+  flex: 1 1 6.5em;
+  min-width: 6.5em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -125,6 +148,8 @@
 .chat-message .macro-helper-row button {
   flex: none;
   width: auto;
+  max-width: 100%;
+  white-space: nowrap;
   line-height: 1.6;
   padding: 0 6px;
 }

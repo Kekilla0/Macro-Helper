@@ -15,6 +15,7 @@ const log = logger.for(import.meta.url);
  *
  *   Verbal (V)    : not while Silenced.
  *   Somatic (S)   : a free hand (Hands), or the hand holding the focus when the spell also has M. War Caster lifts it.
+ *                   A Versatile weapon held in both hands leaves one free (it can be held in one).
  *   Material (M)  : an equipped item with dnd5e's Focus property (any kind, for any caster : a weapon that is also a
  *                   focus, an amulet, an emblem on a shield...), or a carried Component Pouch. A focus in a hand (or an
  *                   emblem on the held shield) is handled by that hand; a worn one (an amulet) or the pouch needs a
@@ -89,7 +90,9 @@ export class components{
 
     const managed = hands.manages(actor);
     const held = managed ? hands.of(actor) : null;
-    const freeHand = managed ? (!held.main || !held.off) : true;
+    /* A Versatile weapon held in both hands could be held in one : a hand is free for the spell */
+    const bothHands = managed && held.main && (held.main === held.off) ? actor.items.get(held.main) : null;
+    const freeHand = managed ? (!held.main || !held.off || (!!bothHands && hands.isVersatile(bothHands) && !hands.isTwoHanded(bothHands))) : true;
     const warCaster = actor.items.some(i => idOf(i) === this.WAR_CASTER);
     const foci = actor.items.filter(i => i.system?.properties?.has?.("foc") && i.system.equipped);
     /* In a hand (or an emblem on a held shield) : that hand also does S */
@@ -161,6 +164,8 @@ export class components{
   /* ---------- The step and the spending ---------- */
 
   static async step(activity, ctx, next){
+    /* Not a casting (the shard of a cast Ice Knife, Witch Bolt's later turns, a leap) */
+    if(ctx.config?.[module.id]?.noCast) return next();
     const found = this.problems(activity, ctx.config);
     if(found.length && !limits.allow(found.join(" "), { who : activity.actor.name, what : activity.item.name })) return;
     return next();
