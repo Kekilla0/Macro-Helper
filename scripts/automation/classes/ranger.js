@@ -2,6 +2,7 @@ import { module } from '../../module.js';
 import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
 import { gm } from '../../gm.js';
+import { casting } from '../casting.js';
 import { idOf, chooseOption, whisperOwners, waitFor } from '../../helpers/utils.js';
 import { pickTargets } from '../../helpers/targets.js';
 import { tokenOf } from '../../helpers/tokens.js';
@@ -134,6 +135,8 @@ export class ranger{
     const value = await chooseOption({ title : spell.name, icon : "fa-solid fa-crosshairs", prompt : module.i18n("classes.ranger.payPrompt"), options : payments });
     const pay = payments.find(p => p.value === value);
     if(!pay) return null;
+    /* Its components, and one slot a turn (Casting) */
+    if(!casting.allowsCast(spell, { slot : !pay.free })) return null;
     return this.place(actor, spell, { pay });
   }
 
@@ -145,7 +148,10 @@ export class ranger{
     if(!target) return null;
     if(pay){
       if(pay.free) await this.spendFavored(actor);
-      else await actor.update({ [`system.spells.${pay.key}.value`] : Math.max(0, Number(actor.system.spells[pay.key].value) - 1) });
+      else {
+        await actor.update({ [`system.spells.${pay.key}.value`] : Math.max(0, Number(actor.system.spells[pay.key].value) - 1) });
+        await casting.slotSpent(actor);
+      }
       await this.concentrate(actor, spell, pay.level ?? 1);
     }
     /* The mark itself is on another creature : the GM's button */

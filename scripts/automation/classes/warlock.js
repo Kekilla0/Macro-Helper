@@ -13,6 +13,7 @@ import { restChoices } from '../rest-choices.js';
 import { chooseOne } from '../../helpers/creatures.js';
 import { limits } from '../limits.js';
 import { patch } from '../../patch.js';
+import { casting } from '../casting.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -115,6 +116,8 @@ export class warlock{
     const value = await chooseOption({ title : spell.name, icon : "fa-solid fa-skull", prompt : module.i18n("classes.ranger.payPrompt"), options : payments });
     const pay = payments.find(p => p.value === value);
     if(!pay) return null;
+    /* Its components, and one slot a turn (Casting) */
+    if(!casting.allowsCast(spell, { slot : true })) return null;
     const ability = await chooseOption({ title : spell.name, icon : "fa-solid fa-skull", prompt : module.i18n("classes.warlock.hexAbility"),
       options : this.ABILITIES.map(a => ({ value : a, label : CONFIG.DND5E.abilities[a]?.label ?? a })) });
     if(!ability) return null;
@@ -127,6 +130,7 @@ export class warlock{
     if(!target) return null;
     if(pay){
       await actor.update({ [`system.spells.${pay.key}.value`] : Math.max(0, Number(actor.system.spells[pay.key].value) - 1) });
+      await casting.slotSpent(actor);
       await ranger.concentrate(actor, spell, pay.level ?? 1, { hours : this.hoursFor(pay.level ?? 1) });
     }
     const label = CONFIG.DND5E.abilities[ability]?.label ?? ability;

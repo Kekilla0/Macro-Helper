@@ -112,6 +112,8 @@ export const GROUPS = {
         choices : { off : "settings.handsLight.off", light : "settings.handsLight.light", timed : "settings.handsLight.timed" } },
       ammoRecovery : { scope : "world", default : "half", type : String,
         choices : { off : "settings.ammoRecovery.off", half : "settings.ammoRecovery.half" } },
+      spellMaterials : { scope : "world", default : "off", type : String,
+        choices : { off : "settings.spellMaterials.off", item : "settings.spellMaterials.item", coins : "settings.spellMaterials.coins" } },
     },
   },
   /* System Automation → Combat : initiative, summons, instantaneous areas */
@@ -221,7 +223,7 @@ const VIRTUAL = {
 
 /* The rest of System Automation's settings, as they read while it's off */
 const AUTOMATION_OFF = {
-  conditions : "off", masteryRules : false, handsEnabled : false, handsLight : "off", ammoRecovery : "off",
+  conditions : "off", masteryRules : false, handsEnabled : false, handsLight : "off", ammoRecovery : "off", spellMaterials : "off",
   initiativeMethod : "player", initiativeMessages : "individual", summonInitiative : "roll", clearAreas : false,
   homebrewPush : false, homebrewInitiative : false, homebrewAmmoSearch : false, homebrewAmmoRecovery : "rules", homebrewFlanking : "off",
 };

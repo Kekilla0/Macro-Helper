@@ -11,6 +11,7 @@ import { limits } from '../limits.js';
 import { actions } from '../actions.js';
 import { masteries } from '../masteries.js';
 import { TYPES } from '../../roll-item/message.js';
+import { casting } from '../casting.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -204,6 +205,8 @@ export class paladin{
       prompt : module.i18n("classes.paladin.smitePrompt"), options : choices.map(c => ({ value : c.value, label : c.label })) });
     const choice = choices.find(c => c.value === value);
     if(!choice) return false;
+    /* Its components, and one slot a turn (Casting) */
+    if(!casting.allowsCast(choice.spell, { slot : !choice.free })) return false;
     /* A Bonus Action : one a turn */
     if(usedThisTurn(actor, "smite") && !limits.allow(module.format("classes.paladin.smiteUsed", { name : actor.name }), { who : actor.name, what : choice.spell.name })) return false;
 
@@ -238,7 +241,10 @@ export class paladin{
       return;
     }
     const slot = actor.system.spells?.[choice.slot.key];
-    if(slot) await actor.update({ [`system.spells.${choice.slot.key}.value`] : Math.max(0, Number(slot.value) - 1) });
+    if(slot){
+      await actor.update({ [`system.spells.${choice.slot.key}.value`] : Math.max(0, Number(slot.value) - 1) });
+      await casting.slotSpent(actor);
+    }
   }
 
   /* Wrathful and Thunderous : their save on the card, for the creatures hit (one save per card : an item's own rider stays) */
