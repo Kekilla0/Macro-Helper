@@ -238,12 +238,14 @@ export function highlightRange(origin, feet, { normal, tokens = [], selected = [
  * @returns {{ x : number, y : number, feet : number }|null}  the token's new top-left position and how far that is,
  *          null if it can't move at all
  */
-export function pushDestination(thing, from, feet = 10){
+export function pushDestination(thing, from, feet = 10, { toward = false } = {}){
   const token = tokenOf(thing), source = tokenOf(from);
   if(!token || !source || (token === source)) return null;
 
   const start = token.center;
   let dx = start.x - source.center.x, dy = start.y - source.center.y;
+  /* A pull : straight toward the source instead (stops at the first creature : the source itself at the latest) */
+  if(toward){ dx = -dx; dy = -dy; }
   const norm = isCircular() ? Math.hypot(dx, dy) : Math.max(Math.abs(dx), Math.abs(dy));
   if(!norm) return null;
   dx /= norm; dy /= norm;
@@ -353,6 +355,22 @@ function occupied(token, x, y){
 export async function pushAway(thing, from, feet = 10){
   const token = tokenOf(thing);
   const destination = pushDestination(token, from, feet);
+  if(!destination || !token.document.canUserModify(game.user, "update")) return 0;
+  await token.document.update({ x : destination.x, y : destination.y });
+  return destination.feet;
+}
+
+/**
+ * Pull a token straight toward another (Thorn Whip), square by square, stopping at walls and creatures (so at the
+ * latest beside the one pulling). Needs permission to move the token.
+ * @param {Token|TokenDocument|Actor} thing   what's pulled
+ * @param {Token|TokenDocument|Actor} toward  who pulls
+ * @param {number} [feet=10]
+ * @returns {Promise<number>}  the feet it moved (0 : blocked or already there)
+ */
+export async function pullToward(thing, toward, feet = 10){
+  const token = tokenOf(thing);
+  const destination = pushDestination(token, toward, feet, { toward : true });
   if(!destination || !token.document.canUserModify(game.user, "update")) return 0;
   await token.document.update({ x : destination.x, y : destination.y });
   return destination.feet;

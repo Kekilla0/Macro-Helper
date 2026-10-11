@@ -58,4 +58,14 @@ whether the module covers it or you need to edit the item.
 | **Sleep** (spell) | Incapacitated for the minute, no second save. 2024: the save again at the end of its next turn, Unconscious on a failure; damage wakes it. | Changed when added (and on load): a repeating save (end of its turn); a failure makes it Unconscious; it ends on damage. |
 | **Wizard** (class import) | Plutonium asks for the cantrips but not the 6 spellbook spells. | Prepared Spells' Add a Spell adds them. |
 | **Advancement-Backing Items** (Plutonium's world compendium) | Holds features' copies of spells, some with uses of their own (a free Detect Magic once a Long Rest). | The module's compendium lists skip those copies. |
+| **Basic foci** (Amulet, Crystal, Emblem, Orb, Reliquary, Rod, Staff, Wand, Sprig of Mistletoe, Wooden Staff, Yew Wand; instruments) | Not marked with dnd5e's Focus property. | Given it when added to a character (and on load). |
+| **Holy Symbol / Druidic Focus (Varies)** (dnd5e loot) | Loot, which can't be equipped, so it never counts as a focus. | Use an equippable focus (Amulet, Emblem, Sprig of Mistletoe...). |
+| **Material costs** (Find Familiar and others, on characters' copies) | The cost field is sometimes 0 although the text says "worth 10+ GP". | The cost is read from the text when the field is empty. |
+| **Spell text markup** (Sacred Flame and others) | Rules terms are written as `@variantrule[Cover\|XPHB\|Half Cover]`, so plain text checks miss them. | The module reads the label shown. |
+| **Light** (cantrip) | Made a summon (a "Summon" button), not a light on a touched object. | Light asks: a token in reach or a square; the module makes the light (no summon). |
+| **Shillelagh** (cantrip) | Its enchantment allows any Simple Melee weapon; 2024: a Club or Quarterstaff. | The pick only offers a Club or Quarterstaff. |
+| **True Strike** (cantrip) | Its enchantment always makes the damage Radiant, and its extra Radiant formula rolls 0d6 below level 5 (an empty damage box). | The damage type question (Radiant or the weapon's) comes up; the empty box is left (cosmetic). |
+| **Guidance / Resistance** (cantrips) | One effect per skill / damage type, nothing picks which. Resistance rolls its 1d4 when cast. | A choice when cast puts that one effect on the target; Resistance's reduction is rolled when the damage comes. |
+| **Ensnaring Strike / Hail of Thorns** (spells) | Cast as standalone saves; 2024 they follow a weapon hit (like the smites). | Not handled yet (see the morning questions). |
+| **Witch Bolt** (spell) | Its later turns' 1d12 is rolled with the first hit. | Not handled yet. |
 

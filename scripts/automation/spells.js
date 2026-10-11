@@ -9,7 +9,7 @@ import { conditions } from './conditions.js';
 import { actions } from './actions.js';
 import { itemFixes } from './item-fixes.js';
 import { patch } from '../patch.js';
-import { chooseOption } from '../helpers/utils.js';
+import { chooseOption, plainText } from '../helpers/utils.js';
 import { TYPES } from '../roll-item/message.js';
 const log = logger.for(import.meta.url);
 
@@ -465,7 +465,7 @@ export class spells{
     if((item?.type !== "spell") || !(Number(item.system.level) > 0)) return 0;
     const level = Number(activity.actor?.system?.spells?.[usage?.spell?.slot]?.level) || 0;
     if(!level) return 0;
-    const text = String(item.system.description?.value ?? "").replace(/<[^>]+>/g, " ");
+    const text = plainText(item.system.description?.value);
     const m = /\b(one|two|three|\d+) additional (?:[a-z]+ )?(?:creatures?|targets?|beasts?|humanoids?|undead|allies|ally)\b[^.]*?\bfor each (?:spell )?slot level above (\d+)/i.exec(text);
     if(!m) return 0;
     const per = { one : 1, two : 2, three : 3 }[m[1].toLowerCase()] ?? Number(m[1]);

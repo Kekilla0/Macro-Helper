@@ -3,6 +3,7 @@ import { rollModes } from './roll-modes.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { patch } from '../patch.js';
+import { spellEffects } from './spell-effects.js';
 import { tokenOf, distanceBetween, canSee } from '../helpers/tokens.js';
 import { clearLastDamage, isKilledOutright } from '../helpers/actors.js';
 import { giveMode, noteReason, conditionName, logReasons } from '../roll-item/reasons.js';
@@ -149,7 +150,8 @@ export class conditions{
     const is = id => module.format("reasons.attackerIs", { condition : conditionName(id) });
     const their = id => module.format("reasons.targetIs", { condition : conditionName(id) });
     for(const id of this.ATTACKER_DISADVANTAGE.filter(s => mine.has(s))) giveMode(roll, "disadvantage", is(id));
-    if(mine.has("invisible")) giveMode(roll, "advantage", is("invisible"));
+    /* Invisible, unless an effect takes that away (Starry Wisp) */
+    if(mine.has("invisible") && !spellEffects.has(activity?.actor, "noInvisible")) giveMode(roll, "advantage", is("invisible"));
 
     const target = this.targetOf(config);
     const theirs = target?.actor?.statuses;
@@ -159,7 +161,7 @@ export class conditions{
       if(this.within5(attacker, target)) giveMode(roll, "advantage", module.i18n("reasons.proneNear"));
       else giveMode(roll, "disadvantage", module.i18n("reasons.proneFar"));
     }
-    if(theirs.has("invisible")) giveMode(roll, "disadvantage", their("invisible"));
+    if(theirs.has("invisible") && !spellEffects.has(target.actor, "noInvisible")) giveMode(roll, "disadvantage", their("invisible"));
     /* Sight, worked out once for this roll */
     const sees = attacker ? { target : canSee(attacker, target), attacker : canSee(target, attacker) } : { target : true, attacker : true };
     log.debug("Sight", attacker?.name, "sees", target.name, sees.target, "|", target.name, "sees", attacker?.name, sees.attacker);

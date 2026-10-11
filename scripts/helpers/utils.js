@@ -31,6 +31,19 @@ export async function waitFor(condition, { interval = 100, timeout = 20000 } = {
  * @param {ActiveEffect} effect
  * @returns {Item|null}
  */
+/**
+ * An item description as plain words, for reading rules from it : tags gone, and enricher references turned into
+ * what they show ("@variantrule[Cover|XPHB|Half Cover]" -> "Half Cover", "@UUID[...]{Find Familiar}" -> "Find Familiar").
+ * @param {string} html
+ * @returns {string}
+ */
+export function plainText(html){
+  return String(html ?? "")
+    .replace(/@\w+\[[^\]]*\]\{([^}]*)\}/g, "$1")
+    .replace(/@\w+\[([^\]]*)\]/g, (match, inner) => { const parts = inner.split("|"); return parts[2] ?? parts[0] ?? ""; })
+    .replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+}
+
 export function originItem(effect){
   const origin = effect?.origin ? fromUuidSync(effect.origin, { strict : false }) : null;
   if(!origin) return null;

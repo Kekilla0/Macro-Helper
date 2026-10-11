@@ -123,12 +123,21 @@ export class casting{
     /* What the cast was set to (level, ritual...), kept for the end : plain data only */
     const config = foundry.utils.deepClone({ spell : ctx.config?.spell, scaling : ctx.config?.scaling, consume : ctx.config?.consume,
       [module.id] : ctx.config?.[module.id] ?? {} }, { strict : false });
-    const effect = await actor.beginConcentrating(activity, {
-      name : module.format("casting.effect", { spell : activity.item.name }),
+    /* A Concentration effect of our own (dnd5e's beginConcentrating only takes spells that need Concentration;
+       casting one that takes 1 minute or more always does) : saves on damage, ends on Incapacitated like any other */
+    const status = CONFIG.statusEffects[CONFIG.specialStatusEffects?.CONCENTRATING ?? "concentrating"] ?? {};
+    const item = activity.item;
+    const [effect] = await actor.createEmbeddedDocuments("ActiveEffect", [{
+      name : module.format("casting.effect", { spell : item.name }),
+      img : status.img ?? item.img,
+      origin : item.uuid,
+      statuses : [status.id ?? "concentrating", ...(status.statuses ?? [])],
+      system : { type : "concentrating" },
       /* No duration of its own : the card says when it's done (an expiry would end it as a failure) */
       duration : { value : null, units : "", expiry : null },
-      flags : { [module.id] : { casting : { activity : activity.uuid, end, config } } },
-    });
+      flags : { dnd5e : { activity : { type : activity.type, id : activity.id, uuid : activity.uuid }, item : { type : item.type, id : item.id, uuid : item.uuid } },
+        [module.id] : { casting : { activity : activity.uuid, end, config } } },
+    }]);
     if(!effect) return;
     const message = await ChatMessage.implementation.create({
       speaker : ChatMessage.implementation.getSpeaker({ actor }),

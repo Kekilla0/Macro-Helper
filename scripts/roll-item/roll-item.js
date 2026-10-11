@@ -7,7 +7,7 @@ import { tokenOf, getRange, getTokensInArea } from '../helpers/tokens.js';
 import { pickTargets } from '../helpers/targets.js';
 import { pickAttack, attackModeFor } from '../helpers/items.js';
 import { rerolls } from './rerolls.js';
-import { chooseOption, wait, makeButton, originItem } from '../helpers/utils.js';
+import { chooseOption, wait, makeButton, originItem, plainText } from '../helpers/utils.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -394,7 +394,7 @@ export class rollItem{
     switch(usage[module.id]?.mode){
       case "attack" : {
         /* The pick and card come after dnd5e's use returns : the promise goes on the results (Flurry of Blows waits) */
-        const card = rollItem.attackAfterUse(activity, usage, area);
+        const card = rollItem.chooseInArea(activity, area).then(chosen => rollItem.attackAfterUse(activity, usage, chosen));
         if(results) results[module.id] = { card };
         return;
       }
@@ -403,7 +403,7 @@ export class rollItem{
       case "damage" :
       case "utility" : {
         /* The card is made after dnd5e's use returns : its promise goes on the results, for helpers that wait on it */
-        const card = rollItem.usageCard(activity, results.message, { area });
+        const card = rollItem.chooseInArea(activity, area).then(chosen => rollItem.usageCard(activity, results.message, { area : chosen }));
         if(results) results[module.id] = { card };
         return;
       }
@@ -677,6 +677,24 @@ export class rollItem{
     this.announceTargets(activity, inside, { keepEmpty : true });
     log.debug("Area targets", activity.item?.name, inside.map(t => t.name));
     return inside;
+  }
+
+  /**
+   * "Each creature of your choice" in an area (Word of Radiance) : the caster picks which of those inside, on the map
+   * (the area stays shown; any number, Enter to confirm). Anything else : everyone inside, as placed.
+   * @param {Activity} activity
+   * @param {Token[]|null} inside   targetArea's tokens
+   * @returns {Promise<Token[]|null>}
+   */
+  static async chooseInArea(activity, inside){
+    if(!inside?.length) return inside;
+    const text = plainText(activity?.item?.system?.description?.value);
+    if(!/\b(?:creatures?|targets?|allies|enemies) of your choice\b/i.test(text)) return inside;
+    const picks = await pickTargets(activity.item, { count : inside.length, range : Infinity, disposition : "any", includeSelf : false, useTargets : false,
+      sight : false, confirm : "auto", filter : t => inside.includes(t), notice : module.format("rollItem.areaChoice", { n : inside.length }) });
+    this.announceTargets(activity, picks ?? [], { keepEmpty : true });
+    log.debug("Area choice", activity.item?.name, (picks ?? []).map(t => t.name));
+    return picks ?? [];
   }
 
   /**

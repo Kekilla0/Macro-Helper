@@ -2,7 +2,7 @@ import { module } from '../module.js';
 import { settings } from '../settings.js';
 import { rollItem } from './roll-item.js';
 import { extraD20, rerolls, addDie } from './rerolls.js';
-import { originOf, addNote } from '../helpers/utils.js';
+import { originOf, addNote, plainText } from '../helpers/utils.js';
 
 /* Declared in module.json documentTypes.ChatMessage, Foundry prefixes them with the module id */
 export const TYPES = {
@@ -244,7 +244,14 @@ export function registerMessages(){
   /* A target pill behind total cover : ✕ for its AC, and a miss */
   const coverShown = t => (Number.isFinite(t?.ac) && (t.ac >= rollItem.TOTAL_COVER_AC)) ? { ac : COVER_LABELS.total, hasAC : true, isMiss : true } : {};
 
-  const coverOf = (message, uuid) => message.getFlag?.(module.id, `cover.${uuidKey(uuid)}`)?.level ?? "none";
+  /* Half and Three-Quarters Cover don't count for an item that says so (Sacred Flame); Total Cover still does. The
+     buttons stay, the GM can still set them : they're just not applied */
+  const IGNORES_COVER = /no benefit from half cover or three-quarters cover|ignores? (?:half and three-quarters |half or three-quarters )?cover/i;
+  const ignoresCover = message => IGNORES_COVER.test(plainText(message.getAssociatedItem?.()?.system?.description?.value));
+  const coverOf = (message, uuid) => {
+    const level = message.getFlag?.(module.id, `cover.${uuidKey(uuid)}`)?.level ?? "none";
+    return (["half", "threeQuarters"].includes(level) && ignoresCover(message)) ? "none" : level;
+  };
 
   /* The chips : GM only, one group per target (named when there are several) */
   const coverContext = (message, targets = []) => {
@@ -252,7 +259,8 @@ export function registerMessages(){
     return {
       named : targets.length > 1,
       targets : targets.map(t => {
-        const level = coverOf(message, t.token);
+        /* The chip shows what the GM set, even where the item ignores it */
+        const level = message.getFlag?.(module.id, `cover.${uuidKey(t.token)}`)?.level ?? "none";
         return {
           uuid : t.token, name : t.name,
           levels : Object.keys(COVER).map(id => ({ id, label : COVER_LABELS[id], active : id === level, tooltip : module.i18n(`cover.${id}`) })),

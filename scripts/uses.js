@@ -31,10 +31,12 @@ export class uses{
       "familiar",      // Familiars : Store / Summon New / Release, before dnd5e's choice of activity
       "itemMacro",     // Item Macro : a macro run before (or instead of) the use
       "healer",        // Feats : the Healer feat's Battle Medic
+      "byHealth",      // Spells : Toll the Dead uses its healthy / hurt activity for its target
       "fastForward",   // Roll Item : one attack with its riders skips dnd5e's choice of activity
     ],
     activity : [
       "castingBusy",   // Casting : a long cast under way : using anything else asks, then fails the cast
+      "noReactions",   // Spell effects : a Reaction while an effect forbids them (Arms of Hadar) : Rule Limits
       "offScene",      // Roll Item : no token on the scene being viewed : no targets (it can't see them)
       "itemMacro",     // Item Macro : a macro on the activity
       "ritual",        // Spells : cast as a Ritual (no slot, 10 minutes longer) or normally
@@ -43,6 +45,7 @@ export class uses{
       "slotPerTurn",   // Casting : a second spell slot this turn follows Rule Limits
       "metamagic",     // Sorcerer : Metamagic chosen and paid before a Sorcerer spell is cast (Distant : the range picked)
       "components",    // Components : V (not Silenced), S (a free hand), M (a focus, or a pouch and a free hand) : Rule Limits
+      "spellChoice",   // Spell effects : Guidance's skill, Resistance's damage type, asked before the targets
       "flurry",        // Monk : Monk's Focus's Flurry of Blows uses the Unarmed Strike instead
       "presetTargets", // Cleric : Turn Undead targets the Undead within 30 ft itself (no pick)
       "action",        // Default Actions : choose and pick first (Help)
@@ -52,6 +55,8 @@ export class uses{
       "hide",          // Rogue : Cunning Action's Hide asks the GM first; used only once allowed
       "healersKit",    // Default Actions : the Healer's Kit's Stabilize picks a creature at 0 HP first
       "dancingLights", // Spells : Dancing Lights : four lights or one form, where each goes
+      "spellLight",    // Spell actions : Light on a token or a square, Produce Flame in hand
+      "spareTheDying", // Spell actions : Spare the Dying picks a creature at 0 HP first
       "pactWeapon",    // Warlock : Forge Pact Weapon : bond a weapon or conjure one
       "pickTargets",   // Roll Item : pick targets on the map (Pick Targets)
       "spellRange",    // Spells : no pick, Rule Limits on : targets out of the spell's range follow Rule Limits

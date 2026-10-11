@@ -16,8 +16,9 @@ const log = logger.for(import.meta.url);
  *   Verbal (V)    : not while Silenced.
  *   Somatic (S)   : a free hand (Hands), or the hand holding the focus when the spell also has M. War Caster lifts it.
  *   Material (M)  : an equipped item with dnd5e's Focus property (any kind, for any caster : a weapon that is also a
- *                   focus, an amulet, an emblem on a shield...), or a carried Component Pouch and a free hand. The
- *                   hand holding the focus (or reaching into the pouch) also does S. The basic foci (Plutonium's and
+ *                   focus, an amulet, an emblem on a shield...), or a carried Component Pouch. A focus in a hand (or an
+ *                   emblem on the held shield) is handled by that hand; a worn one (an amulet) or the pouch needs a
+ *                   free hand to grasp it. That hand also does S. The basic foci (Plutonium's and
  *                   dnd5e's : amulet, crystal, emblem, orb, reliquary, rod, staff, wand, sprig of mistletoe, wooden
  *                   staff, yew wand) and musical instruments get the Focus property when added.
  *   Costly M      : (System Automation → Equipment → Costly Materials) a spell's material with a cost (Identify's
@@ -98,9 +99,15 @@ export class components{
 
     let somaticDone = !need.s || warCaster;
     if(need.m){
+      /* Held (or an emblem on the held shield) : that hand handles it, and does S */
       if(focusInHand) somaticDone = true;
-      else if(pouch && freeHand) somaticDone = true;
-      else if(!focusWorn) out.push(module.format(pouch ? "components.pouchNoHand" : "components.material", { name : actor.name, spell : item.name }));
+      /* Worn (an amulet on a necklace), or the pouch : a free hand grasps it, and does S */
+      else if((focusWorn || pouch) && freeHand) somaticDone = true;
+      else {
+        out.push(module.format((focusWorn || pouch) ? "components.graspNoHand" : "components.material", { name : actor.name, spell : item.name }));
+        /* No free hand already said : not again for S */
+        if(focusWorn || pouch) somaticDone = true;
+      }
     }
     if(!somaticDone && !freeHand) out.push(module.format("components.somatic", { name : actor.name, spell : item.name }));
     out.push(...this.costlyProblems(activity));
