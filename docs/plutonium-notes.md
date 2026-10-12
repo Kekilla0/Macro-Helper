@@ -66,6 +66,9 @@ whether the module covers it or you need to edit the item.
 | **Shillelagh** (cantrip) | Its enchantment allows any Simple Melee weapon; 2024: a Club or Quarterstaff. | The pick only offers a Club or Quarterstaff. |
 | **True Strike** (cantrip) | Its enchantment always makes the damage Radiant, and its extra Radiant formula rolls 0d6 below level 5 (an empty damage box). | The damage type question (Radiant or the weapon's) comes up; the empty box is left (cosmetic). |
 | **Guidance / Resistance** (cantrips) | One effect per skill / damage type, nothing picks which. Resistance rolls its 1d4 when cast. | A choice when cast puts that one effect on the target; Resistance's reduction is rolled when the damage comes. |
-| **Ensnaring Strike / Hail of Thorns** (spells) | Cast as standalone saves; 2024 they follow a weapon hit (like the smites). | Not handled yet (see the morning questions). |
-| **Witch Bolt** (spell) | Its later turns' 1d12 is rolled with the first hit. | Not handled yet. |
-
+| **Ensnaring Strike / Hail of Thorns** (spells) | Cast as standalone saves; 2024 they follow a weapon hit (like the smites). | A Strike button on the hit's card; their saves ride on that card. |
+| **Witch Bolt** (spell) | Its later turns' 1d12 is rolled with the first hit. | The 1d12 isn't rolled on the first card; casting again at the same creature rolls it (no slot). |
+| **Grease** (spell) | Its save has no effect : a failure can't apply Prone. | An item fix adds a Prone effect to the save (a failure applies it). |
+| **Produce Flame** (cantrip) | Hurl Fire has the spell's Self range (0 ft), so a hurl is out of range. | An item fix gives Hurl Fire its 60 ft. |
+| **Jump** (spell) | Its effect changes nothing. | An item fix sets the creature's jump speed to 30 ft. |
+| **Create or Destroy Water** (spell) | Its gallons are a roll formula (a "10" on the card). | Not rolled; Fill / Rain asked instead. |

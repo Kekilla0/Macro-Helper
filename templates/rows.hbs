@@ -48,6 +48,9 @@
             <i class="fa-solid fa-reply-all fa-flip-horizontal" inert></i> {{ effectApply }}
         </button>
         {{/if}}
+        {{#if effectImmune}}
+        <span class="applied immune" data-tooltip="{{ effectImmune }}"><i class="fa-solid fa-shield" inert></i> {{ effectImmune }}</span>
+        {{/if}}
         {{#if effectApplied}}
         <span class="applied healing" data-tooltip="{{ localize "rollItem.row.applied" }}"><i class="fa-solid fa-check" inert></i> {{ effectApplied }}</span>
         {{/if}}

@@ -261,8 +261,9 @@ export function registerMessages(){
       targets : targets.map(t => {
         /* The chip shows what the GM set, even where the item ignores it */
         const level = message.getFlag?.(module.id, `cover.${uuidKey(t.token)}`)?.level ?? "none";
+        const shown = maskTarget(t);
         return {
-          uuid : t.token, name : t.name,
+          uuid : t.token, name : shown?.name ?? t.name, img : shown?.img ?? t.img ?? TargetsField.resolve(t).token?.texture?.src ?? "icons/svg/mystery-man.svg",
           levels : Object.keys(COVER).map(id => ({ id, label : COVER_LABELS[id], active : id === level, tooltip : module.i18n(`cover.${id}`) })),
         };
       }),
@@ -413,15 +414,25 @@ export function registerMessages(){
     return effects.filter(e => (!hasSave || !result?.success || e.onSave) && (!chosen || (e.doc?.id === chosen)));
   };
 
+  /* An effect whose conditions the creature is immune to (a Ghoul and Poisoned) : it isn't applied */
+  const immuneTo = (actor, effect) => {
+    const immunities = actor?.system?.traits?.ci?.value;
+    const statuses = [...(effect?.doc?.statuses ?? effect?.statuses ?? [])];
+    return !!immunities && statuses.length > 0 && statuses.every(s => immunities.has?.(s));
+  };
+
   const effectRow = (message, uuid, { hasSave, result, effects, owner = false }) => {
     /* With a save : the GM's, once rolled. Without (a buff) : the creature's owner or the GM */
     if(hasSave ? (!game.user.isGM || !result) : !(game.user.isGM || owner)) return {};
-    const due = dueEffects(message, effects, { hasSave, result });
+    const actor = TargetsField.resolve({ token : uuid }).actor;
+    const all = dueEffects(message, effects, { hasSave, result });
+    const due = all.filter(e => !immuneTo(actor, e));
+    const immune = all.filter(e => immuneTo(actor, e)).map(e => e.doc.name);
     const names = due.map(e => e.doc.name).join(", ");
     /* Rules can change the GM's button (macro-helper.rowEffect : Shove shows the shover's choice, nothing until then) */
     const row = { show : due.length > 0, names, done : !!message.getFlag(module.id, `effects.${uuidKey(uuid)}`) };
     Hooks.callAll(`${module.id}.rowEffect`, message, uuid, row, { success : !!result?.success, effects : due.map(e => e.doc) });
-    if(!row.show) return {};
+    if(!row.show) return immune.length ? { effectImmune : module.format("rollItem.row.immune", { names : immune.join(", ") }) } : {};
     if(row.done) return { effectApplied : row.names };
     return { effectApply : module.format("rollItem.row.applyEffect", { names : row.names }) };
   };
@@ -434,7 +445,7 @@ export function registerMessages(){
     const hasSave = activity?.type === "save";
     const result = saveResultsOf(message).get(uuid);
     if(!actor || (hasSave && (!game.user.isGM || !result)) || (!hasSave && !(game.user.isGM || actor.isOwner))) return;
-    const due = dueEffects(message, effectsOf(activity), { hasSave, result });
+    const due = dueEffects(message, effectsOf(activity), { hasSave, result }).filter(e => !immuneTo(actor, e));
     /* Rules may stop it or do it themselves (macro-helper.preApplyEffects : Grapple on a creature too big; Shove) */
     if(Hooks.call(`${module.id}.preApplyEffects`, message, actor, due.map(e => e.doc), { uuid, button }) === false) return;
     if(!due.length) return;

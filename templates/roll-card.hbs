@@ -28,7 +28,6 @@
     </section>
     {{/if}}
     {{> "macro-helper.faces" }}
-    {{> "macro-helper.cover" }}
     {{#if note}}<p class="supplement macro-helper-note"><strong>{{ note }}</strong></p>{{/if}}
 
     {{#if mastery}}
@@ -110,6 +109,9 @@
     </ul>
 </section>
 {{/if}}
+
+{{!-- Cover (GM) : a row per target, above the attack --}}
+{{> "macro-helper.cover" }}
 
 {{!-- Attack --}}
 {{> "dnd5e.card-rolls" }}

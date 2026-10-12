@@ -74,6 +74,7 @@ export class spells{
     itemFixes.add({ name : "Mind Sliver", where : "owned", plan : item => this.mindSliverFix(item) });
     itemFixes.add({ name : "Produce Flame", where : "owned", plan : item => this.produceFlameFix(item) });
     itemFixes.add({ name : "Jump", where : "owned", plan : item => this.jumpFix(item) });
+    itemFixes.add({ name : "Grease", where : "owned", plan : item => this.greaseFix(item) });
     Hooks.on("dnd5e.rollSavingThrow", (rolls, data) => this.nextSaveUsed(data?.subject ?? rolls?.[0]?.data?.actor ?? null));
     Hooks.on("dnd5e.preApplyDamage", (actor, amount) => this.blockHealing(actor, amount));
     itemFixes.add({ name : "Giant Insect", where : "owned", plan : item => this.giantInsectFix(item) });
@@ -245,6 +246,23 @@ export class spells{
       ...(this.untilTurnEnd(item, effects)?.updateEffects ?? []),
     ];
     return updateEffects.length ? { updateEffects } : null;
+  }
+
+  /* ---------- Grease : a failed save leaves it Prone (Plutonium's save has no effect to apply) ---------- */
+
+  static GREASE_PRONE = "mhGreaseProne000";
+
+  static greaseFix(item){
+    if(!this.enabled() || this.is2014(item) || (item?.type !== "spell") || (idOf(item) !== "grease")) return null;
+    const save = [...(item.system?.activities ?? [])].find(a => a.type === "save");
+    if(!save || item.effects?.get?.(this.GREASE_PRONE)) return null;
+    const effects = (item.effects?.contents ?? []).filter(e => e.statuses?.has?.("prone"));
+    if(effects.length) return null;
+    return {
+      create : { effects : [{ _id : this.GREASE_PRONE, name : game.i18n.localize(CONFIG.statusEffects.find(e => e.id === "prone")?.name ?? "Prone"),
+        img : CONFIG.statusEffects.find(e => e.id === "prone")?.img ?? "icons/svg/falling.svg", statuses : ["prone"], transfer : false }] },
+      update : { [`system.activities.${save.id}.effects`] : [...(save.toObject?.().effects ?? []), { _id : this.GREASE_PRONE, onSave : false }] },
+    };
   }
 
   /* ---------- Jump : its effect sets the creature's jump speed to 30 ft (the token ruler's Jump action uses it) ---------- */

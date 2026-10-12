@@ -36,6 +36,8 @@ export class conditions{
   static register(){
     if(game.system.id !== "dnd5e") return;
     rollModes.add("conditions", config => this.onPreRollAttack(config));
+    /* An effect from an item or spell whose conditions the creature is immune to (a Skeleton and Poisoned) : not put on */
+    Hooks.on("preCreateActiveEffect", (effect, data, options, userId) => this.immuneEffect(effect, userId));
     /* Roll Item's cards : an automatic failure fails whatever is rolled, and no roll is needed for one */
     Hooks.on(`${module.id}.saveOutcome`, (message, outcome) => this.markAutoFail(message, outcome));
     Hooks.on(`${module.id}.autoFail`, (actor, ability, found) => { const name = this.autoFailOf(actor, ability); if(name) found.push(name); });
@@ -222,6 +224,16 @@ export class conditions{
     const auto = message?.getFlag?.(module.id, "autoFail") ?? null;
     if(auto && outcome){ outcome.auto = auto; outcome.success = false; }
     return outcome;
+  }
+
+  static immuneEffect(effect, userId){
+    const actor = effect?.parent;
+    if((actor?.documentName !== "Actor") || !effect.origin) return;
+    const statuses = [...(effect.statuses ?? [])];
+    const immunities = actor.system?.traits?.ci?.value;
+    if(!statuses.length || !immunities || !statuses.every(s => immunities.has?.(s))) return;
+    if(userId === game.user.id) ui.notifications.info(module.format("conditions.immuneEffect", { name : actor.name, effect : effect.name }));
+    return false;
   }
 
   /* ---------- Stable ---------- */

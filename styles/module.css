@@ -261,17 +261,9 @@
 }
 
 
-/* Cover chips (GM only), compact at the top of a card */
-.chat-message .macro-helper-cover {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px 8px;
-  font-size: var(--font-size-11, 11px);
-  margin: 2px 0;
-}
-.chat-message .macro-helper-cover .cover-target { display: inline-flex; align-items: center; gap: 2px; }
-.chat-message .macro-helper-cover .name { margin-right: 2px; opacity: 0.8; }
+/* Cover (GM only) : a row per target, its levels small on the right */
+.chat-message .macro-helper-cover { margin: 2px 0; }
+.chat-message .macro-helper-cover .macro-helper-row-apply { gap: 2px; font-size: var(--font-size-11, 11px); }
 .chat-message .macro-helper-cover button {
   min-width: 20px;
   height: 18px;

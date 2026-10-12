@@ -1,5 +1,4 @@
 {{!-- dnd5e usage-card.hbs, with the damage-card.hbs roll + tray added below the card face --}}
-{{> "macro-helper.cover" }}
 {{#if content}}
 {{{ content }}}
 {{else}}
@@ -66,6 +65,8 @@
 
 {{!-- One row per target, the same for every card : its save (none for a buff), its result, then on the right its damage /
      healing and its effects to apply --}}
+{{!-- Cover (GM) : a row per target, above the saves --}}
+{{> "macro-helper.cover" }}
 {{#if targetRows.length}}{{> "macro-helper.rows" rows=targetRows }}{{/if}}
 
 {{!-- Save results (dnd5e "Chat Card Summary" setting) --}}
