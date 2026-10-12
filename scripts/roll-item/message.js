@@ -1587,6 +1587,12 @@ export function registerMessages(){
       },
     }, { inplace : false }));
 
+    /* A row's healing / damage applied without its button (temporary HP on the caster's own creature, at once) */
+    async applyRollsTo(uuid){
+      if(!this.damageRolls.length) return;
+      await applyRow(this.parent, { dataset : { target : uuid, multiplier : "1" }, disabled : false }, { rolls : this.damageRolls, targets : this.targets });
+    }
+
     /* A row's effects applied without its button (a buff on the caster's own creature, at once) */
     async applyEffectsTo(uuid){
       await applyRowEffects(this.parent, { dataset : { target : uuid }, disabled : false }, { activity : this.parent.getAssociatedActivity({ scaled : true }), targets : this.targets });

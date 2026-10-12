@@ -307,6 +307,9 @@ export class conditions{
   /* Death saves : damage to a character at 0 HP is a failure (two on a crit); its HP max in one hit, or massive damage
      while still up, is three. Changes dnd5e's pending update, nothing awaited. */
   static onPreApplyDamage(actor, amount, updates, options = {}){
+    /* Temporary HP given (Armor of Agathys) : dnd5e reports it as 0 damage, onApplyDamage records it from here */
+    const temp = Number(updates?.["system.attributes.hp.temp"]) - (Number(actor?.system?.attributes?.hp?.temp) || 0);
+    if(!amount && (temp > 0) && options) options[`${module.id}TempGiven`] = temp;
     if(!settings.value("downedRules") || (actor?.type !== "character") || !(amount > 0) || !updates) return;
     const hp = actor.system.attributes?.hp ?? {};
     const death = actor.system.attributes?.death ?? {};
@@ -332,6 +335,8 @@ export class conditions{
   /* Remember the last damage a creature took and the card it came from (Stone's Endurance...); what was applied from
      a card (damage or healing) shows on its row; a third death save failure means Dead */
   static async onApplyDamage(actor, amount, options = {}){
+    /* Temporary HP shows on its row as healing does (+5) */
+    if(!amount && options[`${module.id}TempGiven`]) amount = -options[`${module.id}TempGiven`];
     if(!amount || !actor?.isOwner) return;
     const message = options.origin?.id ?? null;
     const update = {};

@@ -1374,12 +1374,13 @@ export class rollItem{
   }
 
   /**
-   * A buff's card (a utility with effects, no save) : its effects go at once on the caster's own character (the caster
+   * A buff's or a heal's card (a utility with effects, healing, temporary HP) : it goes at once on the caster's own character (the caster
    * itself, or the character assigned to one of its players : theirs, not one they merely have access to); their rows
    * show them applied. Anyone else's waits for its row's Apply.
    */
   static async applyOwnBuffs(activity, message){
-    if((activity?.type !== "utility") || !activity.effects?.length || (typeof message?.system?.applyEffectsTo !== "function")) return;
+    const heal = activity?.type === "heal";
+    if(!(heal || ((activity?.type === "utility") && activity.effects?.length)) || (typeof message?.system?.applyEffectsTo !== "function")) return;
     const caster = activity.actor;
     const assigned = game.users.filter(u => !u.isGM && caster?.testUserPermission(u, "OWNER")).map(u => u.character).filter(Boolean);
     const { TargetsField } = dnd5e.dataModels.chatMessage.fields;
@@ -1388,7 +1389,10 @@ export class rollItem{
       if(!actor?.isOwner) continue;
       const base = actor.isToken ? actor.token?.baseActor : actor;
       const own = (actor === caster) || (actor.uuid === caster?.uuid) || assigned.some(c => (c === actor) || (c === base));
-      if(own) await message.system.applyEffectsTo(descriptor.token).catch(error => log.debug("Own buff", error));
+      if(!own) continue;
+      /* Healing or temporary HP (Cure Wounds, Armor of Agathys), then the effects */
+      if(heal) await message.system.applyRollsTo(descriptor.token).catch(error => log.debug("Own heal", error));
+      if(activity.effects?.length) await message.system.applyEffectsTo(descriptor.token).catch(error => log.debug("Own buff", error));
     }
   }
 }

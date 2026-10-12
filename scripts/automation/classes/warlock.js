@@ -14,6 +14,7 @@ import { chooseOne } from '../../helpers/creatures.js';
 import { limits } from '../limits.js';
 import { patch } from '../../patch.js';
 import { casting } from '../casting.js';
+import { postTargetCard, registerTargetCards } from '../../helpers/target-card.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -64,6 +65,7 @@ export class warlock{
       return this.useHex(item.actor, item);
     });
     gm.handle("hex", (data, user) => this.applyHex(data, user));
+    registerTargetCards();
     Hooks.on("createChatMessage", (message, options, userId) => { if(userId === game.user.id) this.onAttackCard(message); });
     Hooks.on("deleteActiveEffect", effect => this.onConcentrationEnd(effect));
     Hooks.on("updateActor", (actor, changes) => this.onDown(actor, changes));
@@ -134,10 +136,11 @@ export class warlock{
       await ranger.concentrate(actor, spell, pay.level ?? 1, { hours : this.hoursFor(pay.level ?? 1) });
     }
     const label = CONFIG.DND5E.abilities[ability]?.label ?? ability;
-    await gm.ask("hex", { caster : actor.uuid, spell : spell.uuid, target : target.document.uuid, from : move?.effect.uuid ?? null, ability,
-      hours : this.hoursFor(pay?.level ?? 1) }, { actor,
-      text : module.format(move ? "classes.warlock.hexMoved" : "classes.warlock.hexed", { name : actor.name, target : target.name, ability : label }),
-      label : module.format("classes.warlock.hexButton", { target : target.name }) });
+    /* The curse is on another creature : the spell's card, a row for it with Hex (the GM, or its owner) */
+    await postTargetCard({ actor, item : spell, text : module.format(move ? "classes.warlock.hexMoved" : "classes.warlock.hexed", { name : actor.name, target : target.name, ability : label }),
+      rows : [{ token : target.document.uuid, action : "hex",
+        data : { caster : actor.uuid, spell : spell.uuid, target : target.document.uuid, from : move?.effect.uuid ?? null, ability, hours : this.hoursFor(pay?.level ?? 1) },
+        label : module.i18n(move ? "classes.ranger.moveShort" : "classes.warlock.hexShort"), done : module.i18n("classes.warlock.hexedShort") }] });
     log.debug("Hex", actor.name, target.name, ability, move ? "moved" : pay?.value);
     return true;
   }
@@ -152,7 +155,8 @@ export class warlock{
     const caster = fromUuidSync(casterUuid ?? "", { strict : false });
     const target = fromUuidSync(targetUuid ?? "", { strict : false });
     const spell = fromUuidSync(spellUuid ?? "", { strict : false });
-    if(!game.user.isGM || !caster || !target?.actor || (user && !caster.testUserPermission(user, "OWNER"))) return false;
+    /* The caster's owner or the cursed creature's (its row's Hex), or the GM */
+    if(!game.user.isGM || !caster || !target?.actor || (user && !caster.testUserPermission(user, "OWNER") && !target.actor.testUserPermission(user, "OWNER"))) return false;
     if(!ranger.concentrationOf(caster, spell)){
       ui.notifications.warn(module.format("classes.ranger.noConcentration", { name : caster.name, spell : spell?.name ?? "" }));
       return false;

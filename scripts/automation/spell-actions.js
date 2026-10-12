@@ -66,7 +66,8 @@ const log = logger.for(import.meta.url);
  *                   candles, Produce Flame). Its gallons aren't rolled.
  *   Detection     : Detect Evil and Good, Detect Poison and Disease, Detect Magic : a coloured effect on the caster while
  *                   it lasts (it ends with the Concentration), to keep track of it.
- *   Cast only     : Sanctuary's save is the attacker's (spell-effects), so using the spell casts it without asking.
+ *   Cast only     : Sanctuary's save is the attacker's (spell-effects), Armor of Agathys's damage is its reaction (spells) :
+ *                   using the spell casts it without asking.
  *   Areas         : coloured by the spell (Fog Cloud a fog grey) or the caster's choice (Elementalism : air, earth, fire,
  *                   water, chosen as it's cast : no other question). Fog Cloud's area is heavily obscured : no sight
  *                   into, out of or through it (the Vision rules).
@@ -78,6 +79,9 @@ const log = logger.for(import.meta.url);
  *   Alarm         : its area is watched (the active GM) : a creature entering it, moving inside it or leaving it is
  *                   whispered to the caster's players and the GM. The caster and creatures friendly to it don't set it
  *                   off (the ones it designates).
+ *   Hellish Rebuke : a creature damaged by an attack or spell (its card's damage applied to it) gets a Hellish Rebuke
+ *                   button on its row of that card (its owner or the GM), when it has the spell ready, a slot, and the
+ *                   one who did it is within 60 ft : the spell cast at that creature (its save card), the slot spent.
  *   Shield        : an attack card that hits a creature with Shield ready (and a slot) gets a Shield button for its
  *                   owner (or the GM) : Shield is cast (slot, its effect) and the card judges that hit again at AC +5.
  *                   A Magic Missile card gets one per target too : that creature takes none of its damage.
@@ -105,6 +109,7 @@ export class spellActions{
   static LEAP = { "chromatic-orb" : { feet : 30 } };
   static FLEE = ["dissonant-whispers"];
   static SHIELD = { spell : "shield", ac : 5, negates : ["magic-missile"] };
+  static REBUKE = { spell : "hellish-rebuke", range : 60 };
   /* Summons placed by their caster : the leash (feet from the caster) */
   static PLACED = {
     "mage-hand" : { leash : 30, move : 30, action : "action" },
@@ -121,7 +126,7 @@ export class spellActions{
   static WATER = { id : "create-or-destroy-water", skins : 20, range : 30, pints : 4, item : "Compendium.dnd5e.equipment24.Item.dmgspWaterfresh0", identifier : "water-fresh-pint" };
   static DETECTION = { "detect-evil-and-good" : "#ffd24a", "detect-poison-and-disease" : "#5cc66b", "detect-magic" : "#a974ff" };
   /* Spells whose other activity is for someone else (Sanctuary's save : the attacker's) : straight to casting */
-  static CAST_ONLY = { "sanctuary" : {} };
+  static CAST_ONLY = { "sanctuary" : {}, "armor-of-agathys" : { type : "heal" } };
   static ILLUSIONS = { "disguise-self" : { watch : "caster" }, "silent-image" : { watch : "space", feet : 15 } };
   static COMMAND = { id : "command", options : ["approach", "drop", "flee", "grovel", "halt"] };
 
@@ -220,6 +225,10 @@ export class spellActions{
     Hooks.on("updateWorldTime", () => this.placedExpire());
     /* True Strike : the spell's face on the attack card (both : the weapon's rules and the spell's) */
     Hooks.on(`${module.id}.cardFaces`, (message, faces) => { const uuid = message.getFlag?.(module.id, "castAs"); if(uuid && !faces.some(f => f.uuid === uuid)) faces.push({ uuid }); });
+    /* Hellish Rebuke */
+    Hooks.on(`${module.id}.rowButtons`, (message, uuid, buttons) => this.rebukeButton(message, uuid, buttons));
+    Hooks.on(`${module.id}.rowButton`, (message, uuid, id) => { if(id === "hellishRebuke") this.rebuke(message, uuid); });
+    gm.handle("spellRebuked", (data, user) => this.rebukedAsGM(data, user));
     /* Shield */
     Hooks.on(`${module.id}.cardButtons`, (message, buttons, context) => this.shieldButtons(message, buttons, context));
     Hooks.on(`${module.id}.cardButton`, (message, id) => { if(String(id).startsWith("shield|")) this.shield(message, String(id).slice(7)); });
@@ -932,7 +941,7 @@ export class spellActions{
 
   static async illusionStep(item, ctx, next){
     const spec = this.ILLUSIONS[idOf(item)] ?? this.CAST_ONLY[idOf(item)];
-    const use = spec ? item.system.activities?.find?.(a => a.type === "utility") : null;
+    const use = spec ? item.system.activities?.find?.(a => a.type === (spec.type ?? "utility")) : null;
     if(!this.enabled() || !use) return next();
     const { chooseActivity, ...usage } = ctx.config ?? {};
     if(spec.watch !== "space") return use.use(usage, ctx.dialog, ctx.message);
@@ -1265,19 +1274,69 @@ export class spellActions{
     if(done.length) await this.removeTokens(done);
   }
 
-  /* ========== Shield ========== */
+  /* ========== Hellish Rebuke ========== */
 
-  /* Its Shield spell, ready to cast (prepared, or always ready), with a slot for it : { spell, slot } or null */
-  static shieldReady(actor){
-    const spell = actor?.items?.find?.(i => (i.type === "spell") && (idOf(i) === this.SHIELD.spell)
-      && ((i.system.method !== "spell") || (Number(i.system.prepared) > 0)));
+  /* A reaction spell it can cast now : it can react (not incapacitated, not at 0 HP), the spell ready (prepared, or
+     always ready) and a slot for it : { spell, slot } or null */
+  static OUT = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
+  static reactionReady(actor, id){
+    if(!actor || this.OUT.some(s => actor.statuses?.has(s)) || (Number(actor.system?.attributes?.hp?.value) <= 0)) return null;
+    const spell = actor?.items?.find?.(i => (i.type === "spell") && (idOf(i) === id) && ((i.system.method !== "spell") || (Number(i.system.prepared) > 0)));
     if(!spell) return null;
-    /* Shield is already up (its +5 counts on new attacks) */
-    if(actor.effects.some(e => !e.disabled && String(e.origin ?? "").startsWith(spell.uuid))) return null;
     const slots = Object.entries(actor.system?.spells ?? {})
       .filter(([, s]) => (Number(s?.value) > 0) && (Number(s?.level) >= 1))
       .sort(([, a], [, b]) => a.level - b.level);
     return slots.length ? { spell, slot : slots[0][0] } : null;
+  }
+
+  static rebukeKey(uuid){
+    return `rebuked.${String(uuid).replaceAll(".", "-")}`;
+  }
+
+  /* The damaged creature's row : once this card's damage is applied to it */
+  static rebukeButton(message, uuid, buttons){
+    if(!this.enabled()) return;
+    const token = fromUuidSync(uuid, { strict : false });
+    const actor = token?.actor;
+    if(!actor || !(actor.isOwner) || message.getFlag?.(module.id, this.rebukeKey(uuid))) return;
+    const hurt = Object.values(actor.getFlag(module.id, `applied.${message.id}`) ?? {}).some(v => Number(v) > 0);
+    if(!hurt || !this.reactionReady(actor, this.REBUKE.spell)) return;
+    const from = message.getAssociatedToken?.() ?? null;
+    const attacker = from?.object ?? tokenOf(message.getAssociatedActor?.());
+    if(!attacker || (attacker.actor === actor) || !token.object || (distanceBetween(token.object, attacker) > this.REBUKE.range)) return;
+    buttons.push({ id : "hellishRebuke", icon : "fa-fire", label : module.i18n("spellActions.rebuke") });
+  }
+
+  /* Cast at the one who did it (its save card), the slot spent; the card remembers */
+  static async rebuke(message, uuid){
+    const token = fromUuidSync(uuid, { strict : false });
+    const actor = token?.actor;
+    const ready = actor?.isOwner ? this.reactionReady(actor, this.REBUKE.spell) : null;
+    const attacker = message.getAssociatedToken?.()?.object ?? tokenOf(message.getAssociatedActor?.());
+    if(!ready || !attacker || message.getFlag(module.id, this.rebukeKey(uuid))) return;
+    const save = ready.spell.system.activities?.find?.(a => a.type === "save") ?? ready.spell.system.activities?.contents?.[0];
+    if(!save) return;
+    canvas.tokens.setTargets([attacker.id]);
+    const used = await save.use({ spell : { slot : ready.slot }, [module.id] : { skipPick : true, useTargets : true } }, { configure : false });
+    if(used) await gm.run("spellRebuked", { message : message.id, token : uuid });
+  }
+
+  static async rebukedAsGM({ message : id, token : uuid } = {}, user){
+    const message = game.messages.get(id);
+    const actor = fromUuidSync(uuid ?? "", { strict : false })?.actor;
+    if(!message || !actor?.testUserPermission(user, "OWNER")) return false;
+    await message.setFlag(module.id, this.rebukeKey(uuid), true);
+    return true;
+  }
+
+  /* ========== Shield ========== */
+
+  /* Its Shield spell, ready to cast (prepared, or always ready), with a slot for it : { spell, slot } or null */
+  static shieldReady(actor){
+    const ready = this.reactionReady(actor, this.SHIELD.spell);
+    /* Shield is already up (its +5 counts on new attacks) */
+    if(!ready || actor.effects.some(e => !e.disabled && String(e.origin ?? "").startsWith(ready.spell.uuid))) return null;
+    return ready;
   }
 
   static shieldKey(uuid){
