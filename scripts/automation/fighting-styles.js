@@ -12,6 +12,7 @@ import { masteries } from './masteries.js';
 import { conditions } from './conditions.js';
 import { limits } from './limits.js';
 import { hands } from './hands.js';
+import { actionTracker } from './action-tracker.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -224,6 +225,10 @@ export class fightingStyles{
 
   /* Its requirements : seeing the attacker, and the shield (or for Interception a weapon) in hand. "" when met */
   static unmet(style, guard, attackerToken){
+    /* A Reaction : not while Incapacitated or at 0 HP, nor once it's used (Action Tracker) */
+    if(actionTracker.OUT_OF_ACTION.some(s => guard.actor?.statuses?.has?.(s)) || (Number(guard.actor?.system?.attributes?.hp?.value) <= 0))
+      return module.format("fightingStyles.cantReact", { name : guard.name });
+    if(!actionTracker.left(guard.actor, "reaction")) return module.format("actionTracker.spent", { name : guard.name, kind : actionTracker.label("reaction") });
     if(attackerToken && !canSee(guard, attackerToken)) return module.format("fightingStyles.cantSee", { name : guard.name });
     const shield = hasShieldEquipped(guard.actor);
     const inHand = hands.manages(guard.actor) ? hands.heldItems(guard.actor) : guard.actor.items.filter(i => i.system?.equipped);
@@ -283,10 +288,12 @@ export class fightingStyles{
       const { rollItem } = await import('../roll-item/roll-item.js');
       await rollItem.showDice([roll], message);
       await gm.run("intercept", { message : message.id, guard : guardUuid, target : targetUuid, amount : roll.total, formula : roll.formula, result : roll.result });
+      await actionTracker.spend(guard.actor, { kind : "reaction", what : module.i18n("fightingStyles.interceptShort") }).catch(() => null);
     }
     else {
       const notes = await gm.run("protect", { message : message.id, ray, guard : guardUuid, target : targetUuid });
       for(const note of notes ?? []) ui.notifications.info(note);
+      await actionTracker.spend(guard.actor, { kind : "reaction", what : module.i18n("fightingStyles.protectShort") }).catch(() => null);
     }
   }
 
@@ -377,7 +384,7 @@ export class fightingStyles{
         if(!token || !activity) return;
         canvas.tokens.setTargets([token.id]);
         button.disabled = true;
-        await activity.use({}, { configure : false });
+        await activity.use({ [module.id] : { economy : "free" } }, { configure : false });
       });
     }
   }

@@ -191,7 +191,8 @@ export class monk{
     const results = [];
     try {
       for(let i = 0; i < count; i++){
-        const used = await this.untilShown(() => strike.use({ event : config.event }, { ...dialog }, { ...message }));
+        /* Action Tracker : the first strike is the Bonus Action, the others come with it */
+        const used = await this.untilShown(() => strike.use({ event : config.event, [module.id] : { economy : i ? "free" : "bonus" } }, { ...dialog }, { ...message }));
         if(!used) break;
         results.push(used);
       }

@@ -14,6 +14,7 @@ import { masteries } from '../masteries.js';
 import { TYPES } from '../../roll-item/message.js';
 import { casting } from '../casting.js';
 import { spellActions } from '../spell-actions.js';
+import { actionTracker } from '../action-tracker.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -201,6 +202,8 @@ export class paladin{
     if(!actor?.isOwner || !kind || this.smitten(message, ray)) return;
     const choices = this.choicesFor(actor, { kind });
     if(!choices.length) return;
+    /* Action Tracker : no Bonus Action left, no button */
+    if(!actionTracker.left(actor, "bonus")) return;
     /* Only the Ranger's strikes apply : "Strike" */
     const smite = choices.some(c => !this.HIT_NEEDS[idOf(c.spell)]);
     buttons.push({ id : "smite", label : module.i18n(smite ? "classes.paladin.smite" : "classes.paladin.strike"), icon : smite ? "fa-sun" : "fa-crosshairs" });
@@ -255,6 +258,7 @@ export class paladin{
     if(!casting.allowsCast(choice.spell, { slot : !choice.free })) return false;
     /* A Bonus Action : one a turn */
     if(usedThisTurn(actor, "smite") && !limits.allow(module.format("classes.paladin.smiteUsed", { name : actor.name }), { who : actor.name, what : choice.spell.name })) return false;
+    if(!actionTracker.left(actor, "bonus") && !limits.allow(module.format("actionTracker.spent", { name : actor.name, kind : actionTracker.label("bonus") }), { who : actor.name, what : choice.spell.name })) return false;
 
     const target = this.targetOf(message, ray);
     const damage = this.NO_HIT_DAMAGE.includes(idOf(choice.spell)) ? null : this.damageOf(choice.spell, choice.level, target);
@@ -267,6 +271,7 @@ export class paladin{
     await message.setFlag(module.id, `smite.${masteries.rayKey(ray)}`, choice.spell.id);
     await this.pay(actor, choice);
     await markUsedThisTurn(actor, "smite");
+    await actionTracker.spend(actor, { kind : "bonus", what : choice.spell.name }).catch(error => log.debug(error));
     await this.rider(message, choice.spell);
     /* Hail of Thorns : everyone within 5 ft of the target saves, on this card (its save and damage, like Ice Knife's) */
     const around = this.AROUND_TARGET[idOf(choice.spell)];
@@ -329,7 +334,7 @@ export class paladin{
     });
     const radius = (feet / scene.grid.distance) * scene.grid.size + (Math.max(token.w, token.h) / 2);
     gm.run("areaRegion", { scene : scene.id, name : spell.name, color : game.user.color?.css ?? "#ffd700",
-      x : token.center.x, y : token.center.y, radius, activity : save.uuid, origin : token.document.uuid }).catch(error => log.debug(error));
+      x : token.center.x, y : token.center.y, radius, activity : save.uuid, origin : (message.getAssociatedToken?.() ?? token.document).uuid }).catch(error => log.debug(error));
   }
 
   /* Thunderous Smite : a creature that failed its save is pushed 10 ft away (the GM's button; Prone is the save's effect) */

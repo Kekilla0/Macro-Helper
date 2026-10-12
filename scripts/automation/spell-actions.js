@@ -7,6 +7,7 @@ import { gm } from '../gm.js';
 import { spells } from './spells.js';
 import { hands } from './hands.js';
 import { actions } from './actions.js';
+import { actionTracker } from './action-tracker.js';
 import { TYPES } from '../roll-item/message.js';
 import { idOf, chooseOption, buttonRow, addButton, makeButton, esc, ownerIds, originOf, originItem } from '../helpers/utils.js';
 import { conditions } from './conditions.js';
@@ -417,7 +418,7 @@ export class spellActions{
     /* True Strike : the attack with it now (the enchantment is what makes it use your spellcasting ability) */
     if(this.ATTACK_AFTER_ENCHANT.includes(idOf(activity.item))){
       const attack = actor.items.get(item.id)?.system?.activities?.find?.(a => a.type === "attack");
-      const used = attack ? await attack.use({ [module.id] : { note : module.format("spellActions.trueStrikeNote", { spell : activity.item.name }), cardFlags : { castAs : activity.item.uuid } } }) : null;
+      const used = attack ? await attack.use({ [module.id] : { economy : "free", note : module.format("spellActions.trueStrikeNote", { spell : activity.item.name }), cardFlags : { castAs : activity.item.uuid } } }) : null;
       /* Instantaneous : the enchantment ends once the attack's card is done */
       if(used) await uses.cardOf(used).catch(() => null);
       if(!enchantment.isDeleted) await enchantment.delete().catch(error => log.debug(error));
@@ -441,7 +442,7 @@ export class spellActions{
     if(!save || !token?.center || !canvas.ready) return null;
     const radius = (feet / canvas.scene.grid.distance) * canvas.grid.size + (Math.max(token.w, token.h) / 2);
     const made = await gm.run("areaRegion", { scene : canvas.scene.id, name : spell.name, color : game.user.color?.css ?? "#ffd700",
-      x : token.center.x, y : token.center.y, radius, activity : save.uuid, origin : token.document.uuid });
+      x : token.center.x, y : token.center.y, radius, activity : save.uuid, origin : (tokenOf(save.item?.actor)?.document ?? token.document).uuid });
     const region = made?.id ? canvas.scene.regions.get(made.id) : null;
     const inside = region ? getTokensInArea(region) : [token];
     if(!inside.includes(token)) inside.push(token);
@@ -480,7 +481,7 @@ export class spellActions{
     /* The burst shown on the map (the GM's client makes it) */
     const radius = (feet / scene.grid.distance) * scene.grid.size + (Math.max(token.w, token.h) / 2);
     gm.run("areaRegion", { scene : scene.id, name : save.item.name, color : game.user.color?.css ?? "#ffd700",
-      x : token.center.x, y : token.center.y, radius, activity : save.uuid, origin : token.document.uuid }).catch(error => log.debug(error));
+      x : token.center.x, y : token.center.y, radius, activity : save.uuid, origin : (tokenOf(save.item?.actor)?.document ?? token.document).uuid }).catch(error => log.debug(error));
   }
 
   /* ========== Sustained (Witch Bolt) ========== */
@@ -539,7 +540,7 @@ export class spellActions{
       return picking ? attack.use({ [module.id] : { useTargets : true } }) : next();
     }
     return damage.use({ consume : { spellSlot : false, resources : false }, concentration : { begin : false }, scaling : 0,
-      [module.id] : { skipPick : true, noCast : true, note : module.i18n("spellActions.sustainedNote") } }, { configure : false });
+      [module.id] : { skipPick : true, noCast : true, economy : "bonus", note : module.i18n("spellActions.sustainedNote") } }, { configure : false });
   }
 
   /* ========== Leap (Chromatic Orb) ========== */
@@ -1371,6 +1372,8 @@ export class spellActions{
   static OUT = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
   static reactionReady(actor, id){
     if(!actor || this.OUT.some(s => actor.statuses?.has(s)) || (Number(actor.system?.attributes?.hp?.value) <= 0)) return null;
+    /* Its Reaction already used (Action Tracker) */
+    if(!actionTracker.left(actor, "reaction")) return null;
     const spell = actor?.items?.find?.(i => (i.type === "spell") && (idOf(i) === id) && ((i.system.method !== "spell") || (Number(i.system.prepared) > 0)));
     if(!spell) return null;
     const slots = Object.entries(actor.system?.spells ?? {})
@@ -1448,7 +1451,10 @@ export class spellActions{
 
   /* Magic Missile cards : a Shield button for each target you own that can cast it */
   static missileShieldButtons(message, html){
-    if(!this.enabled() || !this.SHIELD.negates.includes(idOf(message.getAssociatedItem?.()))) return;
+    /* dnd5e's own turn / rest messages have no item (asking throws) */
+    let item = null;
+    try { item = message.getAssociatedItem?.(); } catch { return; }
+    if(!this.enabled() || !this.SHIELD.negates.includes(idOf(item))) return;
     const mine = (message.system?.targets ?? []).map(t => fromUuidSync(t.token, { strict : false })).filter(t => t?.actor?.isOwner && this.shieldReady(t.actor));
     const done = (message.system?.targets ?? []).map(t => fromUuidSync(t.token, { strict : false })).filter(t => t?.actor?.isOwner && message.getFlag(module.id, this.shieldKey(t.uuid)));
     if(!mine.length && !done.length) return;

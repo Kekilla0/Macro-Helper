@@ -427,3 +427,48 @@
 .chat-message .macro-helper-target-card .card-header .title { font-weight : bold; font-size : var(--font-size-14, 14px); }
 .chat-message .macro-helper-target-card .card-header .subtitle { font-size : var(--font-size-11, 11px); opacity : 0.8; }
 .chat-message .macro-helper-target-card .card-description.collapsed .collapsible-content { display : none; }
+
+/* Action Tracker : a creature's Action, Bonus Action, Reaction in the combat tracker */
+.macro-helper-economy { display: inline-flex; gap: 6px; align-items: center; margin-top: 2px; font-size: 0.8em; }
+.macro-helper-economy i { cursor: pointer; }
+.macro-helper-economy i.action { color: #3fa34d; }
+.macro-helper-economy i.bonus { color: #e08a1e; }
+.macro-helper-economy i.reaction { color: #9a6fd8; }
+.macro-helper-economy i.spent { opacity: 0.25; }
+.macro-helper-economy .attacks { font-size: 0.9em; opacity: 0.8; }
+.macro-helper-economy i.added { outline: 1px solid currentColor; outline-offset: 1px; border-radius: 50%; }
+
+/* Action Tracker : the action bar above the hotbar */
+#macro-helper-action-bar { position: relative; display: flex; align-items: center; gap: 12px; align-self: center; margin: 0 0 6px 0;
+  padding: 4px 10px; border-radius: 6px; background: rgba(20, 18, 24, 0.85); border: 1px solid #555; color: #eee; font-size: 14px; pointer-events: all; width: fit-content; }
+#macro-helper-action-bar[hidden] { display: none; }
+#macro-helper-action-bar.mine { border-color: #c9a227; }
+#macro-helper-action-bar .who { display: flex; align-items: center; gap: 6px; font-weight: bold; }
+#macro-helper-action-bar .who img { width: 26px; height: 26px; border: none; object-fit: contain; }
+#macro-helper-action-bar .pips { display: flex; align-items: center; gap: 5px; font-size: 16px; }
+#macro-helper-action-bar .pips i { cursor: pointer; }
+#macro-helper-action-bar .pips .sep { width: 6px; }
+#macro-helper-action-bar i.action { color: #3fa34d; }
+#macro-helper-action-bar i.bonus { color: #e08a1e; }
+#macro-helper-action-bar i.reaction { color: #9a6fd8; }
+#macro-helper-action-bar i.spent { opacity: 0.2; }
+#macro-helper-action-bar i.added { outline: 1px solid currentColor; outline-offset: 2px; border-radius: 50%; }
+#macro-helper-action-bar .move.over { color: #e05050; }
+#macro-helper-action-bar .object.spent { opacity: 0.35; }
+#macro-helper-action-bar .log-toggle { width: auto; height: 24px; line-height: 22px; padding: 0 6px; background: none; border: 1px solid #666; color: #eee; }
+#macro-helper-action-bar .log { position: absolute; bottom: 100%; left: 0; margin-bottom: 4px; max-height: 260px; overflow-y: auto; min-width: 320px;
+  padding: 6px 10px; border-radius: 6px; background: rgba(20, 18, 24, 0.95); border: 1px solid #555; font-size: 13px; }
+#macro-helper-action-bar .log ol { margin: 0; padding-left: 18px; }
+.macro-helper-economy-status.approved { color: #3fa34d; }
+.macro-helper-economy-status.denied, .macro-helper-economy-status.cancelled { color: #c04040; }
+#macro-helper-action-bar .end-turn { width: auto; height: 26px; line-height: 24px; padding: 0 10px; background: #3a5f2a; border: 1px solid #6c9c4f; color: #fff; font-weight: bold; }
+#macro-helper-action-bar .extras, .macro-helper-economy .legendary { display: inline-flex; gap: 4px; align-items: center; }
+#macro-helper-action-bar i.fa-crown, .macro-helper-economy i.fa-crown { color: #e0c341; }
+#macro-helper-action-bar i.lair, .macro-helper-economy i.lair { color: #6fa8d8; }
+.macro-helper-economy i.spent { opacity: 0.25; }
+#macro-helper-action-bar .ready-button { width: auto; height: 26px; line-height: 24px; padding: 0 8px; background: none; border: 1px solid #8a7a3a; color: #eee; }
+#macro-helper-action-bar .ready-chip, .macro-helper-economy .readied { color: #e0c341; }
+
+/* Roll Requests : feat buttons (Lose Concentration, Lucky, Bardic Inspiration) sized to fit the row */
+.chat-message button[data-request-feat] { width: auto; flex: 0 0 auto; height: 24px; line-height: 22px; padding: 0 6px; font-size: 12px; white-space: nowrap; }
+#macro-helper-action-bar .ready-button:disabled { opacity: 0.35; cursor: default; }

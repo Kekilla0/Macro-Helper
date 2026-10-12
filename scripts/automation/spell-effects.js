@@ -57,6 +57,7 @@ export class spellEffects{
     "protection-from-evil-and-good" : { attackersOfTypes : { types : ["aberration", "celestial", "elemental", "fey", "fiend", "undead"], mode : "disadvantage", resist : ["charmed", "frightened"] } },
     "compelled-duel" : { onlyAgainstOrigin : "disadvantage" },
     "arms-of-hadar" : { noReactions : true },
+    "shocking-grasp" : { noReactions : true },
     "sanctuary" : { sanctuary : true },
   };
   /* Spells whose effects are a choice : the question, and the rule the chosen one carries */
@@ -304,7 +305,8 @@ export class spellEffects{
     const actor = activity?.actor;
     if(!this.enabled() || !actor?.isOwner || !((activity.type === "attack") || (activity.item?.type === "spell"))) return;
     const wards = this.withRule(actor, "sanctuary");
-    if(wards.length) await actor.deleteEmbeddedDocuments("ActiveEffect", wards.map(e => e.id)).catch(() => {});
+    if(wards.length) await actor.deleteEmbeddedDocuments("ActiveEffect", wards.map(e => e.id),
+      { [module.id] : { reason : module.format("spellEffects.sanctuaryEnded", { name : actor.name, what : activity.item?.name ?? "" }) } }).catch(() => {});
   }
 
   /* A Reaction while it can't take one (Arms of Hadar) : Rule Limits */

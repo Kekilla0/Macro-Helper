@@ -50,6 +50,7 @@ export class uses{
       "castLevel",     // Spells : a levelled spell aimed at creatures asks its slot level first (the pick counts upcast targets)
       "longCast",      // Casting : 1 minute or more (or a Ritual) : begun with Concentration, cast from its card later
       "slotPerTurn",   // Casting : a second spell slot this turn follows Rule Limits
+      "economy",       // Action Tracker : its Action / Bonus Action / Reaction (Rule Limits for a second), spent once used
       "metamagic",     // Sorcerer : Metamagic chosen and paid before a Sorcerer spell is cast (Distant : the range picked)
       "components",    // Components : V (not Silenced), S (a free hand), M (a focus, or a pouch and a free hand) : Rule Limits
       "spellCommand",  // Spell actions : Command : which command, before the targets
@@ -72,6 +73,7 @@ export class uses{
       "pickTargets",   // Roll Item : pick targets on the map (Pick Targets)
       "spellRange",    // Spells : no pick, Rule Limits on : targets out of the spell's range follow Rule Limits
       "weaponRange",   // Weapons : no pick, Rule Limits on : targets beyond the weapon's reach / range follow Rule Limits
+      "economyApproval", // Action Tracker : a player's Action / Bonus Action off its turn : the GM approves (its targets picked)
     ],
   };
 

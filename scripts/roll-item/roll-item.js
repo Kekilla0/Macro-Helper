@@ -877,12 +877,13 @@ export class rollItem{
     return actors.some(a => (by?.uuid === a.uuid) || (by?.id === a.id));
   }
 
+  /* On every scene (the GM may be looking at another one than the fight's) */
   static async #clearInstant(test){
-    const scene = canvas.scene;
-    if(!scene) return;
-    const gone = (scene.regions?.contents ?? [...(scene.regions ?? [])]).filter(r => this.#isInstant(r) && test(r)).map(r => r.id);
-    if(gone.length) await scene.deleteEmbeddedDocuments("Region", gone);
-    log.debug("Cleared templates", gone.length);
+    for(const scene of new Set([canvas.scene, ...(game.scenes?.contents ?? [])].filter(Boolean))){
+      const gone = (scene.regions?.contents ?? [...(scene.regions ?? [])]).filter(r => this.#isInstant(r) && test(r)).map(r => r.id);
+      if(gone.length) await scene.deleteEmbeddedDocuments("Region", gone);
+      if(gone.length) log.debug("Cleared templates", scene.name, gone.length);
+    }
   }
 
   /* The first wall that blocks movement between two points, or null */

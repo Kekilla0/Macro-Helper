@@ -121,6 +121,7 @@ export const GROUPS = {
     icon : "fa-solid fa-swords",
     nested : true,
     settings : {
+      actionTracker : { scope : "world", default : false, type : Boolean },
       initiativeMethod : { scope : "world", default : "player", type : String,
         choices : { player : "settings.initiativeMethod.player", auto : "settings.initiativeMethod.auto" } },
       initiativeMessages : { scope : "world", default : "individual", type : String,
@@ -213,6 +214,8 @@ const VIRTUAL = {
   speciesRules : rule("speciesRules", "traitRules"),
   featRules : rule("featRules", "traitRules"),
   spellRules : rule("spellRules"),
+  /* Off unless switched on */
+  actionTracker : () => AUTO() && (() => { try { return RAW("actionTracker") === true; } catch { return false; } })(),
   /* System Automation's own keys : off with it */
   /* Rule Limits : "change" was Block + Fix Automatically (settings version 6) */
   weaponRules : () => (AUTO() ? ((RAW("weaponRules") === "change") ? "block" : RAW("weaponRules")) : "off"),

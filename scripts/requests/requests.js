@@ -46,6 +46,11 @@ export class rollRequests{
   }
 
   static register(){
+    /* Concentration ended (however) : its concentration cards drop the Lose Concentration button */
+    Hooks.on("deleteActiveEffect", effect => {
+      if(!effect?.statuses?.has?.("concentrating")) return;
+      for(const m of game.messages.contents.slice(-30)) if(m.getFlag(module.id, "request")) ui.chat?.updateMessage(m);
+    });
     if(game.system.id !== "dnd5e") return;
     Hooks.on("renderHotbar", (app, html) => this.addButton(html));
     Hooks.once("ready", () => this.addButton(document.getElementById("hotbar")));
@@ -320,7 +325,7 @@ export class rollRequests{
       if(tactical) out.push(button("tactical", "fa-chess-knight", module.format("requests.featFor", { feat : module.i18n("classes.fighter.tactical"), name : row.name })));
     }
     /* Concentration failed : losing it is a button (Lucky or Bardic Inspiration may still change the roll first) */
-    if((this.checkOf(request).kind === "concentration") && (entry.success === false) && actor?.isOwner && (actor.concentration?.effects?.size > 0)){
+    if((this.checkOf(request).kind === "concentration") && (entry.success === false) && actor?.isOwner && (actor.concentration?.effects?.size > 0) && !entry.lostConcentration){
       out.push(button("loseConcentration", "fa-heart-crack", module.i18n("requests.loseConcentration")));
     }
     if(game.user.isGM && entry.tactical && !entry.tacticalSpent && (entry.success !== false)){
