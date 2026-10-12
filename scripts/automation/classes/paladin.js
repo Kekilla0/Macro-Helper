@@ -4,7 +4,8 @@ import { logger } from '../../log.js';
 import { idOf, chooseOption, buttonRow, addButton, makeButton } from '../../helpers/utils.js';
 import { usedThisTurn, markUsedThisTurn, setStatus } from '../../helpers/actors.js';
 import { pickTargets } from '../../helpers/targets.js';
-import { pushAway } from '../../helpers/tokens.js';
+import { pushAway, distanceBetween } from '../../helpers/tokens.js';
+import { gm } from '../../gm.js';
 import { uses } from '../../uses.js';
 import { itemFixes } from '../item-fixes.js';
 import { limits } from '../limits.js';
@@ -30,7 +31,7 @@ const log = logger.for(import.meta.url);
  *                     the sheet smites the latest melee hit instead (Plutonium makes them Actions with their own damage).
  *                     The Ranger's spells that follow a weapon hit work the same way (the button says Strike when only
  *                     they apply) : Ensnaring Strike (any weapon hit : its STR save on the card), Hail of Thorns (a
- *                     ranged weapon hit : a DEX save for everyone within 5 ft of the target, its own save card).
+ *                     ranged weapon hit : a DEX save for everyone within 5 ft of the target, on the hit's card).
  *   Lay on Hands    : both activities reach a creature you touch (picked on the map). Remove Poison ends Poisoned on a
  *                     creature you own; on anyone else the GM gets an End Poisoned button on the card.
  */
@@ -267,9 +268,9 @@ export class paladin{
     await this.pay(actor, choice);
     await markUsedThisTurn(actor, "smite");
     await this.rider(message, choice.spell);
-    /* Hail of Thorns : everyone within 5 ft of the target saves (its own card, the slot already paid) */
+    /* Hail of Thorns : everyone within 5 ft of the target saves, on this card (its save and damage, like Ice Knife's) */
     const around = this.AROUND_TARGET[idOf(choice.spell)];
-    if(around && target) await spellActions.areaSave(choice.spell, target, { level : choice.level, feet : around });
+    if(around && target) await this.aroundRider(message, choice.spell, choice.level, target, around);
     /* Concentration (Wrathful, Searing...) : on the spell, as if cast */
     if(choice.spell.system.properties?.has?.("concentration")){
       const activity = choice.spell.system.activities?.contents?.[0];
@@ -302,6 +303,33 @@ export class paladin{
     if(!save) return;
     await message.update({ "system.rider" : { id : save.id, item : spell.uuid, ability : save.save?.ability?.first?.() ?? "",
       dc : Number.isFinite(save.save?.dc?.value) ? save.save.dc.value : null, onSave : null } });
+  }
+
+  /* A save for the target and everyone within some feet of it, on the hit's card : the spell's save as the card's own,
+     with its creatures, its damage rolled at the slot's level onto the card, the burst shown on the map */
+  static async aroundRider(message, spell, level, target, feet){
+    const save = spell.system.activities?.find?.(a => a.type === "save");
+    const token = target?.object ?? target;
+    if(!save || !token?.document) return;
+    const scene = token.document.parent;
+    const targets = scene.tokens.filter(t => t.actor && t.object && ((t === token.document) || (distanceBetween(t.object, token) <= feet))).map(t => t.uuid);
+    const rolls = [];
+    for(const part of save.damage?.parts ?? []){
+      const formula = part.scaledFormula?.(Math.max(0, (Number(level) || 1) - (Number(spell.system.level) || 1)), { rollData : save.getRollData?.() ?? {} }) ?? part.formula;
+      if(!formula) continue;
+      const type = part.types?.first?.() ?? [...(part.types ?? [])][0] ?? "";
+      const roll = await new CONFIG.Dice.DamageRoll(formula, save.getRollData?.() ?? {}, { type, types : [type], properties : ["mgc"] }).evaluate();
+      roll.options[module.id] = { part : "save" };
+      rolls.push(roll);
+    }
+    await message.update({
+      "system.rider" : { id : save.id, item : spell.uuid, ability : save.save?.ability?.first?.() ?? "",
+        dc : Number.isFinite(save.save?.dc?.value) ? save.save.dc.value : null, onSave : save.damage?.onSave ?? null, targets },
+      ...(rolls.length ? { rolls : [...message.rolls, ...rolls].map(r => JSON.stringify(r)) } : {}),
+    });
+    const radius = (feet / scene.grid.distance) * scene.grid.size + (Math.max(token.w, token.h) / 2);
+    gm.run("areaRegion", { scene : scene.id, name : spell.name, color : game.user.color?.css ?? "#ffd700",
+      x : token.center.x, y : token.center.y, radius, activity : save.uuid, origin : token.document.uuid }).catch(error => log.debug(error));
   }
 
   /* Thunderous Smite : a creature that failed its save is pushed 10 ft away (the GM's button; Prone is the save's effect) */

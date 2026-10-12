@@ -8,6 +8,7 @@ import { pickTargets } from '../../helpers/targets.js';
 import { tokenOf } from '../../helpers/tokens.js';
 import { uses } from '../../uses.js';
 import { TYPES } from '../../roll-item/message.js';
+import { postTargetCard, registerTargetCards } from '../../helpers/target-card.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -41,6 +42,7 @@ export class ranger{
       return this.use(item.actor);
     });
     gm.handle("huntersMark", (data, user) => this.applyMark(data, user));
+    registerTargetCards();
     /* The damage : on the attack card, when it's made (the attacker's client) */
     Hooks.on("createChatMessage", (message, options, userId) => { if(userId === game.user.id) this.onAttackCard(message); });
     /* Concentration on the spell ends : so does the mark (the GM) */
@@ -154,10 +156,11 @@ export class ranger{
       }
       await this.concentrate(actor, spell, pay.level ?? 1);
     }
-    /* The mark itself is on another creature : the GM's button */
-    await gm.ask("huntersMark", { caster : actor.uuid, spell : spell.uuid, target : target.document.uuid, from : move?.effect.uuid ?? null, hours : this.hoursFor(pay?.level ?? 1) },
-      { actor, text : module.format(move ? "classes.ranger.moved" : "classes.ranger.marked", { name : actor.name, target : target.name, spell : spell.name }),
-        label : module.format(move ? "classes.ranger.moveButton" : "classes.ranger.markButton", { target : target.name }) });
+    /* The mark itself is on another creature : the spell's card, a row for it with Mark (the GM, or its owner) */
+    await postTargetCard({ actor, item : spell, text : module.format(move ? "classes.ranger.moved" : "classes.ranger.marked", { name : actor.name, target : target.name, spell : spell.name }),
+      rows : [{ token : target.document.uuid, action : "huntersMark",
+        data : { caster : actor.uuid, spell : spell.uuid, target : target.document.uuid, from : move?.effect.uuid ?? null, hours : this.hoursFor(pay?.level ?? 1) },
+        label : module.i18n(move ? "classes.ranger.moveShort" : "classes.ranger.markShort"), done : module.i18n("classes.ranger.markedShort") }] });
     log.debug("Hunter's Mark", actor.name, target.name, move ? "moved" : pay?.value);
     return true;
   }
@@ -191,7 +194,8 @@ export class ranger{
     const caster = fromUuidSync(casterUuid ?? "", { strict : false });
     const target = fromUuidSync(targetUuid ?? "", { strict : false });
     const spell = fromUuidSync(spellUuid ?? "", { strict : false });
-    if(!game.user.isGM || !caster || !target?.actor || (user && !caster.testUserPermission(user, "OWNER"))) return false;
+    /* The caster's owner or the marked creature's (its row's Mark), or the GM */
+    if(!game.user.isGM || !caster || !target?.actor || (user && !caster.testUserPermission(user, "OWNER") && !target.actor.testUserPermission(user, "OWNER"))) return false;
     /* Concentration gone before the GM got to it : nothing to mark */
     if(!this.concentrationOf(caster, spell)){
       ui.notifications.warn(module.format("classes.ranger.noConcentration", { name : caster.name, spell : spell?.name ?? "" }));

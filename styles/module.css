@@ -427,3 +427,11 @@
 /* Font of Magic window : a row of slot levels each way */
 .macro-helper-font-row { display : flex; flex-wrap : wrap; gap : 6px; margin-bottom : 8px; }
 .macro-helper-font-row button { flex : 0 0 auto; min-width : 70px; line-height : 1.2; padding : 4px 8px; }
+
+/* A spell's card for what it does to creatures with no roll (Hunter's Mark, Hex) : the header like dnd5e's cards */
+.chat-message .macro-helper-target-card .card-header { display : flex; align-items : center; gap : 6px; cursor : pointer; }
+.chat-message .macro-helper-target-card .card-header .item-icon img { width : 32px; height : 32px; border : none; flex : none; }
+.chat-message .macro-helper-target-card .card-header .name-stacked { flex : 1; display : flex; flex-direction : column; min-width : 0; }
+.chat-message .macro-helper-target-card .card-header .title { font-weight : bold; font-size : var(--font-size-14, 14px); }
+.chat-message .macro-helper-target-card .card-header .subtitle { font-size : var(--font-size-11, 11px); opacity : 0.8; }
+.chat-message .macro-helper-target-card .card-description.collapsed .collapsible-content { display : none; }

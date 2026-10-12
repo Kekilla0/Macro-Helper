@@ -75,6 +75,9 @@ const log = logger.for(import.meta.url);
  *                   put on its sheet. Nothing goes on anyone by itself.
  *   Produce Flame : one use, the pick decides (within 60 ft) : you (the flame in your hand, your light) or a creature
  *                   (its Hurl Fire attack at it). The flame stays in your hand : it lights nowhere else.
+ *   Alarm         : its area is watched (the active GM) : a creature entering it, moving inside it or leaving it is
+ *                   whispered to the caster's players and the GM. The caster and creatures friendly to it don't set it
+ *                   off (the ones it designates).
  *   Shield        : an attack card that hits a creature with Shield ready (and a slot) gets a Shield button for its
  *                   owner (or the GM) : Shield is cast (slot, its effect) and the card judges that hit again at AC +5.
  *                   A Magic Missile card gets one per target too : that creature takes none of its damage.
@@ -108,6 +111,7 @@ export class spellActions{
     "unseen-servant" : { leash : 60, move : 15, action : "bonus", invisible : true, sight : 60 },
   };
   static MESSAGE = "message";
+  static ALARM = "alarm";
   static FLAME = { id : "produce-flame", range : 60 };
   static GOODBERRY = { id : "goodberry", max : 10, item : "Compendium.dnd5e.spells24.Item.phbutlMagicalBer" };
   /* Areas : a colour, heavily obscured (no sight through) */
@@ -163,12 +167,15 @@ export class spellActions{
     Hooks.on("combatTurnChange", combat => this.commandTurn(combat));
     /* Areas */
     Hooks.on("dnd5e.preCreateMeasuredTemplate", (activity, config) => this.areaColor(activity, config));
-    Hooks.on("createRegion", region => this.obscureArea(region));
+    Hooks.on("createRegion", region => { this.obscureArea(region); this.alarmStart(region); });
     /* dnd5e makes the final area in the user's colour : ours, as it's created */
     Hooks.on("preCreateRegion", region => this.regionColor(region));
     uses.onItem("element", (item, ctx, next) => this.elementStep(item, ctx, next));
     /* Produce Flame */
     uses.onItem("flame", (item, ctx, next) => this.flameStep(item, ctx, next));
+    /* Alarm */
+    Hooks.on("updateToken", (token, changes) => { if(("x" in (changes ?? {})) || ("y" in (changes ?? {})) || ("elevation" in (changes ?? {}))) this.alarmWatch(token); });
+    Hooks.on("createToken", token => this.alarmWatch(token));
     /* Goodberry */
     uses.onItem("goodberry", (item, ctx, next) => this.goodberryStep(item, ctx, next));
     gm.handle("goodberries", (data, user) => this.goodberriesAsGM(data, user));
@@ -691,6 +698,45 @@ export class spellActions{
     const title = module.format("spellActions.command.title", { spell : item.name, word });
     usage[module.id] = { ...(usage[module.id] ?? {}), cardFlags : { title } };
     return use.use(usage, ctx.dialog, foundry.utils.mergeObject(ctx.message ?? {}, { data : { flags : { [module.id] : { title } } } }, { inplace : false }));
+  }
+
+  /* ========== Alarm ========== */
+
+  /* An Alarm area placed : who's already in it (their moves there are "moves inside", not "entered") */
+  static async alarmStart(region){
+    if(!game.users.activeGM?.isSelf || !this.enabled()) return;
+    const item = fromUuidSync(region.getFlag("dnd5e", "item") ?? "", { strict : false });
+    if(idOf(item) !== this.ALARM) return;
+    const grid = region.parent.grid.size;
+    const inside = region.parent.tokens.filter(t => t.actor && region.testPoint({ x : t.x + (t.width * grid / 2), y : t.y + (t.height * grid / 2), elevation : t.elevation ?? 0 })).map(t => t.uuid);
+    await region.setFlag(module.id, "alarmInside", inside).catch(() => {});
+  }
+
+  /* A token moved (or appeared) : each Alarm area on its scene, who's inside now against who was */
+  static async alarmWatch(token){
+    if(!game.users.activeGM?.isSelf || !this.enabled() || !token?.parent) return;
+    const scene = token.parent;
+    for(const region of scene.regions){
+      const item = fromUuidSync(region.getFlag("dnd5e", "item") ?? "", { strict : false });
+      if(idOf(item) !== this.ALARM) continue;
+      const caster = item.actor;
+      const casterToken = scene.tokens.find(t => t.actor === caster) ?? null;
+      const D = CONST.TOKEN_DISPOSITIONS;
+      /* Not the caster, not its friends (the creatures it designated) */
+      if(!token.actor || (token.actor === caster) || (casterToken && (token.disposition === casterToken.disposition) && (token.disposition === D.FRIENDLY))) continue;
+      const grid = scene.grid.size;
+      const point = { x : token.x + (token.width * grid / 2), y : token.y + (token.height * grid / 2), elevation : token.elevation ?? 0 };
+      const now = region.testPoint(point);
+      const inside = new Set(region.getFlag(module.id, "alarmInside") ?? []);
+      const was = inside.has(token.uuid);
+      if(!now && !was) continue;
+      const what = (now && !was) ? "entered" : (!now && was) ? "left" : "moved";
+      if(now) inside.add(token.uuid); else inside.delete(token.uuid);
+      await region.setFlag(module.id, "alarmInside", [...inside]).catch(() => {});
+      const players = game.users.filter(u => !u.isGM && caster?.testUserPermission(u, "OWNER")).map(u => u.id);
+      await ChatMessage.implementation.create({ speaker : { alias : item.name }, whisper : [...new Set([...players, ...game.users.filter(u => u.isGM).map(u => u.id)])],
+        content : `<p>${esc(module.format(`spellActions.alarm.${what}`, { name : token.name, spell : item.name, caster : caster?.name ?? "" }))}</p>` });
+    }
   }
 
   /* ========== Produce Flame ========== */
