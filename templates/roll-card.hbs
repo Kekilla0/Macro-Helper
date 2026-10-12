@@ -189,6 +189,9 @@
 {{!-- Sections rules add (macro-helper.cardSections) : a weapon mastery's button, Graze's damage on a miss --}}
 {{#each sections}}{{> (lookup . "partial") context }}{{/each}}
 
+{{!-- What rules let you do to each creature, no save (Thorn Whip's pull) : a row each, like a save card's --}}
+{{#if ruleRows.length}}{{> "macro-helper.rows" rows=ruleRows }}{{/if}}
+
 {{!-- Effects the attack applies (Guiding Bolt, Ray of Frost) --}}
 {{#if effects.length}}
 <effect-application class="dnd5e2">

@@ -126,6 +126,12 @@ export class rollItem{
       dc : Number.isFinite(save.save.dc.value) ? save.save.dc.value : null,
       onSave : save.damage?.onSave ?? null,
     } : null;
+    /* Rules can give the save its own creatures (Ice Knife : everyone within 5 ft of the target) : macro-helper.riderTargets */
+    if(rider){
+      const around = [];
+      Hooks.callAll(`${module.id}.riderTargets`, save, target, around);
+      if(around.length) rider.targets = around;
+    }
 
     const why = this.disadvantageOf(config);
     const message = await this.attackCard(activity, [roll, ...damage, ...added, ...extras, ...riderDamage], { scaling, rider, note, cardFlags,
@@ -368,7 +374,7 @@ export class rollItem{
 
   static modeFor(activity, usage){
     /* Utility activities : a formula to roll, or effects for creatures other than the user (Bless : a row each, its Apply) */
-    if((activity?.type === "utility") && !activity.roll?.formula && !(activity.effects?.length && !this.isSelfOnly(activity))) return null;
+    if((activity?.type === "utility") && !activity.roll?.formula && !(activity.effects?.length && !this.isSelfOnly(activity)) && !usage?.[module.id]?.mode) return null;
     /* Rules can keep Roll Item off an activity (macro-helper.preRollItem : Bardic Inspiration's die is rolled when used) */
     if(Hooks.call(`${module.id}.preRollItem`, activity, usage) === false) return null;
     let mode = usage?.[module.id]?.mode;
@@ -719,7 +725,11 @@ export class rollItem{
     const ranged = function(data, options = {}){
       restore();
       const onMove = args => {
-        const { shape, position } = args;
+        const { shape } = args;
+        /* A cube on a square grid : its corner on a grid point, so it covers whole squares (a 5 ft cube : one square) */
+        const g = canvas.grid.size;
+        const snap = (shape.type === "rectangle") && canvas.grid.isSquare;
+        const position = snap ? { x : Math.round(args.position.x / g) * g, y : Math.round(args.position.y / g) * g } : args.position;
         const center = token.center;
         const dx = position.x - center.x, dy = position.y - center.y;
         const gap = Math.hypot(dx, dy);
@@ -731,7 +741,8 @@ export class rollItem{
           const step = Math.max(0, back - 2) / (back || 1);
           point = { x : center.x + ((wall.x - center.x) * step), y : center.y + ((wall.y - center.y) * step) };
         }
-        if(!wall && (gap <= limit)) return options.onMove?.(args);
+        if(!wall && (gap <= limit) && !snap) return options.onMove?.(args);
+        if(snap) point = { x : Math.round(point.x / g) * g, y : Math.round(point.y / g) * g };
         shape.updateSource(point);
         options.onMove?.(args);
         return false;

@@ -811,6 +811,8 @@ export function registerMessages(){
           ability : new StringField({ blank : true, initial : "" }),
           dc : new NumberField({ integer : true, nullable : true, initial : null }),
           onSave : new StringField({ blank : true, nullable : true, initial : null }),
+          /* Who saves, when it isn't the creatures the attack hit (Ice Knife : everyone round the target) : token uuids */
+          targets : new ArrayField(new StringField({ blank : false }), { required : false, initial : [] }),
         }, { nullable : true, initial : null }),
       };
     }
@@ -1265,6 +1267,13 @@ export function registerMessages(){
         ? [await this.attackRoll.render({ template : ROLL_TEMPLATE, isPrivate : true })]
         : rendered.filter((_, i) => !(rolls[i] instanceof DamageRoll));
       if(context.targets) context.targets = context.targets.map(t => ({ ...maskTarget(t), ...coverShown(t), applied : appliedOn(this.parent, t.token, ["hits", "tray"]) }));
+      /* What rules let you do to a creature with no save (Thorn Whip's pull) : a row each, like a save card's */
+      if(this.parent.isContentVisible && !this.isMulti){
+        const attack = this.attackRoll;
+        context.ruleRows = buildRows(this.parent, { targets : this.targets })
+          .map((row, i) => ({ ...row, ruleButtons : ruleButtonsOf(this.parent, row.uuid, { result : { hit : hitsAC(attack, this.targets[i]?.ac) }, owner : true }) }))
+          .filter(row => row.ruleButtons.length);
+      }
       const damage = this.damageRolls;
       /* Damage is rolled either way; APPLY only shows on a hit (a reroll that hits brings it back) */
       if(damage.length) context.damage = { ...damageContext(this.parent, damage, { hidden }), showTray : this.canApply && this.isHitOn(null) };
@@ -1313,7 +1322,9 @@ export function registerMessages(){
       const save = this.riderActivity;
       if(!save) return [];
       const attack = this.attackRoll;
-      const targets = this.targets.filter(t => hitsAC(attack, t.ac));
+      /* Its own creatures (Ice Knife's burst, hit or miss), else those the attack hit */
+      const own = (this.rider?.targets ?? []).map(uuid => fromUuidSync(uuid, { strict : false })?.object).filter(Boolean);
+      const targets = own.length ? TargetsField.getDescriptors(own) : this.targets.filter(t => hitsAC(attack, t.ac));
       return buildRows(this.parent, {
         targets,
         hasSave : true,
@@ -1350,8 +1361,8 @@ export function registerMessages(){
       return {
         name : save?.name || game.i18n.localize("DND5E.SavingThrow"),
         label,
-        /* Faded when the attack is known to have missed, the GM can still use it */
-        miss : visible && !rollItem.isHit(this.attackRoll),
+        /* Faded when the attack is known to have missed, the GM can still use it (not when it's for others, hit or miss) */
+        miss : visible && !rollItem.isHit(this.attackRoll) && !this.rider?.targets?.length,
         hasDamage : rolls.length > 0,
         damage : rolls.length ? { ...damageContext(this.parent, rolls, { hidden : hidesNumbers(this.parent) }), showTray : this.canApply && rollItem.isHit(this.attackRoll) } : null,
         summaries,

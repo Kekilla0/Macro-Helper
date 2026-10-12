@@ -181,7 +181,7 @@
   min-width: 2.5em;
   text-align: end;
 }
-.chat-message .targets li:has(.macro-helper-applied) { display: flex; align-items: center; gap: 4px; }
+.chat-message .targets li:has(.macro-helper-applied, .macro-helper-row-apply) { display: flex; align-items: center; gap: 4px; width: 100%; }
 .chat-message :is(.macro-helper-row .applied, .macro-helper-applied).damage { color: var(--dnd5e-color-failure, #c62828); }
 .chat-message :is(.macro-helper-row .applied, .macro-helper-applied).healing { color: var(--dnd5e-color-success, #2e7d32); }
 .chat-message .macro-helper-row .result.failure { color: var(--dnd5e-color-failure, #c62828); }

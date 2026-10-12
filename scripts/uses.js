@@ -32,6 +32,9 @@ export class uses{
       "itemMacro",     // Item Macro : a macro run before (or instead of) the use
       "healer",        // Feats : the Healer feat's Battle Medic
       "byHealth",      // Spells : Toll the Dead uses its healthy / hurt activity for its target
+      "element",       // Spell actions : Elementalism : which element (its area's colour), no Beckon / Sculpt question
+      "flame",         // Spell actions : Produce Flame : you, a creature (hurl) or a square, one pick
+      "goodberry",     // Spell actions : Goodberry : who gets the berries (up to 10 picks, repeats allowed)
       "water",         // Spell actions : Create or Destroy Water : fill containers or rain (douse flames)
       "illusion",      // Spell actions : Disguise Self, Silent Image, Sanctuary : straight to casting (the other activity is for others); the image's space
       "afterAttack",   // Spell actions : Ice Knife goes to its attack (its shard's save comes after)

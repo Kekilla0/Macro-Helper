@@ -72,6 +72,8 @@ export class spells{
     itemFixes.add({ name : "Venomous Spew", where : "owned", plan : item => this.spewFix(item) });
     itemFixes.add({ name : "Chill Touch", where : "owned", plan : item => this.chillTouchFix(item) });
     itemFixes.add({ name : "Mind Sliver", where : "owned", plan : item => this.mindSliverFix(item) });
+    itemFixes.add({ name : "Produce Flame", where : "owned", plan : item => this.produceFlameFix(item) });
+    itemFixes.add({ name : "Jump", where : "owned", plan : item => this.jumpFix(item) });
     Hooks.on("dnd5e.rollSavingThrow", (rolls, data) => this.nextSaveUsed(data?.subject ?? rolls?.[0]?.data?.actor ?? null));
     Hooks.on("dnd5e.preApplyDamage", (actor, amount) => this.blockHealing(actor, amount));
     itemFixes.add({ name : "Giant Insect", where : "owned", plan : item => this.giantInsectFix(item) });
@@ -243,6 +245,26 @@ export class spells{
       ...(this.untilTurnEnd(item, effects)?.updateEffects ?? []),
     ];
     return updateEffects.length ? { updateEffects } : null;
+  }
+
+  /* ---------- Jump : its effect sets the creature's jump speed to 30 ft (the token ruler's Jump action uses it) ---------- */
+
+  static jumpFix(item){
+    if(!this.enabled() || this.is2014(item) || (item?.type !== "spell") || (idOf(item) !== "jump")) return null;
+    const KEY = "system.attributes.movement.speeds.jump";
+    const effects = item.effects?.contents ?? [...(item.effects ?? [])];
+    const updateEffects = effects.filter(e => !e.transfer && !(e.changes ?? []).some(c => c.key === KEY))
+      .map(e => ({ _id : e.id, changes : [...(e.toObject().changes ?? []), { key : KEY, type : "upgrade", mode : 4, value : "30" }] }));
+    return updateEffects.length ? { updateEffects } : null;
+  }
+
+  /* ---------- Produce Flame : its hurl has the range of a hurl (60 ft), not the spell's Self ---------- */
+
+  static produceFlameFix(item){
+    if(!this.enabled() || this.is2014(item) || (item?.type !== "spell") || (idOf(item) !== "produce-flame")) return null;
+    const hurl = [...(item.system?.activities ?? [])].find(a => a.type === "attack");
+    if(!hurl || (hurl.range?.override && (Number(hurl.range?.value) > 0))) return null;
+    return { update : { [`system.activities.${hurl.id}.range`] : { override : true, value : "60", units : "ft" } } };
   }
 
   /* ---------- Mind Sliver : the next save only ---------- */

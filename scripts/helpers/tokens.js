@@ -532,6 +532,26 @@ const warnedSight = new Set();
  * @param {Token|TokenDocument|Actor} target
  * @returns {boolean}
  */
+/**
+ * Is the line between two tokens through a heavily obscured area (a region flagged macro-helper.obscured : Fog Cloud),
+ * or is either of them inside one ?
+ * @returns {boolean}
+ */
+export function obscuredBetween(a, b){
+  const ta = tokenOf(a), tb = tokenOf(b);
+  const scene = ta?.document?.parent;
+  const areas = scene?.regions?.filter?.(r => r.getFlag(module.id, "obscured")) ?? [];
+  if(!areas.length || !tb) return false;
+  const from = ta.center, to = tb.center;
+  const steps = Math.max(2, Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / ((canvas.grid?.size ?? 100) / 4)));
+  const elevation = ta.document.elevation ?? 0;
+  for(let i = 0; i <= steps; i++){
+    const point = { x : from.x + ((to.x - from.x) * i / steps), y : from.y + ((to.y - from.y) * i / steps), elevation };
+    if(areas.some(r => r.testPoint(point))) return true;
+  }
+  return false;
+}
+
 export function canSee(viewer, target){
   const v = tokenOf(viewer), t = tokenOf(target);
   if(!v || !t || (v === t)) return true;
@@ -543,6 +563,8 @@ export function canSee(viewer, target){
   try { mode = enabled ? game.settings.get(module.id, "vision") : "off"; }
   catch { try { mode = game.settings.get(module.id, "visionRules") ? "full" : "off"; } catch { mode = "off"; } }
   if(mode === "off") return true;
+  /* A heavily obscured area (Fog Cloud) in the way, or either inside one : no sight through it */
+  if(obscuredBetween(v, t)) return false;
   /* Blinded : only senses that aren't sight (blindsight, tremorsense...) can still find it */
   const blinded = !!v.actor?.statuses?.has("blinded");
   /* Without sight to work it out (vision off on the token or the scene), the conditions still count :

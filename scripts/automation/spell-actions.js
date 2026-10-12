@@ -33,7 +33,7 @@ const log = logger.for(import.meta.url);
  *   Light         : Light : on a creature or object (a token in reach) or on a square in reach; Produce Flame : in
  *                   your hand (your token). A real light, for its duration (an effect on the caster : end it, the light
  *                   goes); casting it again moves it.
- *   Around target : a save for everyone in an area round the creature hit or aimed at (Ice Knife's shard, hit or miss;
+ *   Around target : a save for everyone in an area round the creature hit or aimed at (Ice Knife : on its own attack card;
  *                   Hail of Thorns from its Strike) : the area shown, its own save card, no slot (the cast paid).
  *   Sustained     : Witch Bolt cast again at the same creature while its Concentration lasts : its later turns' damage
  *                   (1d12, no roll, no slot : a Bonus Action you remember to take) instead of a new casting; the first
@@ -67,6 +67,14 @@ const log = logger.for(import.meta.url);
  *   Detection     : Detect Evil and Good, Detect Poison and Disease, Detect Magic : a coloured effect on the caster while
  *                   it lasts (it ends with the Concentration), to keep track of it.
  *   Cast only     : Sanctuary's save is the attacker's (spell-effects), so using the spell casts it without asking.
+ *   Areas         : coloured by the spell (Fog Cloud a fog grey) or the caster's choice (Elementalism : air, earth, fire,
+ *                   water, chosen as it's cast : no other question). Fog Cloud's area is heavily obscured : no sight
+ *                   into, out of or through it (the Vision rules).
+ *   Goodberry     : pick up to 10 creatures on the map (the same one again for more); the card's rows are those creatures,
+ *                   each with Spawn N Goodberries (its owner or the GM) : dnd5e's Magical Berries (food, heals 1 when eaten)
+ *                   put on its sheet. Nothing goes on anyone by itself.
+ *   Produce Flame : one use, the pick decides (within 60 ft) : you (the flame in your hand, your light) or a creature
+ *                   (its Hurl Fire attack at it). The flame stays in your hand : it lights nowhere else.
  *   Shield        : an attack card that hits a creature with Shield ready (and a slot) gets a Shield button for its
  *                   owner (or the GM) : Shield is cast (slot, its effect) and the card judges that hit again at AC +5.
  *                   A Magic Missile card gets one per target too : that creature takes none of its damage.
@@ -100,6 +108,12 @@ export class spellActions{
     "unseen-servant" : { leash : 60, move : 15, action : "bonus", invisible : true, sight : 60 },
   };
   static MESSAGE = "message";
+  static FLAME = { id : "produce-flame", range : 60 };
+  static GOODBERRY = { id : "goodberry", max : 10, item : "Compendium.dnd5e.spells24.Item.phbutlMagicalBer" };
+  /* Areas : a colour, heavily obscured (no sight through) */
+  static AREAS = { "fog-cloud" : { color : "#c4ccd4", obscured : true } };
+  static ELEMENTS = { id : "elementalism", colors : { air : "#cdeeff", earth : "#8a6a3a", fire : "#ff6a1a", water : "#2f7fd6" } };
+  static #areaColor = null;
   static WATER = { id : "create-or-destroy-water", skins : 20, range : 30, pints : 4, item : "Compendium.dnd5e.equipment24.Item.dmgspWaterfresh0", identifier : "water-fresh-pint" };
   static DETECTION = { "detect-evil-and-good" : "#ffd24a", "detect-poison-and-disease" : "#5cc66b", "detect-magic" : "#a974ff" };
   /* Spells whose other activity is for someone else (Sanctuary's save : the attacker's) : straight to casting */
@@ -113,7 +127,8 @@ export class spellActions{
 
   static register(){
     if(game.system.id !== "dnd5e") return;
-    Hooks.on("dnd5e.renderChatMessage", (message, html) => this.pullButtons(message, html));
+    Hooks.on(`${module.id}.rowButtons`, (message, uuid, buttons, { result } = {}) => this.pullButton(message, uuid, buttons, result));
+    Hooks.on(`${module.id}.rowButton`, (message, uuid, id) => { if(id === "spellPull") this.pull(message, uuid); });
     Hooks.on(`${module.id}.rowButtons`, (message, uuid, buttons, { result } = {}) => this.pushButton(message, uuid, buttons, result));
     Hooks.on(`${module.id}.rowButton`, (message, uuid, id) => { if(id === "spellPush") this.push(message, uuid); });
     uses.onItem("byHealth", (item, ctx, next) => this.byHealthStep(item, ctx, next));
@@ -129,8 +144,7 @@ export class spellActions{
     gm.handle("areaRegion", data => this.regionAsGM(data));
     gm.handle("spellFlee", data => this.fleeAsGM(data));
     uses.onItem("afterAttack", (item, ctx, next) => this.afterAttackStep(item, ctx, next));
-    Hooks.on(`${module.id}.isRider`, activity => !(this.AFTER_ATTACK[idOf(activity?.item)] && (activity.type === "save")));
-    Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.afterAttack(activity, usage, results));
+    Hooks.on(`${module.id}.riderTargets`, (save, target, out) => this.burstTargets(save, target, out));
     /* Sustained */
     Hooks.on(`${module.id}.isExtra`, activity => !this.SUSTAINED.includes(idOf(activity?.item)));
     uses.onItem("sustained", (item, ctx, next) => this.sustainedStep(item, ctx, next));
@@ -147,6 +161,19 @@ export class spellActions{
     Hooks.on("createChatMessage", message => this.commandOutcome(message));
     Hooks.on("updateChatMessage", message => this.commandOutcome(message));
     Hooks.on("combatTurnChange", combat => this.commandTurn(combat));
+    /* Areas */
+    Hooks.on("dnd5e.preCreateMeasuredTemplate", (activity, config) => this.areaColor(activity, config));
+    Hooks.on("createRegion", region => this.obscureArea(region));
+    /* dnd5e makes the final area in the user's colour : ours, as it's created */
+    Hooks.on("preCreateRegion", region => this.regionColor(region));
+    uses.onItem("element", (item, ctx, next) => this.elementStep(item, ctx, next));
+    /* Produce Flame */
+    uses.onItem("flame", (item, ctx, next) => this.flameStep(item, ctx, next));
+    /* Goodberry */
+    uses.onItem("goodberry", (item, ctx, next) => this.goodberryStep(item, ctx, next));
+    gm.handle("goodberries", (data, user) => this.goodberriesAsGM(data, user));
+    Hooks.on(`${module.id}.rowButtons`, (message, uuid, buttons) => this.berryButton(message, uuid, buttons));
+    Hooks.on(`${module.id}.rowButton`, (message, uuid, id) => { if(id === "spawnBerries") this.spawnBerries(message, uuid); });
     /* Water */
     uses.onItem("water", (item, ctx, next) => this.waterStep(item, ctx, next));
     Hooks.on(`${module.id}.rollFormula`, activity => idOf(activity?.item) !== this.WATER.id);
@@ -196,29 +223,28 @@ export class spellActions{
 
   /* ========== Pull (Thorn Whip) ========== */
 
-  static pullButtons(message, html){
-    if(!game.user.isGM || !this.enabled() || (message.type !== TYPES.attack)) return;
+  /* On the line of a creature the attack hit (the GM's) : Large or smaller */
+  static pullButton(message, uuid, buttons, result){
+    if(!game.user.isGM || !this.enabled() || (message.type !== TYPES.attack) || !result?.hit) return;
     const pull = this.PULLS[idOf(message.getAssociatedItem?.())];
-    if(!pull || !message.system?.hitTargets) return;
-    const rays = message.system.isMulti ? message.system.rays.map((_, i) => i) : [null];
-    /* The hit tokens, as documents (hitTargets gives what the card resolves : a token or its document) */
-    const tokens = [...new Set(rays.flatMap(r => message.system.hitTargets(r) ?? []).map(t => t?.document ?? t).filter(t => t?.uuid))];
-    if(!tokens.length) return;
-    const row = buttonRow(html, { key : `${module.id}-spell-pull` });
-    if(row.childElementCount) return;
-    for(const token of tokens){
-      const size = token.actor?.system?.traits?.size ?? "med";
-      if(this.SIZES.indexOf(size) > this.SIZES.indexOf(pull.maxSize)) continue;
-      const key = `pulled.${token.uuid.replaceAll(".", "-")}`;
-      addButton(row, makeButton({ icon : "fa-arrows-to-dot", once : true, disabled : !!message.getFlag(module.id, key),
-        text : module.format("spellActions.pull", { name : token.name, feet : pull.feet }),
-        onClick : async () => {
-          const from = message.getAssociatedToken?.()?.object ?? tokenOf(message.getAssociatedActor?.());
-          const moved = (token.object && from) ? await pullToward(token.object, from, pull.feet) : 0;
-          if(!moved) ui.notifications.info(module.format("rollItem.mastery.blocked", { name : token.name }));
-          await message.setFlag(module.id, key, true);
-        } }));
-    }
+    const token = pull ? fromUuidSync(uuid, { strict : false }) : null;
+    if(!token) return;
+    const size = token.actor?.system?.traits?.size ?? "med";
+    if(this.SIZES.indexOf(size) > this.SIZES.indexOf(pull.maxSize)) return;
+    const done = !!message.getFlag(module.id, `pulled.${uuid.replaceAll(".", "-")}`);
+    buttons.push({ id : "spellPull", icon : "fa-arrows-to-dot", disabled : done,
+      label : module.format(done ? "spellActions.pulled" : "spellActions.pullShort", { feet : pull.feet }) });
+  }
+
+  static async pull(message, uuid){
+    const pull = this.PULLS[idOf(message.getAssociatedItem?.())];
+    const token = fromUuidSync(uuid, { strict : false });
+    const key = `pulled.${uuid.replaceAll(".", "-")}`;
+    if(!game.user.isGM || !pull || !token || message.getFlag(module.id, key)) return;
+    const from = message.getAssociatedToken?.()?.object ?? tokenOf(message.getAssociatedActor?.());
+    const moved = (token.object && from) ? await pullToward(token.object, from, pull.feet) : 0;
+    if(!moved) ui.notifications.info(module.format("rollItem.mastery.blocked", { name : token.name }));
+    await message.setFlag(module.id, key, true);
   }
 
   /* ========== Push (Thunderwave) ========== */
@@ -406,7 +432,7 @@ export class spellActions{
     return { id : region?.id ?? null };
   }
 
-  /* Ice Knife : straight to its attack (its save isn't a rider : it's the shard's own, after the attack) */
+  /* Ice Knife : straight to its attack (its save rides on the attack's card, for everyone round the target) */
   static afterAttackStep(item, ctx, next){
     if(!this.enabled() || !this.AFTER_ATTACK[idOf(item)]) return next();
     const attack = item.system.activities?.find?.(a => a.type === "attack");
@@ -415,19 +441,20 @@ export class spellActions{
     return attack.use(usage, ctx.dialog, ctx.message);
   }
 
-  /* Its card done, hit or miss : the save round the target */
-  static async afterAttack(activity, usage, results){
-    const feet = this.AFTER_ATTACK[idOf(activity?.item)];
-    if(!feet || (activity.type !== "attack") || !results || !activity.actor?.isOwner || !this.enabled()) return;
-    /* Roll Item puts its card's promise on the results in its own hook : after this one, maybe */
-    await new Promise(resolve => setTimeout(resolve, 0));
-    const found = await uses.cardOf(results).catch(() => null);
-    const card = (found?.documentName === "ChatMessage") ? found : (found?.message ?? null);
-    const uuid = card?.system?.targets?.[0]?.token;
-    const token = uuid ? fromUuidSync(uuid, { strict : false })?.object : null;
-    if(!token) return;
-    const level = (Number(activity.item.system.level) || 1) + (Number(usage?.scaling) || 0);
-    await this.areaSave(activity.item, token, { level, feet });
+  /* The save's creatures : the target and everyone within 5 ft of it, hit or miss (the area shown) */
+  static burstTargets(save, target, out){
+    const feet = this.AFTER_ATTACK[idOf(save?.item)];
+    const token = target?.object ?? target;
+    if(!feet || !this.enabled() || !token?.document) return;
+    const scene = token.document.parent;
+    for(const t of scene.tokens){
+      if(!t.actor || !t.object) continue;
+      if((t === token.document) || (distanceBetween(t.object, token) <= feet)) out.push(t.uuid);
+    }
+    /* The burst shown on the map (the GM's client makes it) */
+    const radius = (feet / scene.grid.distance) * scene.grid.size + (Math.max(token.w, token.h) / 2);
+    gm.run("areaRegion", { scene : scene.id, name : save.item.name, color : game.user.color?.css ?? "#ffd700",
+      x : token.center.x, y : token.center.y, radius, activity : save.uuid, origin : token.document.uuid }).catch(error => log.debug(error));
   }
 
   /* ========== Sustained (Witch Bolt) ========== */
@@ -624,6 +651,129 @@ export class spellActions{
     }
   }
 
+  /* ========== Areas (Fog Cloud, Elementalism) ========== */
+
+  static areaColor(activity, config){
+    if(!this.enabled() || !config) return;
+    const chosen = this.#areaColor;
+    if(chosen && (chosen.item === activity?.item?.id) && ((Date.now() - chosen.at) < 60000)){ config.color = chosen.color; return; }
+    const area = this.AREAS[idOf(activity?.item)];
+    if(area?.color) config.color = area.color;
+  }
+
+  static regionColor(region){
+    if(!this.enabled()) return;
+    const item = fromUuidSync(region.getFlag?.("dnd5e", "item") ?? region.flags?.dnd5e?.item ?? "", { strict : false });
+    if(!item) return;
+    const chosen = this.#areaColor;
+    const color = (chosen && (chosen.item === item.id) && ((Date.now() - chosen.at) < 60000)) ? chosen.color : this.AREAS[idOf(item)]?.color;
+    if(color) region.updateSource({ color });
+  }
+
+  /* The active GM : a heavily obscuring spell's area is flagged (the Vision rules read it) */
+  static async obscureArea(region){
+    if(!game.users.activeGM?.isSelf || !this.enabled()) return;
+    const item = fromUuidSync(region.getFlag("dnd5e", "item") ?? "", { strict : false });
+    if(this.AREAS[idOf(item)]?.obscured && !region.getFlag(module.id, "obscured")) await region.setFlag(module.id, "obscured", true).catch(error => log.debug(error));
+  }
+
+  /* Elementalism : which element, then its area in that colour (Beckon and Sculpt aren't asked) */
+  static async elementStep(item, ctx, next){
+    if(!this.enabled() || (idOf(item) !== this.ELEMENTS.id)) return next();
+    const use = item.system.activities?.contents?.[0];
+    if(!use) return next();
+    const element = await chooseOption({ title : item.name, icon : "fa-solid fa-wind", prompt : module.i18n("spellActions.element.prompt"),
+      options : Object.keys(this.ELEMENTS.colors).map(e => ({ value : e, label : module.i18n(`spellActions.element.${e}`) })) });
+    if(!element) return null;
+    this.#areaColor = { item : item.id, color : this.ELEMENTS.colors[element], at : Date.now() };
+    const word = module.i18n(`spellActions.element.${element}`);
+    const { chooseActivity, ...usage } = ctx.config ?? {};
+    const title = module.format("spellActions.command.title", { spell : item.name, word });
+    usage[module.id] = { ...(usage[module.id] ?? {}), cardFlags : { title } };
+    return use.use(usage, ctx.dialog, foundry.utils.mergeObject(ctx.message ?? {}, { data : { flags : { [module.id] : { title } } } }, { inplace : false }));
+  }
+
+  /* ========== Produce Flame ========== */
+
+  static async flameStep(item, ctx, next){
+    if(!this.enabled() || (idOf(item) !== this.FLAME.id)) return next();
+    const cast = item.system.activities?.find?.(a => a.type === "utility");
+    const hurl = item.system.activities?.find?.(a => a.type === "attack");
+    const caster = tokenOf(item.actor);
+    if(!cast || !hurl || !caster) return next();
+    /* Yourself or a creature (one you can't see too : the attack has disadvantage) */
+    const [token] = await pickTargets(item, { count : 1, range : this.FLAME.range, disposition : "any", includeSelf : true, useTargets : false, sight : false,
+      notice : module.i18n("spellActions.flame.pick") });
+    if(!token) return null;
+    const { chooseActivity, ...usage } = ctx.config ?? {};
+    /* A creature : Hurl Fire at it */
+    if(token && (token !== caster)){
+      canvas.tokens.setTargets([token.id]);
+      return hurl.use({ ...usage, [module.id] : { ...(usage[module.id] ?? {}), skipPick : true, useTargets : true } }, ctx.dialog, ctx.message);
+    }
+    /* You : the flame in your hand (your light) */
+    const lightWhere = { token : caster.document.uuid };
+    canvas.tokens.setTargets([]);
+    return cast.use({ ...usage, [module.id] : { ...(usage[module.id] ?? {}), skipPick : true, lightWhere } }, ctx.dialog, ctx.message);
+  }
+
+  /* ========== Goodberry ========== */
+
+  static async goodberryStep(item, ctx, next){
+    if(!this.enabled() || (idOf(item) !== this.GOODBERRY.id)) return next();
+    const use = item.system.activities?.contents?.[0];
+    if(!use || !tokenOf(item.actor)) return next();
+    const picks = await pickTargets(item, { count : this.GOODBERRY.max, repeat : true, confirm : "manual", range : Infinity, disposition : "any",
+      includeSelf : true, useTargets : false, sight : false, notice : module.format("spellActions.goodberry.pick", { n : this.GOODBERRY.max }) });
+    if(!picks?.length) return null;
+    /* How many each, its row's Spawn button gives them */
+    const counts = {};
+    for(const t of picks.slice(0, this.GOODBERRY.max)) counts[t.document.uuid.replaceAll(".", "-")] = (counts[t.document.uuid.replaceAll(".", "-")] ?? 0) + 1;
+    canvas.tokens.setTargets([...new Set(picks)].map(t => t.id));
+    const { chooseActivity, ...usage } = ctx.config ?? {};
+    return use.use({ ...usage, [module.id] : { ...(usage[module.id] ?? {}), mode : "utility", skipPick : true, useTargets : true } }, ctx.dialog,
+      foundry.utils.mergeObject(ctx.message ?? {}, { data : { flags : { [module.id] : { goodberries : counts } } } }, { inplace : false }));
+  }
+
+  /* A Goodberry card's rows : Spawn, for the creature's owner or the GM */
+  static berryButton(message, uuid, buttons){
+    const counts = message?.getFlag?.(module.id, "goodberries");
+    const n = counts?.[uuid.replaceAll(".", "-")];
+    const actor = n ? fromUuidSync(uuid, { strict : false })?.actor : null;
+    if(!actor || !(game.user.isGM || actor.isOwner)) return;
+    const done = !!message.getFlag(module.id, `berriesGiven.${uuid.replaceAll(".", "-")}`);
+    buttons.push({ id : "spawnBerries", icon : "fa-seedling", disabled : done,
+      label : module.format(done ? "spellActions.goodberry.spawned" : "spellActions.goodberry.spawn", { n }) });
+  }
+
+  static async spawnBerries(message, uuid){
+    const n = message.getFlag(module.id, "goodberries")?.[uuid.replaceAll(".", "-")];
+    if(!n || message.getFlag(module.id, `berriesGiven.${uuid.replaceAll(".", "-")}`)) return;
+    await gm.run("goodberries", { message : message.id, token : uuid, n });
+  }
+
+  /* GM : that creature's berries (its owner or the GM pressed Spawn), stacked; the card remembers */
+  static async goodberriesAsGM({ message : id, token : uuid, n = 1 } = {}, user){
+    const message = game.messages.get(id);
+    const actor = fromUuidSync(uuid ?? "", { strict : false })?.actor;
+    const key = `berriesGiven.${String(uuid).replaceAll(".", "-")}`;
+    if(!message || !actor || message.getFlag(module.id, key) || !(user.isGM || actor.testUserPermission(user, "OWNER"))) return false;
+    const count = Math.min(this.GOODBERRY.max, Number(message.getFlag(module.id, "goodberries")?.[String(uuid).replaceAll(".", "-")]) || Number(n) || 1);
+    const source = await fromUuid(this.GOODBERRY.item).catch(() => null);
+    if(!source) return ui.notifications.warn(module.i18n("spellActions.goodberry.noItem"));
+    const stack = actor.items.find(i => i.getFlag(module.id, "goodberry"));
+    if(stack) await stack.update({ "system.quantity" : (Number(stack.system.quantity) || 0) + count });
+    else {
+      const data = source.toObject();
+      delete data._id;
+      foundry.utils.mergeObject(data, { name : module.i18n("spellActions.goodberry.name"), system : { quantity : count },
+        flags : { [module.id] : { goodberry : { at : game.time.worldTime, caster : message.getAssociatedActor?.()?.uuid ?? null } } }, _stats : { compendiumSource : source.uuid } });
+      await actor.createEmbeddedDocuments("Item", [data]);
+    }
+    await message.setFlag(module.id, key, true);
+    return true;
+  }
+
   /* ========== Water (Create or Destroy Water) ========== */
 
   static async waterStep(item, ctx, next){
@@ -792,7 +942,9 @@ export class spellActions{
     const itemUuid = effect.getFlag("dnd5e", "item")?.uuid;
     if(!itemUuid) return;
     for(const scene of game.scenes){
-      const ids = scene.regions.filter(r => (r.getFlag(module.id, "illusion")?.item === itemUuid) || (r.getFlag(module.id, "illusion")?.concentration === effect.uuid)).map(r => r.id);
+      /* The image's area, and any area the spell placed (Fog Cloud, Entangle...) : they end with its Concentration */
+      const ids = scene.regions.filter(r => (r.getFlag(module.id, "illusion")?.item === itemUuid) || (r.getFlag(module.id, "illusion")?.concentration === effect.uuid)
+        || (r.getFlag("dnd5e", "item") === itemUuid)).map(r => r.id);
       if(ids.length) await scene.deleteEmbeddedDocuments("Region", ids).catch(error => log.debug(error));
     }
   }
@@ -1168,8 +1320,9 @@ export class spellActions{
     if(!spec) return next();
     const actor = activity.actor, caster = tokenOf(actor);
     if(!caster) return next();
-    let where = null;
-    if(spec.place === "self") where = { token : caster.document.uuid };
+    let where = ctx.config?.[module.id]?.lightWhere ?? null;
+    if(where) {}
+    else if(spec.place === "self") where = { token : caster.document.uuid };
     else {
       const how = await chooseOption({ title : activity.item.name, icon : "fa-solid fa-lightbulb", prompt : module.i18n("spellActions.lightWhere"),
         options : [{ value : "token", label : module.i18n("spellActions.lightToken") }, { value : "square", label : module.i18n("spellActions.lightSquare") }] });

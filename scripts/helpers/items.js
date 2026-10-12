@@ -232,6 +232,8 @@ export async function pickAttack(item, { count = 1, disposition = "nonAlly", wit
       range, within, disposition, confirm, notice, repeat, filter,
       normalRange : shownNormal,
       useTargets : !clearTargets,
+      /* An attack can go at a creature you can't see (in fog, Invisible) : the roll gives the disadvantage, the colours show it */
+      sight : false,
       tokenColor : t => predictMode(attack, t, { attackMode : attackModeFor(item, t, { long }), disadvantage : longOrThreat(t) }),
     });
     if(!targets.length) return null;   // cancelled, or nothing in range (pickTargets said which)
