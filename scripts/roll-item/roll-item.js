@@ -367,8 +367,8 @@ export class rollItem{
   };
 
   static modeFor(activity, usage){
-    /* Utility activities only have something to roll when they define a formula */
-    if(activity?.type === "utility" && !activity.roll?.formula) return null;
+    /* Utility activities : a formula to roll, or effects for creatures other than the user (Bless : a row each, its Apply) */
+    if((activity?.type === "utility") && !activity.roll?.formula && !(activity.effects?.length && !this.isSelfOnly(activity))) return null;
     /* Rules can keep Roll Item off an activity (macro-helper.preRollItem : Bardic Inspiration's die is rolled when used) */
     if(Hooks.call(`${module.id}.preRollItem`, activity, usage) === false) return null;
     let mode = usage?.[module.id]?.mode;
@@ -1015,6 +1015,8 @@ export class rollItem{
   /* A utility activity's own roll formula (dnd5e's "Roll" button), no dialog, no message */
   static async rollFormula(activity){
     if(!activity?.roll?.formula) return [];
+    /* Rules can keep a formula off the card (Resistance's 1d4 is rolled when the damage comes) : macro-helper.rollFormula */
+    if(Hooks.call(`${module.id}.rollFormula`, activity) === false) return [];
     return await activity.rollFormula({}, { configure : false }, { create : false }) ?? [];
   }
 
@@ -1355,6 +1357,27 @@ export class rollItem{
     });
 
     log.debug("Usage card", activity.item.name, { data, damage });
-    return await ChatMessage.implementation.create(data);
+    const message = await ChatMessage.implementation.create(data);
+    await this.applyOwnBuffs(activity, message);
+    return message;
+  }
+
+  /**
+   * A buff's card (a utility with effects, no save) : its effects go at once on the caster's own character (the caster
+   * itself, or the character assigned to one of its players : theirs, not one they merely have access to); their rows
+   * show them applied. Anyone else's waits for its row's Apply.
+   */
+  static async applyOwnBuffs(activity, message){
+    if((activity?.type !== "utility") || !activity.effects?.length || (typeof message?.system?.applyEffectsTo !== "function")) return;
+    const caster = activity.actor;
+    const assigned = game.users.filter(u => !u.isGM && caster?.testUserPermission(u, "OWNER")).map(u => u.character).filter(Boolean);
+    const { TargetsField } = dnd5e.dataModels.chatMessage.fields;
+    for(const descriptor of message.system.targets ?? []){
+      const { actor } = TargetsField.resolve(descriptor);
+      if(!actor?.isOwner) continue;
+      const base = actor.isToken ? actor.token?.baseActor : actor;
+      const own = (actor === caster) || (actor.uuid === caster?.uuid) || assigned.some(c => (c === actor) || (c === base));
+      if(own) await message.system.applyEffectsTo(descriptor.token).catch(error => log.debug("Own buff", error));
+    }
   }
 }

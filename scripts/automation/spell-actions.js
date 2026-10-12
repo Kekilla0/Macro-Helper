@@ -11,6 +11,7 @@ import { TYPES } from '../roll-item/message.js';
 import { idOf, chooseOption, buttonRow, addButton, makeButton, esc, ownerIds, originOf, originItem } from '../helpers/utils.js';
 import { conditions } from './conditions.js';
 import { rollRequests } from '../requests/requests.js';
+import { heldLight } from './held-light.js';
 import { stabilize, addTimedEffect } from '../helpers/actors.js';
 import { pickTargets, pickSpace } from '../helpers/targets.js';
 import { tokenOf, getRange, pullToward, pushAway, addLight, removeLight, getTokensInArea, distanceBetween, canSee } from '../helpers/tokens.js';
@@ -59,6 +60,13 @@ const log = logger.for(import.meta.url);
  *                   spell goes straight to its Use. The first time each hostile creature can see the disguised caster or
  *                   the image, its Study comes as a Roll Request card for the GM (Intelligence (Investigation) against the
  *                   spell's DC, a row each : Sees through it / Fooled); once per creature.
+ *   Water         : Create or Destroy Water asks : Fill containers (the card's rows are the creatures within 30 ft with
+ *                   a waterskin, each with the GM's Fill button : up to 20 skins, 10 gallons at half a gallon each :
+ *                   4 of dnd5e's Water, fresh (Pint) put inside each) or Rain (its 30 ft cube : the flames inside go out, held torches, lamps, lanterns and
+ *                   candles, Produce Flame). Its gallons aren't rolled.
+ *   Detection     : Detect Evil and Good, Detect Poison and Disease, Detect Magic : a coloured effect on the caster while
+ *                   it lasts (it ends with the Concentration), to keep track of it.
+ *   Cast only     : Sanctuary's save is the attacker's (spell-effects), so using the spell casts it without asking.
  *   Shield        : an attack card that hits a creature with Shield ready (and a slot) gets a Shield button for its
  *                   owner (or the GM) : Shield is cast (slot, its effect) and the card judges that hit again at AC +5.
  *                   A Magic Missile card gets one per target too : that creature takes none of its damage.
@@ -92,6 +100,10 @@ export class spellActions{
     "unseen-servant" : { leash : 60, move : 15, action : "bonus", invisible : true, sight : 60 },
   };
   static MESSAGE = "message";
+  static WATER = { id : "create-or-destroy-water", skins : 20, range : 30, pints : 4, item : "Compendium.dnd5e.equipment24.Item.dmgspWaterfresh0", identifier : "water-fresh-pint" };
+  static DETECTION = { "detect-evil-and-good" : "#ffd24a", "detect-poison-and-disease" : "#5cc66b", "detect-magic" : "#a974ff" };
+  /* Spells whose other activity is for someone else (Sanctuary's save : the attacker's) : straight to casting */
+  static CAST_ONLY = { "sanctuary" : {} };
   static ILLUSIONS = { "disguise-self" : { watch : "caster" }, "silent-image" : { watch : "space", feet : 15 } };
   static COMMAND = { id : "command", options : ["approach", "drop", "flee", "grovel", "halt"] };
 
@@ -135,6 +147,14 @@ export class spellActions{
     Hooks.on("createChatMessage", message => this.commandOutcome(message));
     Hooks.on("updateChatMessage", message => this.commandOutcome(message));
     Hooks.on("combatTurnChange", combat => this.commandTurn(combat));
+    /* Water */
+    uses.onItem("water", (item, ctx, next) => this.waterStep(item, ctx, next));
+    Hooks.on(`${module.id}.rollFormula`, activity => idOf(activity?.item) !== this.WATER.id);
+    Hooks.on(`${module.id}.rowButtons`, (message, uuid, buttons) => this.fillButton(message, uuid, buttons));
+    Hooks.on(`${module.id}.rowButton`, (message, uuid, id) => { if(id === "waterFill") this.fill(message, uuid); });
+    gm.handle("waterDouse", (data, user) => this.douseAsGM(data, user));
+    /* Detection */
+    Hooks.on("dnd5e.postUseActivity", activity => this.detectionMark(activity));
     /* Illusions */
     uses.onItem("illusion", (item, ctx, next) => this.illusionStep(item, ctx, next));
     gm.handle("illusionMark", (data, user) => this.illusionMarkAsGM(data, user));
@@ -228,9 +248,21 @@ export class spellActions{
   /* ========== By health (Toll the Dead) ========== */
 
   static async byHealthStep(item, ctx, next){
-    if(!this.enabled() || !this.BY_HEALTH.includes(idOf(item)) || (game.user.targets.size !== 1)) return next();
+    if(!this.enabled() || !this.BY_HEALTH.includes(idOf(item))) return next();
     const activities = item.system.activities?.contents ?? [];
     if(activities.length < 2) return next();
+    /* Pick Targets : the creature first (its Hit Points decide which activity); then no second pick */
+    let picked = false;
+    const caster = tokenOf(item);
+    const pick = settings.value("rollItemPick");
+    if(settings.value("rollItem") && (pick !== "off") && canvas.ready && caster && (caster.document.parent === canvas.scene)
+      && !((pick === "empty") && (game.user.targets.size === 1))){
+      const range = getRange(activities[0]) || Number(item.system.range?.value) || 60;
+      const [target] = await pickTargets(item, { count : 1, range, disposition : "any", includeSelf : false, useTargets : false });
+      if(!target) return null;
+      picked = true;
+    }
+    if(game.user.targets.size !== 1) return next();
     const actor = game.user.targets.first()?.actor;
     const hp = actor?.system?.attributes?.hp;
     if(!hp) return next();
@@ -238,6 +270,7 @@ export class spellActions{
     const activity = activities.find(a => (hurt ? /damag|hurt|wound|missing/i : /healthy|full|unharm/i).test(a.name ?? "")) ?? null;
     if(!activity) return next();
     const { chooseActivity, ...usage } = ctx.config ?? {};
+    if(picked) usage[module.id] = { ...(usage[module.id] ?? {}), skipPick : true, useTargets : true };
     return activity.use(usage, ctx.dialog, ctx.message);
   }
 
@@ -591,10 +624,118 @@ export class spellActions{
     }
   }
 
+  /* ========== Water (Create or Destroy Water) ========== */
+
+  static async waterStep(item, ctx, next){
+    if(!this.enabled() || (idOf(item) !== this.WATER.id)) return next();
+    const use = item.system.activities?.contents?.[0];
+    if(!use) return next();
+    const choice = await chooseOption({ title : item.name, icon : "fa-solid fa-droplet", prompt : module.i18n("spellActions.water.prompt"),
+      options : [{ value : "fill", label : module.i18n("spellActions.water.fill") }, { value : "rain", label : module.i18n("spellActions.water.rain") }] });
+    if(!choice) return null;
+    const { chooseActivity, ...usage } = ctx.config ?? {};
+    const caster = tokenOf(item.actor);
+    if(choice === "fill"){
+      /* No area to place : the card's rows are the creatures within range carrying a waterskin, each with its Fill */
+      const near = caster ? canvas.tokens.placeables.filter(t => t.actor && ((t === caster) || (distanceBetween(t, caster) <= this.WATER.range))
+        && t.actor.items.some(i => idOf(i) === "waterskin")) : [];
+      if(!near.length) ui.notifications.info(module.i18n("spellActions.water.noSkins"));
+      canvas.tokens.setTargets(near.map(t => t.id));
+      return use.use({ ...usage, create : { ...(usage.create ?? {}), measuredTemplate : false },
+        [module.id] : { ...(usage[module.id] ?? {}), skipPick : true, useTargets : true, cardFlags : { water : "fill" } } },
+        ctx.dialog, foundry.utils.mergeObject(ctx.message ?? {}, { data : { flags : { [module.id] : { water : "fill" } } } }, { inplace : false }));
+    }
+    const result = await use.use({ ...usage, [module.id] : { ...(usage[module.id] ?? {}), skipPick : true } }, ctx.dialog, ctx.message);
+    const regions = (result?.templates ?? []).map(t => (t?.document ?? t)?.uuid).filter(Boolean);
+    if(result && regions.length) await gm.run("waterDouse", { item : item.uuid, regions });
+    return result;
+  }
+
+  /* A Fill card's rows : the GM's Fill for that creature's waterskins (20 at most from one casting) */
+  static fillButton(message, uuid, buttons){
+    if(!game.user.isGM || (message?.getFlag?.(module.id, "water") !== "fill")) return;
+    const actor = fromUuidSync(uuid, { strict : false })?.actor;
+    const skins = actor?.items?.filter(i => idOf(i) === "waterskin") ?? [];
+    if(!skins.length) return;
+    const done = message.getFlag(module.id, `waterFilled.${uuid.replaceAll(".", "-")}`);
+    const used = Object.values(message.getFlag(module.id, "waterFilled") ?? {}).reduce((n, v) => n + (Number(v) || 0), 0);
+    buttons.push({ id : "waterFill", icon : "fa-droplet", disabled : !!done || (used >= this.WATER.skins),
+      label : done ? module.format("spellActions.water.filledN", { n : done }) : module.format("spellActions.water.fillN", { n : skins.length }) });
+  }
+
+  static async fill(message, uuid){
+    const key = `waterFilled.${uuid.replaceAll(".", "-")}`;
+    const actor = fromUuidSync(uuid, { strict : false })?.actor;
+    if(!game.user.isGM || !actor || message.getFlag(module.id, key)) return;
+    const used = Object.values(message.getFlag(module.id, "waterFilled") ?? {}).reduce((n, v) => n + (Number(v) || 0), 0);
+    const skins = actor.items.filter(i => idOf(i) === "waterskin").slice(0, Math.max(0, this.WATER.skins - used));
+    /* Each skin holds 4 pints : dnd5e's Water, fresh (Pint), inside it, topped up to 4 */
+    const source = await fromUuid(this.WATER.item).catch(() => null);
+    if(!source) return ui.notifications.warn(module.i18n("spellActions.water.noItem"));
+    for(const skin of skins){
+      const inside = actor.items.filter(i => (i.system?.container === skin.id) && (idOf(i) === this.WATER.identifier));
+      const have = inside.reduce((n, i) => n + (Number(i.system.quantity) || 0), 0);
+      const need = Math.max(0, this.WATER.pints - have);
+      if(!need) continue;
+      if(inside.length) await inside[0].update({ "system.quantity" : (Number(inside[0].system.quantity) || 0) + need });
+      else {
+        const data = source.toObject();
+        delete data._id;
+        foundry.utils.mergeObject(data, { system : { container : skin.id, quantity : need }, _stats : { compendiumSource : source.uuid } });
+        await actor.createEmbeddedDocuments("Item", [data]);
+      }
+    }
+    await message.setFlag(module.id, key, skins.length);
+  }
+
+  /* GM : the flames inside the rain's area go out */
+  static async douseAsGM({ item : itemUuid, regions = [] } = {}, user){
+    const item = fromUuidSync(itemUuid ?? "", { strict : false });
+    if(!item?.actor?.testUserPermission(user, "OWNER")) return false;
+    const out = [];
+    for(const uuid of regions){
+      const region = fromUuidSync(uuid, { strict : false });
+      if(!region) continue;
+      for(const token of getTokensInArea(region, { includeHidden : true })){
+        const actor = token.actor;
+        if(!actor) continue;
+        /* Held lights (torch, lamp, lantern, candle) */
+        for(const id of Object.values(actor.getFlag(module.id, "hands") ?? {})){
+          const held = id ? actor.items.get(id) : null;
+          if(held && heldLight.sourceOf(held) && heldLight.isLit(actor, id)){ await heldLight.putOut(actor, id, { keepTime : true }); out.push(`${token.name} : ${held.name}`); }
+        }
+        /* Produce Flame */
+        const flames = actor.effects.filter(e => idOf(originItem(e)) === "produce-flame");
+        if(flames.length){ await actor.deleteEmbeddedDocuments("ActiveEffect", flames.map(e => e.id)).catch(() => {}); out.push(`${token.name} : ${flames[0].name}`); }
+      }
+    }
+    await ChatMessage.implementation.create({ speaker : ChatMessage.implementation.getSpeaker({ actor : item.actor }),
+      content : `<p>${esc(out.length ? module.format("spellActions.water.doused", { list : out.join(", ") }) : module.i18n("spellActions.water.noFlames"))}</p>` });
+    return true;
+  }
+
+  /* ========== Detection (Detect Evil and Good...) ========== */
+
+  /* A coloured effect on the caster, tied to its Concentration (spell-effects) */
+  static async detectionMark(activity){
+    const color = this.DETECTION[idOf(activity?.item)];
+    const actor = activity?.actor;
+    if(!color || !this.enabled() || !actor?.isOwner) return;
+    const item = actor.items.get(activity.item.id) ?? activity.item;
+    if(actor.effects.some(e => !e.disabled && String(e.origin ?? "").startsWith(item.uuid) && e.getFlag(module.id, "detection"))) return;
+    /* After dnd5e's Concentration lands, so the effect depends on it */
+    await new Promise(resolve => setTimeout(resolve, 400));
+    await actor.createEmbeddedDocuments("ActiveEffect", [{
+      name : module.format("spellActions.detecting", { spell : item.name }), img : item.img, tint : color, origin : item.uuid,
+      duration : activity.duration?.getEffectData?.() ?? {}, showIcon : CONST.ACTIVE_EFFECT_SHOW_ICON?.ALWAYS ?? 2,
+      flags : { [module.id] : { detection : true } },
+    }]).catch(error => log.debug(error));
+  }
+
   /* ========== Illusions (Disguise Self, Silent Image) ========== */
 
   static async illusionStep(item, ctx, next){
-    const spec = this.ILLUSIONS[idOf(item)];
+    const spec = this.ILLUSIONS[idOf(item)] ?? this.CAST_ONLY[idOf(item)];
     const use = spec ? item.system.activities?.find?.(a => a.type === "utility") : null;
     if(!this.enabled() || !use) return next();
     const { chooseActivity, ...usage } = ctx.config ?? {};

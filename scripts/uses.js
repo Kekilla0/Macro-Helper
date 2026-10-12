@@ -32,7 +32,8 @@ export class uses{
       "itemMacro",     // Item Macro : a macro run before (or instead of) the use
       "healer",        // Feats : the Healer feat's Battle Medic
       "byHealth",      // Spells : Toll the Dead uses its healthy / hurt activity for its target
-      "illusion",      // Spell actions : Disguise Self, Silent Image : straight to their Use (Study is for others); the image's space
+      "water",         // Spell actions : Create or Destroy Water : fill containers or rain (douse flames)
+      "illusion",      // Spell actions : Disguise Self, Silent Image, Sanctuary : straight to casting (the other activity is for others); the image's space
       "afterAttack",   // Spell actions : Ice Knife goes to its attack (its shard's save comes after)
       "sustained",     // Spell actions : Witch Bolt again at the same creature : its later turns' damage
       "fastForward",   // Roll Item : one attack with its riders skips dnd5e's choice of activity

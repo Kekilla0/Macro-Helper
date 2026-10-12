@@ -29,9 +29,9 @@ const log = logger.for(import.meta.url);
  *                Tactical Mind at the card's foot for their owners. Individual : dnd5e's own roll messages, linked.
  *   Whisper    : the cards and the rolls only for the GM and the creatures' owners.
  *   Concentration (Roll Item on) : dnd5e's prompt after damage becomes a card like these, one row (whispered to the
- *                creature's owners and the GM; the DC shown). Rolled once (rerolls on the card); a failure ends the
- *                Concentration, unless Lucky or Bardic Inspiration could still change it (then a Lose Concentration
- *                button too). Debug on : the GM's 20 / 1 buttons by each row's reroll.
+ *                creature's owners and the GM; the DC shown). Rolled once (rerolls on the card); a failure gives a
+ *                Lose Concentration button (its owner or the GM), nothing ends by itself. Debug on : the GM's 20 / 1
+ *                buttons by each row's reroll.
  */
 export class rollRequests{
   static DIFFICULTIES = [[5, "veryEasy"], [10, "easy"], [15, "medium"], [20, "hard"], [25, "veryHard"], [30, "nearlyImpossible"]];
@@ -319,7 +319,7 @@ export class rollRequests{
         && (Number(fighter.secondWindOf(actor)?.system?.uses?.value) > 0);
       if(tactical) out.push(button("tactical", "fa-chess-knight", module.format("requests.featFor", { feat : module.i18n("classes.fighter.tactical"), name : row.name })));
     }
-    /* Concentration failed, a feat still could change it : losing it is a button */
+    /* Concentration failed : losing it is a button (Lucky or Bardic Inspiration may still change the roll first) */
     if((this.checkOf(request).kind === "concentration") && (entry.success === false) && actor?.isOwner && (actor.concentration?.effects?.size > 0)){
       out.push(button("loseConcentration", "fa-heart-crack", module.i18n("requests.loseConcentration")));
     }
@@ -452,18 +452,7 @@ export class rollRequests{
     const dc = this.dcOf(request);
     const entry = { ...before, ...mark, total, roll : data, success : (dc === null) ? null : (total >= dc) };
     await card.setFlag(module.id, `request.results.1.${rowKey}`, entry);
-    /* Concentration lost : ended now, unless a feat could still save it (its button, and Lose Concentration) */
-    if((this.checkOf(request).kind === "concentration") && (entry.success === false) && actor && !this.couldSave(actor, entry)){
-      await actor.endConcentration().catch(error => log.debug(error));
-    }
     return true;
-  }
-
-  /* Lucky (a use left, not used here) or Bardic Inspiration (not used here) */
-  static couldSave(actor, entry = {}){
-    const lucky = settings.value("featRules") && findItem(actor, "lucky");
-    if(lucky && (Number(lucky.system.uses?.value) > 0) && !entry.lucky) return true;
-    return !entry.bardic && !!bard.inspirationOf(actor);
   }
 
   /* Individual : a dnd5e roll message answering a request (made, or changed by its buttons) : the GM marks the row */

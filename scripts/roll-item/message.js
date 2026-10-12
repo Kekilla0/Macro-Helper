@@ -320,7 +320,30 @@ export function registerMessages(){
    * @param {ChatMessage} message
    * @param {object} options   { targets, hasSave, abilities, dc, onSave, hasRolls, isHeal }
    */
-  const buildRows = (message, { targets = [], hasSave = false, abilities = [], dc, onSave, hasRolls = false, isHeal = false, bonus = "", effects = [] } = {}) => {
+  /* What a row's Apply would do to that creature : the card's damage sized by its save, through its resistances,
+     immunities and vulnerabilities (dnd5e's own calculation, as its tray shows it). { amount, healing } or null */
+  const rowAmount = (message, actor, rolls, multiplier) => {
+    if(!actor?.calculateDamage || !rolls?.length) return null;
+    const damages = aggregateDamageRolls(rolls, { respectProperties : true }).map(roll => ({
+      properties : new Set(roll.options.properties ?? []), type : roll.options.type, value : Math.max(0, roll.total),
+    }));
+    try {
+      const result = actor.calculateDamage(damages, { multiplier, origin : message });
+      if(!Array.isArray(result)) return null;
+      const total = result.reduce((sum, d) => sum + (Number(d.value) || 0), 0);
+      return { amount : Math.abs(Math.trunc(total)), healing : total < 0 };
+    } catch(error){ return null; }
+  };
+
+  /* A row's damage / healing Apply : nothing to apply (0 : immune, or no damage on a save) : no button */
+  const applyOf = (message, uuid, { hasRolls, owner, hasSave, result, multiplier, labelKey, hideTotal, actor, rolls }) => {
+    if(!hasRolls || !owner || (hasSave && !result) || appliedOn(message, uuid, ["rows"]) || (multiplier === 0)) return null;
+    const amount = rowAmount(message, actor, rolls, multiplier);
+    if(amount && (amount.amount === 0)) return null;
+    return { multiplier, label : labelKey, ...(hideTotal ? {} : (amount ?? {})) };
+  };
+
+  const buildRows = (message, { targets = [], hasSave = false, abilities = [], dc, onSave, hasRolls = false, rolls = [], isHeal = false, bonus = "", effects = [] } = {}) => {
     if(!targets.length || !message.isContentVisible) return [];
     const results = saveResultsOf(message);
     const dmScreen = settings.value("rollItemDmScreen");
@@ -359,9 +382,9 @@ export function registerMessages(){
           detail : (!hideTotal && result.message) ? rollDetail(result.message.rolls?.[0], result.shift ?? 0) : "",
         } : null,
         /* Once applied from this card, the amount shows instead */
-        apply : (hasRolls && owner && (!hasSave || result) && !appliedOn(message, descriptor.token, ["rows"])) ? { multiplier, label : labelKey } : null,
+        apply : applyOf(message, descriptor.token, { hasRolls, owner, hasSave, result, multiplier, labelKey, hideTotal, actor, rolls }),
         /* The save's effects (Turned, Paralyzed...) : the GM applies them once it's rolled, to those they apply to */
-        ...effectRow(message, descriptor.token, { hasSave, result, effects }),
+        ...effectRow(message, descriptor.token, { hasSave, result, effects, owner }),
         /* Buttons rules add to this creature's row (Thunderwave's push) : macro-helper.rowButtons */
         ruleButtons : ruleButtonsOf(message, descriptor.token, { result, owner }),
       };
@@ -383,13 +406,21 @@ export function registerMessages(){
   };
 
   /* A row's effect button (GM) : on a failure all of them, on a success those that apply anyway; applied once */
-  const effectRow = (message, uuid, { hasSave, result, effects }) => {
-    if(!game.user.isGM || !hasSave || !result) return {};
-    const due = effects.filter(e => !result.success || e.onSave);
+  /* The effects a row applies : a save's (all on a failure, those that apply anyway on a success), or with no save all
+     of them (a buff : Bless); a choice spell's only the chosen one (Guidance's skill : the card's spellChoice) */
+  const dueEffects = (message, effects, { hasSave, result }) => {
+    const chosen = message.getFlag?.(module.id, "spellChoice");
+    return effects.filter(e => (!hasSave || !result?.success || e.onSave) && (!chosen || (e.doc?.id === chosen)));
+  };
+
+  const effectRow = (message, uuid, { hasSave, result, effects, owner = false }) => {
+    /* With a save : the GM's, once rolled. Without (a buff) : the creature's owner or the GM */
+    if(hasSave ? (!game.user.isGM || !result) : !(game.user.isGM || owner)) return {};
+    const due = dueEffects(message, effects, { hasSave, result });
     const names = due.map(e => e.doc.name).join(", ");
     /* Rules can change the GM's button (macro-helper.rowEffect : Shove shows the shover's choice, nothing until then) */
     const row = { show : due.length > 0, names, done : !!message.getFlag(module.id, `effects.${uuidKey(uuid)}`) };
-    Hooks.callAll(`${module.id}.rowEffect`, message, uuid, row, { success : !!result.success, effects : due.map(e => e.doc) });
+    Hooks.callAll(`${module.id}.rowEffect`, message, uuid, row, { success : !!result?.success, effects : due.map(e => e.doc) });
     if(!row.show) return {};
     if(row.done) return { effectApplied : row.names };
     return { effectApply : module.format("rollItem.row.applyEffect", { names : row.names }) };
@@ -397,24 +428,32 @@ export function registerMessages(){
 
   /* The GM applies a row's effects to its creature */
   const applyRowEffects = async (message, button, { activity, targets = [] } = {}) => {
-    if(!game.user.isGM) return;
     const uuid = button.dataset.target;
     const descriptor = targets.find(t => t.token === uuid) ?? { token : uuid };
     const { actor } = TargetsField.resolve(descriptor);
+    const hasSave = activity?.type === "save";
     const result = saveResultsOf(message).get(uuid);
-    if(!actor || !result) return;
-    const due = effectsOf(activity).filter(e => !result.success || e.onSave);
+    if(!actor || (hasSave && (!game.user.isGM || !result)) || (!hasSave && !(game.user.isGM || actor.isOwner))) return;
+    const due = dueEffects(message, effectsOf(activity), { hasSave, result });
     /* Rules may stop it or do it themselves (macro-helper.preApplyEffects : Grapple on a creature too big; Shove) */
     if(Hooks.call(`${module.id}.preApplyEffects`, message, actor, due.map(e => e.doc), { uuid, button }) === false) return;
     if(!due.length) return;
+    const origin = activity.item?.uuid;
+    /* The activity's duration when the effect has none of its own (Bless : 1 minute) */
+    const duration = activity.duration?.getEffectData?.() ?? null;
     const data = due.map(({ doc }) => {
-      const d = foundry.utils.mergeObject(doc.toObject(), { origin : activity.item?.uuid ?? doc.parent?.uuid, transfer : false, disabled : false,
+      const d = foundry.utils.mergeObject(doc.toObject(), { origin : origin ?? doc.parent?.uuid, transfer : false, disabled : false,
         start : { time : game.time.worldTime, ...(game.combat?.started ? { combat : game.combat.id, round : game.combat.round, turn : game.combat.turn ?? 0 } : {}) },
         flags : { [module.id] : { fromCard : message.id } } });
+      if(duration && !(doc.duration?.seconds || doc.duration?.rounds || doc.duration?.turns || doc.duration?.value)) d.duration = duration;
       delete d._id;
       return d;
     });
     button.disabled = true;
+    /* The same effect from the same spell already on it (cast again) : replaced, never twice */
+    const names = new Set(data.map(d => d.name));
+    const old = actor.effects.filter(e => names.has(e.name) && origin && String(e.origin ?? "").startsWith(origin));
+    if(old.length) await actor.deleteEmbeddedDocuments("ActiveEffect", old.map(e => e.id)).catch(() => {});
     await actor.createEmbeddedDocuments("ActiveEffect", data);
     await message.setFlag(module.id, `effects.${uuidKey(uuid)}`, true);
   };
@@ -1282,6 +1321,7 @@ export function registerMessages(){
         dc : Number.isFinite(this.rider.dc) ? this.rider.dc : save.save?.dc?.value,
         onSave : this.rider.onSave,
         hasRolls : this.riderRolls.length > 0,
+        rolls : this.riderRolls,
         bonus : save.save?.bonus ?? "",
         effects : effectsOf(save),
       });
@@ -1525,6 +1565,11 @@ export function registerMessages(){
       },
     }, { inplace : false }));
 
+    /* A row's effects applied without its button (a buff on the caster's own creature, at once) */
+    async applyEffectsTo(uuid){
+      await applyRowEffects(this.parent, { dataset : { target : uuid }, disabled : false }, { activity : this.parent.getAssociatedActivity({ scaled : true }), targets : this.targets });
+    }
+
     static defineSchema(){
       const { ArrayField, SchemaField, StringField } = foundry.data.fields;
       return {
@@ -1602,9 +1647,10 @@ export function registerMessages(){
         dc : activity?.save?.dc?.value,
         onSave : this.onSave ?? activity?.damage?.onSave,
         hasRolls : this.damageRolls.length > 0,
+        rolls : this.damageRolls,
         isHeal : activity?.type === "heal",
         bonus : activity?.save?.bonus ?? "",
-        effects : hasSave ? effectsOf(activity) : [],
+        effects : effectsOf(activity),
       });
     }
 
@@ -1653,12 +1699,16 @@ export function registerMessages(){
       if(damage.length) context.damage = damageContext(this.parent, damage, { hidden : hidesNumbers(this.parent) });
 
       /* A row per target replaces dnd5e's single save button summary and tray : each target saves and takes its own */
-      context.rows = this.targetRows();
-      if(context.rows.length){
+      /* Not context.rows : that's dnd5e's (the spell's level, school, components... pills) */
+      context.targetRows = this.targetRows();
+      if(context.targetRows.length){
         if(context.damage) context.damage.showTray = false;
-        if(this.parent.getAssociatedActivity()?.type === "save") context.effects = [];
+        /* The rows apply the effects (a save's, a buff's) : dnd5e's tray of every effect isn't needed */
+        context.effects = [];
         context.summaries = [];
         /* dnd5e's own save button rolls for everyone through its dialog : the rows replace it */
+        /* Its tag too ("DC 13 Charisma Saving Throw") : each row's save button already says it */
+        if(context.rows?.rollSave) delete context.rows.rollSave;
         if(context.buttonGroups){
           delete context.buttonGroups.rollSave;
           if(foundry.utils.isEmpty(context.buttonGroups)) delete context.buttonGroups;

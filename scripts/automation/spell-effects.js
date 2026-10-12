@@ -13,6 +13,7 @@ import { getAppliedConditions } from '../helpers/items.js';
 import { pickTargets } from '../helpers/targets.js';
 import { getRange, addLight, removeLight } from '../helpers/tokens.js';
 import { rollItem } from '../roll-item/roll-item.js';
+import { patch } from '../patch.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -37,11 +38,12 @@ const log = logger.for(import.meta.url);
  *                                 happens). It ends when this creature attacks or casts a spell (Sanctuary)
  *
  * Choices : a spell whose effects are options (Guidance : a skill, Resistance : a damage type) asks which when cast,
- * then puts that one on its target (yours : at once; anyone else's : the GM's button), tied to the Concentration.
+ * and the card's rows apply only that one (Resistance's 1d4 isn't rolled on the card : it comes with the damage).
  *
- * Buffs : a spell's utility or healing activity with effects (Bless, Shield of Faith, Longstrider, Heroism, Mage Armor
- * on someone else...) puts them on its targets the same way when cast (dnd5e's tray stays on the card too). Self-only
- * ones are Roll Item's (selfEffects); saves and attacks apply theirs from their rows and trays.
+ * Buffs : a spell's utility or healing activity with effects for others (Bless, Shield of Faith, Longstrider, Heroism)
+ * gets Roll Item's card, a row per target with its Apply (the creature's owner or the GM; no save). Nothing is put on
+ * automatically. Self-only ones are Roll Item's (selfEffects); saves and attacks apply theirs from their rows and trays.
+ * Whatever lands from a Concentration spell ends with it.
  */
 export class spellEffects{
   /* The rule a spell's effect carries, by the spell's identifier */
@@ -82,9 +84,13 @@ export class spellEffects{
     Hooks.on("dnd5e.rollAttackV2", rolls => this.spendOnAttack(rolls));
     Hooks.on("dnd5e.preApplyDamage", (actor, amount, updates, options) => this.blockHealing(actor, amount, updates, options));
     Hooks.on("dnd5e.calculateDamage", (actor, damages, options) => this.reduceDamage(actor, damages, options));
+    /* Damage really being applied (not a tray's or a row's preview of it) : rules that roll or spend act only then */
+    Hooks.once("setup", () => patch.wrap("CONFIG.Actor.documentClass.prototype.applyDamage", function(wrapped, damages, options = {}, ...rest){
+      return wrapped(damages, { ...options, [module.id] : { ...(options?.[module.id] ?? {}), applying : true } }, ...rest);
+    }));
     uses.onActivity("spellChoice", (activity, ctx, next) => this.choiceStep(activity, ctx, next));
-    Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.applyChoice(activity, usage, results));
-    Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.applyBuffs(activity, usage, results));
+    /* Resistance's 1d4 : rolled when the damage comes, not on the card */
+    Hooks.on(`${module.id}.rollFormula`, activity => !(this.enabled() && this.CHOICES[idOf(activity?.item)])) ;
     gm.handle("spellEffect", data => this.applyAsGM(data));
     gm.handle("spellEffectEnd", data => this.endAsGM(data));
     Hooks.on("dnd5e.preRollSavingThrowV2", (config, dialog, message) => this.protectedSave(config, message));
@@ -101,7 +107,9 @@ export class spellEffects{
 
   static giveRule(effect){
     if(!this.enabled() || (effect?.parent?.documentName !== "Actor") || effect.getFlag?.(module.id, "rule")) return;
-    const rule = this.RULES[idOf(originItem(effect))];
+    const id = idOf(originItem(effect));
+    /* A choice spell's effect : its rule from the effect (Resistance : the damage type in its name) */
+    const rule = this.RULES[id] ?? this.CHOICES[id]?.rule?.(effect);
     if(rule) effect.updateSource({ [`flags.${module.id}.rule`] : rule });
   }
 
@@ -277,7 +285,9 @@ export class spellEffects{
       if(!ward || (token.actor === attacker)){ out.push(token); continue; }
       const caster = originItem(ward)?.actor;
       const dc = Number(caster?.system?.attributes?.spell?.dc) || 13;
-      const rolled = await attacker.rollSavingThrow({ ability : "wis", target : dc }, { configure : false });
+      /* Its header says why : Sanctuary, who's warded */
+      const flavor = module.format("spellEffects.sanctuarySave", { name : attacker.name, target : token.name, ability : game.i18n.localize(CONFIG.DND5E.abilities.wis?.label ?? "Wisdom"), spell : originItem(ward)?.name ?? ward.name });
+      const rolled = await attacker.rollSavingThrow({ ability : "wis", target : dc }, { configure : false }, { data : { flavor } });
       const roll = Array.isArray(rolled) ? rolled[0] : rolled;
       if(roll && (roll.total >= dc)){ out.push(token); continue; }
       ui.notifications.info(module.format("spellEffects.sanctuaryFailed", { name : attacker.name, target : token.name }));
@@ -324,7 +334,8 @@ export class spellEffects{
 
   /* Damage of a type it's protected from : less by the dice (once a turn in combat, once a minute out of it) */
   static reduceDamage(actor, damages, options){
-    if(!Array.isArray(damages) || !this.enabled()) return;
+    /* A preview (dnd5e's tray, a row's number) : no roll, nothing spent */
+    if(!Array.isArray(damages) || !this.enabled() || !options?.[module.id]?.applying) return;
     for(const effect of this.withRule(actor, "reduceDamage")){
       const { type, dice = "1d4", oncePerTurn } = effect.getFlag(module.id, "rule").reduceDamage ?? {};
       const hit = damages.find(d => (d.type === type) && (Number(d.value) > 0));
@@ -333,8 +344,8 @@ export class spellEffects{
       if(oncePerTurn && (usedThisTurn(actor, key) || this.usedLately(effect))) continue;
       /* Rolled here (damage is worked out synchronously) : NdM dice, the same random source as Foundry's */
       const [, n = "1", faces = "4"] = /(\d*)d(\d+)/i.exec(dice) ?? [];
-      let total = 0;
-      for(let i = 0; i < (Number(n) || 1); i++) total += Math.ceil((1 - CONFIG.Dice.randomUniform()) * Number(faces)) || 1;
+      const results = Array.from({ length : Number(n) || 1 }, () => Math.ceil((1 - CONFIG.Dice.randomUniform()) * Number(faces)) || 1);
+      const total = results.reduce((sum, r) => sum + r, 0);
       /* Off that damage, and off the total dnd5e has already added up */
       const off = Math.min(total, Number(hit.value));
       hit.value = Number(hit.value) - off;
@@ -343,8 +354,13 @@ export class spellEffects{
         markUsedThisTurn(actor, key).catch(() => {});
         if(!game.combat?.started && effect.isOwner) effect.setFlag(module.id, "usedAt", game.time.worldTime).catch(() => {});
       }
-      ChatMessage.implementation.create({ speaker : ChatMessage.implementation.getSpeaker({ actor }),
-        content : `<p>${module.format("spellEffects.reduced", { name : actor.name, effect : effect.name, n : total, dice, type : CONFIG.DND5E.damageTypes?.[type]?.label ?? type })}</p>` }).catch(() => {});
+      /* Shown as a roll like any other (its dice in the dropdown), what it took off as its flavor */
+      const typeLabel = game.i18n.localize(CONFIG.DND5E.damageTypes?.[type]?.label ?? type);
+      const roll = Roll.fromData({ class : "Roll", formula : `${Number(n) || 1}d${faces}`, evaluated : true, total, options : {},
+        terms : [{ class : "Die", number : Number(n) || 1, faces : Number(faces), modifiers : [], evaluated : true, options : { flavor : typeLabel },
+          results : results.map(result => ({ result, active : true })) }] });
+      ChatMessage.implementation.create({ speaker : ChatMessage.implementation.getSpeaker({ actor }), rolls : [roll],
+        flavor : module.format("spellEffects.reduced", { name : actor.name, effect : effect.name, n : total, dice, type : typeLabel }) }).catch(() => {});
     }
   }
 
@@ -368,68 +384,9 @@ export class spellEffects{
       options : options.map(e => ({ value : e.id, label : e.name })) });
     if(!id) return;
     uses.mark(ctx, { spellChoice : id });
-    uses.flag(ctx, { note : module.format("spellEffects.chosen", { effect : options.find(e => e.id === id)?.name ?? "" }) });
+    /* The card's rows apply only this one */
+    uses.flag(ctx, { spellChoice : id, note : module.format("spellEffects.chosen", { effect : options.find(e => e.id === id)?.name ?? "" }) });
     return next();
-  }
-
-  /* An item effect as it lands from this cast : its duration, tied to the spell's Concentration, its rule */
-  static effectData(activity, effect, rule = null){
-    const item = activity.item, caster = activity.actor;
-    const concentration = caster.effects.find(e => e.statuses?.has?.("concentrating") && (e.getFlag("dnd5e", "item")?.id === item.id));
-    const data = effect.toObject();
-    delete data._id;
-    Object.assign(data, { transfer : false, disabled : false, origin : item.uuid });
-    const duration = activity.duration?.getEffectData?.();
-    if(duration) data.duration = duration;
-    foundry.utils.setProperty(data, "flags.dnd5e.dependentOn", concentration?.uuid ?? null);
-    if(rule) foundry.utils.setProperty(data, `flags.${module.id}.rule`, rule);
-    return data;
-  }
-
-  /* Effects onto creatures : yours at once (a player's own), anyone else's (and the GM's own uses) the GM's button */
-  static async give(caster, actors, effects){
-    for(const actor of actors){
-      const datas = effects.map(e => e.data);
-      /* Yours (or you're the GM) : on it now; someone else's : the GM's button */
-      if(actor.isOwner) await actor.createEmbeddedDocuments("ActiveEffect", datas);
-      else {
-        const names = effects.map(e => e.name).join(", ");
-        await gm.ask("spellEffect", { actor : actor.uuid, data : datas }, { actor : caster,
-          text : module.format("spellEffects.ask", { name : caster.name, effect : names, target : actor.name }),
-          label : module.format("spellEffects.askButton", { effect : names, target : actor.name }) });
-      }
-    }
-  }
-
-  /* Cast : the chosen effect on each target (none targeted : the caster), tied to the spell's Concentration */
-  static async applyChoice(activity, usage, results){
-    const id = usage?.[module.id]?.spellChoice;
-    if(!id || !results || !activity?.actor?.isOwner) return;
-    const effect = activity.item.effects.get(id);
-    if(!effect) return;
-    const rule = this.CHOICES[idOf(activity.item)]?.rule?.(effect);
-    const targets = [...(game.user.targets ?? [])].map(t => t.actor).filter(Boolean);
-    await this.give(activity.actor, targets.length ? targets : [activity.actor], [{ name : effect.name, data : this.effectData(activity, effect, rule) }]);
-  }
-
-  /* Cast : a buff's effects on its targets (not self-only : Roll Item does those; not a choice spell) */
-  static async applyBuffs(activity, usage, results){
-    if(!this.enabled() || !results || !activity?.actor?.isOwner || (activity.item?.type !== "spell")) return;
-    if(!["utility", "heal"].includes(activity.type) || usage?.[module.id]?.spellChoice || this.CHOICES[idOf(activity.item)]) return;
-    const effects = (activity.effects ?? []).map(p => activity.item.effects.get(p._id)).filter(e => e && !e.transfer && (e.type !== "enchantment"));
-    if(!effects.length) return;
-    /* Range Self (Disguise Self) : the caster's own, put on by Roll Item; never on whoever happens to be targeted */
-    if(this.selfOnly(activity)) return;
-    const targets = [...(game.user.targets ?? [])].filter(t => t.actor).map(t => t.actor);
-    if(!targets.length) return;
-    await this.give(activity.actor, targets, effects.map(e => ({ name : e.name, data : this.effectData(activity, e, this.RULES[idOf(activity.item)] ?? null) })));
-  }
-
-  /* Range Self, no other target : Roll Item puts its effects on the caster itself */
-  static selfOnly(activity){
-    const range = activity?.range?.override ? activity.range : (activity?.item?.system?.range ?? {});
-    const type = (activity?.target?.override ? activity.target : (activity?.item?.system?.target ?? {}))?.affects?.type ?? "";
-    return (range.units === "self") || (type === "self");
   }
 
   static async applyAsGM({ actor : uuid, data } = {}){

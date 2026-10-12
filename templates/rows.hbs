@@ -6,7 +6,7 @@
     <li class="macro-helper-row">
         <img class="token" src="{{ img }}" alt="">
         <span class="name">{{ name }}</span>
-        <span class="macro-helper-row-actions">
+        <span class="macro-helper-row-roll">
         {{#each saves}}
         <button type="button" class="save" data-action="rowSave" data-target="{{ ../uuid }}" data-ability="{{ ability }}"
                 data-tooltip="{{ hint }}" aria-label="{{ hint }}">
@@ -30,10 +30,15 @@
             <i class="fa-solid {{ icon }}" inert></i>
         </button>
         {{/each}}
+        </span>
+        <span class="macro-helper-row-apply">
         {{#with apply}}
+        <span class="macro-helper-apply-group">
+        {{#if amount includeZero=true}}<span class="amount {{#if healing}}healing{{else}}damage{{/if}}" data-tooltip="{{ localize "rollItem.row.wouldApply" }}">{{ amount }}</span>{{/if}}
         <button type="button" class="apply" data-action="rowApply" data-target="{{ ../uuid }}" data-multiplier="{{ multiplier }}">
             <i class="fa-solid fa-reply-all fa-flip-horizontal" inert></i> {{ localize label }}
         </button>
+        </span>
         {{/with}}
         {{#with applied}}
         <span class="applied {{#if healing}}healing{{else}}damage{{/if}}" data-tooltip="{{ localize "rollItem.row.applied" }}">{{ text }}</span>

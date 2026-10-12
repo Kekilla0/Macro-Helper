@@ -64,8 +64,9 @@
 </div>
 {{/each}}
 
-{{!-- One row per target : its save (button, then the result), then its damage / healing by that result --}}
-{{#if rows.length}}{{> "macro-helper.rows" }}{{/if}}
+{{!-- One row per target, the same for every card : its save (none for a buff), its result, then on the right its damage /
+     healing and its effects to apply --}}
+{{#if targetRows.length}}{{> "macro-helper.rows" rows=targetRows }}{{/if}}
 
 {{!-- Save results (dnd5e "Chat Card Summary" setting) --}}
 {{#each summaries}}

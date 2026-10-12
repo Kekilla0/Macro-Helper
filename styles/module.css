@@ -112,26 +112,43 @@
   align-items: center;
   gap: 6px;
 }
-.chat-message .macro-helper-row-actions .result {
+.chat-message .macro-helper-apply-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+.chat-message .macro-helper-row .amount {
+  font-weight: bold;
+  font-size: var(--font-size-14, 14px);
+  min-width: 1.5em;
+  text-align: end;
+}
+.chat-message .macro-helper-row .amount.damage { color: var(--dnd5e-color-failure, #c62828); }
+.chat-message .macro-helper-row .amount.healing { color: var(--dnd5e-color-success, #2e7d32); }
+.chat-message .macro-helper-row .result {
   font-weight: bold;
   font-size: var(--font-size-14, 14px);
   white-space: nowrap;
 }
-.chat-message .macro-helper-row-actions button.apply,
-.chat-message .macro-helper-row-actions button.save {
+.chat-message .macro-helper-row button.apply,
+.chat-message .macro-helper-row button.save {
   padding: 0 5px;
   font-size: var(--font-size-12, 12px);
 }
-.chat-message .macro-helper-row-actions {
+/* [creature] [roll : save, result, rerolls] [apply : amount, Apply, effects, rule buttons] : three groups side by side,
+   each wrapping inside itself, the last against the right */
+.chat-message :is(.macro-helper-row-actions, .macro-helper-row-roll, .macro-helper-row-apply) {
   display: flex;
   flex: 0 1 auto;
   flex-wrap: wrap;
-  justify-content: flex-end;
   align-items: center;
   gap: 3px 4px;
-  margin-left: auto;
   min-width: 0;
 }
+.chat-message .macro-helper-row-roll { justify-content: center; }
+.chat-message :is(.macro-helper-row-actions, .macro-helper-row-apply) { justify-content: flex-end; margin-left: auto; }
+.chat-message .macro-helper-row-roll:empty, .chat-message .macro-helper-row-apply:empty { display: none; }
 .chat-message .macro-helper-row img.token {
   width: 24px;
   height: 24px;
