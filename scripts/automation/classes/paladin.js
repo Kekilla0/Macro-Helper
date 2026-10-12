@@ -57,6 +57,8 @@ export class paladin{
   static register(){
     if(game.system.id !== "dnd5e") return;
     Hooks.on(`${module.id}.cardButtons`, (message, buttons, context) => this.cardButtons(message, buttons, context));
+    /* A smite on the card : its spell's face (name and rules) under the weapon's, like the spell's own card */
+    Hooks.on(`${module.id}.cardFaces`, (message, faces) => this.smiteFaces(message, faces));
     Hooks.on("dnd5e.renderChatMessage", (message, html) => this.pushButtons(message, html));
     Hooks.on(`${module.id}.cardButton`, (message, id, context) => {
       if(id === "smite") this.smite(message, context?.ray ?? null);
@@ -176,6 +178,15 @@ export class paladin{
     if((activity?.type !== "attack") || (activity.item?.type !== "weapon")) return false;
     const mode = card.attackOf(ray)?.options?.attackMode;
     return String(activity.getActionType?.(mode) ?? "").startsWith("m");
+  }
+
+  static smiteFaces(message, faces){
+    const ids = Object.values(message?.getFlag?.(module.id, "smite") ?? {});
+    const actor = ids.length ? message.getAssociatedActor?.() : null;
+    for(const id of new Set(ids)){
+      const spell = actor?.items?.get(id);
+      if(spell && !faces.some(f => f.uuid === spell.uuid)) faces.push({ uuid : spell.uuid });
+    }
   }
 
   static smitten(message, ray){
