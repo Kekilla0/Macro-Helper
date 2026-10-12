@@ -44,7 +44,9 @@ const log = logger.for(import.meta.url);
  *                     creature for each spell slot level above N" in its text adds those targets (Bless, Command...),
  *                     with or without a pick; with no pick, more targets than that follow Rule Limits.
  *   Rituals         : a spell with the Ritual tag you have prepared : cast normally (a slot, a higher level allowed) or
- *                     as a Ritual (10 minutes longer, no slot, its own level). A Wizard with Ritual Adept casts the
+ *                     as a Ritual (10 minutes longer, no slot, its own level), asked only when it's a real choice : a
+ *                     spell that takes 1 minute or more (Find Familiar), or with no slot left, is just cast as a Ritual.
+ *   Material cost   : a spell whose material says "worth 10+ GP" but has no cost in its data (Find Familiar) gets it. A Wizard with Ritual Adept casts the
  *                     rituals in its spellbook (its Wizard spells) without preparing them : as a Ritual only. The card
  *                     notes it (flags.ritual for the action tracker).
  *   Range           : Rule Limits on and no target pick (Pick Targets off, or Roll Item off) : a spell aimed at
@@ -75,6 +77,7 @@ export class spells{
     itemFixes.add({ name : "Produce Flame", where : "owned", plan : item => this.produceFlameFix(item) });
     itemFixes.add({ name : "Jump", where : "owned", plan : item => this.jumpFix(item) });
     itemFixes.add({ name : "Grease", where : "owned", plan : item => this.greaseFix(item) });
+    itemFixes.add({ name : "Material cost", where : "owned", plan : item => this.materialCostFix(item) });
     Hooks.on("dnd5e.rollSavingThrow", (rolls, data) => this.nextSaveUsed(data?.subject ?? rolls?.[0]?.data?.actor ?? null));
     Hooks.on("dnd5e.preApplyDamage", (actor, amount) => this.blockHealing(actor, amount));
     itemFixes.add({ name : "Giant Insect", where : "owned", plan : item => this.giantInsectFix(item) });
@@ -265,6 +268,19 @@ export class spells{
     };
   }
 
+  /* ---------- Material cost : "worth 10+ GP" in the text, no cost in the data ---------- */
+
+  static materialCostFix(item){
+    if(!this.enabled() || (item?.type !== "spell")) return null;
+    const m = item.system?.materials;
+    if(!m || (Number(m.cost) > 0)) return null;
+    const worth = String(m.value ?? "").match(/worth\s+(?:at\s+least\s+)?([\d,]+)\s*\+?\s*GP/i);
+    if(!worth) return null;
+    const update = { "system.materials.cost" : Number(worth[1].replaceAll(",", "")) };
+    if(/consume/i.test(m.value) && !m.consumed) update["system.materials.consumed"] = true;
+    return { update };
+  }
+
   /* ---------- Jump : its effect sets the creature's jump speed to 30 ft (the token ruler's Jump action uses it) ---------- */
 
   static jumpFix(item){
@@ -382,9 +398,17 @@ export class spells{
     const mode = this.enabled() ? this.ritualMode(activity?.item) : null;
     if(!mode || ctx.config?.[module.id]?.ritual !== undefined) return next();
     let ritual = (mode === "only");
-    if(mode === "choice"){
+    /* Only a real choice is asked : 1 minute or more saves just 10 minutes for a slot; no slot left, no choice */
+    const activation = activity.item.system?.activation ?? {};
+    const seconds = (Number(activation.value) || 1) * ({ minute : 60, hour : 3600, day : 86400 }[activation.type] ?? 0);
+    const level = Number(activity.item.system?.level) || 1;
+    const slotLeft = Object.values(activity.actor?.system?.spells ?? {}).some(s => (Number(s?.value) > 0) && (Number(s?.level) >= level));
+    if((mode === "choice") && ((seconds >= 60) || !slotLeft)) ritual = true;
+    else if(mode === "choice"){
+      const time = s => s ? this.timeText(s) : (CONFIG.DND5E.activityActivationTypes?.[activation.type]?.label ?? activation.type ?? "");
       const value = await chooseOption({ title : activity.item.name, icon : "fa-solid fa-book-open", prompt : module.i18n("spells.ritual.prompt"),
-        options : [{ value : "normal", label : module.i18n("spells.ritual.normal") }, { value : "ritual", label : module.i18n("spells.ritual.ritual") }] });
+        options : [{ value : "normal", label : module.format("spells.ritual.normal", { time : time(seconds) }) },
+          { value : "ritual", label : module.format("spells.ritual.ritual", { time : this.timeText(seconds + 600) }) }] });
       if(!value) return;
       ritual = (value === "ritual");
     }
@@ -395,6 +419,12 @@ export class spells{
     uses.mark(ctx, { ritual : true, note, cardFlags : { ritual : true } });
     uses.flag(ctx, { ritual : true, note });
     return next();
+  }
+
+  /* 4200 -> "1 hour 10 minutes" */
+  static timeText(seconds){
+    const h = Math.floor(seconds / 3600), m = Math.round((seconds % 3600) / 60);
+    return [h ? module.format(h === 1 ? "spells.ritual.hour" : "spells.ritual.hours", { n : h }) : "", m ? module.format(m === 1 ? "spells.ritual.minute" : "spells.ritual.minutes", { n : m }) : ""].filter(Boolean).join(" ");
   }
 
   /* ---------- Emanations ---------- */

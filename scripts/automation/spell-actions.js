@@ -79,6 +79,11 @@ const log = logger.for(import.meta.url);
  *   Alarm         : its area is watched (the active GM) : a creature entering it, moving inside it or leaving it is
  *                   whispered to the caster's players and the GM. The caster and creatures friendly to it don't set it
  *                   off (the ones it designates).
+ *   Floating Disk : placed like Mage Hand (you pick its space, the GM's client makes it, your players own it). It's a
+ *                   container : items dropped on its sheet ride on it, up to 500 lb. It follows your steps : once you
+ *                   are more than 20 ft from it, it moves along the path you took until it's within 20 ft (no pathing
+ *                   of its own). It ends 100 ft from you, after 1 hour, or cast again; whatever it carried stays as a
+ *                   load on the ground (a token its owners can still empty).
  *   Hellish Rebuke : a creature damaged by an attack or spell (its card's damage applied to it) gets a Hellish Rebuke
  *                   button on its row of that card (its owner or the GM), when it has the spell ready, a slot, and the
  *                   one who did it is within 60 ft : the spell cast at that creature (its save card), the slot spent.
@@ -114,6 +119,7 @@ export class spellActions{
   static PLACED = {
     "mage-hand" : { leash : 30, move : 30, action : "action" },
     "unseen-servant" : { leash : 60, move : 15, action : "bonus", invisible : true, sight : 60 },
+    "tensers-floating-disk" : { leash : 100, follow : 20, carry : 500 },
   };
   static MESSAGE = "message";
   static ALARM = "alarm";
@@ -223,6 +229,10 @@ export class spellActions{
     }));
     Hooks.on("updateToken", (token, changes) => this.placedMoved(token, changes));
     Hooks.on("updateWorldTime", () => this.placedExpire());
+    /* Floating Disk : it follows the caster's steps, and carries up to 500 lb */
+    Hooks.on("moveToken", (token, movement) => this.diskFollow(token, movement));
+    Hooks.on("preCreateItem", item => this.diskWeight(item));
+    Hooks.on("preUpdateItem", (item, change) => JSON.stringify(change ?? {}).match(/quantity|weight/) ? this.diskWeight(item, change) : undefined);
     /* True Strike : the spell's face on the attack card (both : the weapon's rules and the spell's) */
     Hooks.on(`${module.id}.cardFaces`, (message, faces) => { const uuid = message.getFlag?.(module.id, "castAs"); if(uuid && !faces.some(f => f.uuid === uuid)) faces.push({ uuid }); });
     /* Hellish Rebuke */
@@ -1164,7 +1174,7 @@ export class spellActions{
     const from = tokenOf(activity.actor);
     if(!from) return next();
     /* One out already : move it, or a new one */
-    if(this.placedOf(activity.item.uuid).length){
+    if(spec.move && this.placedOf(activity.item.uuid).length){
       const choice = await chooseOption({ title : activity.item.name, icon : "fa-solid fa-hand", prompt : module.i18n("spellActions.placedPrompt"),
         options : [{ value : "move", label : module.format("spellActions.placedMove", { feet : spec.move, action : module.i18n(`spellActions.action.${spec.action}`) }) },
           { value : "new", label : module.i18n("spellActions.placedNew") }] });
@@ -1215,7 +1225,7 @@ export class spellActions{
     const actor = profile?.uuid ? await dnd5e.documents.Actor5e.fetchExisting(profile.uuid, { origin : { key : "flags.dnd5e.summon.origin", value : item.uuid } }).catch(error => { log.error(error); return null; }) : null;
     if(!actor) return false;
     /* Cast again : the old one goes */
-    await this.removeTokens(this.placedOf(item.uuid));
+    await this.endPlaced(this.placedOf(item.uuid));
     const options = { profile : profile._id };
     const changes = await activity.getChanges(actor, profile, options);
     /* No one's ally (not beside a target for flanking or Sneak Attack); no speed until it's moved */
@@ -1230,8 +1240,14 @@ export class spellActions{
     const tokenData = await activity.getTokenData(config);
     const { value, units } = item.system?.duration ?? {};
     const seconds = (Number(value) || 0) * ({ minute : 60, hour : 3600, day : 86400, round : 6, turn : 6 }[units] ?? 0);
+    const from = caster ? fromUuidSync(caster, { strict : false }) : null;
     foundry.utils.setProperty(tokenData, `flags.${module.id}.placedSummon`, { item : item.uuid, caster : caster ?? null,
-      leash : getRange(activity) || spec.leash, ends : seconds ? game.time.worldTime + seconds : null });
+      leash : spec.follow ? spec.leash : (getRange(activity) || spec.leash), ends : seconds ? game.time.worldTime + seconds : null,
+      ...(spec.follow ? { follow : spec.follow, carry : spec.carry ?? null, trail : from ? [{ x : from.x, y : from.y, elevation : from.elevation ?? 0 }] : [] } : {}) });
+    /* Its art from a module that isn't on (dnd5e's Floating Disk : the Player's Handbook) : the creature's picture */
+    const art = foundry.utils.getProperty(tokenData, "texture.src") ?? "";
+    const artModule = art.match(/^modules\/([^/]+)\//)?.[1];
+    if(artModule && !game.modules.get(artModule)?.active) foundry.utils.setProperty(tokenData, "texture.src", actor.img);
     Hooks.callAll("dnd5e.summonToken", activity, profile, tokenData, options);
     tokenData.disposition = CONST.TOKEN_DISPOSITIONS.NEUTRAL;
     if(spec.sight) foundry.utils.setProperty(tokenData, "sight.enabled", true), foundry.utils.setProperty(tokenData, "sight.range", spec.sight);
@@ -1264,14 +1280,88 @@ export class spellActions{
     const pairs = flag ? [[token, casterOf(flag)]] : scene.tokens.filter(t => t.getFlag(module.id, "placedSummon")?.caster === token.uuid).map(t => [t, token]);
     const centre = t => ({ x : t.x + (t.width * scene.grid.size / 2), y : t.y + (t.height * scene.grid.size / 2) });
     const far = pairs.filter(([s, c]) => c && (scene.grid.measurePath([centre(s), centre(c)]).distance > (Number(s.getFlag(module.id, "placedSummon")?.leash) || 30))).map(([s]) => s);
-    if(far.length) await this.removeTokens(far);
+    if(far.length) await this.endPlaced(far);
   }
 
   /* Its duration passed on the world clock */
   static async placedExpire(){
     if(!game.users.activeGM?.isSelf) return;
     const done = game.scenes.contents.flatMap(s => s.tokens.filter(t => { const ends = t.getFlag(module.id, "placedSummon")?.ends; return Number.isFinite(ends) && (game.time.worldTime >= ends); }));
-    if(done.length) await this.removeTokens(done);
+    if(done.length) await this.endPlaced(done);
+  }
+
+  /* Gone : a disk that carried something leaves its load on the ground (a token its owners can still empty) */
+  static async endPlaced(tokens){
+    const loads = tokens.filter(t => t.getFlag(module.id, "placedSummon")?.carry && t.actor?.items?.some(i => this.weightOf(i) > 0));
+    for(const token of loads){
+      await token.update({ name : module.format("spellActions.disk.load", { name : token.name }), "texture.src" : this.DISK_LOAD_ART,
+        [`flags.${module.id}.diskLoad`] : true, [`flags.${module.id}.placedSummon`] : globalThis._del ?? new foundry.data.operators.ForcedDeletion() }).catch(error => log.debug(error));
+    }
+    await this.removeTokens(tokens.filter(t => !loads.includes(t)));
+  }
+
+  /* ========== Floating Disk ========== */
+
+  static DISK_LOAD_ART = "icons/containers/bags/sack-simple-leather-brown.webp";
+
+  /* An item's weight in lb (its quantity's) : what rides on the disk */
+  static weightOf(item){
+    const w = item?.system?.weight;
+    if(w === undefined) return 0;
+    const value = Number((typeof w === "object") ? w.value : w) || 0;
+    const kg = (typeof w === "object") && (w.units === "kg");
+    return value * (kg ? 2.2 : 1) * (Number(item.system?.quantity ?? 1) || 0);
+  }
+
+  static diskOf(actor){
+    const flag = actor?.isToken ? actor.token?.getFlag?.(module.id, "placedSummon") : null;
+    return Number(flag?.carry) > 0 ? flag : null;
+  }
+
+  /* More than it carries (500 lb) : refused */
+  static diskWeight(item, change = null){
+    const actor = item?.parent;
+    const disk = this.diskOf(actor);
+    if(!disk) return;
+    const now = actor.items.reduce((sum, i) => sum + ((i.id === item.id) ? 0 : this.weightOf(i)), 0);
+    const next = change ? this.weightOf({ system : foundry.utils.mergeObject(item.toObject().system, foundry.utils.expandObject(change).system ?? {}, { inplace : false }) }) : this.weightOf(item);
+    if(now + next <= disk.carry) return;
+    ui.notifications.warn(module.format("spellActions.disk.full", { name : actor.name, max : disk.carry, total : Math.round(now + next) }));
+    return false;
+  }
+
+  /* The caster moved : its path is the disk's; more than 20 ft away, the disk goes along it until it's within 20 ft */
+  static async diskFollow(token, movement){
+    if(!game.users.activeGM?.isSelf || !this.enabled()) return;
+    const scene = token.parent;
+    const disks = scene?.tokens?.filter(t => { const f = t.getFlag(module.id, "placedSummon"); return f?.follow && (f.caster === token.uuid); }) ?? [];
+    if(!disks.length) return;
+    /* Teleported (a GM's drag with the teleport key, Misty Step) : no steps to follow */
+    const passed = movement.passed?.waypoints ?? [];
+    if(passed.length && passed.every(p => p.action === "displace")) return;
+    const grid = scene.grid;
+    const size = grid.size;
+    const centreOf = (p, w = 1, h = 1) => ({ x : p.x + (w * size / 2), y : p.y + (h * size / 2) });
+    /* Its steps, square by square (the disk is one square) */
+    const points = [movement.origin, ...(movement.passed?.waypoints ?? [])].filter(Boolean).map(p => ({ x : p.x, y : p.y, elevation : p.elevation ?? 0 }));
+    const steps = [];
+    for(let i = 1; i < points.length; i++){
+      const a = centreOf(points[i - 1], token.width, token.height), b = centreOf(points[i], token.width, token.height);
+      const cells = grid.isGridless ? [] : grid.getDirectPath([a, b]);
+      if(!cells.length) steps.push({ x : b.x - (size / 2), y : b.y - (size / 2), elevation : points[i].elevation });
+      for(const cell of cells){ const tl = grid.getTopLeftPoint(cell); steps.push({ x : tl.x, y : tl.y, elevation : points[i].elevation }); }
+    }
+    const dest = centreOf(movement.destination ?? token, token.width, token.height);
+    const far = p => grid.measurePath([centreOf(p), dest]).distance;
+    for(const disk of disks){
+      const flag = disk.getFlag(module.id, "placedSummon");
+      const trail = [...(flag.trail ?? []), ...steps].filter((p, i, all) => !i || (p.x !== all[i - 1].x) || (p.y !== all[i - 1].y)).slice(-300);
+      const stop = (far(disk) > flag.follow) ? trail.findIndex(p => far(p) <= flag.follow) : -1;
+      await disk.update({ [`flags.${module.id}.placedSummon.trail`] : (stop < 0) ? trail : trail.slice(stop) });
+      if(stop < 0) continue;
+      await disk.move(trail.slice(0, stop + 1).map(p => ({ x : p.x, y : p.y, elevation : p.elevation })),
+        { autoRotate : false, showRuler : false, constrainOptions : { ignoreWalls : true, ignoreCost : true } }).catch(error => log.debug("Disk follow", error));
+    }
   }
 
   /* ========== Hellish Rebuke ========== */
