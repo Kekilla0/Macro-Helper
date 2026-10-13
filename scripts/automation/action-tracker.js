@@ -4,6 +4,7 @@ import { logger } from '../log.js';
 import { uses } from '../uses.js';
 import { gm } from '../gm.js';
 import { limits } from './limits.js';
+import { combatLog } from './combat-log.js';
 import { idOf, esc } from '../helpers/utils.js';
 const log = logger.for(import.meta.url);
 
@@ -57,6 +58,13 @@ export class actionTracker{
   static register(){
     if(game.system.id !== "dnd5e") return;
     Hooks.on("deleteActiveEffect", (effect, options, userId) => this.effectEnded(effect, options, userId));
+    /* Death saves : a line when they change without a roll (damage at 0 HP, healing); Dead at 3 failures */
+    Hooks.on("dnd5e.rollDeathSave", (rolls, details) => { if(details?.subject) this.#rolled.add(details.subject.uuid); });
+    Hooks.on("preUpdateActor", (actor, changes, options) => {
+      if(foundry.utils.hasProperty(changes ?? {}, "system.attributes.death")) options[module.id] = { ...(options[module.id] ?? {}),
+        deathWas : { ...(actor.system.attributes?.death ?? {}) } };
+    });
+    Hooks.on("updateActor", (actor, changes, options, userId) => this.deathChanged(actor, changes, options, userId));
     uses.onActivity("economy", (activity, ctx, next) => this.step(activity, ctx, next));
     uses.onActivity("economyApproval", (activity, ctx, next) => this.approvalStep(activity, ctx, next));
     gm.handle("economyAnswer", (data, user) => this.answerAsGM(data, user));
@@ -82,10 +90,58 @@ export class actionTracker{
     const actor = effect.parent;
     if((actor?.documentName !== "Actor") || !this.combatOf(actor)) return;
     const reason = options?.[module.id]?.reason ?? "";
-    if(!reason && !effect.isTemporary) return;
+    /* A real duration (not a status dnd5e switches by itself : Bloodied), or a rule's reason */
+    const d = effect.duration ?? {};
+    if(!reason && !(d.seconds || d.rounds || d.turns || d.value)) return;
+    const line = module.format("actionTracker.effectEnded", { name : actor.name, effect : effect.name }) + (reason ? ` ${reason}` : "");
+    await combatLog.add(actor, line);
+    if(!settings.value("combatLogChat")) return;
     const users = new Set(game.users.filter(u => u.isGM || actor.testUserPermission(u, "OWNER")).map(u => u.id));
     await ChatMessage.implementation.create({ speaker : ChatMessage.implementation.getSpeaker({ actor }), whisper : [...users],
-      content : `<p><i class="fa-solid fa-hourglass-end" inert></i> ${esc(module.format("actionTracker.effectEnded", { name : actor.name, effect : effect.name }))}${reason ? ` ${esc(reason)}` : ""}</p>` });
+      content : `<p><i class="fa-solid fa-hourglass-end" inert></i> ${esc(line)}</p>` });
+  }
+
+  static #rolled = new Set();
+
+  /* Death saves changed : a line for its owners and the GM (a roll's own card already says it), Dead at 3 failures */
+  static async deathChanged(actor, changes, options = {}, userId){
+    if((userId !== game.user.id) || !foundry.utils.hasProperty(changes ?? {}, "system.attributes.death")) return;
+    const death = actor.system.attributes?.death ?? {};
+    const was = options[module.id]?.deathWas ?? {};
+    const failures = Number(death.failure) || 0, successes = Number(death.success) || 0;
+    if((failures >= 3) && actor.isOwner && !actor.statuses?.has?.("dead")) await actor.toggleStatusEffect("dead", { active : true, overlay : true }).catch(() => null);
+    if(this.#rolled.delete(actor.uuid)) return;
+    if((failures === (Number(was.failure) || 0)) && (successes === (Number(was.success) || 0))) return;
+    const marks = "✓".repeat(successes) + "·".repeat(Math.max(0, 3 - successes)) + "  " + "✗".repeat(failures) + "·".repeat(Math.max(0, 3 - failures));
+    const key = (failures >= 3) ? "deathDead" : (!failures && !successes) ? "deathReset" : "deathChanged";
+    await combatLog.add(actor, module.format(`actionTracker.${key}`, { name : actor.name, marks }));
+    if(!settings.value("combatLogChat") && this.combatOf(actor)) return;
+    await ChatMessage.implementation.create({ speaker : ChatMessage.implementation.getSpeaker({ actor }),
+      whisper : game.users.filter(u => u.isGM || actor.testUserPermission(u, "OWNER")).map(u => u.id),
+      content : `<p><i class="fa-solid fa-skull" inert></i> ${esc(module.format(`actionTracker.${key}`, { name : actor.name, marks }))}</p>` });
+  }
+
+  /* Its turn, dying : roll the death save, then the turn ends */
+  static async deathSave(actor, combat){
+    const rolls = await actor.rollDeathSave?.({ event : null }).catch(error => { log.debug(error); return null; });
+    if(!rolls) return;
+    const st = this.state(actor);
+    if(st){ this.note(st.rec, module.i18n("actionTracker.log.deathSave")); await this.save(actor, st.rec); }
+    if(combat?.combatant && (combat.combatant.actor === actor)) await combat.nextTurn();
+  }
+
+  /* Its turn, Prone : stand up (half its Speed of movement) */
+  static async standUp(actor, token){
+    const st = this.state(actor);
+    if(!st || !actor.statuses?.has?.("prone")) return;
+    const cost = Math.floor(this.speedOf(actor, "walk") / (actor.statuses?.has?.("dashing") ? 4 : 2));
+    const moved = token ? this.movedOf(token) : 0;
+    const left = this.speedOf(actor, "walk") - moved - (Number(st.rec.standing) || 0);
+    if((cost > left) && !limits.allow(module.format("actionTracker.cantStand", { name : actor.name, cost, left }), { who : actor.name, what : module.i18n("actionTracker.standUp") })) return;
+    await actor.toggleStatusEffect("prone", { active : false });
+    st.rec.standing = (Number(st.rec.standing) || 0) + cost;
+    this.note(st.rec, module.format("actionTracker.log.stood", { cost }));
+    await this.save(actor, st.rec);
   }
 
   /* ---------- State ---------- */
@@ -147,7 +203,12 @@ export class actionTracker{
   static async save(actor, rec){
     if(!actor?.isOwner) return;
     rec.log = (rec.log ?? []).slice(-this.LOG_MAX);
+    /* What's new in its turn's log goes to the fight's log too */
+    const before = actor.getFlag(module.id, "economy");
+    const old = ((before?.combat === rec.combat) && (before?.round === rec.round)) ? (before.log ?? []) : [];
+    const fresh = rec.log.filter(e => !old.some(o => (o.at === e.at) && (o.text === e.text)));
     await actor.setFlag(module.id, "economy", rec);
+    for(const e of fresh) await combatLog.add(actor, e.text);
   }
 
   static note(rec, text){
@@ -317,6 +378,7 @@ export class actionTracker{
     if(JSON.stringify(now) !== JSON.stringify(spent)) return;
     log.debug("Refunded", actor.name);
     await this.save(actor, foundry.utils.deepClone(before));
+    await combatLog.add(actor, module.i18n("combatLog.cancelled"));
   }
 
   static async spend(actor, plan = {}, activity = null){
@@ -531,7 +593,7 @@ export class actionTracker{
     if(!st?.mine || (st.combatant.tokenId !== token.id)) return;
     const action = movement.passed?.waypoints?.at?.(-1)?.action ?? movement.pending?.waypoints?.at?.(-1)?.action ?? token.movementAction;
     const speed = this.speedOf(actor, action);
-    const total = (movement.history?.cost ?? 0) + (movement.passed?.cost ?? 0) + (movement.pending?.cost ?? 0);
+    const total = (movement.history?.cost ?? 0) + (movement.passed?.cost ?? 0) + (movement.pending?.cost ?? 0) + (Number(st.rec.standing) || 0);
     if(!speed || (total <= speed + 0.01)) return;
     return limits.allow(module.format("actionTracker.tooFar", { name : actor.name, moved : Math.round(total), speed }), { who : actor.name, what : module.i18n("actionTracker.movement") }) ? undefined : false;
   }

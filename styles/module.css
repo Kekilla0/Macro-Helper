@@ -472,3 +472,19 @@
 /* Roll Requests : feat buttons (Lose Concentration, Lucky, Bardic Inspiration) sized to fit the row */
 .chat-message button[data-request-feat] { width: auto; flex: 0 0 auto; height: 24px; line-height: 22px; padding: 0 6px; font-size: 12px; white-space: nowrap; }
 #macro-helper-action-bar .ready-button:disabled { opacity: 0.35; cursor: default; }
+#macro-helper-action-bar .big-action { position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); width: auto; white-space: nowrap;
+  height: 44px; padding: 0 22px; font-size: 18px; font-weight: bold; border-radius: 8px; color: #fff; box-shadow: 0 0 10px rgba(0, 0, 0, 0.6); }
+#macro-helper-action-bar .death-save { background: #7a1f1f; border: 2px solid #d05050; }
+#macro-helper-action-bar .stand-up { background: #2f4f7a; border: 2px solid #6f9fd8; }
+
+/* Combat log window */
+.macro-helper-combat-log .window-content { display: flex; flex-direction: column; gap: 6px; padding: 8px; }
+.macro-helper-combat-log .toolbar { display: flex; justify-content: flex-end; }
+.macro-helper-combat-log .toolbar button { width: auto; flex: 0 0 auto; }
+.macro-helper-combat-log .entries { flex: 1; overflow-y: auto; margin: 0; padding: 0; }
+.macro-helper-combat-log .entries .round { margin: 8px 0 4px; font-weight: bold; border-bottom: 1px solid var(--color-border-light-2, #888); }
+.macro-helper-combat-log .entries .entry { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+.macro-helper-combat-log .entries .entry img { width: 26px; height: 26px; border: none; object-fit: contain; flex: 0 0 auto; }
+.macro-helper-combat-log .entries .entry .name { font-weight: bold; white-space: nowrap; }
+.macro-helper-combat-log .entries .entry .name::after { content: " :"; }
+.macro-helper-combat-log .entries .empty { opacity: 0.7; font-style: italic; }

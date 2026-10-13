@@ -122,6 +122,8 @@ export const GROUPS = {
     nested : true,
     settings : {
       actionTracker : { scope : "world", default : false, type : Boolean },
+      combatLogChat : { scope : "world", default : false, type : Boolean },
+      combatLogJournal : { scope : "world", default : false, type : Boolean },
       initiativeMethod : { scope : "world", default : "player", type : String,
         choices : { player : "settings.initiativeMethod.player", auto : "settings.initiativeMethod.auto" } },
       initiativeMessages : { scope : "world", default : "individual", type : String,

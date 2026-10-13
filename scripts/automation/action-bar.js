@@ -75,12 +75,19 @@ export class actionBar{
     const rec = st.rec;
     const action = token?.document?.movementAction ?? "walk";
     const speed = actionTracker.speedOf(actor, action);
-    const moved = token ? actionTracker.movedOf(token) : 0;
+    const moved = (token ? actionTracker.movedOf(token) : 0) + (Number(rec.standing) || 0);
+    /* The big button above the bar : a death save while dying, Stand Up while Prone (its turn) */
+    const death = actor.system?.attributes?.death;
+    const dying = st.mine && (actor.type === "character") && (Number(actor.system?.attributes?.hp?.value) <= 0) && !!death
+      && ((Number(death.failure) || 0) < 3) && ((Number(death.success) || 0) < 3) && !actor.statuses?.has?.("dead") && (game.user.isGM || actor.isOwner);
+    const prone = !dying && st.mine && actor.statuses?.has?.("prone") && !actor.statuses?.has?.("unconscious") && (game.user.isGM || actor.isOwner);
+    const big = dying ? `<button type="button" class="big-action death-save"><i class="fa-solid fa-skull" inert></i> ${esc(module.i18n("actionTracker.bar.deathSave"))}</button>`
+      : prone ? `<button type="button" class="big-action stand-up"><i class="fa-solid fa-person-arrow-up-from-line" inert></i> ${esc(module.format("actionTracker.bar.standUp", { cost : Math.floor(speed / 2) }))}</button>` : "";
     const attacks = this.attacksText(actor, rec.attack);
     const log = (rec.log ?? []).slice().reverse();
     el.hidden = false;
     el.classList.toggle("mine", st.mine);
-    el.innerHTML = `
+    el.innerHTML = `${big}
       <div class="who" data-tooltip="${esc(st.mine ? module.i18n("actionTracker.bar.yourTurn") : module.i18n("actionTracker.bar.notTurn"))}">
         <img src="${esc(token?.document?.texture?.src ?? actor.img)}" alt=""><span>${esc(token?.name ?? actor.name)}</span></div>
       <div class="pips">${actionTracker.pipsHTML(rec)}</div>
@@ -95,6 +102,8 @@ export class actionBar{
       <div class="log"${this.#logOpen ? "" : " hidden"}>${log.length
         ? `<ol>${log.map(e => `<li>${esc(e.text)}</li>`).join("")}</ol>` : `<p>${esc(module.i18n("actionTracker.bar.noLog"))}</p>`}</div>`;
     actionTracker.listen(el.querySelector(".pips"), actor);
+    el.querySelector(".death-save")?.addEventListener("click", event => { event.currentTarget.disabled = true; actionTracker.deathSave(actor, st.combat); });
+    el.querySelector(".stand-up")?.addEventListener("click", event => { event.currentTarget.disabled = true; actionTracker.standUp(actor, token); });
     el.querySelector(".ready-button")?.addEventListener("click", () => actionReady.ready(token, actor));
     el.querySelector(".end-turn")?.addEventListener("click", async event => {
       event.currentTarget.disabled = true;

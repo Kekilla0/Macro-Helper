@@ -13,6 +13,7 @@ import { actions } from './automation/actions.js';
 import { actionTracker } from './automation/action-tracker.js';
 import { actionBar } from './automation/action-bar.js';
 import { actionReady } from './automation/action-ready.js';
+import { combatLog } from './automation/combat-log.js';
 import { barbarian } from './automation/classes/barbarian.js';
 import { bard } from './automation/classes/bard.js';
 import { cleric } from './automation/classes/cleric.js';
@@ -70,6 +71,7 @@ Hooks.once("init", ()=> {
   actionTracker.register();
   actionBar.register();
   actionReady.register();
+  combatLog.register();
   barbarian.register();
   bard.register();
   cleric.register();
