@@ -113,8 +113,15 @@
 {{!-- Cover (GM) : a row per target, above the attack --}}
 {{> "macro-helper.cover" }}
 
-{{!-- Attack --}}
+{{!-- Attack : its box, "Attack" underneath like a damage box's type --}}
+{{#if rolls.length}}
+<div class="macro-helper-attack-box">
 {{> "dnd5e.card-rolls" }}
+<span class="damage-type-label">{{ localize "rollItem.attackLabel" }}</span>
+</div>
+{{else}}
+{{> "dnd5e.card-rolls" }}
+{{/if}}
 
 {{!-- Damage after the attack : the dice are still rolling --}}
 {{#if pending}}
@@ -173,6 +180,7 @@
 
     {{#with extras}}{{> "macro-helper.extras" }}{{/with}}
     {{#each sections}}{{> (lookup . "partial") context }}{{/each}}
+    {{#if ruleRows.length}}{{> "macro-helper.rows" rows=ruleRows }}{{/if}}
 </div>
 {{/each}}
 

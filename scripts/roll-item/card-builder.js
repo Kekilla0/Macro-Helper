@@ -4,7 +4,7 @@ import { uses } from '../uses.js';
 import { logger } from '../log.js';
 import { cells, gridSteps } from '../helpers/tokens.js';
 import { postTargetCard, registerTargetCards } from '../helpers/target-card.js';
-import { rollOptions, rollOptionDamage } from './roll-options.js';
+import { rollOptions, rollOptionDamage, rollOptionD20, rollOptionDamageDice } from './roll-options.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -34,7 +34,7 @@ const log = logger.for(import.meta.url);
  *                              when appended if a target's facts hold (doubled on a critical hit).
  *
  *   item.roll({ activity, advantage, disadvantage, targets, cost, attackBonus, critical, ignoreCover, damageType,
- *               range, reach })   see roll-options.js : what to change before the roll.
+ *               range, reach, d20, damageDice })   see roll-options.js : what to change before the roll.
  */
 const KEY = "cardParts";
 const uuidKey = uuid => String(uuid).replaceAll(".", "-");
@@ -304,6 +304,15 @@ export class cardBuilder{
   static register(){
     Hooks.once("setup", () => this.addMethods());
     Hooks.on("dnd5e.preRollDamageV2", config => rollOptionDamage(config));
+    Hooks.on("dnd5e.postAttackRollConfiguration", (rolls, config) => rollOptionD20(rolls, config));
+    Hooks.on("dnd5e.postDamageRollConfiguration", (rolls, config) => rollOptionDamageDice(rolls, config));
+    /* "Its turn starts" / "Its turn ends" (hook macros) : about the creature whose turn it is (actor, token, combat) */
+    Hooks.on("combatTurnChange", (combat, prior, current) => {
+      const ended = combat.combatants.get(prior?.combatantId);
+      const started = combat.combatants.get(current?.combatantId);
+      if(ended?.actor) Hooks.callAll(`${module.id}.turnEnd`, ended.actor, ended.token, combat);
+      if(started?.actor) Hooks.callAll(`${module.id}.turnStart`, started.actor, started.token, combat);
+    });
     gm.handle("cardRelease", (data, user) => this.releaseAsGM(data, user));
     gm.handle("cardShared", (data, user) => this.sharedAsGM(data, user));
     registerTargetCards();

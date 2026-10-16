@@ -493,3 +493,14 @@
 #macro-helper-action-bar .escape { background: #6a4a1f; border: 2px solid #d0a050; }
 .chat-message button[data-action="rowRule"] img { width: 16px; height: 16px; border: none; vertical-align: middle; margin-right: 2px; }
 #macro-helper-action-bar .release { background: #2f5a3a; border: 2px solid #6fbf7f; }
+
+/* Damage boxes : each die to the right of the total, like the attack's d20; the attack box labelled "Attack" */
+.chat-message .macro-helper-damage-type .dice-roll { position: relative; }
+.chat-message .macro-helper-dice { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); display: inline-flex; gap: 2px; }
+.chat-message .macro-helper-die { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; }
+/* Like the attack's d20 : a solid grey die, its number dark and bold */
+.chat-message .macro-helper-die i { position: absolute; font-size: 16px; color: rgb(102, 102, 102); opacity: 1; }
+.chat-message .macro-helper-die .roll { position: relative; font-family: Roboto, sans-serif; font-size: 12px; font-weight: 700; color: rgb(0, 0, 0); text-shadow: none; }
+.chat-message .macro-helper-attack-box { display: flex; flex-direction: column; }
+.chat-message .macro-helper-attack-box > .damage-type-label { align-self: center; font-family: Roboto, sans-serif; font-size: 10px; font-weight: 400;
+  text-transform: uppercase; line-height: 12.5px; color: rgb(153, 153, 153); }

@@ -17,7 +17,7 @@ const log = logger.for(import.meta.url);
 /* The hooks offered in the dropdown, by group. Any other hook can be typed in as a custom hook. */
 export const CATALOG = {
   startup : ["ready", "canvasReady"],
-  combat : ["combatStart", "combatTurnChange", "deleteCombat"],
+  combat : ["combatStart", "combatTurnChange", "macro-helper.turnStart", "macro-helper.turnEnd", "deleteCombat"],
   tokens : ["createToken", "moveToken", "updateToken", "deleteToken", "targetToken"],
   actors : ["updateActor", "createItem", "deleteItem", "createActiveEffect", "deleteActiveEffect"],
   chat : ["createChatMessage"],

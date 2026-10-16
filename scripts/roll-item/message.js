@@ -394,13 +394,14 @@ export function registerMessages(){
   };
 
   /**
-   * Buttons rules add to a creature's row : Hooks "macro-helper.rowButtons" (message, tokenUuid, buttons, { result, owner })
-   * push { id, label, icon, disabled }; a click calls "macro-helper.rowButton" (message, tokenUuid, id, { event, button }).
+   * Buttons rules add to a creature's row : Hooks "macro-helper.rowButtons" (message, tokenUuid, buttons, { result, owner, ray })
+   * push { id, label, icon, img, tooltip, disabled, result : { total, success } (a roll it made, shown beside it) };
+   * a click calls "macro-helper.rowButton" (message, tokenUuid, id, { event, button }). ray : the attack on a multi card.
    */
-  const ruleButtonsOf = (message, uuid, { result = null, owner = false } = {}) => {
+  const ruleButtonsOf = (message, uuid, { result = null, owner = false, ray = null } = {}) => {
     const buttons = [];
-    Hooks.callAll(`${module.id}.rowButtons`, message, uuid, buttons, { result, owner });
-    return buttons.filter(b => b?.id && b?.label).map(({ id, label, icon = "fa-hand-pointer", img = null, disabled = false }) => ({ id, label, icon, img, disabled }));
+    Hooks.callAll(`${module.id}.rowButtons`, message, uuid, buttons, { result, owner, ray });
+    return buttons.filter(b => b?.id && b?.label).map(({ id, label, icon = "fa-hand-pointer", img = null, tooltip = null, disabled = false, result = null }) => ({ id, label, icon, img, tooltip, disabled, result }));
   };
   const rowRule = (event, button) => {
     const message = game.messages.get(button.closest("[data-message-id]")?.dataset.messageId);
@@ -557,11 +558,16 @@ export function registerMessages(){
       const config = CONFIG.DND5E.damageTypes[part.type] ?? CONFIG.DND5E.healingTypes[part.type] ?? null;
       part.config = config;
       part.label = config?.labelShort ?? config?.label ?? "";
+      /* Its dice, shown to the right of the total like the attack's d20 (a d6 as a d6, kept results only) */
+      const FACES = { 4 : "fa-dice-d4", 6 : "fa-dice-d6", 8 : "fa-dice-d8", 10 : "fa-dice-d10", 12 : "fa-dice-d12", 20 : "fa-dice-d20" };
+      const dice = (roll.dice ?? []).flatMap(d => (d.results ?? []).filter(r => r.active !== false && !r.discarded)
+        .map(r => ({ value : r.result, icon : FACES[d.faces] ?? "fa-square" }))).slice(0, 8);
       return {
         type : part.type,
         label : config?.label ? game.i18n.localize(config.label) : "",
         icon : config?.icon ?? "",
         total : Math.max(0, roll.total),
+        dice,
         parts : [part],
       };
     });
@@ -1262,6 +1268,10 @@ export function registerMessages(){
             showTray : canApply && (damage.length > 0) && hit,
             sections : this.sectionsContext(i),
             extras : this.extrasContext(i),
+            /* What rules let you do to its target (a mastery) : its row */
+            ruleRows : visible ? buildRows(this.parent, { targets : [this.rayTarget(i)].filter(Boolean) })
+              .map(row => ({ ...row, ruleButtons : ruleButtonsOf(this.parent, row.uuid, { result : { hit }, owner : true, ray : i }) }))
+              .filter(row => row.ruleButtons.length) : [],
           };
         }));
         /* An alternative was the damage applied : the attack's own goes away */

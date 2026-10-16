@@ -9,6 +9,7 @@
     <div class="damage-type-box">
         <button type="button" class="dice-roll" {{ disabled isPrivate }}>
             <span class="result"><strong class="total">{{ total }}</strong></span>
+            {{#unless isPrivate}}{{#if dice.length}}<span class="macro-helper-dice">{{#each dice}}<span class="macro-helper-die"><i class="fa-fw fa-solid {{ icon }}" inert></i><span class="roll">{{ value }}</span></span>{{/each}}</span>{{/if}}{{/unless}}
         </button>
         {{#unless isPrivate}}
         <div class="roll-breakdown" popover>{{> "dnd5e.damage-breakdown" }}</div>

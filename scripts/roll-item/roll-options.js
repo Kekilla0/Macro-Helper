@@ -13,6 +13,9 @@ import { giveMode } from './reasons.js';
  *   ignoreCover  : true                  half and three-quarters cover don't count (total cover still does)
  *   damageType   : "fire"                its damage is that type instead
  *   range / reach : feet                 instead of the item's own
+ *   d20          : 15 or [15, 3]         what the attack's d20 shows (one value : every d20; a list : die by die)
+ *   damageDice   : 4 or [6, 1, 3]        what the damage dice show, the same way (a list runs across all its rolls,
+ *                                        crit dice included; past its end, the last value)
  */
 const active = new Map();
 
@@ -61,6 +64,29 @@ export function rollOptionDamage(config){
     roll.options.type = type;
     roll.options.types = [type];
   }
+}
+
+/* Forced dice : each die term of the built rolls gives these faces instead of rolling (still dice : crits, icons,
+   rerolls work). A value past a die's faces is held to them. */
+function forceDice(rolls, value){
+  if((value === undefined) || (value === null)) return;
+  const list = (Array.isArray(value) ? value : [value]).map(Number).filter(n => Number.isFinite(n));
+  if(!list.length) return;
+  let i = 0;
+  const next = faces => Math.clamp(Math.round(list[Math.min(i++, list.length - 1)]), 1, faces);
+  for(const roll of rolls ?? []){
+    for(const term of roll.dice ?? []){
+      term._roll = async () => next(term.faces);
+    }
+  }
+}
+
+export function rollOptionD20(rolls, config){
+  forceDice(rolls, rollOptions.of(config?.subject)?.d20);
+}
+
+export function rollOptionDamageDice(rolls, config){
+  forceDice(rolls, rollOptions.of(config?.subject)?.damageDice);
 }
 
 /* The range / reach : instead of the item's */

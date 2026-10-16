@@ -102,7 +102,7 @@ export class rollItem{
     attackMode ??= target => attackModeFor(activity.item, target) ?? undefined;
 
     const rays = this.countFor(activity, count ?? targets?.length);
-    if(rays > 1) return this.rollRays(activity, rays, { event, scaling, attackMode, disadvantage, targets, mode });
+    if(rays > 1) return this.rollRays(activity, rays, { event, scaling, attackMode, disadvantage, targets, mode, note, cardFlags });
 
     const target = targets?.[0] ?? game.user.targets.first() ?? null;
     const config = this.attackConfig({ attackMode, disadvantage }, target);
@@ -293,7 +293,7 @@ export class rollItem{
     return [attack, ...damage, ...added];
   }
 
-  static async rollRays(activity, count, { event, scaling = 0, attackMode, disadvantage, targets : tokens, mode } = {}){
+  static async rollRays(activity, count, { event, scaling = 0, attackMode, disadvantage, targets : tokens, mode, note, cardFlags } = {}){
     const { TargetsField } = dnd5e.dataModels.chatMessage.fields;
     const targets = this.assignTargets(count, tokens);
     const rolls = [], rays = [];

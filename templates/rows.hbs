@@ -55,7 +55,10 @@
         <span class="applied healing" data-tooltip="{{ localize "rollItem.row.applied" }}"><i class="fa-solid fa-check" inert></i> {{ effectApplied }}</span>
         {{/if}}
         {{#each ruleButtons}}
-        <button type="button" class="apply" data-action="rowRule" data-target="{{ ../uuid }}" data-id="{{ id }}"{{#if disabled}} disabled{{/if}}>
+        {{#with result}}
+        <span class="result {{#if success}}success{{else}}failure{{/if}}">{{ total }} <i class="fa-solid {{#if success}}fa-check{{else}}fa-xmark{{/if}}" inert></i></span>
+        {{/with}}
+        <button type="button" class="apply" data-action="rowRule" data-target="{{ ../uuid }}" data-id="{{ id }}"{{#if tooltip}} data-tooltip="{{ tooltip }}"{{/if}}{{#if disabled}} disabled{{/if}}>
             {{#if img}}<img src="{{ img }}" alt="" inert>{{else}}<i class="fa-solid {{ icon }}" inert></i>{{/if}} {{ label }}
         </button>
         {{/each}}

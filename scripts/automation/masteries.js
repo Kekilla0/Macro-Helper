@@ -26,8 +26,9 @@ const log = logger.for(import.meta.url);
  *                   its damage without your ability modifier (unless that's negative).
  *   Nick          : changes when the Light extra attack happens, nothing to roll.
  *
- * Buttons only work on targets the card knows hit, once per attack. Topple, Push, Sap, Slow and Vex change the target :
- * outcomes, so only the GM sees and clicks those (nothing happens on its own). Cleave is another attack : its roller's.
+ * Topple, Push, Sap, Slow and Vex change the target : outcomes, so only the GM sees and clicks those (nothing happens on
+ * its own) : a button on each hit target's row (its token on the left, the mastery on the right, Topple's save result
+ * beside it), greyed out once used on that target. Cleave is another attack : its roller's, a card button.
  */
 export class masteries{
   static ACTIONS = ["topple", "push", "sap", "slow", "vex", "cleave"];
@@ -50,6 +51,13 @@ export class masteries{
     foundry.applications.handlebars.loadTemplates({ [`${module.id}.mastery`] : `${module.path}/templates/mastery.hbs` });
     Hooks.on(`${module.id}.cardSections`, (message, sections, { ray } = {}) => { const section = this.cardSection(message, ray ?? null); if(section) sections.push(section); });
     Hooks.on(`${module.id}.cardButton`, (message, id, { ray, event, button } = {}) => { if(id === "mastery") this.clicked(message, ray ?? null, event, button); });
+    /* The outcome masteries : on each hit target's row */
+    Hooks.on(`${module.id}.rowButtons`, (message, uuid, buttons, context = {}) => this.rowButtons(message, uuid, buttons, context));
+    Hooks.on(`${module.id}.rowButton`, (message, uuid, id, { button } = {}) => {
+      if(!String(id).startsWith("mastery|")) return;
+      const key = String(id).slice(8);
+      this.clickedRow(message, (key === "single") ? null : Number(key), uuid, button);
+    });
     /* Graze : its damage rolled with every attack, shown when the attack misses */
     rollItem.addRolls(async (activity, attack, damage) => {
       const rolls = await this.grazeRolls(activity, attack, damage);
@@ -60,9 +68,47 @@ export class masteries{
 
   /* ---------- Card ---------- */
 
-  /* Has this attack's mastery been used from its card */
-  static used(message, ray){
-    return !!message?.getFlag?.(module.id, `mastery.${this.rayKey(ray)}`);
+  /* Has this attack's mastery been used from its card (on that target; a card from before the rows : on all) */
+  static used(message, ray, uuid = null){
+    const flag = message?.getFlag?.(module.id, `mastery.${this.rayKey(ray)}`);
+    if((flag === true) || !uuid) return flag === true;
+    return !!flag?.[this.uuidKey(uuid)];
+  }
+
+  static uuidKey(uuid){
+    return String(uuid).replaceAll(".", "-");
+  }
+
+  /* A hit target's row : the outcome mastery's button (the GM's), its save result once rolled */
+  static rowButtons(message, uuid, buttons, { result, ray = null } = {}){
+    if(!this.enabled() || !game.user.isGM || !result?.hit) return;
+    const key = message?.system?.masteryOf?.(ray);
+    if(!this.ACTIONS.includes(key) || (key === "cleave")) return;
+    if(!message.system.hitTargets(ray).some(t => (t.document ?? t).uuid === uuid)) return;
+    const done = message.getFlag(module.id, `mastery.${this.rayKey(ray)}`)?.[this.uuidKey(uuid)];
+    const prone = (key === "topple") ? CONFIG.statusEffects.find(s => s.id === "prone") : null;
+    buttons.push({
+      id : `mastery|${this.rayKey(ray)}`,
+      label : (key === "topple") ? module.format("rollItem.mastery.row.topple", { dc : this.toppleDC(message.getAssociatedActor(), message.system.attackOf(ray)?.options?.ability) })
+        : this.buttonLabel(key, message.getAssociatedActor(), message.system.attackOf(ray)),
+      tooltip : this.buttonLabel(key, message.getAssociatedActor(), message.system.attackOf(ray)),
+      img : prone?.img ?? null,
+      icon : this.ICONS[key] ?? "fa-star",
+      disabled : this.used(message, ray, uuid),
+      result : (typeof done === "object") ? done : null,
+    });
+  }
+
+  static async clickedRow(message, ray, uuid, button){
+    if(button) button.disabled = true;
+    try {
+      const notes = await this.apply(message, ray, uuid);
+      for(const note of notes ?? []) ui.notifications.info(note);
+    }
+    catch(error){
+      console.error("Macro Helper | mastery", error);
+      ui.notifications.warn(error.message);
+    }
   }
 
   /**
@@ -87,8 +133,8 @@ export class masteries{
     /* Cleave is another attack : its roller's. The rest change the target (Prone, moved, an effect) : outcomes the
        GM decides on, so only the GM sees those buttons. Cleave's own extra attack can't Cleave again. */
     const isCleave = !!attack?.options?.[module.id]?.tags?.noMod;
-    const mayUse = (key === "cleave") ? (message.isOwner && !isCleave) : game.user.isGM;
-    const canUse = mayUse && this.ACTIONS.includes(key);
+    /* The others are buttons on each hit target's row (rowButtons) */
+    const canUse = (key === "cleave") && message.isOwner && !isCleave;
     const action = (canUse && hits.length) ? {
       label : this.buttonLabel(key, message.getAssociatedActor(), attack),
       used : this.used(message, ray),
@@ -176,10 +222,11 @@ export class masteries{
   }
 
   /**
-   * Apply an outcome mastery (GM) : only to targets the card says were hit, once per attack.
+   * Apply an outcome mastery (GM) : only to targets the card says were hit, once per target.
+   * @param {string|null} [only]   one target's token uuid, else every hit target it hasn't been used on
    * @returns {Promise<string[]>}  notes to show (too big to push, blocked...)
    */
-  static async apply(message, ray = null){
+  static async apply(message, ray = null, only = null){
     const system = message?.system;
     if(!system?.masteryOf) throw new Error("Not a Roll Item attack card.");
 
@@ -187,8 +234,11 @@ export class masteries{
     if(!this.ACTIONS.includes(key) || (key === "cleave")) throw new Error(`No mastery to use : ${key}`);
     if(this.used(message, ray)) return [module.i18n("rollItem.mastery.used")];
 
-    const targets = system.hitTargets(ray);
-    if(!targets.length) return [module.i18n("rollItem.mastery.noHit")];
+    const hit = system.hitTargets(ray);
+    if(!hit.length) return [module.i18n("rollItem.mastery.noHit")];
+    const targets = hit.filter(t => !only || ((t.document ?? t).uuid === only)).filter(t => !this.used(message, ray, (t.document ?? t).uuid));
+    if(!targets.length) return [module.i18n(only && hit.some(t => (t.document ?? t).uuid === only) ? "rollItem.mastery.used" : "rollItem.mastery.noHit")];
+    const done = { ...(message.getFlag(module.id, `mastery.${this.rayKey(ray)}`) ?? {}) };
 
     const attacker = message.getAssociatedActor();
     const attackerToken = tokenOf(message.getAssociatedToken?.() ?? attacker);
@@ -199,9 +249,12 @@ export class masteries{
     for(const target of targets){
       const actor = target.actor;
       if(!actor) continue;
+      const doneKey = this.uuidKey((target.document ?? target).uuid);
+      done[doneKey] = true;
       switch(key){
         case "topple" : {
           const result = await rollSave(actor, "con", this.toppleDC(attacker, attack?.options?.ability));
+          if(result) done[doneKey] = { total : result.total, success : result.success };
           if(result && !result.success) await setStatus(actor, "prone", true);
           break;
         }
@@ -233,7 +286,7 @@ export class masteries{
       }
     }
 
-    await message.setFlag(module.id, `mastery.${this.rayKey(ray)}`, true);
+    await message.setFlag(module.id, `mastery.${this.rayKey(ray)}`, done);
     log.debug("Mastery", key, "from", message.id, "on", targets.map(t => t.name));
     return notes;
   }

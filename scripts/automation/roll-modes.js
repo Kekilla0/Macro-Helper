@@ -16,6 +16,7 @@ export class rollModes{
     "masteries",   // Sap, Vex
     "heavy",       // weapon handling : Heavy for a Small creature (or one too weak)
     "flanking",    // Homebrew : flanking
+    "packTactics", // Creature traits : Pack Tactics
     "help",        // Default Actions : Help's Assist Attack
     "reckless",    // Barbarian : Reckless Attack
     "protection",  // Fighting Styles : Protection
