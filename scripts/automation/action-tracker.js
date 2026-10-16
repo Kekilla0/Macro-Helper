@@ -316,32 +316,64 @@ export class actionTracker{
   }
 
   /**
-   * A creature's Multiattack, from its text : "makes two Claw attacks and one Bite attack" -> { left : {claw : 2, bite : 1} },
-   * "makes two attacks" -> { any : 2 }. Unreadable : as many as it likes.
+   * A creature's Multiattack, from its text, sentence by sentence :
+   *   "two Claw attacks and one Bite attack"            left   : { claw : 2, bite : 1 }
+   *   "two attacks"                                     any    : 2
+   *   "two Rend or Slam attacks",
+   *   "two attacks, using A, B, or C in any combination" shared : [{ n : 2, ids : [a, b, c] }]
+   *   "five Slam attacks or five Discharge attacks"     choice : [[{ id : slam, n : 5 }], [{ id : discharge, n : 5 }]]
+   *   "It can replace one attack with a Bite attack"    swap   : [bite]   (stands in for one attack of the pool)
+   * Unreadable : as many as it likes.
    */
   static parseMultiattack(actor, item){
-    const text = (item?.system?.description?.value ?? "").replace(/<[^>]+>/g, " ").replace(/@\w+\[[^\]]*\]\{([^}]*)\}/g, "$1").replace(/\s+/g, " ");
-    const attacks = (actor.items?.contents ?? []).filter(i => i.system?.activities?.some?.(a => a.type === "attack"));
-    const find = name => {
-      const n = name.toLowerCase().replace(/^(its|their|the)\s+/, "").replace(/s$/, "");
-      return attacks.find(i => i.name.toLowerCase() === n) ?? attacks.find(i => n.startsWith(i.name.toLowerCase()) || i.name.toLowerCase().startsWith(n));
+    const text = (item?.system?.description?.value ?? "").replace(/<[^>]+>/g, " ").replace(/@\w+\[[^\]]*\]\{([^}]*)\}/g, "$1").replace(/\s+/g, " ").trim();
+    const items = actor.items?.contents ?? [];
+    const attacks = items.filter(i => i.system?.activities?.some?.(a => a.type === "attack"));
+    const find = (name, list = attacks) => {
+      const n = name.toLowerCase().replace(/^(its|their|the)\s+/, "").replace(/s$/, "").trim();
+      return list.find(i => i.name.toLowerCase() === n) ?? list.find(i => n.startsWith(i.name.toLowerCase()) || i.name.toLowerCase().startsWith(n));
     };
-    const out = { any : 0, left : {}, text };
+    const ids = list => list.split(/\s*,\s*(?:or\s+|and\s+)?|\s+(?:or|and)\s+/).map(n => find(n)?.id).filter(Boolean);
+    const out = { any : 0, left : {}, shared : [], choice : [], swap : [], text };
     const count = w => this.NUMBERS[w.toLowerCase()] ?? Number(w);
-    const named = /\b(a|an|one|two|three|four|five|six|\d+)\s+(?:attacks?\s+with\s+(?:its|their)\s+([\w' -]+?)(?=[.,;]|\s+and\b|$)|([A-Z][\w'-]*(?:\s+[A-Z][\w'-]*)*)\s+attacks?\b|attacks?\b)/g;
-    for(const m of text.matchAll(named)){
-      const n = count(m[1]);
-      if(!Number.isFinite(n) || (n < 1)) continue;
-      const name = m[2] ?? m[3];
-      const hit = name ? find(name) : null;
-      if(hit) out.left[hit.id] = (out.left[hit.id] ?? 0) + n;
-      else if(!name) out.any += n;
+    const N = "(a|an|one|two|three|four|five|six|\\d+)", NAME = "[A-Z][\\w'-]*(?:\\s+[A-Z][\\w'-]*)*";
+    const named = new RegExp(`\\b${N}\\s+(?:attacks?\\s+with\\s+(?:its|their)\\s+([\\w' -]+?)(?=[.,;]|\\s+and\\b|$)|(${NAME})\\s+attacks?\\b|attacks?\\b)`, "g");
+    for(let s of text.split(/(?<=\.)\s+/)){
+      const swap = s.match(new RegExp(`replace\\s+one\\s+attack\\s+with\\s+(?:a\\s+use\\s+of\\s+|an?\\s+)?(?:its\\s+)?(${NAME})`));
+      if(swap){
+        const hit = find(swap[1], items);
+        if(hit) out.swap.push(hit.id);
+        continue;
+      }
+      s = s.replace(new RegExp(`\\b${N}\\s+attacks?,?\\s+using\\s+(.+?)\\s+in\\s+any\\s+combination`, "g"), (all, n, list) => {
+        const group = ids(list);
+        if(group.length) out.shared.push({ n : count(n), ids : group });
+        return group.length ? " " : all;
+      });
+      s = s.replace(new RegExp(`\\b${N}\\s+(${NAME})\\s+attacks?\\s+or\\s+${N}\\s+(${NAME})\\s+attacks?\\b`, "g"), (all, n1, a, n2, b) => {
+        const [x, y] = [find(a), find(b)];
+        if(x && y) out.choice.push([{ id : x.id, n : count(n1) }], [{ id : y.id, n : count(n2) }]);
+        return (x && y) ? " " : all;
+      });
+      s = s.replace(new RegExp(`\\b${N}\\s+(${NAME}(?:\\s*,\\s*${NAME})*,?\\s+or\\s+${NAME})\\s+attacks?\\b`, "g"), (all, n, list) => {
+        const group = ids(list);
+        if(group.length) out.shared.push({ n : count(n), ids : group });
+        return group.length ? " " : all;
+      });
+      for(const m of s.matchAll(named)){
+        const n = count(m[1]);
+        if(!Number.isFinite(n) || (n < 1)) continue;
+        const name = m[2] ?? m[3];
+        const hit = name ? find(name) : null;
+        if(hit) out.left[hit.id] = (out.left[hit.id] ?? 0) + n;
+        else if(!name) out.any += n;
+      }
     }
-    if(!out.any && !Object.keys(out.left).length) out.any = this.MANY;
+    if(!this.poolLeft(out)) out.any = this.MANY;
     return out;
   }
 
-  /* The pool the first attack opens : { any, left, text } */
+  /* The pool the first attack opens : { any, left, shared, choice, swap, text } */
   static attackPool(actor, activity){
     const multi = this.multiattackOf(actor);
     const pool = multi ? this.parseMultiattack(actor, multi) : { any : this.attacksPerAction(actor, activity?.item), left : {}, text : "" };
@@ -349,16 +381,46 @@ export class actionTracker{
     return pool;
   }
 
-  /* Take one attack from the pool : true if it had one for this item */
+  /* Take one attack from the pool : true if it had one for this item. The first attack of an either/or picks its branch;
+     an attack (or use) the Multiattack lets replace one attack takes one from anywhere in the pool */
   static takeAttack(pool, item){
-    if(!pool) return false;
-    if((pool.left?.[item?.id] ?? 0) > 0){ pool.left[item.id] -= 1; return true; }
+    if(!pool || !item) return false;
+    const id = item.id;
+    if(pool.choice?.length){
+      const branch = pool.choice.find(b => b.some(e => e.id === id));
+      if(branch){
+        for(const e of branch) pool.left[e.id] = (pool.left[e.id] ?? 0) + e.n;
+        pool.choice = [];
+      }
+    }
+    if((pool.left?.[id] ?? 0) > 0){ pool.left[id] -= 1; return true; }
+    const group = pool.shared?.find(g => (g.n > 0) && g.ids.includes(id));
+    if(group){ group.n -= 1; return true; }
+    if(this.isSwap(pool, item)){
+      pool.swap = [];
+      if(pool.choice?.length){
+        for(const e of pool.choice[0]) pool.left[e.id] = (pool.left[e.id] ?? 0) + e.n;
+        pool.choice = [];
+      }
+      if((pool.any ?? 0) > 0){ pool.any -= 1; return true; }
+      const shared = pool.shared?.find(g => g.n > 0);
+      if(shared){ shared.n -= 1; return true; }
+      const left = Object.keys(pool.left ?? {}).find(k => pool.left[k] > 0);
+      if(left){ pool.left[left] -= 1; return true; }
+    }
     if((pool.any ?? 0) > 0){ pool.any -= 1; return true; }
     return false;
   }
 
+  /* Can this use stand in for one of the pool's attacks ("It can replace one attack with a use of Roar") */
+  static isSwap(pool, item){
+    return !!item && !!pool?.swap?.includes(item.id) && (this.poolLeft(pool) > 0);
+  }
+
   static poolLeft(pool){
-    return (pool?.any ?? 0) + Object.values(pool?.left ?? {}).reduce((a, b) => a + b, 0);
+    return (pool?.any ?? 0) + Object.values(pool?.left ?? {}).reduce((a, b) => a + b, 0)
+      + (pool?.shared ?? []).reduce((a, g) => a + g.n, 0)
+      + Math.max(0, ...(pool?.choice ?? []).map(b => b.reduce((a, e) => a + e.n, 0)));
   }
 
   /* After the Attack action's attacks : the Bonus Action attack it allows */
@@ -369,14 +431,21 @@ export class actionTracker{
   }
 
   /* { kind, attack : "new" | "more" | "bonus" | "over" | null, offTurn, ask } */
+  /* A use its Multiattack lets stand in for one attack ("It can replace one attack with a use of Roar") */
+  static swapsIn(activity){
+    const multi = this.multiattackOf(activity?.actor);
+    return !!multi && !!activity.item && this.parseMultiattack(activity.actor, multi).swap.includes(activity.item.id);
+  }
+
   static plan(activity, cost, st){
     const attack = this.isAttack(activity);
     if(cost === "reaction") return { kind : "reaction" };
     if(!st.mine) return { kind : "reaction", offTurn : cost, attackOffTurn : attack, ask : !attack && !!activity.actor?.hasPlayerOwner && !game.user.isGM };
-    if((attack || this.isMultiattack(activity.item)) && (cost === "action")){
+    const swap = !attack && (cost === "action") && this.swapsIn(activity);
+    if((attack || swap || this.isMultiattack(activity.item)) && (cost === "action")){
       if(st.rec.attack){
         const pool = foundry.utils.deepClone(st.rec.attack);
-        if(attack && this.takeAttack(pool, activity.item)) return { kind : null, attack : "more", pool };
+        if((attack || swap) && this.takeAttack(pool, activity.item)) return { kind : null, attack : "more", pool };
         if(attack && (this.remaining(st.rec, "bonus") > 0) && this.bonusAttack(activity, st.rec)) return { kind : "bonus", attack : "bonus" };
         if(this.remaining(st.rec, "action") > 0) return { kind : "action", attack : "new" };
         return { kind : "action", attack : "over", pool };
@@ -447,7 +516,7 @@ export class actionTracker{
     }
     if(attack === "new"){
       rec.attack = this.attackPool(actor, activity);
-      if(this.isAttack(activity)) this.takeAttack(rec.attack, activity.item);
+      if(this.isAttack(activity) || this.swapsIn(activity)) this.takeAttack(rec.attack, activity.item);
       rec.light = this.isAttack(activity) && this.isLight(activity.item);
     }
     else if(attack === "more"){
@@ -719,6 +788,10 @@ export class actionTracker{
         const half = spent && (i === total - used) && (attacksLeft > 0);
         const tip = half ? module.format("actionTracker.attacks", { n : (attacksLeft >= this.MANY - 1) ? "…" : attacksLeft })
           : module.format(spent ? "actionTracker.used" : "actionTracker.left", { kind : this.label(kind) });
+        /* The Attack action's pip empties as its attacks are made */
+        const all = Number(rec.attack?.total) || 0;
+        if(half && (attacksLeft < this.MANY - 1) && (all > 0))
+          return `<i class="pie ${kind}${added ? " added" : ""}" style="--left:${Math.round(100 * attacksLeft / all)}%" data-kind="${kind}" data-tooltip="${esc(tip)}"></i>`;
         const icon = half ? "fa-circle-half-stroke" : this.ICONS[kind];
         return `<i class="fa-solid ${icon} ${kind}${(spent && !half) ? " spent" : ""}${half ? " half" : ""}${added ? " added" : ""}" data-kind="${kind}" data-tooltip="${esc(tip)}"></i>`;
       }).join("");
@@ -738,10 +811,7 @@ export class actionTracker{
       li.querySelector(`.${module.id}-economy`)?.remove();
       const box = document.createElement("div");
       box.className = `${module.id}-economy`;
-      const left = this.poolLeft(st.rec.attack);
-      box.innerHTML = this.pipsHTML(st.rec, { small : true }) + (((left > 0) && (left < this.MANY - 1))
-        ? `<span class="attacks" data-tooltip="${esc(module.format("actionTracker.attacks", { n : left }))}">+${left}</span>` : "")
-        + this.extrasHTML(actor) + this.readyHTML(st.rec);
+      box.innerHTML = this.pipsHTML(st.rec, { small : true }) + this.extrasHTML(actor) + this.readyHTML(st.rec);
       this.listen(box, actor);
       (li.querySelector(".token-name") ?? li).append(box);
     }

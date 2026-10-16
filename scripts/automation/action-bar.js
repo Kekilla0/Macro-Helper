@@ -7,7 +7,7 @@ import { cardBuilder, grapplesOn, grappling } from '../roll-item/card-builder.js
 /**
  * The action bar (Action Tracker on) : just above Foundry's hotbar, one creature's turn in a started combat it's in :
  * its Actions, Bonus Actions and Reactions (pips; an added one is ringed, a used one dimmed : a click marks one used or
- * gives it back), what's left of its Attack action (a Multiattack's attacks by name), its movement this turn against
+ * gives it back), its Action pip emptying as the Attack action's attacks are made, its movement this turn against
  * its Speed, its object interaction, and the turn's log.
  * On its turn, End Turn (its owner or the GM) moves the combat on.
  *   Whose : a player's selected token (one they own), else their assigned character; the GM's first selected token.
@@ -58,14 +58,6 @@ export class actionBar{
     return el;
   }
 
-  static attacksText(actor, pool){
-    if(!pool) return "";
-    const named = Object.entries(pool.left ?? {}).filter(([, n]) => n > 0).map(([id, n]) => `${actor.items.get(id)?.name ?? "?"} ×${n}`);
-    if((pool.any > 0) && (pool.any < actionTracker.MANY - 1)) named.push(module.format("actionTracker.bar.any", { n : pool.any }));
-    if(pool.any >= actionTracker.MANY - 1) named.push(module.i18n("actionTracker.bar.anyMany"));
-    return named.join(" · ");
-  }
-
   static render(){
     const el = this.element();
     if(!el) return;
@@ -92,7 +84,6 @@ export class actionBar{
          ...grapples.map(g => `<button type="button" class="escape" data-effect="${g.effect.id}"><i class="fa-solid fa-hand-back-fist" inert></i> ${esc(module.format("actionTracker.bar.escapeFrom", { name : g.byName, dc : g.dc }))}</button>`),
          ...holds.map(t => `<button type="button" class="release" data-target="${(t.document ?? t).uuid}"><i class="fa-solid fa-hand" inert></i> ${esc(module.format("actionTracker.bar.release", { name : t.name }))}</button>`)].filter(Boolean);
     const big = buttons.length ? `<div class="big-action">${buttons.join("")}</div>` : "";
-    const attacks = this.attacksText(actor, rec.attack);
     const log = (rec.log ?? []).slice().reverse();
     el.hidden = false;
     el.classList.toggle("mine", st.mine);
@@ -103,7 +94,6 @@ export class actionBar{
       ${actionTracker.extrasHTML(actor) ? `<div class="extras">${actionTracker.extrasHTML(actor)}</div>` : ""}
       ${rec.ready ? `<div class="ready-chip">${actionTracker.readyHTML(rec)} ${esc(rec.ready.name)}</div>`
         : (st.mine && (game.user.isGM || actor.isOwner)) ? `<button type="button" class="ready-button"${(actionTracker.remaining(rec, "action") <= 0) ? " disabled" : ""} data-tooltip="${esc(module.i18n("actionTracker.ready.tip"))}"><i class="fa-solid fa-hourglass-half" inert></i> ${esc(module.i18n("actionTracker.ready.button"))}</button>` : ""}
-      ${attacks ? `<div class="attacks" data-tooltip="${esc(rec.attack?.text || module.i18n("actionTracker.bar.attacksTip"))}"><i class="fa-solid fa-hand-fist" inert></i> ${esc(attacks)}</div>` : ""}
       <div class="move${(speed && (moved > speed)) ? " over" : ""}" data-tooltip="${esc(module.i18n("actionTracker.movement"))}"><i class="fa-solid fa-shoe-prints" inert></i> ${moved} / ${speed} ft</div>
       <div class="object${(rec.objects >= 1) ? " spent" : ""}" data-tooltip="${esc(module.i18n((rec.objects >= 1) ? "actionTracker.bar.objectUsed" : "actionTracker.bar.objectFree"))}"><i class="fa-solid fa-hand-holding" inert></i></div>
       <button type="button" class="log-toggle" data-tooltip="${esc(module.i18n("actionTracker.bar.log"))}"><i class="fa-solid fa-list" inert></i></button>

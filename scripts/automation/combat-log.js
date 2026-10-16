@@ -10,10 +10,10 @@ const log = logger.for(import.meta.url);
  * the GM's client) : every creature's turn log (its uses, attacks, movement, readied actions...), effects that end and
  * death saves that change. The book button in the combat tracker's top bar opens it : by round, [token + name : entry],
  * live. Export : a text file. Players see the lines about creatures they own or can see; the GM all of them.
- * Rolls : an attack once its card is revealed (its total, hit or miss on each target), saves / checks / death saves
- * (total, against the DC), damage and healing as applied. An NPC's numbers show as "?" to players with DM Screen on.
+ * Rolls : an attack once its card is revealed (its total, its targets), saves / checks / death saves
+ * (total, against the DC), damage and healing as applied (an attack's damage : "hit by" it). An NPC's numbers show as "?" to players with DM Screen on.
  * Combat Log : Journal (setting) : when the combat is deleted, its log is kept as a journal entry.
- * Kept short : an attack is one line (its place in the Attack action, total, hit / miss), one hit's damage one line
+ * Kept short : an attack is one line (its place in the Attack action, total, targets), one hit's damage one line
  * (its parts added up), effects applied by another creature (or a condition) a line; duplicate names are numbered.
  */
 export class combatLog{
@@ -116,7 +116,7 @@ export class combatLog{
 
   /* ---------- Rolls ---------- */
 
-  /* An attack card, once revealed : its total, hit or miss on each target (the active GM, once per card) */
+  /* An attack card, once revealed : its total and targets (the active GM, once per card) */
   static async onAttackCard(message, changes){
     if(!this.enabled() || !game.users.activeGM?.isSelf || (message.type !== "macro-helper.rollItem")) return;
     if(message.getFlag(module.id, "reveal") !== 2 || message.getFlag(module.id, "logged")) return;
@@ -125,12 +125,10 @@ export class combatLog{
     if(!attack || !actor) return;
     await message.setFlag(module.id, "logged", true);
     const item = message.getAssociatedItem?.()?.name ?? "";
+    /* Only who it was aimed at : hit or miss isn't known until every AC change is in (Shield, cover, Parry); the damage
+       line says it hit */
     const { TargetsField } = dnd5e.dataModels.chatMessage.fields;
-    const hits = new Set((message.system.hitTargets?.(null) ?? []).map(t => t?.document?.uuid ?? t?.uuid ?? t));
-    const targets = (message.system.targets ?? []).map(d => {
-      const name = TargetsField.resolve(d)?.token?.name ?? d.name ?? "?";
-      return module.format(hits.has(d.token) ? "combatLog.hit" : "combatLog.miss", { name });
-    });
+    const targets = (message.system.targets ?? []).map(d => TargetsField.resolve(d)?.token?.name ?? d.name ?? "?");
     const crit = attack.isCritical ? ` ${module.i18n("combatLog.crit")}` : attack.isFumble ? ` ${module.i18n("combatLog.fumble")}` : "";
     const step = (actor.getFlag(module.id, "economy")?.log ?? []).slice().reverse().find(e => e.barOnly && (e.item === item));
     const place = step ? [step.kind ? module.i18n(`actionTracker.${step.kind}`) : "", step.nth].filter(Boolean).join(", ") : "";
@@ -165,7 +163,10 @@ export class combatLog{
     let from = "";
     try { from = card?.getAssociatedItem?.()?.name ?? ""; } catch { from = ""; }
     const key = (amount > 0) ? "combatLog.damage" : "combatLog.healing";
-    const suffix = from ? ` (${from})` : "";
+    /* From an attack : the hit is logged here, once the damage is dealt */
+    const by = card?.speaker?.alias ?? card?.getAssociatedActor?.()?.name ?? "";
+    const hit = (amount > 0) && card?.system?.attackRoll && by && (card.getAssociatedActor?.()?.uuid !== actor.uuid);
+    const suffix = hit ? ` ${module.format("combatLog.hitBy", { item : from, name : by })}` : from ? ` (${from})` : "";
     await this.add(actor, module.format(key, { n : Math.abs(amount) }) + suffix, { numbers : true,
       group : card ? `${(amount > 0) ? "dmg" : "heal"}:${card.id}` : null, amount : Math.abs(amount), key, suffix });
   }

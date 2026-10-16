@@ -435,7 +435,6 @@
 .macro-helper-economy i.bonus { color: #e08a1e; }
 .macro-helper-economy i.reaction { color: #9a6fd8; }
 .macro-helper-economy i.spent { opacity: 0.25; }
-.macro-helper-economy .attacks { font-size: 0.9em; opacity: 0.8; }
 .macro-helper-economy i.added { outline: 1px solid currentColor; outline-offset: 1px; border-radius: 50%; }
 
 /* Action Tracker : the action bar above the hotbar */
@@ -490,6 +489,8 @@
 .macro-helper-combat-log .entries .entry .name::after { content: " :"; }
 .macro-helper-combat-log .entries .empty { opacity: 0.7; font-style: italic; }
 #macro-helper-action-bar i.half, .macro-helper-economy i.half { opacity: 0.75; }
+#macro-helper-action-bar i.pie, .macro-helper-economy i.pie { display: inline-block; width: 1em; height: 1em; border-radius: 50%; vertical-align: -0.125em;
+  background: conic-gradient(currentColor var(--left), transparent 0); box-shadow: inset 0 0 0 1.5px currentColor; }
 #macro-helper-action-bar .escape { background: #6a4a1f; border: 2px solid #d0a050; }
 .chat-message button[data-action="rowRule"] img { width: 16px; height: 16px; border: none; vertical-align: middle; margin-right: 2px; }
 #macro-helper-action-bar .release { background: #2f5a3a; border: 2px solid #6fbf7f; }
