@@ -360,6 +360,9 @@ export class actionReady{
     const actor = token.actor;
     const disengaged = actor?.statuses?.has?.("disengaged") || actor?.effects?.some?.(e => !e.disabled && (e.getFlag(module.id, "disengaged") || e.getFlag(module.id, "disengage")));
     if(!actor || disengaged) return;
+    /* Flyby (Animated Broom, owls) : flying out of an enemy's reach provokes nothing */
+    const action = movement.passed?.waypoints?.at?.(-1)?.action ?? movement.pending?.waypoints?.at?.(-1)?.action ?? token.movementAction;
+    if((action === "fly") && actor.items?.some?.(i => (idOf(i) === "flyby") || /^flyby$/i.test(i.name ?? ""))) return;
     if(!actionTracker.combatOf(actor)) return;
     const done = new Set(own.oaDone ?? []);
     const threats = token.parent.tokens.filter(t => (t !== token) && t.actor && !t.hidden && !done.has(t.uuid) && (this.relation(t, token) === "enemy")

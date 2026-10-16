@@ -2,6 +2,7 @@ import { module } from '../module.js';
 import { esc } from '../helpers/utils.js';
 import { actionTracker } from './action-tracker.js';
 import { actionReady } from './action-ready.js';
+import { cardBuilder, grapplesOn, grappling } from '../roll-item/card-builder.js';
 
 /**
  * The action bar (Action Tracker on) : just above Foundry's hotbar, one creature's turn in a started combat it's in :
@@ -81,10 +82,15 @@ export class actionBar{
     const dying = st.mine && (actor.type === "character") && (Number(actor.system?.attributes?.hp?.value) <= 0) && !!death
       && ((Number(death.failure) || 0) < 3) && ((Number(death.success) || 0) < 3) && !actor.statuses?.has?.("dead") && !actor.statuses?.has?.("stable") && (game.user.isGM || actor.isOwner);
     const prone = !dying && st.mine && actor.statuses?.has?.("prone") && !actor.statuses?.has?.("unconscious") && (game.user.isGM || actor.isOwner);
-    const grapple = !dying && st.mine && !actionTracker.OUT_OF_ACTION.some(s => actor.statuses?.has?.(s)) && (game.user.isGM || actor.isOwner) ? actionTracker.grappleOf(actor) : null;
+    const may = game.user.isGM || actor.isOwner;
+    const free = !actionTracker.OUT_OF_ACTION.some(s => actor.statuses?.has?.(s));
+    /* One Escape per grapple on it (its turn), one Release per creature it holds (any time) */
+    const grapples = (!dying && st.mine && free && may) ? grapplesOn(actor) : [];
+    const holds = (!dying && may && token) ? grappling(token) : [];
     const buttons = dying ? [`<button type="button" class="death-save"><i class="fa-solid fa-skull" inert></i> ${esc(module.i18n("actionTracker.bar.deathSave"))}</button>`]
       : [prone ? `<button type="button" class="stand-up"><i class="fa-solid fa-person-arrow-up-from-line" inert></i> ${esc(module.format("actionTracker.bar.standUp", { cost : Math.floor(speed / 2) }))}</button>` : "",
-         grapple ? `<button type="button" class="escape"><i class="fa-solid fa-hand-back-fist" inert></i> ${esc(module.format("actionTracker.bar.escape", { dc : grapple.dc }))}</button>` : ""].filter(Boolean);
+         ...grapples.map(g => `<button type="button" class="escape" data-effect="${g.effect.id}"><i class="fa-solid fa-hand-back-fist" inert></i> ${esc(module.format("actionTracker.bar.escapeFrom", { name : g.byName, dc : g.dc }))}</button>`),
+         ...holds.map(t => `<button type="button" class="release" data-target="${(t.document ?? t).uuid}"><i class="fa-solid fa-hand" inert></i> ${esc(module.format("actionTracker.bar.release", { name : t.name }))}</button>`)].filter(Boolean);
     const big = buttons.length ? `<div class="big-action">${buttons.join("")}</div>` : "";
     const attacks = this.attacksText(actor, rec.attack);
     const log = (rec.log ?? []).slice().reverse();
@@ -107,7 +113,9 @@ export class actionBar{
     actionTracker.listen(el.querySelector(".pips"), actor);
     el.querySelector(".death-save")?.addEventListener("click", event => { event.currentTarget.disabled = true; actionTracker.deathSave(actor, st.combat); });
     el.querySelector(".stand-up")?.addEventListener("click", event => { event.currentTarget.disabled = true; actionTracker.standUp(actor, token); });
-    el.querySelector(".escape")?.addEventListener("click", event => { event.currentTarget.disabled = true; actionTracker.escape(actor); });
+    el.querySelectorAll(".escape").forEach(b => b.addEventListener("click", event => { event.currentTarget.disabled = true; actionTracker.escape(actor, event.currentTarget.dataset.effect); }));
+    el.querySelectorAll(".release").forEach(b => b.addEventListener("click", event => { event.currentTarget.disabled = true;
+      cardBuilder.release(token, fromUuidSync(event.currentTarget.dataset.target, { strict : false })); }));
     el.querySelector(".ready-button")?.addEventListener("click", () => actionReady.ready(token, actor));
     el.querySelector(".end-turn")?.addEventListener("click", async event => {
       event.currentTarget.disabled = true;

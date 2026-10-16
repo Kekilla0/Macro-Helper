@@ -155,6 +155,10 @@ export class combatLog{
   /* Damage or healing applied (the client that applied it) */
   static async onDamage(actor, amount, options = {}){
     if(!this.enabled() || !amount || !actor) return;
+    /* Shared damage (Rug of Smothering) : what it really took, and from whom the other's came */
+    const own = options?.[module.id] ?? {};
+    if(Number.isFinite(own.taken)) amount = own.taken;
+    if(own.shared) return this.add(actor, module.format("combatLog.damage", { n : Math.abs(amount) }) + ` ${module.format("combatLog.sharedWith", { name : own.shared.from })}`, { numbers : true });
     const tokens = new Set((actor.getActiveTokens?.(false, true) ?? []).map(t => (t.document ?? t).uuid));
     const card = options.origin?.getAssociatedItem ? options.origin
       : game.messages.contents.slice(-15).reverse().find(m => (m.system?.targets ?? []).some(t => tokens.has(t.token)));

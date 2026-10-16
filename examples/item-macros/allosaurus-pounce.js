@@ -5,14 +5,14 @@
  *
  * Setup : Item Macro on the Claws, mode "Macro instead of the item's use" (it runs that use itself : item.roll()).
  *         Put it on the actor in the sidebar : tokens placed from it carry it.
- * Uses  : item.roll(), card.remove / card.append, applyCondition, followUp, target.sizeAtMost, token.chargedAt
+ * Uses  : item.roll(), card.remove / card.append, applyCondition, followUp, target.isSmaller, token.chargedAt
  */
 
 const card = await item.roll();          // the normal Claws use : targets, attack, damage, its card
 if(!card) return;                        // the target pick was closed : nothing rolled
 
 // Per target : Large or smaller, and charged straight at it (30+ ft, just before)
-const pounce = target => target.sizeAtMost("large") && token.chargedAt(target, 30);
+const pounce = target => target.isSmaller("large") && token.chargedAt(target, 30);
 
 card.remove("prone");                    // the Claws' own Prone would show on every hit
 card.append(applyCondition({ type : "prone", when : ["hit", pounce] }));

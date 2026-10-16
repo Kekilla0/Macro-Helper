@@ -5,6 +5,7 @@ import { uses } from '../uses.js';
 import { gm } from '../gm.js';
 import { limits } from './limits.js';
 import { combatLog } from './combat-log.js';
+import { grapplesOn } from '../roll-item/card-builder.js';
 import { idOf, esc } from '../helpers/utils.js';
 const log = logger.for(import.meta.url);
 
@@ -151,24 +152,14 @@ export class actionTracker{
     if(combat?.combatant && (combat.combatant.actor === actor)) await combat.nextTurn();
   }
 
-  /* Grappled : the grapple's escape DC (its Grapple's save DC, "escape DC 13" in a monster's text, else 8 + STR + PB) */
+  /* Grappled : each grapple with its escape DC (card-builder.js) */
   static grappleOf(actor){
-    const effect = actor?.effects?.find?.(e => !e.disabled && e.statuses?.has?.("grappled"));
-    if(!effect) return null;
-    let origin = null;
-    try { origin = effect.origin ? fromUuidSync(effect.origin, { strict : false }) : null; } catch { origin = null; }
-    const item = (origin?.documentName === "Item") ? origin : (origin?.item ?? null);
-    const by = item?.actor ?? origin?.actor ?? null;
-    const save = [...(item?.system?.activities ?? [])].find(a => a.type === "save");
-    const text = String(item?.system?.description?.value ?? "");
-    const dc = Number(save?.save?.dc?.value) || Number(text.match(/escape\s+DC\s+(\d+)/i)?.[1])
-      || (by ? 8 + (Number(by.system?.abilities?.str?.mod) || 0) + (Number(by.system?.attributes?.prof) || 0) : 10);
-    return { effect, dc, by };
+    return grapplesOn(actor)[0] ?? null;
   }
 
   /* Its turn, Grappled : escape (its Action) : the better of Athletics and Acrobatics against the escape DC */
-  static async escape(actor){
-    const grapple = this.grappleOf(actor);
+  static async escape(actor, effectId = null){
+    const grapple = grapplesOn(actor).find(g => !effectId || (g.effect.id === effectId)) ?? null;
     if(!grapple) return;
     if(!this.left(actor, "action") && !limits.allow(module.format("actionTracker.spent", { name : actor.name, kind : this.label("action") }), { who : actor.name, what : module.i18n("actionTracker.escape") })) return;
     const skills = actor.system?.skills ?? {};
@@ -179,8 +170,7 @@ export class actionTracker{
     await this.spend(actor, { kind : "action", what : module.i18n("actionTracker.escape") });
     const freed = roll.total >= grapple.dc;
     if(freed){
-      const all = actor.effects.filter(e => e.statuses?.has?.("grappled")).map(e => e.id);
-      if(all.length) await actor.deleteEmbeddedDocuments("ActiveEffect", all, { [module.id] : { reason : module.i18n("actionTracker.escaped") } }).catch(() => null);
+      await grapple.effect.delete({ [module.id] : { reason : module.i18n("actionTracker.escaped") } }).catch(() => null);
     }
     const st = this.state(actor);
     if(st){

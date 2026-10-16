@@ -492,3 +492,4 @@
 #macro-helper-action-bar i.half, .macro-helper-economy i.half { opacity: 0.75; }
 #macro-helper-action-bar .escape { background: #6a4a1f; border: 2px solid #d0a050; }
 .chat-message button[data-action="rowRule"] img { width: 16px; height: 16px; border: none; vertical-align: middle; margin-right: 2px; }
+#macro-helper-action-bar .release { background: #2f5a3a; border: 2px solid #6fbf7f; }
