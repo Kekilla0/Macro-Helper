@@ -697,6 +697,7 @@
   "cardBuilder.sharedText" : "{name} takes {n} damage (shared with {from}).",
   "cardBuilder.sharedApply" : "Apply {n} damage",
   "cardBuilder.sharedDone" : "{n} damage applied",
+  "cardBuilder.reason" : "{item} (its own rule)",
   "cardBuilder.apply" : "{name}",
   "cardBuilder.applied" : "{name} applied",
   "cardBuilder.noItem" : "No attack called {name} on this creature.",

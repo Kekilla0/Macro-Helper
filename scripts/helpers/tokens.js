@@ -1,3 +1,4 @@
+import { rollOptionRange } from '../roll-item/roll-options.js';
 import { module } from '../module.js';
 
 /**
@@ -105,6 +106,9 @@ export function getRange(thing, { long = false, thrown = false } = {}){
   const item = isItem ? thing : thing?.item;
   const activity = isItem ? (item.system.activities?.getByType("attack")[0] ?? item.system.activities?.contents[0]) : thing;
   if(!item) return 0;
+  /* item.roll({ range / reach }) : instead of the item's */
+  const given = rollOptionRange(activity);
+  if(given) return given;
 
   /* Activities that set their own range override the item's */
   const range = activity?.range?.override ? activity.range : (item.system.range ?? {});

@@ -4,6 +4,7 @@ import { uses } from '../uses.js';
 import { logger } from '../log.js';
 import { cells, gridSteps } from '../helpers/tokens.js';
 import { postTargetCard, registerTargetCards } from '../helpers/target-card.js';
+import { rollOptions, rollOptionDamage } from './roll-options.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -32,7 +33,8 @@ const log = logger.for(import.meta.url);
  *   extraDamage(formula, { type, when })   more damage on the hit, in the hit's own damage line (by type), rolled
  *                              when appended if a target's facts hold (doubled on a critical hit).
  *
- *   item.roll({ activity })    which of the item's activities (its index, id or name), when it has several.
+ *   item.roll({ activity, advantage, disadvantage, targets, cost, attackBonus, critical, ignoreCover, damageType,
+ *               range, reach })   see roll-options.js : what to change before the roll.
  */
 const KEY = "cardParts";
 const uuidKey = uuid => String(uuid).replaceAll(".", "-");
@@ -239,18 +241,31 @@ export class CardBuilder{
 
 export class cardBuilder{
   /* item.roll() : the item's normal use, its card as a CardBuilder (null : nothing was rolled) */
-  static async roll(item, { post = true, activity = null } = {}){
+  static async roll(item, { post = true, activity = null, ...options } = {}){
     /* Several activities (Plutonium's two Talons) : the one asked for, else dnd5e asks */
     const list = [...(item.system?.activities ?? [])];
     const chosen = (activity === null) ? null : (Number.isInteger(activity) ? list[activity] : list.find(a => (a.id === activity) || (a.name === activity)));
-    const config = { [module.id] : { skipMacro : true } };
-    const results = chosen ? await chosen.use(config) : await item.use(config);
-    if(!results) return null;
-    const made = await uses.cardOf(results);
+    const config = { [module.id] : { skipMacro : true, ...(options.cost ? { economy : options.cost } : {}) } };
+    /* Targets given : no pick, those are the targets */
+    if(Array.isArray(options.targets)){
+      canvas.tokens.setTargets(options.targets.map(t => (t.object ?? t)?.id).filter(Boolean));
+      config[module.id].skipPick = true;
+      config[module.id].useTargets = true;
+    }
+    const keys = [chosen?.uuid, item.uuid];
+    rollOptions.set(keys, options);
+    let made = null;
+    try {
+      const results = chosen ? await chosen.use(config) : await item.use(config);
+      if(!results) return null;
+      made = await uses.cardOf(results);
+    }
+    finally { rollOptions.clear(keys); }
     /* The card itself (the use may hand back its data, or the message) */
     const id = made?.id ?? made?._id ?? made?.message?.id ?? null;
     const message = (made?.documentName === "ChatMessage") ? made : (id ? game.messages.get(id) : null);
     if(!message) return null;
+    if(options.ignoreCover && message.isOwner) await message.setFlag(module.id, "ignoreCover", true);
     if(!post) log.debug("item.roll : the card is already posted by the use; post : false is not supported yet");
     return new CardBuilder(message);
   }
@@ -288,6 +303,7 @@ export class cardBuilder{
 
   static register(){
     Hooks.once("setup", () => this.addMethods());
+    Hooks.on("dnd5e.preRollDamageV2", config => rollOptionDamage(config));
     gm.handle("cardRelease", (data, user) => this.releaseAsGM(data, user));
     gm.handle("cardShared", (data, user) => this.sharedAsGM(data, user));
     registerTargetCards();

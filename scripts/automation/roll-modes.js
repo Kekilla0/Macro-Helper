@@ -1,3 +1,4 @@
+import { rollOptionModes } from '../roll-item/roll-options.js';
 import { logger } from '../log.js';
 const log = logger.for(import.meta.url);
 
@@ -44,6 +45,8 @@ export class rollModes{
 
   static register(){
     if(game.system.id !== "dnd5e") return;
+    /* item.roll()'s own advantage / disadvantage / bonus / critical range (card macros) */
+    this.add("macro", config => rollOptionModes(config));
     Hooks.on("dnd5e.preRollAttackV2", config => this.apply(config));
   }
 }

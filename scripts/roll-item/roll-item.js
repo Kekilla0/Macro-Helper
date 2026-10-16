@@ -1,3 +1,4 @@
+import { rollOptionFilter } from './roll-options.js';
 import { module } from '../module.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
@@ -474,7 +475,7 @@ export class rollItem{
     }
 
     const count = this.countFor(activity);
-    const picked = await pickAttack(activity.item, { activity, count, repeat : count > 1, clearTargets : pick === "always", used : true, rangeMultiplier });
+    const picked = await pickAttack(activity.item, { activity, count, repeat : count > 1, clearTargets : pick === "always", used : true, rangeMultiplier, filter : rollOptionFilter(activity) ?? undefined });
     if(!picked) return this.cancelUse(activity);
     const { attackMode, disadvantage } = picked;
     const targets = await this.checkTargets(activity, picked.targets);
@@ -494,7 +495,7 @@ export class rollItem{
     const attacker = tokenOf(activity.item);
     if(!settings.value("rollItem") || (pick === "off") || !canvas.ready || !attacker || (attacker.document.parent !== canvas.scene)) return null;
     const picked = await pickAttack(activity.item, { activity, count : this.countFor(activity), repeat : this.countFor(activity) > 1,
-      clearTargets : pick === "always", used : false, rangeMultiplier : Number(usage?.[module.id]?.rangeMultiplier) || 1 });
+      clearTargets : pick === "always", used : false, rangeMultiplier : Number(usage?.[module.id]?.rangeMultiplier) || 1, filter : rollOptionFilter(activity) ?? undefined });
     if(!picked?.targets?.length) return false;
     return this.announceTargets(activity, picked.targets);
   }
