@@ -75,6 +75,7 @@ export class actionTracker{
       if(this.enabled() && foundry.utils.hasProperty(changes ?? {}, `flags.${module.id}.economy`)) ui.combat?.render();
     });
     Hooks.on("updateCombatant", () => { if(this.enabled()) ui.combat?.render(); });
+    Hooks.on("updateCombat", (combat, changes) => this.skipTurn(combat, changes));
     Hooks.on("createChatMessage", (message, options, userId) => this.fromMessage(message, userId));
     Hooks.on("createActiveEffect", (effect, options, userId) => this.fromEffect(effect, userId));
     Hooks.on("dnd5e.postUseActivity", activity => this.onUsed(activity));
@@ -93,7 +94,9 @@ export class actionTracker{
     /* A real duration (not a status dnd5e switches by itself : Bloodied), or a rule's reason */
     const d = effect.duration ?? {};
     if(!reason && !(d.seconds || d.rounds || d.turns || d.value)) return;
-    const line = module.format("actionTracker.effectEnded", { name : actor.name, effect : effect.name }) + (reason ? ` ${reason}` : "");
+    const status = (effect.statuses?.size === 1) ? CONFIG.statusEffects.find(s => s.id === [...effect.statuses][0]) : null;
+    const label = status ? game.i18n.localize(status.name ?? status.label ?? effect.name) : effect.name;
+    const line = module.format("actionTracker.effectEnded", { effect : label }) + (reason ? ` ${reason}` : "");
     await combatLog.add(actor, line);
     if(!settings.value("combatLogChat")) return;
     const users = new Set(game.users.filter(u => u.isGM || actor.testUserPermission(u, "OWNER")).map(u => u.id));
@@ -102,6 +105,25 @@ export class actionTracker{
   }
 
   static #rolled = new Set();
+
+  /* A creature that can't act on its turn : dead, defeated, an NPC at 0 HP, or a character at 0 HP that's stable */
+  static cantAct(actor){
+    if(!actor) return false;
+    if(actor.statuses?.has?.("dead") || actor.statuses?.has?.("defeated")) return true;
+    if(Number(actor.system?.attributes?.hp?.value) > 0) return false;
+    if(actor.type !== "character") return true;
+    const death = actor.system?.attributes?.death ?? {};
+    return actor.statuses?.has?.("stable") || ((Number(death.failure) || 0) >= 3);
+  }
+
+  static async skipTurn(combat, changes){
+    if(!this.enabled() || !game.users.activeGM?.isSelf || !combat?.started || !(("turn" in (changes ?? {})) || ("round" in (changes ?? {})))) return;
+    if(!this.cantAct(combat.combatant?.actor)) return;
+    if(combat.combatants.every(c => this.cantAct(c.actor))) return;
+    await new Promise(resolve => setTimeout(resolve, 300));
+    await combatLog.add(combat.combatant.actor, module.i18n("actionTracker.log.skipped"));
+    await combat.nextTurn();
+  }
 
   /* Death saves changed : a line for its owners and the GM (a roll's own card already says it), Dead at 3 failures */
   static async deathChanged(actor, changes, options = {}, userId){
@@ -126,8 +148,45 @@ export class actionTracker{
     const rolls = await actor.rollDeathSave?.({ event : null }).catch(error => { log.debug(error); return null; });
     if(!rolls) return;
     const st = this.state(actor);
-    if(st){ this.note(st.rec, module.i18n("actionTracker.log.deathSave")); await this.save(actor, st.rec); }
     if(combat?.combatant && (combat.combatant.actor === actor)) await combat.nextTurn();
+  }
+
+  /* Grappled : the grapple's escape DC (its Grapple's save DC, "escape DC 13" in a monster's text, else 8 + STR + PB) */
+  static grappleOf(actor){
+    const effect = actor?.effects?.find?.(e => !e.disabled && e.statuses?.has?.("grappled"));
+    if(!effect) return null;
+    let origin = null;
+    try { origin = effect.origin ? fromUuidSync(effect.origin, { strict : false }) : null; } catch { origin = null; }
+    const item = (origin?.documentName === "Item") ? origin : (origin?.item ?? null);
+    const by = item?.actor ?? origin?.actor ?? null;
+    const save = [...(item?.system?.activities ?? [])].find(a => a.type === "save");
+    const text = String(item?.system?.description?.value ?? "");
+    const dc = Number(save?.save?.dc?.value) || Number(text.match(/escape\s+DC\s+(\d+)/i)?.[1])
+      || (by ? 8 + (Number(by.system?.abilities?.str?.mod) || 0) + (Number(by.system?.attributes?.prof) || 0) : 10);
+    return { effect, dc, by };
+  }
+
+  /* Its turn, Grappled : escape (its Action) : the better of Athletics and Acrobatics against the escape DC */
+  static async escape(actor){
+    const grapple = this.grappleOf(actor);
+    if(!grapple) return;
+    if(!this.left(actor, "action") && !limits.allow(module.format("actionTracker.spent", { name : actor.name, kind : this.label("action") }), { who : actor.name, what : module.i18n("actionTracker.escape") })) return;
+    const skills = actor.system?.skills ?? {};
+    const skill = ((Number(skills.acr?.total) || 0) > (Number(skills.ath?.total) || 0)) ? "acr" : "ath";
+    const rolls = await actor.rollSkill?.({ skill, target : grapple.dc }, { configure : false }).catch(error => { log.debug(error); return null; });
+    const roll = Array.isArray(rolls) ? rolls[0] : rolls;
+    if(!roll) return;
+    await this.spend(actor, { kind : "action", what : module.i18n("actionTracker.escape") });
+    const freed = roll.total >= grapple.dc;
+    if(freed){
+      const all = actor.effects.filter(e => e.statuses?.has?.("grappled")).map(e => e.id);
+      if(all.length) await actor.deleteEmbeddedDocuments("ActiveEffect", all, { [module.id] : { reason : module.i18n("actionTracker.escaped") } }).catch(() => null);
+    }
+    const st = this.state(actor);
+    if(st){
+      this.note(st.rec, module.format(freed ? "actionTracker.log.escaped" : "actionTracker.log.stillHeld", { total : roll.total, dc : grapple.dc }), { barOnly : true });
+      await this.save(actor, st.rec);
+    }
   }
 
   /* Its turn, Prone : stand up (half its Speed of movement) */
@@ -208,11 +267,11 @@ export class actionTracker{
     const old = ((before?.combat === rec.combat) && (before?.round === rec.round)) ? (before.log ?? []) : [];
     const fresh = rec.log.filter(e => !old.some(o => (o.at === e.at) && (o.text === e.text)));
     await actor.setFlag(module.id, "economy", rec);
-    for(const e of fresh) await combatLog.add(actor, e.text);
+    for(const e of fresh) if(!e.barOnly) await combatLog.add(actor, e.text);
   }
 
-  static note(rec, text){
-    (rec.log ??= []).push({ text, at : Date.now() });
+  static note(rec, text, extra = {}){
+    (rec.log ??= []).push({ text, at : Date.now(), ...extra });
   }
 
   /* More of one this turn (Action Surge, Haste) : shown as an added pip */
@@ -412,10 +471,11 @@ export class actionTracker{
     const text = plan.readied ? module.format("actionTracker.log.released", { what : name })
       : plan.oa ? module.format("actionTracker.log.oa", { what : name })
       : plan.offTurn ? module.format("actionTracker.log.offTurn", { what : name, kind : this.label(plan.offTurn) })
-      : ((attack === "new") || (attack === "more")) && this.isAttack(activity) ? module.format("actionTracker.log.attackOf", { what : name, kind : kind ? this.label(kind) : "", nth })
+      : ((attack === "new") || (attack === "more")) && this.isAttack(activity) ? module.format(kind ? "actionTracker.log.attackOf" : "actionTracker.log.attackMore", { what : name, kind : kind ? this.label(kind) : "", nth })
       : kind ? module.format("actionTracker.log.used", { what : name, kind : this.label(kind) })
       : name;
-    this.note(rec, text);
+    const isAttackLine = ((attack === "new") || (attack === "more")) && this.isAttack(activity) && !plan.readied && !plan.oa && !plan.offTurn;
+    this.note(rec, text, isAttackLine ? { barOnly : true, item : name, nth, kind : kind ?? "" } : {});
     log.debug("Spent", actor.name, kind ?? attack, rec.used);
     await this.save(actor, rec);
   }
@@ -662,11 +722,15 @@ export class actionTracker{
     return this.KINDS.map(kind => {
       const total = this.total(rec, kind);
       const used = Number(rec.used?.[kind]) || 0;
+      const attacksLeft = (kind === "action") ? this.poolLeft(rec.attack) : 0;
       return Array.from({ length : total }, (_, i) => {
         const spent = i >= total - used;
         const added = i >= 1;
-        const tip = module.format(spent ? "actionTracker.used" : "actionTracker.left", { kind : this.label(kind) });
-        return `<i class="fa-solid ${this.ICONS[kind]} ${kind}${spent ? " spent" : ""}${added ? " added" : ""}" data-kind="${kind}" data-tooltip="${esc(tip)}"></i>`;
+        const half = spent && (i === total - used) && (attacksLeft > 0);
+        const tip = half ? module.format("actionTracker.attacks", { n : (attacksLeft >= this.MANY - 1) ? "…" : attacksLeft })
+          : module.format(spent ? "actionTracker.used" : "actionTracker.left", { kind : this.label(kind) });
+        const icon = half ? "fa-circle-half-stroke" : this.ICONS[kind];
+        return `<i class="fa-solid ${icon} ${kind}${(spent && !half) ? " spent" : ""}${half ? " half" : ""}${added ? " added" : ""}" data-kind="${kind}" data-tooltip="${esc(tip)}"></i>`;
       }).join("");
     }).join(small ? "" : `<span class="sep"></span>`);
   }

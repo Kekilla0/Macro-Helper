@@ -79,10 +79,13 @@ export class actionBar{
     /* The big button above the bar : a death save while dying, Stand Up while Prone (its turn) */
     const death = actor.system?.attributes?.death;
     const dying = st.mine && (actor.type === "character") && (Number(actor.system?.attributes?.hp?.value) <= 0) && !!death
-      && ((Number(death.failure) || 0) < 3) && ((Number(death.success) || 0) < 3) && !actor.statuses?.has?.("dead") && (game.user.isGM || actor.isOwner);
+      && ((Number(death.failure) || 0) < 3) && ((Number(death.success) || 0) < 3) && !actor.statuses?.has?.("dead") && !actor.statuses?.has?.("stable") && (game.user.isGM || actor.isOwner);
     const prone = !dying && st.mine && actor.statuses?.has?.("prone") && !actor.statuses?.has?.("unconscious") && (game.user.isGM || actor.isOwner);
-    const big = dying ? `<button type="button" class="big-action death-save"><i class="fa-solid fa-skull" inert></i> ${esc(module.i18n("actionTracker.bar.deathSave"))}</button>`
-      : prone ? `<button type="button" class="big-action stand-up"><i class="fa-solid fa-person-arrow-up-from-line" inert></i> ${esc(module.format("actionTracker.bar.standUp", { cost : Math.floor(speed / 2) }))}</button>` : "";
+    const grapple = !dying && st.mine && !actionTracker.OUT_OF_ACTION.some(s => actor.statuses?.has?.(s)) && (game.user.isGM || actor.isOwner) ? actionTracker.grappleOf(actor) : null;
+    const buttons = dying ? [`<button type="button" class="death-save"><i class="fa-solid fa-skull" inert></i> ${esc(module.i18n("actionTracker.bar.deathSave"))}</button>`]
+      : [prone ? `<button type="button" class="stand-up"><i class="fa-solid fa-person-arrow-up-from-line" inert></i> ${esc(module.format("actionTracker.bar.standUp", { cost : Math.floor(speed / 2) }))}</button>` : "",
+         grapple ? `<button type="button" class="escape"><i class="fa-solid fa-hand-back-fist" inert></i> ${esc(module.format("actionTracker.bar.escape", { dc : grapple.dc }))}</button>` : ""].filter(Boolean);
+    const big = buttons.length ? `<div class="big-action">${buttons.join("")}</div>` : "";
     const attacks = this.attacksText(actor, rec.attack);
     const log = (rec.log ?? []).slice().reverse();
     el.hidden = false;
@@ -104,6 +107,7 @@ export class actionBar{
     actionTracker.listen(el.querySelector(".pips"), actor);
     el.querySelector(".death-save")?.addEventListener("click", event => { event.currentTarget.disabled = true; actionTracker.deathSave(actor, st.combat); });
     el.querySelector(".stand-up")?.addEventListener("click", event => { event.currentTarget.disabled = true; actionTracker.standUp(actor, token); });
+    el.querySelector(".escape")?.addEventListener("click", event => { event.currentTarget.disabled = true; actionTracker.escape(actor); });
     el.querySelector(".ready-button")?.addEventListener("click", () => actionReady.ready(token, actor));
     el.querySelector(".end-turn")?.addEventListener("click", async event => {
       event.currentTarget.disabled = true;

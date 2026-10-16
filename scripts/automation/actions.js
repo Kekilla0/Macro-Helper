@@ -27,6 +27,9 @@ const log = logger.for(import.meta.url);
  *                      advantage. Ends when used, or at the start of your next turn (out of combat : when used).
  *     Stabilize      : a creature at 0 HP within 5 ft. WIS (Medicine) DC 10 : on a success it's Stable (stabilize()).
  *
+ * Monsters get Dash, Disengage, Dodge and Help from Macro Helper's Actions compendium (the ones they lack), when their
+ * token is placed and when a combat they're in starts (the active GM's client).
+ *
  * Help's choices and picks happen before dnd5e uses the activity (beforeUse, from Roll Item's use wrapper), so its
  * card targets who was picked and says what for. The marks it leaves go on the enemy / the ally, who the helper
  * usually doesn't own : the GM's client makes them, once the use went through.
@@ -46,6 +49,9 @@ export class actions{
 
   static register(){
     if(game.system.id !== "dnd5e") return;
+    /* Monsters : the basic actions, when placed and when a combat starts */
+    Hooks.on("createToken", token => this.giveBasics(token.actor));
+    Hooks.on("combatStart", combat => { for(const c of combat.combatants) this.giveBasics(c.actor); });
     /* Dodge, Dash and Disengage mark the creature here, not through Roll Item */
     Hooks.on(`${module.id}.selfEffects`, activity => !(this.enabled() && [this.DODGE, this.DASH, this.DISENGAGE, this.HELP].includes(idOf(activity?.item))));
     Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.onUse(activity, usage, results));
@@ -299,6 +305,26 @@ export class actions{
   }
 
   /* A creature at 0 HP within 5 ft first (none : nothing spent), then the use, then it's Stable (no check) */
+  /* ---------- Monsters' basic actions ---------- */
+
+  static BASICS = ["dash", "disengage", "dodge", "help"];
+
+  static async giveBasics(actor){
+    if(!this.enabled() || !game.users.activeGM?.isSelf || (actor?.type !== "npc")) return;
+    const missing = this.BASICS.filter(id => !actor.items.some(i => idOf(i) === id));
+    if(!missing.length) return;
+    const pack = game.packs.get(`${module.id}.actions`);
+    if(!pack) return;
+    const index = await pack.getIndex({ fields : ["system.identifier"] });
+    const docs = [];
+    for(const id of missing){
+      const entry = [...index].find(e => e.system?.identifier === id);
+      const doc = entry ? await pack.getDocument(entry._id) : null;
+      if(doc) docs.push(foundry.utils.mergeObject(doc.toObject(), { _id : null, [`flags.${module.id}.basicAction`] : true }, { inplace : false }));
+    }
+    if(docs.length) await actor.createEmbeddedDocuments("Item", docs.map(d => { delete d._id; return d; })).catch(error => log.debug("Basic actions", error));
+  }
+
   static async healersKitStep(activity, ctx, next){
     if(!this.enabled() || !this.isKitStabilize(activity) || !activity.actor?.isOwner) return next();
     const near = canvas.scene?.grid.distance ?? 5;

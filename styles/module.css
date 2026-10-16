@@ -472,8 +472,9 @@
 /* Roll Requests : feat buttons (Lose Concentration, Lucky, Bardic Inspiration) sized to fit the row */
 .chat-message button[data-request-feat] { width: auto; flex: 0 0 auto; height: 24px; line-height: 22px; padding: 0 6px; font-size: 12px; white-space: nowrap; }
 #macro-helper-action-bar .ready-button:disabled { opacity: 0.35; cursor: default; }
-#macro-helper-action-bar .big-action { position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); width: auto; white-space: nowrap;
-  height: 44px; padding: 0 22px; font-size: 18px; font-weight: bold; border-radius: 8px; color: #fff; box-shadow: 0 0 10px rgba(0, 0, 0, 0.6); }
+#macro-helper-action-bar .big-action { position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); display: flex; gap: 10px; }
+#macro-helper-action-bar .big-action button { width: auto; white-space: nowrap; height: 44px; padding: 0 22px; font-size: 18px; font-weight: bold;
+  border-radius: 8px; color: #fff; box-shadow: 0 0 10px rgba(0, 0, 0, 0.6); }
 #macro-helper-action-bar .death-save { background: #7a1f1f; border: 2px solid #d05050; }
 #macro-helper-action-bar .stand-up { background: #2f4f7a; border: 2px solid #6f9fd8; }
 
@@ -488,3 +489,5 @@
 .macro-helper-combat-log .entries .entry .name { font-weight: bold; white-space: nowrap; }
 .macro-helper-combat-log .entries .entry .name::after { content: " :"; }
 .macro-helper-combat-log .entries .empty { opacity: 0.7; font-style: italic; }
+#macro-helper-action-bar i.half, .macro-helper-economy i.half { opacity: 0.75; }
+#macro-helper-action-bar .escape { background: #6a4a1f; border: 2px solid #d0a050; }

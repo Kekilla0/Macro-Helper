@@ -11,6 +11,12 @@ import { esc } from './utils.js';
  *   rows : [{ token : TokenDocument uuid, label : "Mark Orc", action : gm handler name, data : {...}, done : "Marked" }]
  */
 export async function postTargetCard({ actor, item, text = "", rows = [] } = {}){
+  /* Action Tracker : a Bonus Action spell (Hunter's Mark, Hex) bypasses the use pipeline : spent here */
+  const activation = [...(item?.system?.activities ?? [])][0]?.activation?.type || item?.system?.activation?.type;
+  if(activation === "bonus"){
+    const { actionTracker } = await import('../automation/action-tracker.js');
+    await actionTracker.spend(actor, { kind : "bonus", what : item.name }).catch(() => null);
+  }
   const labels = item?.labels ?? {};
   const pills = [labels.level, labels.school, ...(labels.components?.tags ?? []), labels.components?.vsm, labels.activation, labels.duration,
     typeof labels.range === "string" ? labels.range : null].filter(Boolean);

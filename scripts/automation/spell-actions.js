@@ -335,7 +335,7 @@ export class spellActions{
     const [target] = await pickTargets(activity.item, { count : 1, range, disposition : "any", includeSelf : true, useTargets : false,
       filter : t => actions.canStabilize(t.actor) });
     if(!target?.actor) return;
-    uses.flag(ctx, { note : module.format("actions.kit.note", { name : target.name }) });
+    uses.flag(ctx, { note : module.format("spellActions.spareNote", { name : target.name }) });
     const result = await next();
     if(result) await stabilize(target.actor);
     return result;

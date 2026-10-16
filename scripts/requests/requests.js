@@ -65,7 +65,19 @@ export class rollRequests{
     /* dnd5e's Concentration prompt : our card instead */
     Hooks.once("setup", () => patch.wrap("CONFIG.Actor.documentClass.prototype.challengeConcentration", async function(wrapped, options = {}, ...rest){
       if(!settings.value("rollItem") || !(this.concentration?.effects?.size > 0)) return wrapped(options, ...rest);
+      /* Down (0 HP) or unable to act : no save, its Concentration just ends (the 0 HP card says so) */
+      const out = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"].some(s => this.statuses?.has?.(s));
+      if(out || (Number(this.system?.attributes?.hp?.value) <= 0)){
+        if(this.isOwner) await this.endConcentration().catch(() => null);
+        return null;
+      }
       return rollRequests.concentrationCard(this, options);
+    }));
+    /* dnd5e's "end Concentration ?" prompt when it's Incapacitated : it just ends (the rules leave no choice) */
+    Hooks.once("setup", () => patch.wrap("CONFIG.Actor.documentClass.prototype.promptConcentrationEnd", async function(wrapped, ...args){
+      if(!settings.value("rollItem") || !(this.concentration?.effects?.size > 0)) return wrapped(...args);
+      if(this.isOwner) await this.endConcentration().catch(() => null);
+      return null;
     }));
   }
 

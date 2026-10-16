@@ -358,7 +358,8 @@ export class actionReady{
     const own = options?.[module.id] ?? {};
     if(own.oaSkip || !(["dragging", "keyboard"].includes(movement?.method) || own.oaResume)) return;
     const actor = token.actor;
-    if(!actor || actor.statuses?.has?.("disengaged")) return;
+    const disengaged = actor?.statuses?.has?.("disengaged") || actor?.effects?.some?.(e => !e.disabled && (e.getFlag(module.id, "disengaged") || e.getFlag(module.id, "disengage")));
+    if(!actor || disengaged) return;
     if(!actionTracker.combatOf(actor)) return;
     const done = new Set(own.oaDone ?? []);
     const threats = token.parent.tokens.filter(t => (t !== token) && t.actor && !t.hidden && !done.has(t.uuid) && (this.relation(t, token) === "enemy")

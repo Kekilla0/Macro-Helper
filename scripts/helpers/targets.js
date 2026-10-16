@@ -519,12 +519,15 @@ export function getFlanker(attacker, target){
   const opposite = (p, q) => (crosses(p, q, { x : x0, y0, y1 }) && crosses(p, q, { x : x1, y0, y1 }))
     || (crosses(p, q, {}, { y : y0, x0, x1 }) && crosses(p, q, {}, { y : y1, x0, x1 }));
 
+  /* Where the tokens are, not where their move animation has got to (an attack right after moving) */
+  const size = canvas.grid.size;
+  const centre = tok => { const d = tok.document; return { x : d.x + ((Number(d.width) || 1) * size / 2), y : d.y + ((Number(d.height) || 1) * size / 2) }; };
   return canvas.tokens.placeables.find(ally => (ally !== a) && (ally !== t) && ally.actor
     && isAlly(ally, a)
     && !isOutOfAction(ally)
     && !INCAPACITATED.some(status => ally.actor.statuses?.has(status))
     && (distanceBetween(ally, t) <= reach)
-    && opposite(a.center, ally.center)) ?? null;
+    && opposite(centre(a), centre(ally))) ?? null;
 }
 
 /**
