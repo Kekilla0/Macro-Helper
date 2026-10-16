@@ -1,5 +1,5 @@
 import { module } from '../module.js';
-import { tokenOf, distanceBetween, getRange, getTokensWithin, highlightRange, isOutOfAction, canSee, isSpaceFree, HIGHLIGHT } from './tokens.js';
+import { tokenOf, distanceBetween, getRange, getTokensWithin, highlightRange, isOutOfAction, canSee, canSeePoint, isSpaceFree, HIGHLIGHT } from './tokens.js';
 
 /* Opposite dispositions (hostile vs friendly) */
 export function isEnemy(a, b){
@@ -389,9 +389,11 @@ function pickOnMap(from, feet, candidates, { count, numberAllowed, within, confi
  * @param {(space : {x : number, y : number}) => string} [options.check]  why else a space won't do ("" : it will)
  * @param {string} [options.banner]  the banner's title, keys (another wording : "Click where the light goes")
  * @param {string} [options.keys]
+ * @param {boolean} [options.seen=false]  a space it can see (a teleport) : its sight (walls that block sight, light, its senses,
+ *   Blinded) instead of walls that block movement
  * @returns {Promise<{x : number, y : number}|null>}  the space's top-left corner (canvas pixels), null if cancelled
  */
-export async function pickSpace(origin, { range = 5, size = 1, notice = "", occupied = false, check = null, banner : title = null, keys = null } = {}){
+export async function pickSpace(origin, { range = 5, size = 1, notice = "", occupied = false, check = null, banner : title = null, keys = null, seen = false } = {}){
   const from = tokenOf(origin);
   if(!from) return warn(module.i18n("helpers.pick.noToken")) && null;
   const highlight = highlightRange(from, range, { showSelf : false });
@@ -424,6 +426,7 @@ export async function pickSpace(origin, { range = 5, size = 1, notice = "", occu
     if(other) return other;
     const center = { x : x + (size * grid / 2), y : y + (size * grid / 2) };
     let blocked = false;
+    if(seen) return canSeePoint(from, center) ? "" : module.i18n("helpers.space.unseen");
     try { blocked = !!CONFIG.Canvas.polygonBackends.move.testCollision(from.center, center, { type : "move", mode : "any" }); }
     catch { blocked = false; }
     return blocked ? module.i18n("helpers.space.wall") : "";

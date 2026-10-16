@@ -695,12 +695,24 @@ export class actionTracker{
     return speed * (actor.statuses?.has?.("dashing") ? 2 : 1);
   }
 
-  /* Feet moved this turn (Foundry clears the history when a turn starts) */
+  static isTeleport(action){
+    return !!CONFIG.Token.movement?.actions?.[action]?.teleport;
+  }
+
+  /* Feet moved this turn (Foundry clears the history when a turn starts); a teleport (Misty Step) spends none */
   static movedOf(token){
     const doc = token?.document ?? token;
     const history = doc?.movementHistory ?? [];
     if(history.length < 2) return 0;
-    try { return Math.round(doc.measureMovementPath(history).cost ?? 0); }
+    try {
+      if(!history.some(w => this.isTeleport(w.action))) return Math.round(doc.measureMovementPath(history).cost ?? 0);
+      let cost = 0;
+      for(let i = 1; i < history.length; i++){
+        if(this.isTeleport(history[i].action)) continue;
+        cost += doc.measureMovementPath([history[i - 1], history[i]]).cost ?? 0;
+      }
+      return Math.round(cost);
+    }
     catch { return 0; }
   }
 
@@ -712,7 +724,7 @@ export class actionTracker{
     if(!st?.mine || (st.combatant.tokenId !== token.id)) return;
     const action = movement.passed?.waypoints?.at?.(-1)?.action ?? movement.pending?.waypoints?.at?.(-1)?.action ?? token.movementAction;
     const speed = this.speedOf(actor, action);
-    const total = (movement.history?.cost ?? 0) + (movement.passed?.cost ?? 0) + (movement.pending?.cost ?? 0) + (Number(st.rec.standing) || 0);
+    const total = this.movedOf(token) + (movement.passed?.cost ?? 0) + (movement.pending?.cost ?? 0) + (Number(st.rec.standing) || 0);
     if(!speed || (total <= speed + 0.01)) return;
     return limits.allow(module.format("actionTracker.tooFar", { name : actor.name, moved : Math.round(total), speed }), { who : actor.name, what : module.i18n("actionTracker.movement") }) ? undefined : false;
   }
@@ -724,8 +736,9 @@ export class actionTracker{
     const actor = token.actor;
     const st = feet ? this.state(actor) : null;
     if(!st?.mine || (st.combatant.tokenId !== token.id)) return;
-    const moved = Math.round((movement.history?.cost ?? 0) + feet);
-    this.note(st.rec, module.format("actionTracker.log.moved", { feet, moved, speed : this.speedOf(actor, movement.passed?.waypoints?.at?.(-1)?.action) }));
+    const action = movement.passed?.waypoints?.at?.(-1)?.action;
+    if(this.isTeleport(action)) this.note(st.rec, module.format("actionTracker.log.teleported", { feet }));
+    else this.note(st.rec, module.format("actionTracker.log.moved", { feet, moved : this.movedOf(token), speed : this.speedOf(actor, action) }));
     await this.save(actor, st.rec);
   }
 

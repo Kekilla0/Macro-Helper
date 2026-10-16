@@ -556,16 +556,45 @@ export function obscuredBetween(a, b){
   return false;
 }
 
+/* The vision setting : "off", "conditions" (Blinded / Invisible only) or "full" (walls, light, senses) */
+function visionMode(){
+  let enabled = true;
+  /* A rule : System Automation's switch (not Roll Item's) turns it off */
+  try { enabled = game.settings.get(module.id, "automationEnabled") !== false; } catch { enabled = true; }
+  try { return enabled ? game.settings.get(module.id, "vision") : "off"; }
+  catch { try { return game.settings.get(module.id, "visionRules") ? "full" : "off"; } catch { return "off"; } }
+}
+
+/* Whether the viewer's senses (not sight while Blinded) find these points; object : the token there, if any */
+function detects(v, points, { object = null, tolerance = 2 } = {}){
+  const blinded = !!v.actor?.statuses?.has("blinded");
+  let source = v.vision?.active ? v.vision : null;
+  const temporary = !source;
+  if(temporary){
+    source = new CONFIG.Canvas.visionSourceClass({ sourceId : `${v.sourceId}.${module.id}`, object : v });
+    const states = v._getVisionBlindedStates?.() ?? {};
+    for(const state in states) source.blinded[state] = states[state];
+    source.initialize(v._getVisionSourceData());
+  }
+  try {
+    const config = canvas.visibility._createVisibilityTestConfig(points, { tolerance, object });
+    const modes = CONFIG.Canvas.detectionModes;
+    const SIGHT = foundry.canvas?.perception?.DetectionMode?.DETECTION_TYPES?.SIGHT ?? 0;
+    for(const [id, mode] of Object.entries(v.document.detectionModes ?? {})){
+      if(blinded && ((modes[id]?.type ?? SIGHT) === SIGHT)) continue;
+      if(modes[id]?.testVisibility(source, mode, config)) return true;
+    }
+    return false;
+  } finally {
+    if(temporary) source.destroy();
+  }
+}
+
 export function canSee(viewer, target){
   const v = tokenOf(viewer), t = tokenOf(target);
   if(!v || !t || (v === t)) return true;
   /* Vision setting : off, conditions only (Blinded / Invisible, no walls or light), full sight */
-  let mode = "full";
-  let enabled = true;
-  /* A rule : System Automation's switch (not Roll Item's) turns it off */
-  try { enabled = game.settings.get(module.id, "automationEnabled") !== false; } catch { enabled = true; }
-  try { mode = enabled ? game.settings.get(module.id, "vision") : "off"; }
-  catch { try { mode = game.settings.get(module.id, "visionRules") ? "full" : "off"; } catch { mode = "off"; } }
+  const mode = visionMode();
   if(mode === "off") return true;
   /* A heavily obscured area (Fog Cloud) in the way, or either inside one : no sight through it */
   if(obscuredBetween(v, t)) return false;
@@ -580,26 +609,21 @@ export function canSee(viewer, target){
     if(!warnedSight.has(v.id)){ warnedSight.add(v.id); console.warn(`${module.title} | ${v.name} has no vision : it sees everything.`); }
     return true;
   }
+  return detects(v, [t.center], { object : t, tolerance : Math.max(2, Math.floor(Math.min(t.w, t.h) / 4)) });
+}
 
-  let source = v.vision?.active ? v.vision : null;
-  const temporary = !source;
-  if(temporary){
-    source = new CONFIG.Canvas.visionSourceClass({ sourceId : `${v.sourceId}.${module.id}`, object : v });
-    const blinded = v._getVisionBlindedStates?.() ?? {};
-    for(const state in blinded) source.blinded[state] = blinded[state];
-    source.initialize(v._getVisionSourceData());
-  }
-  try {
-    const size = Math.min(t.w, t.h);
-    const config = canvas.visibility._createVisibilityTestConfig([t.center], { tolerance : Math.max(2, Math.floor(size / 4)), object : t });
-    const modes = CONFIG.Canvas.detectionModes;
-    const SIGHT = foundry.canvas?.perception?.DetectionMode?.DETECTION_TYPES?.SIGHT ?? 0;
-    for(const [id, mode] of Object.entries(v.document.detectionModes ?? {})){
-      if(blinded && ((modes[id]?.type ?? SIGHT) === SIGHT)) continue;
-      if(modes[id]?.testVisibility(source, mode, config)) return true;
-    }
-    return false;
-  } finally {
-    if(temporary) source.destroy();
-  }
+/**
+ * Can the viewer see a point on the map (a space to teleport to) : like canSee, for a place instead of a creature.
+ * @param {Token|TokenDocument|Actor} viewer
+ * @param {{x : number, y : number}} point   canvas pixels
+ * @returns {boolean}
+ */
+export function canSeePoint(viewer, point){
+  const v = tokenOf(viewer);
+  if(!v || !point) return true;
+  const mode = visionMode();
+  if(mode === "off") return true;
+  const blinded = !!v.actor?.statuses?.has("blinded");
+  if((mode === "conditions") || !canvas.ready || !canvas.visibility?.tokenVision || !v.document.sight?.enabled) return !blinded;
+  return detects(v, [{ x : point.x, y : point.y, elevation : v.document.elevation ?? 0 }]);
 }

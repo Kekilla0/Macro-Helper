@@ -2,7 +2,8 @@ import { module } from '../module.js';
 import { gm } from '../gm.js';
 import { uses } from '../uses.js';
 import { logger } from '../log.js';
-import { cells, gridSteps } from '../helpers/tokens.js';
+import { cells, gridSteps, tokenOf } from '../helpers/tokens.js';
+import { pickSpace } from '../helpers/targets.js';
 import { postTargetCard, registerTargetCards } from '../helpers/target-card.js';
 import { rollOptions, rollOptionDamage, rollOptionD20, rollOptionDamageDice } from './roll-options.js';
 const log = logger.for(import.meta.url);
@@ -54,6 +55,27 @@ export function followUp(item, { when = [], label = null } = {}){
 
 export function extraDamage(formula, { type = null, when = [], label = null } = {}){
   return { kind : "damage", formula : String(formula), type, when : [when].flat(), label };
+}
+
+/**
+ * Teleport : pick an unoccupied space within `feet` it can see, use the item (when given : its card, its cost), then
+ * move there by teleport (same elevation, no movement spent, no Opportunity Attacks). Blinded : it can't.
+ *   await token.teleport(40, { item })      Blink Dog's Teleport
+ * @returns {Promise<object|null>}  the item's card (or the space, without an item); null if cancelled or refused
+ */
+export async function teleport(thing, feet, { item = null } = {}){
+  const from = tokenOf(thing);
+  if(!from) return null;
+  if(!from.document.isOwner){ ui.notifications.warn(module.format("cardBuilder.teleportOwner", { name : from.name })); return null; }
+  if(from.actor?.statuses?.has?.("blinded")){ ui.notifications.warn(module.format("cardBuilder.teleportBlinded", { name : from.name })); return null; }
+  const size = Math.max(1, Math.round(from.document.width ?? 1));
+  const space = await pickSpace(from, { range : feet, size, seen : true, notice : item?.name ?? "",
+    banner : module.format("cardBuilder.teleportBanner", { feet }) });
+  if(!space) return null;
+  const card = item ? await cardBuilder.roll(item) : null;
+  if(item && !card) return null;
+  await from.document.move({ x : space.x, y : space.y, action : "blink" });
+  return card ?? space;
 }
 
 /* Sizes, smallest first : isSmaller("medium") means Medium or smaller (as stat blocks say it) */
@@ -285,7 +307,7 @@ export class cardBuilder{
   }
 
   /* Card macros' building blocks, on the documents whatever the Helpers → Methods switches say :
-     item.roll(), token.chargedAt(target, feet), creature.isSmaller(size), creature.grappling() (never over an existing method) */
+     item.roll(), token.chargedAt(target, feet), token.teleport(feet, { item }), creature.isSmaller(size), creature.grappling() (never over an existing method) */
   static addMethods(){
     const add = (cls, name, fn) => {
       const proto = cls?.prototype;
@@ -298,7 +320,10 @@ export class cardBuilder{
       add(cls, "isSmaller", function(size){ return isSmaller(this, size); });
       add(cls, "grappling", function(){ return grappling(this); });
     }
-    for(const cls of [CONFIG.Token.documentClass, CONFIG.Token.objectClass]) add(cls, "chargedAt", function(target, feet, options){ return chargedAt(this, target, feet, options); });
+    for(const cls of [CONFIG.Token.documentClass, CONFIG.Token.objectClass]){
+      add(cls, "chargedAt", function(target, feet, options){ return chargedAt(this, target, feet, options); });
+      add(cls, "teleport", function(feet, options){ return teleport(this, feet, options); });
+    }
   }
 
   static register(){
