@@ -1,3 +1,4 @@
+import { cardBuilder } from './card-builder.js';
 import { module } from '../module.js';
 import { settings } from '../settings.js';
 import { rollItem } from './roll-item.js';
@@ -399,7 +400,7 @@ export function registerMessages(){
   const ruleButtonsOf = (message, uuid, { result = null, owner = false } = {}) => {
     const buttons = [];
     Hooks.callAll(`${module.id}.rowButtons`, message, uuid, buttons, { result, owner });
-    return buttons.filter(b => b?.id && b?.label).map(({ id, label, icon = "fa-hand-pointer", disabled = false }) => ({ id, label, icon, disabled }));
+    return buttons.filter(b => b?.id && b?.label).map(({ id, label, icon = "fa-hand-pointer", img = null, disabled = false }) => ({ id, label, icon, img, disabled }));
   };
   const rowRule = (event, button) => {
     const message = game.messages.get(button.closest("[data-message-id]")?.dataset.messageId);
@@ -1219,7 +1220,7 @@ export function registerMessages(){
       context.effects = [];
       if(canApplyEffects(this.parent)){
         const riderEffects = new Set(effectDocs(this.riderActivity).map(e => e.id));
-        context.effects = effectDocs(this.parent.getAssociatedActivity({ scaled : true })).filter(e => !riderEffects.has(e.id));
+        context.effects = effectDocs(this.parent.getAssociatedActivity({ scaled : true })).filter(e => !riderEffects.has(e.id) && cardBuilder.keeps(this.parent, e));
       }
 
       if(this.isMulti){

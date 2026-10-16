@@ -377,6 +377,12 @@ if(group.length) return item.rollItem({ count : group.length });
   - **Run For** is *Owner, where it happens*, meaning the client where the hook fires if that user owns the creature. Use *Active GM (once)* for hooks that fire for everyone, like *Actor changed* or *Combat turn*.
   - Only macros saved by a GM run from hooks. If a player changes one, its hooks stop until a GM saves it again.
   - The macro runs inside the hook, so until its first `await` it can change what the hook passed.
+- **Card macros** (with Roll Item): a macro that only adds what's different to an item's normal card. Set it to **Macro only**; `item.roll()` runs the item's normal use (targets, attack, damage, Hands, the Action Tracker...) and returns its card, already posted. Then:
+  - `card.append(part)` adds a part, shown in each target's row in the order appended; `card.remove("prone")` takes off one of the item's own effects (by its condition or name); `card.clear()` takes them all off, to build the rest yourself.
+  - `applyCondition({ type, when, duration, save : { ability, dc, repeat : "end" } })`: an Apply button (the target's owner or the GM) for that condition, with the condition's own icon and name. A save repeats at the end (or start) of each of its turns. A creature already under that condition keeps the harsher one (the longer, then the one with no save, then the higher DC).
+  - `followUp("Bite", { when })`: a button for the card's owner: that item's attack at the target, part of this use (no Action of its own).
+  - `when`: `"hit"` / `"miss"` are judged live (Shield, cover and rerolls change them); a function `target => …` is judged once per target when appended; `true` / `false` as given. Changes made together reach the card in one update.
+  - Checks for `when`: `target.sizeAtMost("large")`, and `token.chargedAt(target, 30)` (its last stretch of movement this turn straight at the target, at least that far, ending within reach). Example: [examples/item-macros/allosaurus-pounce.js](examples/item-macros/allosaurus-pounce.js).
 
 ## Hook Macros
 

@@ -4,6 +4,7 @@ import { uses } from '../uses.js';
 import { logger } from '../log.js';
 import { MacroEditor } from './editor.js';
 import { itemHooks } from './item-hooks.js';
+import { applyCondition, followUp } from '../roll-item/card-builder.js';
 const log = logger.for(import.meta.url);
 
 /* What happens when an item/activity with a macro is used */
@@ -42,7 +43,8 @@ export class itemMacro{
     const item = activity ? target.item : target;
     const actor = item?.actor ?? null;
     const token = actor?.token?.object ?? actor?.getActiveTokens()[0] ?? null;
-    return { actor, token, item, activity, hook : null, args : [], ...extra };
+    /* Card builder parts, to append to the card item.roll() returns */
+    return { actor, token, item, activity, hook : null, args : [], applyCondition, followUp, ...extra };
   }
 
   static async execute(target, scope = this.scope(target)){
@@ -165,6 +167,8 @@ export class itemMacro{
   }
 
   static #step(target, ctx, next){
+    /* item.roll() from the item's own macro (or a card's follow-up) : the normal use, not the macro again */
+    if(ctx.config?.[module.id]?.skipMacro) return next();
     const { config : usage, dialog, message } = ctx;
     const go = (...args) => {
       if(args.length) [ctx.config = ctx.config, ctx.dialog = ctx.dialog, ctx.message = ctx.message] = args;

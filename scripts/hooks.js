@@ -4,6 +4,7 @@ import { logger } from './log.js';
 import { itemMacro } from './item-macro/item-macro.js';
 import { api } from './api.js';
 import { rollItem } from './roll-item/roll-item.js';
+import { cardBuilder } from './roll-item/card-builder.js';
 import { hookMacros } from './hook-macros/hook-macros.js';
 import { methods } from './helpers/methods.js';
 import { conditions } from './automation/conditions.js';
@@ -62,6 +63,7 @@ Hooks.once("init", ()=> {
   rollModes.register();
   api.register();
   rollItem.register();
+  cardBuilder.register();
   masteries.register();
   maneuvers.register();
   conditions.register();

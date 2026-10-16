@@ -56,7 +56,7 @@
         {{/if}}
         {{#each ruleButtons}}
         <button type="button" class="apply" data-action="rowRule" data-target="{{ ../uuid }}" data-id="{{ id }}"{{#if disabled}} disabled{{/if}}>
-            <i class="fa-solid {{ icon }}" inert></i> {{ label }}
+            {{#if img}}<img src="{{ img }}" alt="" inert>{{else}}<i class="fa-solid {{ icon }}" inert></i>{{/if}} {{ label }}
         </button>
         {{/each}}
         </span>
