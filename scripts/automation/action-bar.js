@@ -26,6 +26,7 @@ export class actionBar{
       if(foundry.utils.hasProperty(changes ?? {}, `flags.${module.id}.economy`) || foundry.utils.hasProperty(changes ?? {}, "system.attributes.movement")) later();
     });
     Hooks.on("createActiveEffect", later);
+    Hooks.on("updateActiveEffect", later);
     Hooks.on("deleteActiveEffect", later);
     Hooks.once("ready", later);
   }
@@ -79,10 +80,13 @@ export class actionBar{
     /* One Escape per grapple on it (its turn), one Release per creature it holds (any time) */
     const grapples = (!dying && st.mine && free && may) ? grapplesOn(actor) : [];
     const holds = (!dying && may && token) ? grappling(token) : [];
+    /* Wake a creature within 5 ft (Sleep Breath) : its Action, on its turn */
+    const sleepers = (!dying && st.mine && free && may && token) ? actionTracker.sleepersNear(token) : [];
     const buttons = dying ? [`<button type="button" class="death-save"><i class="fa-solid fa-skull" inert></i> ${esc(module.i18n("actionTracker.bar.deathSave"))}</button>`]
       : [prone ? `<button type="button" class="stand-up"><i class="fa-solid fa-person-arrow-up-from-line" inert></i> ${esc(module.format("actionTracker.bar.standUp", { cost : Math.floor(speed / 2) }))}</button>` : "",
          ...grapples.map(g => `<button type="button" class="escape" data-effect="${g.effect.id}"><i class="fa-solid fa-hand-back-fist" inert></i> ${esc(module.format("actionTracker.bar.escapeFrom", { name : g.byName, dc : g.dc }))}</button>`),
-         ...holds.map(t => `<button type="button" class="release" data-target="${(t.document ?? t).uuid}"><i class="fa-solid fa-hand" inert></i> ${esc(module.format("actionTracker.bar.release", { name : t.name }))}</button>`)].filter(Boolean);
+         ...holds.map(t => `<button type="button" class="release" data-target="${(t.document ?? t).uuid}"><i class="fa-solid fa-hand" inert></i> ${esc(module.format("actionTracker.bar.release", { name : t.name }))}</button>`),
+         ...sleepers.map(t => `<button type="button" class="wake" data-target="${t.id}"><i class="fa-solid fa-bell" inert></i> ${esc(module.format("actionTracker.bar.wake", { name : t.name }))}</button>`)].filter(Boolean);
     const big = buttons.length ? `<div class="big-action">${buttons.join("")}</div>` : "";
     const log = (rec.log ?? []).slice().reverse();
     el.hidden = false;
@@ -104,6 +108,8 @@ export class actionBar{
     el.querySelector(".death-save")?.addEventListener("click", event => { event.currentTarget.disabled = true; actionTracker.deathSave(actor, st.combat); });
     el.querySelector(".stand-up")?.addEventListener("click", event => { event.currentTarget.disabled = true; actionTracker.standUp(actor, token); });
     el.querySelectorAll(".escape").forEach(b => b.addEventListener("click", event => { event.currentTarget.disabled = true; actionTracker.escape(actor, event.currentTarget.dataset.effect); }));
+    el.querySelectorAll(".wake").forEach(b => b.addEventListener("click", event => { event.currentTarget.disabled = true;
+      actionTracker.wake(actor, token, canvas.tokens.get(event.currentTarget.dataset.target)); }));
     el.querySelectorAll(".release").forEach(b => b.addEventListener("click", event => { event.currentTarget.disabled = true;
       cardBuilder.release(token, fromUuidSync(event.currentTarget.dataset.target, { strict : false })); }));
     el.querySelector(".ready-button")?.addEventListener("click", () => actionReady.ready(token, actor));

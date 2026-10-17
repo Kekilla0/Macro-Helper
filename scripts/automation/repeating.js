@@ -18,6 +18,9 @@ const log = logger.for(import.meta.url);
  *     onFail : "unconscious",                                a failed roll turns it into that condition for the rest
  *                                                            of its duration, with no more rolls (Sleep)
  *     endsOnDamage : true,                                   it ends when the creature takes damage (Sleep)
+ *     onFailDuration, onFailEndsOn : ["damage", "wake"]      a card macro's worsening (Sleep Breath) : how long the new
+ *                                                            condition lasts, what ends it (wake : a creature within 5 ft
+ *                                                            uses its Action, from its action bar)
  *     tempHP : 3 }                                           temporary Hit Points it gains at that turn : the caster's
  *                                                            spellcasting modifier (Heroism); a button for its owner
  * The items carry a template (TABLE, put on their effects by an item fix), so the effect has it however it's applied
@@ -195,7 +198,19 @@ export class repeating{
     }
     /* Failed, and the effect worsens (Sleep : Unconscious for the rest of it), no more rolls */
     else if(!success && repeat.onFail && effect && !effect.isDeleted){
-      await effect.update({ statuses : [repeat.onFail], [`flags.${module.id}.repeat.done`] : true });
+      const update = { statuses : [repeat.onFail], [`flags.${module.id}.repeat.done`] : true };
+      /* A card macro's (Sleep Breath) : the new condition's own name and icon, its own duration from now, what ends it */
+      if(effect.getFlag(module.id, "cardCondition")){
+        const status = CONFIG.statusEffects.find(s => s.id === repeat.onFail);
+        update.name = game.i18n.localize(status?.name ?? repeat.onFail);
+        if(status?.img) update.img = status.img;
+        if(repeat.onFailDuration) update.duration = { ...repeat.onFailDuration, startTime : game.time.worldTime,
+          startRound : game.combat?.round ?? null, startTurn : game.combat?.turn ?? null };
+        const ends = repeat.onFailEndsOn ?? [];
+        update[`flags.${module.id}.repeat.endsOnDamage`] = ends.includes("damage");
+        update[`flags.${module.id}.repeat.wake`] = ends.includes("wake");
+      }
+      await effect.update(update);
       ui.notifications.info(module.format("repeating.worsened", { name : actor.name, effect : effect.name,
         condition : game.i18n.localize(CONFIG.statusEffects.find(s => s.id === repeat.onFail)?.name ?? repeat.onFail) }));
     }

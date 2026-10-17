@@ -1,4 +1,4 @@
-import { rollOptionFilter } from './roll-options.js';
+import { rollOptionFilter, rollOptions } from './roll-options.js';
 import { module } from '../module.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
@@ -177,6 +177,8 @@ export class rollItem{
 
   /* The item's other damage activities, rolled for this attack (tagged as extras that only apply on a hit) */
   static async extraDamage(activity, attack){
+    /* A card macro that named the activity (item.roll({ activity })) : only that one, the macro adds the rest */
+    if(rollOptions.of(activity)?.only) return [];
     /* Rules can say a damage activity isn't rolled with the attack (macro-helper.isExtra : Witch Bolt's later turns) */
     const others = activity?.item?.system?.activities?.filter(a => (a.type === "damage") && (a.id !== activity.id) && (a.canUse !== false)
       && (Hooks.call(`${module.id}.isExtra`, a) !== false)) ?? [];

@@ -2,7 +2,7 @@ import { module } from '../module.js';
 import { gm } from '../gm.js';
 import { uses } from '../uses.js';
 import { logger } from '../log.js';
-import { cells, gridSteps, tokenOf } from '../helpers/tokens.js';
+import { cells, gridSteps, tokenOf, pushAway } from '../helpers/tokens.js';
 import { pickSpace } from '../helpers/targets.js';
 import { postTargetCard, registerTargetCards } from '../helpers/target-card.js';
 import { rollOptions, rollOptionDamage, rollOptionD20, rollOptionDamageDice } from './roll-options.js';
@@ -17,7 +17,7 @@ const log = logger.for(import.meta.url);
  *   card.append(followUp("Bite", { when : ["hit", pounce] }));
  *
  * Parts are kept on the card (flags.macro-helper.cardParts) and shown in each target's row, in the order appended.
- * `when` : "hit" / "miss" are judged live (Shield, cover, a reroll change them), a function (target) => boolean is a
+ * `when` : "hit" / "miss" are judged live (Shield, cover, a reroll change them), "fail" / "save" once its save is rolled, a function (target) => boolean is a
  * fact judged once per target when appended (its size, how it was charged), true / false as given. Changes made
  * together reach the card in one update (no flicker).
  *
@@ -29,11 +29,17 @@ const log = logger.for(import.meta.url);
  *     type } damage at the start / end of each of its turns. insteadOfDamage : this or the hit's damage for that
  *     target, not both. self : a linked effect on the creature that did it ("Smothering: Ranger"); either ending ends
  *     the other. Already under that condition : the harsher one stays (the longer, then no save, then the higher DC).
+ *     save.fail : { type, duration, endsOn } a failed repeat save turns it into that condition instead (no more saves),
+ *     lasting that long; endsOn : "damage" (it takes damage) and / or "wake" (a creature within 5 ft uses its Action :
+ *     a Wake button on that creature's action bar). Sleep Breath.
+ *   push(feet, { when, from })   a Push button (the GM) : the target pushed that far straight away from `from` (the
+ *                              card's creature), stopping at walls and creatures.
  *   followUp(item, { when })   a button for the card's owner : that item's attack at the target, part of this use
  *                              (no Action of its own for the Action Tracker).
  *   extraDamage(formula, { type, when })   more damage on the hit, in the hit's own damage line (by type), rolled
  *                              when appended if a target's facts hold (doubled on a critical hit).
  *
+ *   item.roll({ uses : "Fire Breath" })   that item's use is spent for this one (checked before : none left, no use).
  *   item.roll({ activity, advantage, disadvantage, targets, cost, attackBonus, critical, ignoreCover, damageType,
  *               range, reach, d20, damageDice })   see roll-options.js : what to change before the roll.
  */
@@ -46,6 +52,11 @@ export function applyCondition({ type, when = [], with : also = [], duration = n
   insteadOfDamage = false, self = null, label = null } = {}){
   return { kind : "condition", type, when : [when].flat(), with : [also].flat().filter(Boolean), duration, save, escape, repeat,
     insteadOfDamage : !!insteadOfDamage, self, label };
+}
+
+export function push(feet, { when = [], from = null, label = null } = {}){
+  const by = from ? ((from.document ?? from)?.uuid ?? null) : null;
+  return { kind : "push", feet : Number(feet) || 0, from : by, when : [when].flat(), label };
 }
 
 export function followUp(item, { when = [], label = null } = {}){
@@ -263,7 +274,11 @@ export class CardBuilder{
 
 export class cardBuilder{
   /* item.roll() : the item's normal use, its card as a CardBuilder (null : nothing was rolled) */
-  static async roll(item, { post = true, activity = null, ...options } = {}){
+  static async roll(item, { post = true, activity = null, uses : shared = null, ...options } = {}){
+    /* uses : another item's uses spend for this one (a wyrmling's two breaths share one Recharge 5–6) : checked first */
+    const pool = shared ? (item.actor?.items?.getName(shared) ?? item.actor?.items?.get(shared) ?? null) : null;
+    if(shared && !pool){ ui.notifications.warn(module.format("cardBuilder.noItem", { name : shared })); return null; }
+    if(pool && !(Number(pool.system?.uses?.value) > 0)){ ui.notifications.warn(module.format("cardBuilder.usesSpent", { name : pool.name, item : item.name })); return null; }
     /* Several activities (Plutonium's two Talons) : the one asked for, else dnd5e asks */
     const list = [...(item.system?.activities ?? [])];
     const chosen = (activity === null) ? null : (Number.isInteger(activity) ? list[activity] : list.find(a => (a.id === activity) || (a.name === activity)));
@@ -275,7 +290,8 @@ export class cardBuilder{
       config[module.id].useTargets = true;
     }
     const keys = [chosen?.uuid, item.uuid];
-    rollOptions.set(keys, options);
+    /* An activity named : only it is rolled (not the item's other damage activities : Plutonium's split charge damage) */
+    rollOptions.set(keys, chosen ? { ...options, only : true } : options);
     let made = null;
     try {
       const results = chosen ? await chosen.use(config) : await item.use(config);
@@ -288,6 +304,7 @@ export class cardBuilder{
     const message = (made?.documentName === "ChatMessage") ? made : (id ? game.messages.get(id) : null);
     if(!message) return null;
     if(options.ignoreCover && message.isOwner) await message.setFlag(module.id, "ignoreCover", true);
+    if(pool) await pool.update({ "system.uses.spent" : (Number(pool.system.uses.spent) || 0) + 1 });
     if(!post) log.debug("item.roll : the card is already posted by the use; post : false is not supported yet");
     return new CardBuilder(message);
   }
@@ -303,7 +320,8 @@ export class cardBuilder{
 
   static shown(part, uuid, result){
     if(part.facts && (part.facts[uuidKey(uuid)] === false)) return false;
-    return part.when.every(w => (w === "hit") ? (result?.hit === true) : (w === "miss") ? (result?.hit === false) : (w !== false));
+    return part.when.every(w => (w === "hit") ? (result?.hit === true) : (w === "miss") ? (result?.hit === false)
+      : (w === "fail") ? (result?.success === false) : (w === "save") ? (result?.success === true) : (w !== false));
   }
 
   /* Card macros' building blocks, on the documents whatever the Helpers → Methods switches say :
@@ -375,6 +393,11 @@ export class cardBuilder{
           /* The condition's own picture and name; once applied, greyed out */
           buttons.push({ id : `part:${index}`, img : status?.img ?? null, icon : "fa-circle-exclamation", disabled : done, label : name });
         }
+        else if(part.kind === "push"){
+          if(!game.user.isGM) return;
+          buttons.push({ id : `part:${index}`, icon : "fa-arrows-left-right-to-line", disabled : done,
+            label : part.label ?? module.format(done ? "cardBuilder.pushed" : "cardBuilder.push", { feet : part.feet }) });
+        }
         else if(part.kind === "followUp"){
           if(!message.isOwner) return;
           buttons.push({ id : `part:${index}`, icon : "fa-hand-fist", disabled : done, label : part.label ?? part.item });
@@ -393,6 +416,14 @@ export class cardBuilder{
     if(part.kind === "condition"){
       const ok = await gm.run("cardCondition", { message : message.id, index, target : uuid });
       if(ok) await gm.run("cardPartDone", { message : message.id, index, target : uuid, instead : part.insteadOfDamage });
+      return;
+    }
+    if(part.kind === "push"){
+      if(!game.user.isGM || !target?.object) return;
+      const from = (part.from ? fromUuidSync(part.from, { strict : false })?.object : null) ?? message.getAssociatedToken?.()?.object ?? tokenOf(message.getAssociatedActor?.());
+      const moved = from ? await pushAway(target.object, from, part.feet) : 0;
+      if(!moved) ui.notifications.info(module.format("rollItem.mastery.blocked", { name : target.name }));
+      await this.doneAsGM({ message : message.id, index, target : uuid });
       return;
     }
     if(part.kind === "followUp"){
@@ -465,6 +496,12 @@ export class cardBuilder{
     if(by && uuid) await gm.run("cardRelease", { target : uuid, by });
   }
 
+  /* A part's duration : rounds (a number) or Foundry's duration data */
+  static durationOf(duration){
+    if(duration === null || duration === undefined) return null;
+    return (typeof duration === "number") ? { rounds : duration } : duration;
+  }
+
   /* How long it can last, in seconds (Infinity : until something ends it) */
   static lasting(duration){
     if(!duration) return Infinity;
@@ -486,11 +523,14 @@ export class cardBuilder{
     const source = sourceToken?.name ?? by?.name ?? "";
     /* Several conditions, an escape DC or a linked effect : the name says where it's from */
     const name = part.label ?? ((part.with?.length || part.escape || part.self) && source ? `${base}: ${source}` : base);
-    const duration = (typeof part.duration === "number") ? { rounds : part.duration } : (part.duration ?? {});
+    const duration = this.durationOf(part.duration) ?? {};
     const at = part.repeat?.at ?? part.save?.repeat ?? "end";
     const repeat = (part.save || part.repeat) ? { label : at, from : { item : origin, actor : by?.uuid ?? null },
       roll : part.save ? { type : "save", ability : part.save.ability, dc : Number(part.save.dc) || null } : null,
       when : { at, of : actor.uuid },
+      /* A failed repeat save worsens it (Sleep Breath : Unconscious for 1 minute, ended by damage or a Wake) */
+      ...(part.save?.fail ? { onFail : part.save.fail.type, onFailDuration : this.durationOf(part.save.fail.duration),
+        onFailEndsOn : [part.save.fail.endsOn ?? []].flat() } : {}),
       damage : part.repeat?.damage ? `(${part.repeat.damage})${part.repeat.type ? `[${part.repeat.type}]` : ""}` : null } : null;
     const incoming = { duration, save : part.save };
     /* Already under it : the harsher stays */

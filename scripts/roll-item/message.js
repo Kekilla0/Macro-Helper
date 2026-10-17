@@ -413,7 +413,8 @@ export function registerMessages(){
      of them (a buff : Bless); a choice spell's only the chosen one (Guidance's skill : the card's spellChoice) */
   const dueEffects = (message, effects, { hasSave, result }) => {
     const chosen = message.getFlag?.(module.id, "spellChoice");
-    return effects.filter(e => (!hasSave || !result?.success || e.onSave) && (!chosen || (e.doc?.id === chosen)));
+    /* Not those a card macro took off (card.remove) */
+    return effects.filter(e => (!hasSave || !result?.success || e.onSave) && (!chosen || (e.doc?.id === chosen)) && cardBuilder.keeps(message, e.doc));
   };
 
   /* An effect whose conditions the creature is immune to (a Ghoul and Poisoned) : it isn't applied */

@@ -8,7 +8,7 @@ import * as utils from './helpers/utils.js';
 import * as creatures from './helpers/creatures.js';
 import { restChoices } from './automation/rest-choices.js';
 import { rollRequests } from './requests/requests.js';
-import { applyCondition, followUp, extraDamage, shareDamage, chargedAt, isSmaller, grappling, teleport, cardBuilder } from './roll-item/card-builder.js';
+import { applyCondition, followUp, extraDamage, shareDamage, chargedAt, isSmaller, grappling, teleport, push, cardBuilder } from './roll-item/card-builder.js';
 
 /* Public functions for macros : MacroHelper.x(...) or game.modules.get("macro-helper").api.x(...) */
 export class api{
@@ -17,7 +17,7 @@ export class api{
       rollItem : (...args)=> rollItem.roll(...args),
       /* Card builder : the normal use's card to append to, and its parts */
       roll : (item, options) => cardBuilder.roll(item, options),
-      applyCondition, followUp, extraDamage, shareDamage, chargedAt, isSmaller, grappling, teleport,
+      applyCondition, followUp, extraDamage, shareDamage, chargedAt, isSmaller, grappling, teleport, push,
 
       /* Helpers, see scripts/helpers */
       ...tokens,    // tokenOf, actorOf, cells, distanceBetween, getRange, getTokensWithin, highlightRange, pushDestination, pushAway, addLight, removeLight, hasLight

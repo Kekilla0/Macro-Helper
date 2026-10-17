@@ -7,6 +7,7 @@ import { limits } from './limits.js';
 import { combatLog } from './combat-log.js';
 import { grapplesOn } from '../roll-item/card-builder.js';
 import { idOf, esc } from '../helpers/utils.js';
+import { getTokensWithin } from '../helpers/tokens.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -69,6 +70,7 @@ export class actionTracker{
     uses.onActivity("economy", (activity, ctx, next) => this.step(activity, ctx, next));
     uses.onActivity("economyApproval", (activity, ctx, next) => this.approvalStep(activity, ctx, next));
     gm.handle("economyAnswer", (data, user) => this.answerAsGM(data, user));
+    gm.handle("wake", (data, user) => this.wakeAsGM(data, user));
     Hooks.on("renderChatMessageHTML", (message, html) => this.drawRequest(message, html));
     Hooks.on("updateChatMessage", message => this.answered(message));
     Hooks.on("renderCombatTracker", (app, html) => this.drawTracker(html));
@@ -155,6 +157,37 @@ export class actionTracker{
   /* Grappled : each grapple with its escape DC (card-builder.js) */
   static grappleOf(actor){
     return grapplesOn(actor)[0] ?? null;
+  }
+
+  /* Asleep and can be woken (Sleep Breath) : its effects a creature within 5 ft can end with its Action */
+  static wakeEffects(actor){
+    return (actor?.effects?.contents ?? []).filter(e => !e.disabled && e.getFlag(module.id, "repeat")?.wake);
+  }
+
+  /* The creatures within 5 ft of this token that it can wake */
+  static sleepersNear(token){
+    if(!token) return [];
+    return getTokensWithin(token, 5, { includeDead : true }).filter(t => (t !== token) && this.wakeEffects(t.actor).length);
+  }
+
+  /* Its turn : its Action wakes a creature within 5 ft */
+  static async wake(actor, token, sleeper){
+    const what = module.format("actionTracker.bar.wake", { name : sleeper?.name ?? "" });
+    if(!sleeper || !this.wakeEffects(sleeper.actor).length) return;
+    if(!this.left(actor, "action") && !limits.allow(module.format("actionTracker.spent", { name : actor.name, kind : this.label("action") }), { who : actor.name, what })) return;
+    const ok = await gm.run("wake", { target : (sleeper.document ?? sleeper).uuid, by : (token.document ?? token).uuid });
+    if(ok) await this.spend(actor, { kind : "action", what });
+  }
+
+  /* GM : the waker's owner (or the GM) pressed Wake, and it's still within 5 ft */
+  static async wakeAsGM({ target : uuid, by } = {}, user){
+    const sleeper = fromUuidSync(uuid ?? "", { strict : false });
+    const waker = fromUuidSync(by ?? "", { strict : false });
+    if(!sleeper?.actor || !waker?.actor || !(user.isGM || waker.actor.testUserPermission(user, "OWNER"))) return false;
+    if(!this.sleepersNear(waker.object).some(t => t.document === sleeper)) return false;
+    const ids = this.wakeEffects(sleeper.actor).map(e => e.id);
+    await sleeper.actor.deleteEmbeddedDocuments("ActiveEffect", ids, { [module.id] : { reason : module.format("actionTracker.woken", { name : waker.name }) } });
+    return true;
   }
 
   /* Its turn, Grappled : escape (its Action) : the better of Athletics and Acrobatics against the escape DC */
@@ -485,7 +518,13 @@ export class actionTracker{
     const spent = foundry.utils.deepClone(actor.getFlag(module.id, "economy"));
     let result = null;
     try { result = await next(); }
-    finally { if(!result) await this.save(actor, st.rec).catch(error => log.error(error)); }
+    finally {
+      /* Refused or cancelled (dnd5e : no uses left) : as it was, and the log says so */
+      if(!result){
+        await this.save(actor, st.rec).catch(error => log.error(error));
+        await combatLog.add(actor, module.i18n("combatLog.cancelled")).catch(error => log.debug(error));
+      }
+    }
     if(result) uses.cardOf(result).then(card => card ? null : this.refund(actor, st.rec, spent)).catch(error => log.debug(error));
     return result;
   }

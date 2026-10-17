@@ -72,3 +72,6 @@ whether the module covers it or you need to edit the item.
 | **Produce Flame** (cantrip) | Hurl Fire has the spell's Self range (0 ft), so a hurl is out of range. | An item fix gives Hurl Fire its 60 ft. |
 | **Jump** (spell) | Its effect changes nothing. | An item fix sets the creature's jump speed to 30 ft. |
 | **Create or Destroy Water** (spell) | Its gallons are a roll formula (a "10" on the card). | Not rolled; Fill / Rain asked instead. |
+| **Metallic dragon wyrmlings' second breath** (Brass Sleep Breath, Bronze Repulsion Breath) | No recharge of its own; 2024 both breaths share one Recharge 5–6. | The second breath's card macro: `item.roll({ uses : "Fire Breath" })` spends the first breath's charge (none left: no use). |
+| **Sleep Breath** (Brass Dragon Wyrmling) | One effect with Incapacitated and Unconscious together, for 1 minute, no save. | Card macro: Incapacitated, CON save at the end of its turns; a failure makes it Unconscious for 1 minute (ended by damage or a Wake). |
+| **Gore / Claw / Repulsion Breath** (Boar, Brown Bear, Bronze Dragon Wyrmling) | Their Prone lands on any hit or failed save, whatever the size or charge; no push. | Card macros take it off and add Prone with the stat block's conditions (and the push). |
