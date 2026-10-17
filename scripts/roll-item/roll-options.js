@@ -89,10 +89,9 @@ export function rollOptionDamageDice(rolls, config){
   forceDice(rolls, rollOptions.of(config?.subject)?.damageDice);
 }
 
-/* The range / reach : instead of the item's */
-export function rollOptionRange(activity){
-  const options = rollOptions.of(activity);
-  const feet = Number(options?.range ?? options?.reach);
+/* The range (everything) / reach (a melee weapon's reach only, its thrown range stays) : instead of the item's */
+export function rollOptionRange(activity, which = "range"){
+  const feet = Number(rollOptions.of(activity)?.[which]);
   return Number.isFinite(feet) && (feet > 0) ? feet : null;
 }
 

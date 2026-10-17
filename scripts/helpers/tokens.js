@@ -106,7 +106,7 @@ export function getRange(thing, { long = false, thrown = false } = {}){
   const item = isItem ? thing : thing?.item;
   const activity = isItem ? (item.system.activities?.getByType("attack")[0] ?? item.system.activities?.contents[0]) : thing;
   if(!item) return 0;
-  /* item.roll({ range / reach }) : instead of the item's */
+  /* item.roll({ range }) : instead of the item's */
   const given = rollOptionRange(activity);
   if(given) return given;
 
@@ -121,7 +121,9 @@ export function getRange(thing, { long = false, thrown = false } = {}){
   /* Weapons : reach for melee, range for ranged (and thrown on request) */
   if(item.type === "weapon"){
     const melee = item.system.attackType !== "ranged";
-    if(melee && !(thrown && range.value)) return toScene(item.system.range.reach ?? 5);
+    /* Its reach : item.roll({ reach }), else the weapon's */
+    const reach = rollOptionRange(activity, "reach") ?? item.system.range.reach ?? 5;
+    if(melee && !(thrown && range.value)) return toScene(reach);
     return toScene(long ? (range.long || range.value || 0) : (range.value || 0));
   }
 

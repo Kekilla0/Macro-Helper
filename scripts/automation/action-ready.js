@@ -356,7 +356,8 @@ export class actionReady{
   static preMove(token, movement, options = {}){
     if(!this.enabled()) return;
     const own = options?.[module.id] ?? {};
-    if(own.oaSkip || !(["dragging", "keyboard"].includes(movement?.method) || own.oaResume)) return;
+    /* Its own movement : a drag, the keyboard, or a macro's leap (oaCheck); not a teleport or a forced move (a push) */
+    if(own.oaSkip || !(["dragging", "keyboard"].includes(movement?.method) || own.oaResume || own.oaCheck)) return;
     const actor = token.actor;
     const disengaged = actor?.statuses?.has?.("disengaged") || actor?.effects?.some?.(e => !e.disabled && (e.getFlag(module.id, "disengaged") || e.getFlag(module.id, "disengage")));
     if(!actor || disengaged) return;

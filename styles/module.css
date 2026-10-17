@@ -504,5 +504,6 @@
 .chat-message .macro-helper-die i { position: absolute; font-size: 16px; color: rgb(102, 102, 102); opacity: 1; }
 .chat-message .macro-helper-die .roll { position: relative; font-family: Roboto, sans-serif; font-size: 12px; font-weight: 700; color: rgb(0, 0, 0); text-shadow: none; }
 .chat-message .macro-helper-attack-box { display: flex; flex-direction: column; }
-.chat-message .macro-helper-attack-box > .damage-type-label { align-self: center; font-family: Roboto, sans-serif; font-size: 10px; font-weight: 400;
+.chat-message .macro-helper-attack-box > .damage-type-label { /* centred on the roll's box, past the row's icon (16px + 8px gap), like a damage type */
+  align-self: stretch; text-align: center; margin-left: 24px; font-family: Roboto, sans-serif; font-size: 10px; font-weight: 400;
   text-transform: uppercase; line-height: 12.5px; color: rgb(153, 153, 153); }

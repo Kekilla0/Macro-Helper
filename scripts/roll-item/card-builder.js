@@ -89,6 +89,36 @@ export async function teleport(thing, feet, { item = null } = {}){
   return card ?? space;
 }
 
+/**
+ * Leap : pick an unoccupied space within `feet` (not through a wall that blocks movement), use the item (when given),
+ * then jump there, at the same elevation. Leaving a creature's reach provokes an Opportunity Attack (as a drag does).
+ * The leap's distance isn't counted as movement : the macro says what it costs (token.useMovement(-10)).
+ *   if(!await token.leap(30, { item })) return;
+ *   await token.useMovement(-10);
+ * @returns {Promise<object|null>}  the item's card (or the space, without an item); null if cancelled
+ */
+export async function leap(thing, feet, { item = null } = {}){
+  const from = tokenOf(thing);
+  if(!from) return null;
+  if(!from.document.isOwner){ ui.notifications.warn(module.format("cardBuilder.teleportOwner", { name : from.name })); return null; }
+  const size = Math.max(1, Math.round(from.document.width ?? 1));
+  const space = await pickSpace(from, { range : feet, size, notice : item?.name ?? "", banner : module.format("cardBuilder.leapBanner", { feet }) });
+  if(!space) return null;
+  const card = item ? await cardBuilder.roll(item) : null;
+  if(item && !card) return null;
+  const { actionTracker } = await import('../automation/action-tracker.js');
+  actionTracker.markLeap(from.id, space);
+  /* Its own movement : Opportunity Attacks as for a drag (a teleport or a push doesn't provoke) */
+  await from.document.move({ x : space.x, y : space.y, action : "jump" }, { [module.id] : { oaCheck : true } });
+  return card ?? space;
+}
+
+/* Movement spent (negative feet) or given back (positive) this turn : token.useMovement(-10) */
+export async function useMovement(thing, feet){
+  const { actionTracker } = await import('../automation/action-tracker.js');
+  return actionTracker.useMovement(tokenOf(thing) ?? thing, feet);
+}
+
 /* Sizes, smallest first : isSmaller("medium") means Medium or smaller (as stat blocks say it) */
 const SIZES = ["tiny", "sm", "med", "lg", "huge", "grg"];
 const SIZE_NAMES = { tiny : "tiny", small : "sm", medium : "med", large : "lg", huge : "huge", gargantuan : "grg" };
@@ -325,7 +355,7 @@ export class cardBuilder{
   }
 
   /* Card macros' building blocks, on the documents whatever the Helpers → Methods switches say :
-     item.roll(), token.chargedAt(target, feet), token.teleport(feet, { item }), creature.isSmaller(size), creature.grappling() (never over an existing method) */
+     item.roll(), token.chargedAt(target, feet), token.teleport(feet, { item }), token.leap(feet, { item }), token.useMovement(feet), creature.isSmaller(size), creature.grappling() (never over an existing method) */
   static addMethods(){
     const add = (cls, name, fn) => {
       const proto = cls?.prototype;
@@ -341,6 +371,8 @@ export class cardBuilder{
     for(const cls of [CONFIG.Token.documentClass, CONFIG.Token.objectClass]){
       add(cls, "chargedAt", function(target, feet, options){ return chargedAt(this, target, feet, options); });
       add(cls, "teleport", function(feet, options){ return teleport(this, feet, options); });
+      add(cls, "leap", function(feet, options){ return leap(this, feet, options); });
+      add(cls, "useMovement", function(feet){ return useMovement(this, feet); });
     }
   }
 

@@ -356,6 +356,7 @@ export class actionTracker{
    *   "two attacks, using A, B, or C in any combination" shared : [{ n : 2, ids : [a, b, c] }]
    *   "five Slam attacks or five Discharge attacks"     choice : [[{ id : slam, n : 5 }], [{ id : discharge, n : 5 }]]
    *   "It can replace one attack with a Bite attack"    swap   : [bite]   (stands in for one attack of the pool)
+   *   "uses Paralyzing Tentacles", "uses Antennae twice" uses : { tentacles : 1, antennae : 2 }   (part of it, no Action)
    * Unreadable : as many as it likes.
    */
   static parseMultiattack(actor, item){
@@ -367,7 +368,8 @@ export class actionTracker{
       return list.find(i => i.name.toLowerCase() === n) ?? list.find(i => n.startsWith(i.name.toLowerCase()) || i.name.toLowerCase().startsWith(n));
     };
     const ids = list => list.split(/\s*,\s*(?:or\s+|and\s+)?|\s+(?:or|and)\s+/).map(n => find(n)?.id).filter(Boolean);
-    const out = { any : 0, left : {}, shared : [], choice : [], swap : [], text };
+    const out = { any : 0, left : {}, shared : [], choice : [], swap : [], uses : {}, text };
+    const TIMES = { once : 1, twice : 2, thrice : 3 };
     const count = w => this.NUMBERS[w.toLowerCase()] ?? Number(w);
     const N = "(a|an|one|two|three|four|five|six|\\d+)", NAME = "[A-Z][\\w'-]*(?:\\s+[A-Z][\\w'-]*)*";
     const named = new RegExp(`\\b${N}\\s+(?:attacks?\\s+with\\s+(?:its|their)\\s+([\\w' -]+?)(?=[.,;]|\\s+and\\b|$)|(${NAME})\\s+attacks?\\b|attacks?\\b)`, "g");
@@ -378,6 +380,12 @@ export class actionTracker{
         if(hit) out.swap.push(hit.id);
         continue;
       }
+      /* "uses Constrict", "uses Antennae twice" : those uses are part of it (not "can use Spellcasting to cast...") */
+      s = s.replace(new RegExp(`\\buses\\s+(?:its\\s+)?(${NAME})(?:\\s+(once|twice|thrice|(\\d+|two|three|four)\\s+times))?`, "g"), (all, name, times, n) => {
+        const hit = find(name, items);
+        if(hit) out.uses[hit.id] = (out.uses[hit.id] ?? 0) + (TIMES[times] ?? (n ? count(n) : 1));
+        return hit ? " " : all;
+      });
       s = s.replace(new RegExp(`\\b${N}\\s+attacks?,?\\s+using\\s+(.+?)\\s+in\\s+any\\s+combination`, "g"), (all, n, list) => {
         const group = ids(list);
         if(group.length) out.shared.push({ n : count(n), ids : group });
@@ -406,7 +414,7 @@ export class actionTracker{
     return out;
   }
 
-  /* The pool the first attack opens : { any, left, shared, choice, swap, text } */
+  /* The pool the first attack opens : { any, left, shared, choice, swap, uses, text } */
   static attackPool(actor, activity){
     const multi = this.multiattackOf(actor);
     const pool = multi ? this.parseMultiattack(actor, multi) : { any : this.attacksPerAction(actor, activity?.item), left : {}, text : "" };
@@ -427,6 +435,7 @@ export class actionTracker{
       }
     }
     if((pool.left?.[id] ?? 0) > 0){ pool.left[id] -= 1; return true; }
+    if((pool.uses?.[id] ?? 0) > 0){ pool.uses[id] -= 1; return true; }
     const group = pool.shared?.find(g => (g.n > 0) && g.ids.includes(id));
     if(group){ group.n -= 1; return true; }
     if(this.isSwap(pool, item)){
@@ -452,6 +461,7 @@ export class actionTracker{
 
   static poolLeft(pool){
     return (pool?.any ?? 0) + Object.values(pool?.left ?? {}).reduce((a, b) => a + b, 0)
+      + Object.values(pool?.uses ?? {}).reduce((a, b) => a + b, 0)
       + (pool?.shared ?? []).reduce((a, g) => a + g.n, 0)
       + Math.max(0, ...(pool?.choice ?? []).map(b => b.reduce((a, e) => a + e.n, 0)));
   }
@@ -463,13 +473,16 @@ export class actionTracker{
     return (idOf(item) === "unarmed-strike") && !!activity.actor?.items?.some?.(i => idOf(i) === "martial-arts");
   }
 
-  /* { kind, attack : "new" | "more" | "bonus" | "over" | null, offTurn, ask } */
-  /* A use its Multiattack lets stand in for one attack ("It can replace one attack with a use of Roar") */
+  /* A use that's part of its Multiattack without being an attack : "uses Paralyzing Tentacles", or one that stands in
+     for an attack ("It can replace one attack with a use of Roar") */
   static swapsIn(activity){
     const multi = this.multiattackOf(activity?.actor);
-    return !!multi && !!activity.item && this.parseMultiattack(activity.actor, multi).swap.includes(activity.item.id);
+    if(!multi || !activity.item) return false;
+    const pool = this.parseMultiattack(activity.actor, multi);
+    return pool.swap.includes(activity.item.id) || ((pool.uses[activity.item.id] ?? 0) > 0);
   }
 
+  /* { kind, attack : "new" | "more" | "bonus" | "over" | null, offTurn, ask } */
   static plan(activity, cost, st){
     const attack = this.isAttack(activity);
     if(cost === "reaction") return { kind : "reaction" };
@@ -772,13 +785,49 @@ export class actionTracker{
   static async logMove(token, movement, user){
     if(!this.enabled() || (user?.id ?? user) !== game.user.id) return;
     const feet = Math.round(movement?.passed?.cost ?? 0);
+    /* A leap (token.leap), even split by an Opportunity Attack stop : every part of it until it lands */
+    const mark = this.#leaping.get(token.id);
+    const leapt = !!mark && (Date.now() < mark.until);
+    if(mark && (!leapt || ((token.x === mark.x) && (token.y === mark.y)))) this.#leaping.delete(token.id);
     const actor = token.actor;
     const st = feet ? this.state(actor) : null;
     if(!st?.mine || (st.combatant.tokenId !== token.id)) return;
     const action = movement.passed?.waypoints?.at?.(-1)?.action;
-    if(this.isTeleport(action)) this.note(st.rec, module.format("actionTracker.log.teleported", { feet }));
-    else this.note(st.rec, module.format("actionTracker.log.moved", { feet, moved : this.movedOf(token), speed : this.speedOf(actor, action) }));
+    /* A leap (token.leap) : its distance isn't movement spent (the macro says what it costs : token.useMovement) */
+    if(leapt){
+      st.rec.standing = (Number(st.rec.standing) || 0) - feet;
+      this.note(st.rec, module.format("actionTracker.log.leapt", { feet }));
+    }
+    else if(this.isTeleport(action)) this.note(st.rec, module.format("actionTracker.log.teleported", { feet }));
+    else this.note(st.rec, module.format("actionTracker.log.moved", { feet, moved : this.movedOf(token) + (Number(st.rec.standing) || 0), speed : this.speedOf(actor, action) }));
     await this.save(actor, st.rec);
+  }
+
+  /* token.leap : its moves until it lands there are the leap (logMove takes them off the movement spent) */
+  static #leaping = new Map();
+  static markLeap(tokenId, { x, y } = {}){
+    this.#leaping.set(tokenId, { x, y, until : Date.now() + 120000 });
+  }
+
+  /**
+   * Movement spent (negative) or given back (positive) this turn, outside a move : token.useMovement(-10) (a leap's
+   * cost). Past its Speed : Rule Limits. Not in a combat (no turn) : nothing to count.
+   * @returns {Promise<boolean>}  false if Rule Limits stopped it
+   */
+  static async useMovement(thing, feet){
+    const token = thing?.document ? thing : (thing?.object ?? null);
+    const actor = thing?.actor ?? thing;
+    const st = this.enabled() ? this.state(actor) : null;
+    const change = -Math.round(Number(feet) || 0);
+    if(!st || !change) return true;
+    const speed = this.speedOf(actor, token?.document?.movementAction ?? "walk");
+    const moved = (token ? this.movedOf(token) : 0) + (Number(st.rec.standing) || 0);
+    if((change > 0) && speed && (moved + change > speed + 0.01)
+      && !limits.allow(module.format("actionTracker.tooFar", { name : actor.name, moved : moved + change, speed }), { who : actor.name, what : module.i18n("actionTracker.movement") })) return false;
+    st.rec.standing = (Number(st.rec.standing) || 0) + change;
+    this.note(st.rec, module.format((change > 0) ? "actionTracker.log.movementUsed" : "actionTracker.log.movementBack", { feet : Math.abs(change), moved : moved + change, speed }));
+    await this.save(actor, st.rec);
+    return true;
   }
 
   /* ---------- Object interactions (Hands) ---------- */
