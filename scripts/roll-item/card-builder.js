@@ -7,6 +7,7 @@ import { pickSpace, isEnemy } from '../helpers/targets.js';
 import { postTargetCard, registerTargetCards } from '../helpers/target-card.js';
 import { rollOptions, rollOptionDamage, rollOptionD20, rollOptionDamageDice } from './roll-options.js';
 import { disease } from '../automation/disease.js';
+import { noteReason } from './reasons.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -51,6 +52,12 @@ const log = logger.for(import.meta.url);
  *     aura : { radius, type } : every other creature within radius of it has that condition while there (Flumph's
  *     Stench Spray). removal : ["rest"] : a Long Rest ends it. duration { hours : "1d4" } : rolled when applied.
  *     randomMove : on its turn, a Random move button on its action bar (Euphoria Breath).
+ *     expire : { status } : what happens if it runs its full time (not ended sooner) : that status (Gas Spore : dead).
+ *     repeat : { at, damage, type, of : "source" } : the damage at the start / end of the turns of the one that did it.
+ *   engulf({ when, escape, damage, type })   inside it (Gelatinous Cube) : "Engulfed: <it>" (Restrained), the target
+ *                              moved into its space and moving with it, its damage at the start of its turns; Escape
+ *                              (Athletics against escape) or a creature beside it pulling it out leaves it beside.
+ *   immunity({ when, duration })   immune to this item of this creature that long (Ghast's Stench) : target.isImmuneTo(item).
  *   push(feet, { when, from })   a Push button (the GM) : the target pushed that far straight away from `from` (the
  *                              card's creature), stopping at walls and creatures.
  *   followUp(item, { when })   a button for the card's owner : that item's attack at the target, part of this use
@@ -69,10 +76,31 @@ const uuidKey = uuid => String(uuid).replaceAll(".", "-");
 
 export function applyCondition({ type, when = [], with : also = [], duration = null, save = null, escape = null, repeat = null,
   insteadOfDamage = false, self = null, label = null, noReactions = false, oneAction = false, until = null, aura = null,
-  removal = [], randomMove = false } = {}){
+  removal = [], randomMove = false, expire = null } = {}){
   return { kind : "condition", type, when : [when].flat(), with : [also].flat().filter(Boolean), duration, save, escape, repeat,
     insteadOfDamage : !!insteadOfDamage, self, label, noReactions : !!noReactions, oneAction : !!oneAction, until, aura,
-    removal : [removal].flat().filter(Boolean), randomMove : !!randomMove };
+    removal : [removal].flat().filter(Boolean), randomMove : !!randomMove, expire };
+}
+
+export function engulf({ when = [], escape = null, damage = null, type = null, label = null } = {}){
+  return { kind : "engulf", when : [when].flat(), escape, damage, type, label };
+}
+
+export function immunity({ when = [], duration = "24h", label = null } = {}){
+  return { kind : "immunity", when : [when].flat(), duration, label };
+}
+
+/* A creature of that type ("undead", "beast"...) : dnd5e's creature type (characters : their species' type) */
+export function isType(thing, type){
+  const actor = thing?.actor ?? thing;
+  const value = actor?.system?.details?.type?.value ?? (actor?.type === "character" ? "humanoid" : null);
+  return !!value && [type].flat().some(t => String(t).toLowerCase() === String(value).toLowerCase());
+}
+
+/* Immune to this item of this creature (Ghast's Stench : an immunity part on a success) */
+export function isImmuneTo(thing, item){
+  const actor = thing?.actor ?? thing;
+  return !!item && !!actor?.effects?.some?.(e => !e.disabled && (e.getFlag(module.id, "immuneTo") === item.uuid));
 }
 
 /* An object a condition lasts as long as (Ettercap's Web Strand) : a token with its own AC and Hit Points */
@@ -198,7 +226,7 @@ export function attachedTo(thing){
  *   await token.useMovement(50);
  *   const trampled = await token.trample(50, { size : "medium", disengage : true });
  */
-export async function trample(thing, feet, { size = "medium", disengage = false, enemies = true } = {}){
+export async function trample(thing, feet, { size = "medium", disengage = false, enemies = true, endInside = false } = {}){
   const from = tokenOf(thing);
   if(!from) return null;
   if(!from.document.isOwner){ ui.notifications.warn(module.format("cardBuilder.teleportOwner", { name : from.name })); return null; }
@@ -225,7 +253,8 @@ export async function trample(thing, feet, { size = "medium", disengage = false,
     const big = crossed(space).find(t => !isSmaller(t, size));
     return big ? module.format("cardBuilder.throughTooBig", { name : big.name }) : "";
   };
-  const space = await pickSpace(from, { range, size : w, check, banner : module.format("cardBuilder.throughBanner", { feet : range }) });
+  /* endInside : it may end its move on the creatures it passes through (a Gelatinous Cube engulfing them) */
+  const space = await pickSpace(from, { range, size : w, check, occupied : !!endInside, banner : module.format("cardBuilder.throughBanner", { feet : range }) });
   if(!space) return null;
   const entered = crossed(space).filter(t => !enemies || isEnemy(t, from));
   await from.document.move({ x : space.x, y : space.y }, { constrainOptions : { ignoreTokens : true }, ...(disengage ? { [module.id] : { oaSkip : true } } : {}) });
@@ -470,6 +499,7 @@ export class cardBuilder{
     const message = (made?.documentName === "ChatMessage") ? made : (id ? game.messages.get(id) : null);
     if(!message) return null;
     if(options.ignoreCover && message.isOwner) await message.setFlag(module.id, "ignoreCover", true);
+    if(options.saveDisadvantage && message.isOwner) await message.setFlag(module.id, "saveDisadvantage", true);
     if(pool) await pool.update({ "system.uses.spent" : (Number(pool.system.uses.spent) || 0) + 1 });
     if(!post) log.debug("item.roll : the card is already posted by the use; post : false is not supported yet");
     return new CardBuilder(message);
@@ -505,6 +535,8 @@ export class cardBuilder{
       add(cls, "grappling", function(){ return grappling(this); });
       add(cls, "attachedTo", function(){ return attachedTo(this); });
       add(cls, "applyCondition", function(spec){ return applyConditionNow(this, spec); });
+      add(cls, "isType", function(type){ return isType(this, type); });
+      add(cls, "isImmuneTo", function(item){ return isImmuneTo(this, item); });
     }
     for(const cls of [CONFIG.Token.documentClass, CONFIG.Token.objectClass]){
       add(cls, "chargedAt", function(target, feet, options){ return chargedAt(this, target, feet, options); });
@@ -555,7 +587,44 @@ export class cardBuilder{
       return doc.move({ x, y, action : "displace" }, { [module.id] : { oaSkip : true } }).then(() => true);
     });
     gm.handle("applyConditionNow", (data, user) => this.applyNowAsGM(data, user));
+    /* GM : a creature pulled out of the one engulfing it (by a creature its user owns, beside it) */
+    gm.handle("cardPullOut", async ({ target : uuid, puller } = {}, user) => {
+      const doc = fromUuidSync(uuid ?? "", { strict : false });
+      const by = fromUuidSync(puller ?? "", { strict : false });
+      if(!doc?.actor || !(user.isGM || by?.testUserPermission?.(user, "OWNER"))) return false;
+      const ids = doc.actor.effects.filter(e => e.getFlag(module.id, "engulfedBy")).map(e => e.id);
+      if(ids.length) await doc.actor.deleteEmbeddedDocuments("ActiveEffect", ids, { [module.id] : { reason : module.format("cardBuilder.pulledOut", { name : by?.name ?? "" }) } });
+      return true;
+    });
     this.objectHooks();
+    this.expiryHooks();
+    /* Out of an engulfing creature once that effect ends (escape, pulled out) : beside it */
+    Hooks.on("deleteActiveEffect", effect => {
+      if(game.users.activeGM?.isSelf && effect.getFlag?.(module.id, "engulfedBy")) this.leaveEngulf(effect).catch(error => log.debug(error));
+    });
+    /* "A creature enters its space" (hook macros) : a move ending inside another creature's space (Ooze Cube) */
+    Hooks.on("moveToken", (doc, movement, options = {}) => {
+      /* Not the module's own placing (into an engulfing creature, following one) */
+      if(!game.users.activeGM?.isSelf || !movement?.destination || options?.[module.id]?.oaSkip) return;
+      const grid = canvas.grid.size, at = movement.destination;
+      for(const t of doc.parent?.tokens ?? []){
+        if((t === doc) || !t.actor) continue;
+        const over = (at.x < t.x + (t.width * grid)) && (at.x + (doc.width * grid) > t.x) && (at.y < t.y + (t.height * grid)) && (at.y + (doc.height * grid) > t.y);
+        if(over) Hooks.callAll(`${module.id}.entersSpace`, t, doc);
+      }
+    });
+    /* "Any creature's turn starts" (hook macros) : every creature's, for the creatures around it (Ghast's Stench) */
+    Hooks.on("combatTurnChange", (combat, prior, current) => {
+      const started = combat.combatants.get(current?.combatantId);
+      if(started?.actor) Hooks.callAll(`${module.id}.anyTurnStart`, started.actor, started.token, combat);
+    });
+    /* item.roll({ saveDisadvantage }) : the card's saves with disadvantage (entering an Ooze Cube) */
+    Hooks.on("dnd5e.preRollSavingThrowV2", (config, dialog, message) => {
+      const card = game.messages.get(message?.data?.system?.origin?.id ?? message?.data?.system?.origin);
+      if(!card?.getFlag?.(module.id, "saveDisadvantage")) return;
+      if(config.rolls?.[0]) noteReason(config.rolls[0], "disadvantage", card.getAssociatedItem?.()?.name ?? ""), (config.rolls[0].options.disadvantage = true);
+      else config.disadvantage = true;
+    });
     for(const hook of ["createToken", "deleteToken", "createActiveEffect", "deleteActiveEffect", "canvasReady"]) Hooks.on(hook, () => this.syncAuras());
     Hooks.on("updateToken", (doc, changes) => { if(("x" in changes) || ("y" in changes)) this.syncAuras(); });
     /* A Long Rest ends the conditions a rest ends (Flumph's stench : removal ["rest"]) */
@@ -596,12 +665,13 @@ export class cardBuilder{
           /* The condition's own picture and name; once applied, greyed out */
           buttons.push({ id : `part:${index}`, img : status?.img ?? null, icon : "fa-circle-exclamation", disabled : done, label : name });
         }
-        else if((part.kind === "effect") || (part.kind === "attach") || (part.kind === "disease")){
+        else if(["effect", "attach", "disease", "engulf", "immunity"].includes(part.kind)){
           if(!(game.user.isGM || target?.actor?.isOwner)) return;
           const item = message.getAssociatedItem?.();
           /* An attach that brings conditions says so : "Attach (Blinded)" */
           const also = (part.with ?? []).map(id => game.i18n.localize(CONFIG.statusEffects.find(st => st.id === id)?.name ?? id)).join(", ");
-          const label = part.label ?? ((part.kind === "attach") ? (module.i18n("cardBuilder.attach") + (also ? ` (${also})` : "")) : (part.name ?? item?.name ?? ""));
+          const label = part.label ?? ((part.kind === "attach") ? (module.i18n("cardBuilder.attach") + (also ? ` (${also})` : ""))
+            : (part.kind === "engulf") ? module.i18n("cardBuilder.engulf") : (part.kind === "immunity") ? module.i18n("cardBuilder.immunity") : (part.name ?? item?.name ?? ""));
           buttons.push({ id : `part:${index}`, img : part.img ?? item?.img ?? null, icon : "fa-circle-exclamation", disabled : done, label });
         }
         else if(part.kind === "push"){
@@ -624,7 +694,7 @@ export class cardBuilder{
     const part = message.getFlag(module.id, KEY)?.parts?.[index];
     if(!part || message.getFlag(module.id, `cardDone.${index}.${uuidKey(uuid)}`)) return;
     const target = fromUuidSync(uuid, { strict : false });
-    if(["condition", "effect", "attach", "disease"].includes(part.kind)){
+    if(["condition", "effect", "attach", "disease", "engulf", "immunity"].includes(part.kind)){
       const ok = await gm.run("cardCondition", { message : message.id, index, target : uuid });
       if(ok) await gm.run("cardPartDone", { message : message.id, index, target : uuid, instead : part.insteadOfDamage });
       return;
@@ -660,6 +730,8 @@ export class cardBuilder{
     if(part.kind === "effect") await this.applyEffectTo(actor, part, context);
     else if(part.kind === "attach") await this.attachTo(actor, part, context);
     else if(part.kind === "disease") await disease.applyTo(actor, part, context);
+    else if(part.kind === "engulf") await this.engulfTo(actor, part, context);
+    else if(part.kind === "immunity") await this.immunityTo(actor, part, context);
     else await this.applyConditionTo(actor, part, context);
     return true;
   }
@@ -758,7 +830,7 @@ export class cardBuilder{
     const at = part.repeat?.at ?? part.save?.repeat ?? "end";
     const repeat = (part.save || part.repeat) ? { label : at, from : { item : origin, actor : by?.uuid ?? null },
       roll : part.save ? { type : "save", ability : part.save.ability, dc : Number(part.save.dc) || null } : null,
-      when : { at, of : actor.uuid },
+      when : { at, of : (part.repeat?.of === "source") ? ((sourceToken?.actor ?? by)?.uuid ?? actor.uuid) : actor.uuid },
       /* A failed repeat save worsens it (Sleep Breath : Unconscious for 1 minute, ended by damage or a Wake) */
       ...(part.save?.fail ? { onFail : part.save.fail.type, onFailDuration : this.durationOf(part.save.fail.duration),
         onFailEndsOn : [part.save.fail.endsOn ?? []].flat() } : {}),
@@ -778,7 +850,8 @@ export class cardBuilder{
       flags : { [module.id] : { cardCondition : true, ...(repeat ? { repeat } : {}), ...grapple,
         ...((part.noReactions || part.oneAction || part.randomMove) ? { rule : { ...(part.noReactions ? { noReactions : true } : {}), ...(part.oneAction ? { oneAction : true } : {}), ...(part.randomMove ? { randomMove : true } : {}) } } : {}),
         ...(part.aura ? { aura : { radius : Number(part.aura.radius) || 5, type : part.aura.type ?? part.type } } : {}),
-        ...((part.removal ?? []).includes("rest") ? { restEnds : true } : {}) } } }]);
+        ...((part.removal ?? []).includes("rest") ? { restEnds : true } : {}),
+        ...(part.expire ? { expire : part.expire } : {}) } } }]);
     /* Until an object is destroyed (a web) : its token on the target's space */
     if(made && (part.until?.kind === "object")) await this.makeObject(made, part.until, { targetToken, item : origin ? fromUuidSync(origin, { strict : false }) : null });
     if(made && part.aura) this.syncAuras();
@@ -838,8 +911,9 @@ export class cardBuilder{
       const held = t.getFlag?.(module.id, "objectFor");
       return !!held && (fromUuidSync(held, { strict : false })?.parent === doc.actor);
     };
+    const inside = t => !!t.actor?.effects?.some?.(e => e.getFlag(module.id, "engulfedBy") === doc.uuid);
     for(const t of doc.parent?.tokens ?? []){
-      if((t === doc) || !(t.actor?.effects?.some?.(e => e.getFlag(module.id, "attachedTo") === doc.uuid) || holds(t))) continue;
+      if((t === doc) || !(t.actor?.effects?.some?.(e => e.getFlag(module.id, "attachedTo") === doc.uuid) || holds(t) || inside(t))) continue;
       t.move({ x : t.x + dx, y : t.y + dy, action : "displace" }, { constrainOptions : { ignoreTokens : true, ignoreWalls : true }, [module.id] : { oaSkip : true } }).catch(error => log.debug(error));
     }
   }
@@ -982,5 +1056,93 @@ export class cardBuilder{
     }
     await ChatMessage.implementation.create({ speaker : ChatMessage.implementation.getSpeaker({ token : doc }),
       content : `<p>${module.format("cardBuilder.randomMoved", { name : doc.name, steps : steps.join(", ") || "—" })}</p>` });
+  }
+
+  /* ---------- Engulf (Gelatinous Cube) ---------- */
+
+  static async engulfTo(actor, part, { origin = null, by = null, sourceToken = null, targetToken = null } = {}){
+    const cube = sourceToken ?? by?.getActiveTokens?.(false, true)?.[0] ?? null;
+    if(!cube || !targetToken) return;
+    const item = origin ? fromUuidSync(origin, { strict : false }) : null;
+    const status = CONFIG.statusEffects.find(s => s.id === "restrained");
+    const damage = part.damage ? `(${part.damage})${part.type ? `[${part.type}]` : ""}` : null;
+    const [made] = await actor.createEmbeddedDocuments("ActiveEffect", [{ name : module.format("cardBuilder.engulfedName", { name : cube.name }),
+      img : item?.img ?? status?.img ?? "icons/svg/acid.svg", origin, statuses : ["restrained"],
+      flags : { [module.id] : { cardCondition : true, engulfedBy : cube.uuid, pullDamage : damage,
+        grapple : { by : cube.uuid, escape : Number(part.escape) || null, skill : "ath", attach : true, engulf : true },
+        ...(damage ? { repeat : { label : "start", from : { item : origin, actor : cube.actor?.uuid ?? null }, roll : null,
+          when : { at : "start", of : cube.actor?.uuid ?? null }, damage } } : {}) } } }]);
+    if(!made) return;
+    /* Inside it : on its space */
+    await targetToken.move({ x : cube.x + ((cube.width - targetToken.width) * canvas.grid.size / 2), y : cube.y + ((cube.height - targetToken.height) * canvas.grid.size / 2), action : "displace" },
+      { constrainOptions : { ignoreTokens : true, ignoreWalls : true }, [module.id] : { oaSkip : true } }).catch(error => log.debug(error));
+  }
+
+  /* Out of it (escaped, pulled out, the effect gone) : the nearest unoccupied space beside it */
+  static async leaveEngulf(effect){
+    const cube = fromUuidSync(effect.getFlag(module.id, "engulfedBy") ?? "", { strict : false });
+    const doc = effect.parent?.getActiveTokens?.(false, true)?.[0] ?? null;
+    if(!cube || !doc) return;
+    const grid = canvas.grid.size;
+    let best = null;
+    for(let gx = cube.x - (doc.width * grid); gx <= cube.x + (cube.width * grid); gx += grid){
+      for(let gy = cube.y - (doc.height * grid); gy <= cube.y + (cube.height * grid); gy += grid){
+        const inCube = (gx > cube.x - (doc.width * grid)) && (gx < cube.x + (cube.width * grid)) && (gy > cube.y - (doc.height * grid)) && (gy < cube.y + (cube.height * grid));
+        if(inCube) continue;
+        const taken = canvas.tokens.placeables.some(t => (t.document !== doc) && t.actor && (gx < t.document.x + (t.document.width * grid)) && (gx + (doc.width * grid) > t.document.x)
+          && (gy < t.document.y + (t.document.height * grid)) && (gy + (doc.height * grid) > t.document.y));
+        if(taken) continue;
+        const d = Math.hypot(gx - doc.x, gy - doc.y);
+        if(!best || (d < best.d)) best = { x : gx, y : gy, d };
+      }
+    }
+    if(best) await doc.move({ x : best.x, y : best.y, action : "displace" }, { constrainOptions : { ignoreTokens : true }, [module.id] : { oaSkip : true } }).catch(error => log.debug(error));
+  }
+
+  /* Its Action : pull a creature out of the one engulfing it (Athletics against its escape DC; the puller takes its damage) */
+  static async pullOut(actor, token, inside){
+    const effect = inside?.actor?.effects?.find?.(e => e.getFlag(module.id, "engulfedBy"));
+    if(!effect) return;
+    const { actionTracker } = await import('../automation/action-tracker.js');
+    const dc = effect.getFlag(module.id, "grapple")?.escape ?? 10;
+    const rolls = await actor.rollSkill?.({ skill : "ath", target : dc }, { configure : false }).catch(() => null);
+    const roll = Array.isArray(rolls) ? rolls[0] : rolls;
+    if(!roll) return;
+    await actionTracker.spend(actor, { kind : "action", what : module.format("actionTracker.bar.pullOut", { name : inside.name }) });
+    /* Out first (the burn could drop the puller), then the burn, success or not */
+    const damage = effect.getFlag(module.id, "pullDamage");
+    if(roll.total >= dc) await gm.run("cardPullOut", { target : inside.document.uuid, puller : actor.uuid }).catch(error => log.debug(error));
+    if(damage){
+      const hurt = await new CONFIG.Dice.DamageRoll(damage, {}, {}).evaluate();
+      await hurt.toMessage({ speaker : ChatMessage.implementation.getSpeaker({ actor }), flavor : module.format("cardBuilder.pullBurn", { name : actor.name }) });
+      await actor.applyDamage([{ value : hurt.total, type : damage.match(/\[(\w+)\]/)?.[1] }]).catch(error => log.debug(error));
+    }
+  }
+
+  /* ---------- Immunity (Ghast's Stench) ---------- */
+
+  static async immunityTo(actor, part, { origin = null, sourceToken = null, by = null } = {}){
+    const item = origin ? fromUuidSync(origin, { strict : false }) : null;
+    if(!item || isImmuneTo(actor, item)) return;
+    const seconds = disease.seconds(part.duration) || 86400;
+    await actor.createEmbeddedDocuments("ActiveEffect", [{ name : module.format("cardBuilder.immuneName", { item : item.name, name : sourceToken?.name ?? by?.name ?? "" }),
+      img : item.img, origin, duration : { seconds }, flags : { [module.id] : { immuneTo : item.uuid } } }]);
+  }
+
+  /* ---------- A condition that runs its full time : what then (Gas Spore : dead) ---------- */
+
+  static expiryHooks(){
+    Hooks.on("updateActiveEffect", (effect, changes) => {
+      if(!game.users.activeGM?.isSelf || !foundry.utils.getProperty(changes ?? {}, "duration.expired")) return;
+      const expire = effect.getFlag(module.id, "expire");
+      const actor = effect.parent;
+      if(!expire || (actor?.documentName !== "Actor")) return;
+      (async () => {
+        if(expire.status) await actor.toggleStatusEffect(expire.status, { active : true, overlay : expire.status === "dead" });
+        await ChatMessage.implementation.create({ speaker : ChatMessage.implementation.getSpeaker({ actor }),
+          content : `<p>${module.format("cardBuilder.expired", { name : actor.name, effect : effect.name })}</p>` });
+        await effect.delete();
+      })().catch(error => log.debug(error));
+    });
   }
 }

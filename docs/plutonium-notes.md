@@ -83,3 +83,5 @@ whether the module covers it or you need to edit the item.
 | **Cultist Fanatic's spells** | Each spell imported twice (once as a spell, once as a Spellcasting copy). | Item data for the GM. |
 | **Web Strand** (Ettercap) | Its Restrained lands on any size and never ends. | Card macro: Restrained (Large or smaller) until a Web token (AC 10, 5 HP, fire vulnerability) is destroyed. |
 | **Euphoria Breath / Stench Spray / Prone Deficiency** (Faerie Dragons, Flumph) | Plain conditions: no random movement, no aura, no die roll; Stench Spray's duration ("for hours") lost its dice. | Card / hook macros (local, not SRD). |
+| **Death Burst** (Gas Spore Fungus) | "Poisoned for hours" lost its dice (1d12), nothing kills at the end. | Hook macro (local, not SRD): `duration : { hours : "1d12" }, expire : { status : "dead" }`. |
+| **Engulf** (Gelatinous Cube) | A plain Restrained on a failure; nothing moves, no repeat acid, no escape. | Card macro: trample + engulf + push. |

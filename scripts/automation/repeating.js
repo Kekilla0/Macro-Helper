@@ -137,7 +137,10 @@ export class repeating{
     if(repeat.tempHP) what.push(module.format("repeating.tempHP", { n : repeat.tempHP }));
     return ChatMessage.implementation.create({
       speaker : ChatMessage.implementation.getSpeaker({ actor }),
-      content : `<p>${esc(module.format(`repeating.${repeat.label}`, { name : actor.name, effect : effect.name }))}${what.length ? ` ${esc(what.join(" · "))}` : ""}</p>`,
+      /* Another creature's turn (a Gelatinous Cube's acid on the one it engulfed) : whose */
+      content : `<p>${esc((repeat.when?.of && (repeat.when.of !== actor.uuid) && ["start", "end"].includes(repeat.label))
+        ? module.format(`repeating.${repeat.label}Of`, { name : actor.name, effect : effect.name, source : fromUuidSync(repeat.when.of, { strict : false })?.name ?? "" })
+        : module.format(`repeating.${repeat.label}`, { name : actor.name, effect : effect.name }))}${what.length ? ` ${esc(what.join(" · "))}` : ""}</p>`,
       flags : { [module.id] : { repeatCard : { actor : actor.uuid, effect : effect.uuid, damageDone : !repeat.damage, rolled : false, tempDone : !repeat.tempHP } } },
     });
   }
