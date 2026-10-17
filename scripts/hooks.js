@@ -16,6 +16,7 @@ import { actionBar } from './automation/action-bar.js';
 import { actionReady } from './automation/action-ready.js';
 import { combatLog } from './automation/combat-log.js';
 import { creatureTraits } from './automation/creature-traits.js';
+import { disease } from './automation/disease.js';
 import { barbarian } from './automation/classes/barbarian.js';
 import { bard } from './automation/classes/bard.js';
 import { cleric } from './automation/classes/cleric.js';
@@ -76,6 +77,7 @@ Hooks.once("init", ()=> {
   actionReady.register();
   combatLog.register();
   creatureTraits.register();
+  disease.register();
   barbarian.register();
   bard.register();
   cleric.register();

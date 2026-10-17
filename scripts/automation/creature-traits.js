@@ -15,6 +15,8 @@ const log = logger.for(import.meta.url);
  * Common creature traits, recognised by name on the creature (no macro needed) :
  *   Pack Tactics : advantage on an attack roll against a creature when one of its allies (not Incapacitated) is within
  *                  5 ft of that creature. Also shown by the target picker.
+ *   Magic Resistance : advantage on saving throws against spells and other magical effects (a spell, or an item with
+ *                  the Magical property, as the save's card says).
  *   Parry        : a melee attack roll hits it while it holds a weapon : a Parry button on the attack card (its owner,
  *                  the GM) : its Reaction, +2 AC against that attack (the hit judged again).
  * Flyby is with the Opportunity Attacks (action-ready.js).
@@ -35,6 +37,7 @@ export class creatureTraits{
   static register(){
     if(game.system.id !== "dnd5e") return;
     rollModes.add("packTactics", config => this.packTactics(config));
+    Hooks.on("dnd5e.preRollSavingThrowV2", (config, dialog, message) => this.magicResistance(config, message));
     Hooks.on(`${module.id}.cardButtons`, (message, buttons, context) => this.parryButtons(message, buttons, context));
     Hooks.on(`${module.id}.cardButton`, (message, id) => { if(String(id).startsWith("parry|")) this.parry(message, String(id).slice(6)); });
     gm.handle("traitParry", (data, user) => this.parryAsGM(data, user));
@@ -53,6 +56,19 @@ export class creatureTraits{
     const ally = canvas.tokens.placeables.find(t => (t !== me) && (t !== target) && t.actor && isAlly(t, me)
       && !this.OUT.some(s => t.actor.statuses?.has?.(s)) && (distanceBetween(t, target) <= 5));
     if(ally) giveMode(config.rolls[0], "advantage", module.format("traits.packTactics", { name : ally.name }));
+  }
+
+  /* ---------- Magic Resistance ---------- */
+
+  static magicResistance(config, message){
+    const actor = config?.subject;
+    if(!this.enabled() || !this.has(actor, "Magic Resistance")) return;
+    const card = game.messages.get(message?.data?.system?.origin?.id ?? message?.data?.system?.origin);
+    const item = card?.getAssociatedItem?.();
+    const magical = (item?.type === "spell") || !!item?.system?.properties?.has?.("mgc");
+    if(!magical) return;
+    if(config.rolls?.[0]) giveMode(config.rolls[0], "advantage", module.i18n("traits.magicResistance"));
+    else config.advantage = true;
   }
 
   /* ---------- Parry ---------- */

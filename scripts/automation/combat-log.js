@@ -12,7 +12,7 @@ const log = logger.for(import.meta.url);
  * live. Export : a text file. Players see the lines about creatures they own or can see; the GM all of them.
  * Rolls : an attack once its card is revealed (its total, its targets), saves / checks / death saves
  * (total, against the DC), damage and healing as applied (an attack's damage : "hit by" it). An NPC's numbers show as "?" to players with DM Screen on.
- * Combat Log : Journal (setting) : when the combat is deleted, its log is kept as a journal entry.
+ * Combat Log : Journal (setting) : when the combat is deleted, its log is kept as a journal entry, in the Combat Logs folder.
  * Kept short : an attack is one line (its place in the Attack action, total, targets), one hit's damage one line
  * (its parts added up), effects applied by another creature (or a condition) a line; duplicate names are numbered.
  */
@@ -208,7 +208,11 @@ export class combatLog{
     const date = `${two(now.getHours())}:${two(now.getMinutes())} ${two(now.getDate())}/${two(now.getMonth() + 1)}/${now.getFullYear()}`;
     const scene = combat.scene ?? game.scenes.get(combat.combatants.contents?.[0]?.sceneId) ?? null;
     const name = module.format("combatLog.journalName", { scene : scene?.name ?? "—", date });
-    await JournalEntry.implementation.create({ name, pages : [{ name, type : "text", text : { content : html } }] }).catch(error => log.error(error));
+    /* All in one journal folder (easy to clear out) : made the first time */
+    const title = module.i18n("combatLog.folder");
+    const folder = game.folders.find(f => (f.type === "JournalEntry") && (f.name === title))
+      ?? await Folder.implementation.create({ name : title, type : "JournalEntry" }).catch(error => { log.error(error); return null; });
+    await JournalEntry.implementation.create({ name, folder : folder?.id ?? null, pages : [{ name, type : "text", text : { content : html } }] }).catch(error => log.error(error));
   }
 
   /* ---------- The window ---------- */

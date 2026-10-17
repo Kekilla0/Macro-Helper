@@ -365,6 +365,10 @@ export class actionReady{
     const action = movement.passed?.waypoints?.at?.(-1)?.action ?? movement.pending?.waypoints?.at?.(-1)?.action ?? token.movementAction;
     if((action === "fly") && actor.items?.some?.(i => (idOf(i) === "flyby") || /^flyby$/i.test(i.name ?? ""))) return;
     if(!actionTracker.combatOf(actor)) return;
+    /* "Before an Opportunity Attack" (hook macros) : suppressOA(args) : this move provokes none (Deer's Agile) */
+    const info = { movement, skip : false };
+    Hooks.callAll(`${module.id}.preOpportunityAttack`, token, info);
+    if(info.skip) return;
     const done = new Set(own.oaDone ?? []);
     const threats = token.parent.tokens.filter(t => (t !== token) && t.actor && !t.hidden && !done.has(t.uuid) && (this.relation(t, token) === "enemy")
       && actionTracker.combatOf(t.actor) && actionTracker.left(t.actor, "reaction") && !actionTracker.OUT_OF_ACTION.some(s => t.actor.statuses?.has?.(s))

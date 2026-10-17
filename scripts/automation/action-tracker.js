@@ -369,7 +369,7 @@ export class actionTracker{
    * Unreadable : as many as it likes.
    */
   static parseMultiattack(actor, item){
-    const text = (item?.system?.description?.value ?? "").replace(/<[^>]+>/g, " ").replace(/@\w+\[[^\]]*\]\{([^}]*)\}/g, "$1").replace(/\s+/g, " ").trim();
+    const text = (item?.system?.description?.value ?? "").replace(/<[^>]+>/g, " ").replace(/@\w+\[[^\]]*\]\{([^}]*)\}/g, "$1").replace(/@\w+\[([^\]|]+)[^\]]*\]/g, "$1").replace(/\s+/g, " ").trim();
     const items = actor.items?.contents ?? [];
     const attacks = items.filter(i => i.system?.activities?.some?.(a => a.type === "attack"));
     const find = (name, list = attacks) => {
@@ -389,7 +389,13 @@ export class actionTracker{
         if(hit) out.swap.push(hit.id);
         continue;
       }
-      /* "uses Constrict", "uses Antennae twice" : those uses are part of it (not "can use Spellcasting to cast...") */
+      /* "it can use Spellcasting to cast Charm Monster" : that spell is part of it */
+      s = s.replace(new RegExp(`\\b(?:can\\s+)?uses?\\s+Spellcasting\\s+to\\s+cast\\s+(${NAME})`, "g"), (all, name) => {
+        const hit = find(name, items);
+        if(hit) out.uses[hit.id] = (out.uses[hit.id] ?? 0) + 1;
+        return hit ? " " : all;
+      });
+      /* "uses Constrict", "uses Antennae twice" : those uses are part of it */
       s = s.replace(new RegExp(`\\buses\\s+(?:its\\s+)?(${NAME})(?:\\s+(once|twice|thrice|(\\d+|two|three|four)\\s+times))?`, "g"), (all, name, times, n) => {
         const hit = find(name, items);
         if(hit) out.uses[hit.id] = (out.uses[hit.id] ?? 0) + (TIMES[times] ?? (n ? count(n) : 1));

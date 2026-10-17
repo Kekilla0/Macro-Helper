@@ -4,7 +4,7 @@ import { uses } from '../uses.js';
 import { logger } from '../log.js';
 import { MacroEditor } from './editor.js';
 import { itemHooks } from './item-hooks.js';
-import { applyCondition, applyEffect, attach, followUp, extraDamage, shareDamage, push } from '../roll-item/card-builder.js';
+import { applyCondition, applyDisease, suppressOA, applyEffect, attach, followUp, extraDamage, shareDamage, push } from '../roll-item/card-builder.js';
 import { limits } from '../automation/limits.js';
 const log = logger.for(import.meta.url);
 
@@ -47,7 +47,7 @@ export class itemMacro{
     /* Card builder parts, to append to the card item.roll() returns */
     /* ruleLimit("...") : Rule Limits for something the rules don't allow (true : go ahead) */
     const ruleLimit = text => limits.allow(text, { who : actor?.name ?? "", what : item?.name ?? "" });
-    return { actor, token, item, activity, hook : null, args : [], applyCondition, applyEffect, attach, followUp, extraDamage, shareDamage, push, ruleLimit, ...extra };
+    return { actor, token, item, activity, hook : null, args : [], applyCondition, applyDisease, suppressOA, applyEffect, attach, followUp, extraDamage, shareDamage, push, ruleLimit, ...extra };
   }
 
   static async execute(target, scope = this.scope(target)){

@@ -6,6 +6,7 @@ import { cells, gridSteps, tokenOf, pushAway } from '../helpers/tokens.js';
 import { pickSpace, isEnemy } from '../helpers/targets.js';
 import { postTargetCard, registerTargetCards } from '../helpers/target-card.js';
 import { rollOptions, rollOptionDamage, rollOptionD20, rollOptionDamageDice } from './roll-options.js';
+import { disease } from '../automation/disease.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -29,6 +30,8 @@ const log = logger.for(import.meta.url);
  *     type } damage at the start / end of each of its turns. insteadOfDamage : this or the hit's damage for that
  *     target, not both. self : a linked effect on the creature that did it ("Smothering: Ranger"); either ending ends
  *     the other. Already under that condition : the harsher one stays (the longer, then no save, then the higher DC).
+ *     noReactions / oneAction : as applyEffect's (Dretch's Fetid Cloud). duration "endOfMyNextTurn" : the end of the
+ *     next turn of the one that did it (dnd5e's sourceEnd).
  *     save.fail : { type, duration, endsOn } a failed repeat save turns it into that condition instead (no more saves),
  *     lasting that long; endsOn : "damage" (it takes damage) and / or "wake" (a creature within 5 ft uses its Action :
  *     a Wake button on that creature's action bar). Sleep Breath.
@@ -41,6 +44,8 @@ const log = logger.for(import.meta.url);
  *                              conditions), "Attached: <target>" on the one that attached (Speed 0, it moves with the
  *                              target). The target's Detach (its Action, a `check` : "ath" by default, against escape)
  *                              or the attacher's Detach (5 ft of its movement) ends both.
+ *   applyDisease({ when, name, ability, dc, every, stages, removal })   a disease (Death Dog's Bite) : one effect that
+ *                              cascades, its save asked again as game time passes (disease.js).
  *   push(feet, { when, from })   a Push button (the GM) : the target pushed that far straight away from `from` (the
  *                              card's creature), stopping at walls and creatures.
  *   followUp(item, { when })   a button for the card's owner : that item's attack at the target, part of this use
@@ -58,9 +63,20 @@ const uuidKey = uuid => String(uuid).replaceAll(".", "-");
 /* ---------- Parts ---------- */
 
 export function applyCondition({ type, when = [], with : also = [], duration = null, save = null, escape = null, repeat = null,
-  insteadOfDamage = false, self = null, label = null } = {}){
+  insteadOfDamage = false, self = null, label = null, noReactions = false, oneAction = false } = {}){
   return { kind : "condition", type, when : [when].flat(), with : [also].flat().filter(Boolean), duration, save, escape, repeat,
-    insteadOfDamage : !!insteadOfDamage, self, label };
+    insteadOfDamage : !!insteadOfDamage, self, label, noReactions : !!noReactions, oneAction : !!oneAction };
+}
+
+export function applyDisease({ when = [], name = null, img = null, ability = "con", dc = null, every = "24h", stages = [], removal = ["save"], cure = "full", label = null } = {}){
+  return { kind : "disease", when : [when].flat(), name, img, ability, dc, every, stages : [stages].flat().filter(Boolean), removal : [removal].flat(), cure, label };
+}
+
+/* In a "Before an Opportunity Attack" item-hook macro : this move provokes none (Deer's Agile) */
+export function suppressOA(args){
+  const info = args?.[1];
+  if(info && (typeof info === "object")) info.skip = true;
+  return true;
 }
 
 export function applyEffect({ when = [], name = null, img = null, duration = null, speed = null, noReactions = false,
@@ -485,6 +501,15 @@ export class cardBuilder{
       if(other) other.delete({ [module.id] : { reason : options?.[module.id]?.reason ?? module.format("cardBuilder.endedWith", { name : effect.name }) } }).catch(() => null);
     });
     gm.handle("cardCondition", (data, user) => this.conditionAsGM(data, user));
+    /* "Drops to 0 HP" (hook macros) : its Hit Points went from above 0 to 0 (the active GM, once) */
+    Hooks.on("preUpdateActor", (actor, changes, options) => {
+      if(foundry.utils.hasProperty(changes ?? {}, "system.attributes.hp.value")) options[`${module.id}HP`] = Number(actor.system?.attributes?.hp?.value) || 0;
+    });
+    Hooks.on("updateActor", (actor, changes, options) => {
+      if(!game.users.activeGM?.isSelf || !foundry.utils.hasProperty(changes ?? {}, "system.attributes.hp.value")) return;
+      const before = Number(options?.[`${module.id}HP`]), now = Number(actor.system?.attributes?.hp?.value);
+      if((before > 0) && (now <= 0)) Hooks.callAll(`${module.id}.zeroHP`, actor, actor.token ?? actor.getActiveTokens?.(false, true)?.[0] ?? null);
+    });
     Hooks.on("moveToken", (doc, movement) => this.followAttached(doc, movement));
     gm.handle("cardPartDone", (data, user) => this.doneAsGM(data, user));
     /* Each target's row : its parts as buttons */
@@ -503,7 +528,7 @@ export class cardBuilder{
           /* The condition's own picture and name; once applied, greyed out */
           buttons.push({ id : `part:${index}`, img : status?.img ?? null, icon : "fa-circle-exclamation", disabled : done, label : name });
         }
-        else if((part.kind === "effect") || (part.kind === "attach")){
+        else if((part.kind === "effect") || (part.kind === "attach") || (part.kind === "disease")){
           if(!(game.user.isGM || target?.actor?.isOwner)) return;
           const item = message.getAssociatedItem?.();
           /* An attach that brings conditions says so : "Attach (Blinded)" */
@@ -531,7 +556,7 @@ export class cardBuilder{
     const part = message.getFlag(module.id, KEY)?.parts?.[index];
     if(!part || message.getFlag(module.id, `cardDone.${index}.${uuidKey(uuid)}`)) return;
     const target = fromUuidSync(uuid, { strict : false });
-    if(["condition", "effect", "attach"].includes(part.kind)){
+    if(["condition", "effect", "attach", "disease"].includes(part.kind)){
       const ok = await gm.run("cardCondition", { message : message.id, index, target : uuid });
       if(ok) await gm.run("cardPartDone", { message : message.id, index, target : uuid, instead : part.insteadOfDamage });
       return;
@@ -566,6 +591,7 @@ export class cardBuilder{
     const context = { origin : item?.uuid ?? null, by : message.getAssociatedActor?.() ?? null, sourceToken, targetToken : fromUuidSync(uuid, { strict : false }) };
     if(part.kind === "effect") await this.applyEffectTo(actor, part, context);
     else if(part.kind === "attach") await this.attachTo(actor, part, context);
+    else if(part.kind === "disease") await disease.applyTo(actor, part, context);
     else await this.applyConditionTo(actor, part, context);
     return true;
   }
@@ -623,6 +649,8 @@ export class cardBuilder{
     /* dnd5e's : the end (start) of the affected creature's next turn */
     if(duration === "endOfNextTurn") return { expiry : "targetEnd" };
     if(duration === "startOfNextTurn") return { expiry : "targetStart" };
+    if(duration === "endOfMyNextTurn") return { expiry : "sourceEnd" };
+    if(duration === "startOfMyNextTurn") return { expiry : "sourceStart" };
     return (typeof duration === "number") ? { rounds : duration } : duration;
   }
 
@@ -668,7 +696,8 @@ export class cardBuilder{
     const grapple = (part.type === "grappled") ? { grapple : { by : sourceToken?.uuid ?? by?.uuid ?? null, escape : Number(part.escape) || null } } : {};
     const [made] = await actor.createEmbeddedDocuments("ActiveEffect", [{ name, img : status?.img ?? "icons/svg/aura.svg",
       statuses : [part.type, ...(part.with ?? [])], origin, duration,
-      flags : { [module.id] : { cardCondition : true, ...(repeat ? { repeat } : {}), ...grapple } } }]);
+      flags : { [module.id] : { cardCondition : true, ...(repeat ? { repeat } : {}), ...grapple,
+        ...((part.noReactions || part.oneAction) ? { rule : { ...(part.noReactions ? { noReactions : true } : {}), ...(part.oneAction ? { oneAction : true } : {}) } } : {}) } } }]);
     /* The doer's linked effect (the Rug's Smothering) : either ending ends the other */
     const doer = sourceToken?.actor ?? by;
     if(made && part.self && doer){
