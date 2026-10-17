@@ -81,3 +81,5 @@ whether the module covers it or you need to edit the item.
 | **Crush** (Darkmantle) | Its Blinded lands on any hit. | Card macro: attach on a hit; covered (Blinded) only on a Medium or smaller target hit with Advantage. |
 | **Cultist's Sickle** | A plain gear Sickle (Nick mastery) next to the stat block's Ritual Sickle; the Cultist has no masteries. | Nothing: it's never used as the Cultist's attack. |
 | **Cultist Fanatic's spells** | Each spell imported twice (once as a spell, once as a Spellcasting copy). | Item data for the GM. |
+| **Web Strand** (Ettercap) | Its Restrained lands on any size and never ends. | Card macro: Restrained (Large or smaller) until a Web token (AC 10, 5 HP, fire vulnerability) is destroyed. |
+| **Euphoria Breath / Stench Spray / Prone Deficiency** (Faerie Dragons, Flumph) | Plain conditions: no random movement, no aura, no die roll; Stench Spray's duration ("for hours") lost its dice. | Card / hook macros (local, not SRD). |

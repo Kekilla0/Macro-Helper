@@ -9,6 +9,7 @@ import { giveMode } from '../roll-item/reasons.js';
 import { TYPES } from '../roll-item/message.js';
 import { rollModes } from './roll-modes.js';
 import { actionTracker } from './action-tracker.js';
+import { patch } from '../patch.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -17,6 +18,8 @@ const log = logger.for(import.meta.url);
  *                  5 ft of that creature. Also shown by the target picker.
  *   Magic Resistance : advantage on saving throws against spells and other magical effects (a spell, or an item with
  *                  the Magical property, as the save's card says).
+ *   Incorporeal Movement : it moves through other creatures (their spaces difficult terrain, as dnd5e counts them);
+ *                  through objects and walls, and the damage for ending inside one, stay with the GM.
  *   Parry        : a melee attack roll hits it while it holds a weapon : a Parry button on the attack card (its owner,
  *                  the GM) : its Reaction, +2 AC against that attack (the hit judged again).
  * Flyby is with the Opportunity Attacks (action-ready.js).
@@ -38,6 +41,11 @@ export class creatureTraits{
     if(game.system.id !== "dnd5e") return;
     rollModes.add("packTactics", config => this.packTactics(config));
     Hooks.on("dnd5e.preRollSavingThrowV2", (config, dialog, message) => this.magicResistance(config, message));
+    const self = this;
+    patch.wrap("CONFIG.Token.objectClass.prototype.constrainMovementPath", function(wrapped, waypoints, options = {}){
+      if(self.enabled() && self.has(this.actor, "Incorporeal Movement")) options = { ...options, ignoreTokens : true };
+      return wrapped(waypoints, options);
+    });
     Hooks.on(`${module.id}.cardButtons`, (message, buttons, context) => this.parryButtons(message, buttons, context));
     Hooks.on(`${module.id}.cardButton`, (message, id) => { if(String(id).startsWith("parry|")) this.parry(message, String(id).slice(6)); });
     gm.handle("traitParry", (data, user) => this.parryAsGM(data, user));

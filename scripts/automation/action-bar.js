@@ -82,11 +82,14 @@ export class actionBar{
     const holds = (!dying && may && token) ? grappling(token) : [];
     /* Wake a creature within 5 ft (Sleep Breath) : its Action, on its turn */
     const sleepers = (!dying && st.mine && free && may && token) ? actionTracker.sleepersNear(token) : [];
+    /* Moving at random (Euphoria Breath) : its turn, its whole movement */
+    const random = !dying && st.mine && may && token && actor.effects?.some?.(e => !e.disabled && e.getFlag(module.id, "rule")?.randomMove);
     const buttons = dying ? [`<button type="button" class="death-save"><i class="fa-solid fa-skull" inert></i> ${esc(module.i18n("actionTracker.bar.deathSave"))}</button>`]
       : [prone ? `<button type="button" class="stand-up"><i class="fa-solid fa-person-arrow-up-from-line" inert></i> ${esc(module.format("actionTracker.bar.standUp", { cost : Math.floor(speed / 2) }))}</button>` : "",
          ...grapples.map(g => `<button type="button" class="escape" data-effect="${g.effect.id}"><i class="fa-solid fa-hand-back-fist" inert></i> ${esc(module.format(g.attach ? "actionTracker.bar.detachFrom" : "actionTracker.bar.escapeFrom", { name : g.byName, dc : g.dc }))}</button>`),
          ...holds.map(t => { const attached = attachedTo(token)?.document === (t.document ?? t);
            return `<button type="button" class="release" data-target="${(t.document ?? t).uuid}"${attached ? ` data-attached="1"` : ""}><i class="fa-solid fa-hand" inert></i> ${esc(module.format(attached ? "actionTracker.bar.detach" : "actionTracker.bar.release", { name : t.name }))}</button>`; }),
+         random ? `<button type="button" class="random-move"><i class="fa-solid fa-shuffle" inert></i> ${esc(module.i18n("actionTracker.bar.randomMove"))}</button>` : "",
          ...sleepers.map(t => `<button type="button" class="wake" data-target="${t.id}"><i class="fa-solid fa-bell" inert></i> ${esc(module.format("actionTracker.bar.wake", { name : t.name }))}</button>`)].filter(Boolean);
     const big = buttons.length ? `<div class="big-action">${buttons.join("")}</div>` : "";
     const log = (rec.log ?? []).slice().reverse();
@@ -109,6 +112,7 @@ export class actionBar{
     el.querySelector(".death-save")?.addEventListener("click", event => { event.currentTarget.disabled = true; actionTracker.deathSave(actor, st.combat); });
     el.querySelector(".stand-up")?.addEventListener("click", event => { event.currentTarget.disabled = true; actionTracker.standUp(actor, token); });
     el.querySelectorAll(".escape").forEach(b => b.addEventListener("click", event => { event.currentTarget.disabled = true; actionTracker.escape(actor, event.currentTarget.dataset.effect); }));
+    el.querySelector(".random-move")?.addEventListener("click", event => { event.currentTarget.disabled = true; cardBuilder.randomMove(token); });
     el.querySelectorAll(".wake").forEach(b => b.addEventListener("click", event => { event.currentTarget.disabled = true;
       actionTracker.wake(actor, token, canvas.tokens.get(event.currentTarget.dataset.target)); }));
     el.querySelectorAll(".release").forEach(b => b.addEventListener("click", async event => {
