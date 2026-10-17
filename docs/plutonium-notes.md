@@ -77,3 +77,7 @@ whether the module covers it or you need to edit the item.
 | **Gore / Claw / Repulsion Breath** (Boar, Brown Bear, Bronze Dragon Wyrmling) | Their Prone lands on any hit or failed save, whatever the size or charge; no push. | Card macros take it off and add Prone with the stat block's conditions (and the push). |
 | **Paralyzing Tentacles** (Carrion Crawler) | Range Self (the text: one creature within 10 feet), so Pick Targets finds no one; its effect is Poisoned only, with no save. | Fix the item (range 10 ft). Card macro: Poisoned with Paralyzed, CON 12 save at the end of its turns, 1 minute. |
 | **Bugbear Warrior's Grab / Light Hammer** | Grab's 10 ft reach is stored as its range (no reach field); Light Hammer's reach is 5 ft (the text: reach 10 ft). | Fix the items (reach 10 ft). |
+| **Petrifying Bite** (Cockatrice) | One effect with Restrained and Petrified together. | Card macro: Restrained on a failed save, repeat save at the end of its turn, a second failure makes it Petrified for 24 hours. |
+| **Crush** (Darkmantle) | Its Blinded lands on any hit. | Card macro: attach on a hit; covered (Blinded) only on a Medium or smaller target hit with Advantage. |
+| **Cultist's Sickle** | A plain gear Sickle (Nick mastery) next to the stat block's Ritual Sickle; the Cultist has no masteries. | Nothing: it's never used as the Cultist's attack. |
+| **Cultist Fanatic's spells** | Each spell imported twice (once as a spell, once as a Spellcasting copy). | Item data for the GM. |

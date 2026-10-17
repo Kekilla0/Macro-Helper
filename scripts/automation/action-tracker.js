@@ -8,6 +8,7 @@ import { combatLog } from './combat-log.js';
 import { grapplesOn } from '../roll-item/card-builder.js';
 import { idOf, esc } from '../helpers/utils.js';
 import { getTokensWithin } from '../helpers/tokens.js';
+import { masteries } from './masteries.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -196,7 +197,8 @@ export class actionTracker{
     if(!grapple) return;
     if(!this.left(actor, "action") && !limits.allow(module.format("actionTracker.spent", { name : actor.name, kind : this.label("action") }), { who : actor.name, what : module.i18n("actionTracker.escape") })) return;
     const skills = actor.system?.skills ?? {};
-    const skill = ((Number(skills.acr?.total) || 0) > (Number(skills.ath?.total) || 0)) ? "acr" : "ath";
+    /* The better of Athletics and Acrobatics, unless it says which (a Darkmantle's attach : Athletics) */
+    const skill = grapple.skill ?? (((Number(skills.acr?.total) || 0) > (Number(skills.ath?.total) || 0)) ? "acr" : "ath");
     const rolls = await actor.rollSkill?.({ skill, target : grapple.dc }, { configure : false }).catch(error => { log.debug(error); return null; });
     const roll = Array.isArray(rolls) ? rolls[0] : rolls;
     if(!roll) return;
@@ -274,6 +276,8 @@ export class actionTracker{
 
   /* Has it this one left ? (out of combat, or the tracker off : yes) */
   static left(actor, kind){
+    /* It can't take Reactions (Arms of Hadar, Slowing Breath : flags.macro-helper.rule.noReactions) : none to offer */
+    if((kind === "reaction") && actor?.effects?.some?.(e => !e.disabled && !e.isSuppressed && e.getFlag(module.id, "rule")?.noReactions)) return false;
     const st = this.state(actor);
     return !st || (this.remaining(st.rec, kind) > 0);
   }
@@ -328,6 +332,11 @@ export class actionTracker{
   static isAttack(activity){
     if(activity?.type !== "attack") return false;
     return (activity.item?.type === "weapon") || !!this.multiattackOf(activity.actor);
+  }
+
+  /* An effect that allows an Action or a Bonus Action, not both (Slowing Breath : flags.macro-helper.rule.oneAction) */
+  static oneAction(actor){
+    return !!actor?.effects?.some?.(e => !e.disabled && !e.isSuppressed && e.getFlag(module.id, "rule")?.oneAction);
   }
 
   static isLight(item){
@@ -469,7 +478,8 @@ export class actionTracker{
   /* After the Attack action's attacks : the Bonus Action attack it allows */
   static bonusAttack(activity, rec){
     const item = activity.item;
-    if(rec.light && this.isLight(item)) return true;
+    /* The Light property's extra attack, unless Nick already made it part of the Attack action */
+    if(rec.light && this.isLight(item) && !rec.nick) return true;
     return (idOf(item) === "unarmed-strike") && !!activity.actor?.items?.some?.(i => idOf(i) === "martial-arts");
   }
 
@@ -492,6 +502,8 @@ export class actionTracker{
       if(st.rec.attack){
         const pool = foundry.utils.deepClone(st.rec.attack);
         if((attack || swap) && this.takeAttack(pool, activity.item)) return { kind : null, attack : "more", pool };
+        /* Nick (mastery) : the Light property's extra attack is part of the Attack action, once a turn */
+        if(attack && st.rec.light && this.isLight(activity.item) && !st.rec.nick && masteries.nick(activity)) return { kind : null, attack : "more", pool, nick : true };
         if(attack && (this.remaining(st.rec, "bonus") > 0) && this.bonusAttack(activity, st.rec)) return { kind : "bonus", attack : "bonus" };
         if(this.remaining(st.rec, "action") > 0) return { kind : "action", attack : "new" };
         return { kind : "action", attack : "over", pool };
@@ -557,6 +569,11 @@ export class actionTracker{
     const rec = st.rec;
     const { kind = null, attack = null } = plan;
     if(kind) rec.used[kind] = (Number(rec.used[kind]) || 0) + 1;
+    /* An Action or a Bonus Action, not both (Slowing Breath) : using one spends the other too */
+    if(["action", "bonus"].includes(kind) && this.oneAction(actor)){
+      const other = (kind === "action") ? "bonus" : "action";
+      rec.used[other] = Math.max(Number(rec.used[other]) || 0, this.total(rec, other));
+    }
     /* The Reaction : the readied use released, or lost to something else */
     if((kind === "reaction") && rec.ready){
       if(!plan.readied){
@@ -573,6 +590,7 @@ export class actionTracker{
     }
     else if(attack === "more"){
       rec.attack = plan.pool;
+      if(plan.nick) rec.nick = true;
       rec.light = rec.light || this.isLight(activity?.item);
     }
     if(this.isAttack(activity)) rec.made = (Number(rec.made) || 0) + 1;
@@ -747,6 +765,11 @@ export class actionTracker{
     return speed * (actor.statuses?.has?.("dashing") ? 2 : 1);
   }
 
+  /* Its movement this turn : its Speed, and what macros added (token.useMovement(50) : Trampling Charge, like a Dash) */
+  static movementOf(actor, action = "walk"){
+    return this.speedOf(actor, action) + (Number(this.state(actor)?.rec?.moreMove) || 0);
+  }
+
   static isTeleport(action){
     return !!CONFIG.Token.movement?.actions?.[action]?.teleport;
   }
@@ -775,7 +798,7 @@ export class actionTracker{
     const st = this.state(actor);
     if(!st?.mine || (st.combatant.tokenId !== token.id)) return;
     const action = movement.passed?.waypoints?.at?.(-1)?.action ?? movement.pending?.waypoints?.at?.(-1)?.action ?? token.movementAction;
-    const speed = this.speedOf(actor, action);
+    const speed = this.movementOf(actor, action);
     const total = this.movedOf(token) + (movement.passed?.cost ?? 0) + (movement.pending?.cost ?? 0) + (Number(st.rec.standing) || 0);
     if(!speed || (total <= speed + 0.01)) return;
     return limits.allow(module.format("actionTracker.tooFar", { name : actor.name, moved : Math.round(total), speed }), { who : actor.name, what : module.i18n("actionTracker.movement") }) ? undefined : false;
@@ -788,7 +811,8 @@ export class actionTracker{
     /* A leap (token.leap), even split by an Opportunity Attack stop : every part of it until it lands */
     const mark = this.#leaping.get(token.id);
     const leapt = !!mark && (Date.now() < mark.until);
-    if(mark && (!leapt || ((token.x === mark.x) && (token.y === mark.y)))) this.#leaping.delete(token.id);
+    const to = movement?.destination ?? token;
+    if(mark && (!leapt || ((to.x === mark.x) && (to.y === mark.y)))) this.#leaping.delete(token.id);
     const actor = token.actor;
     const st = feet ? this.state(actor) : null;
     if(!st?.mine || (st.combatant.tokenId !== token.id)) return;
@@ -799,7 +823,7 @@ export class actionTracker{
       this.note(st.rec, module.format("actionTracker.log.leapt", { feet }));
     }
     else if(this.isTeleport(action)) this.note(st.rec, module.format("actionTracker.log.teleported", { feet }));
-    else this.note(st.rec, module.format("actionTracker.log.moved", { feet, moved : this.movedOf(token) + (Number(st.rec.standing) || 0), speed : this.speedOf(actor, action) }));
+    else this.note(st.rec, module.format("actionTracker.log.moved", { feet, moved : this.movedOf(token) + (Number(st.rec.standing) || 0), speed : this.movementOf(actor, action) }));
     await this.save(actor, st.rec);
   }
 
@@ -810,22 +834,30 @@ export class actionTracker{
   }
 
   /**
-   * Movement spent (negative) or given back (positive) this turn, outside a move : token.useMovement(-10) (a leap's
-   * cost). Past its Speed : Rule Limits. Not in a combat (no turn) : nothing to count.
+   * Its movement this turn, outside a move : token.useMovement(-10) spends 10 ft (a leap's cost; past its movement :
+   * Rule Limits), token.useMovement(50) gives it 50 ft more this turn (Trampling Charge, like a Dash).
+   * Not in a combat (no turn) : nothing to count.
    * @returns {Promise<boolean>}  false if Rule Limits stopped it
    */
   static async useMovement(thing, feet){
     const token = thing?.document ? thing : (thing?.object ?? null);
     const actor = thing?.actor ?? thing;
     const st = this.enabled() ? this.state(actor) : null;
-    const change = -Math.round(Number(feet) || 0);
-    if(!st || !change) return true;
-    const speed = this.speedOf(actor, token?.document?.movementAction ?? "walk");
+    const n = Math.round(Number(feet) || 0);
+    if(!st || !n) return true;
+    const action = token?.document?.movementAction ?? "walk";
     const moved = (token ? this.movedOf(token) : 0) + (Number(st.rec.standing) || 0);
-    if((change > 0) && speed && (moved + change > speed + 0.01)
-      && !limits.allow(module.format("actionTracker.tooFar", { name : actor.name, moved : moved + change, speed }), { who : actor.name, what : module.i18n("actionTracker.movement") })) return false;
-    st.rec.standing = (Number(st.rec.standing) || 0) + change;
-    this.note(st.rec, module.format((change > 0) ? "actionTracker.log.movementUsed" : "actionTracker.log.movementBack", { feet : Math.abs(change), moved : moved + change, speed }));
+    if(n > 0){
+      st.rec.moreMove = (Number(st.rec.moreMove) || 0) + n;
+      this.note(st.rec, module.format("actionTracker.log.movementMore", { feet : n, moved, speed : this.speedOf(actor, action) + st.rec.moreMove }));
+      await this.save(actor, st.rec);
+      return true;
+    }
+    const spend = -n, speed = this.movementOf(actor, action);
+    if(speed && (moved + spend > speed + 0.01)
+      && !limits.allow(module.format("actionTracker.tooFar", { name : actor.name, moved : moved + spend, speed }), { who : actor.name, what : module.i18n("actionTracker.movement") })) return false;
+    st.rec.standing = (Number(st.rec.standing) || 0) + spend;
+    this.note(st.rec, module.format("actionTracker.log.movementUsed", { feet : spend, moved : moved + spend, speed }));
     await this.save(actor, st.rec);
     return true;
   }

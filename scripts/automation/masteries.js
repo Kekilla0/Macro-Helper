@@ -24,7 +24,8 @@ const log = logger.for(import.meta.url);
  *   Vex     hit   : button, you have Advantage on your next attack roll against it before the end of your next turn.
  *   Cleave  hit   : button, once per turn : pick a second creature within 5 ft of the first and in your reach, attack it,
  *                   its damage without your ability modifier (unless that's negative).
- *   Nick          : changes when the Light extra attack happens, nothing to roll.
+ *   Nick          : the Light property's extra attack is part of the Attack action instead of a Bonus Action, once a
+ *                   turn (masteries.nick : the Action Tracker asks), nothing to roll.
  *
  * Topple, Push, Sap, Slow and Vex change the target : outcomes, so only the GM sees and clicks those (nothing happens on
  * its own) : a button on each hit target's row (its token on the left, the mastery on the right, Topple's save result
@@ -40,6 +41,12 @@ export class masteries{
 
   static enabled(){
     return (game.system.id === "dnd5e") && settings.value("rollItemMasteries");
+  }
+
+  /* Nick : this attack's weapon gives its wielder the Nick mastery (dnd5e's masteryOptions : mastered, or a bonus one) */
+  static nick(activity){
+    if(!this.enabled()) return false;
+    return !!activity?.item?.system?.masteryOptions?.some?.(o => o.value === "nick");
   }
 
   static register(){

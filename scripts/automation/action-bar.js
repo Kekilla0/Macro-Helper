@@ -2,7 +2,7 @@ import { module } from '../module.js';
 import { esc } from '../helpers/utils.js';
 import { actionTracker } from './action-tracker.js';
 import { actionReady } from './action-ready.js';
-import { cardBuilder, grapplesOn, grappling } from '../roll-item/card-builder.js';
+import { cardBuilder, grapplesOn, grappling, attachedTo } from '../roll-item/card-builder.js';
 
 /**
  * The action bar (Action Tracker on) : just above Foundry's hotbar, one creature's turn in a started combat it's in :
@@ -68,7 +68,7 @@ export class actionBar{
     const { actor, token } = who;
     const rec = st.rec;
     const action = token?.document?.movementAction ?? "walk";
-    const speed = actionTracker.speedOf(actor, action);
+    const speed = actionTracker.movementOf(actor, action);
     const moved = (token ? actionTracker.movedOf(token) : 0) + (Number(rec.standing) || 0);
     /* The big button above the bar : a death save while dying, Stand Up while Prone (its turn) */
     const death = actor.system?.attributes?.death;
@@ -84,8 +84,9 @@ export class actionBar{
     const sleepers = (!dying && st.mine && free && may && token) ? actionTracker.sleepersNear(token) : [];
     const buttons = dying ? [`<button type="button" class="death-save"><i class="fa-solid fa-skull" inert></i> ${esc(module.i18n("actionTracker.bar.deathSave"))}</button>`]
       : [prone ? `<button type="button" class="stand-up"><i class="fa-solid fa-person-arrow-up-from-line" inert></i> ${esc(module.format("actionTracker.bar.standUp", { cost : Math.floor(speed / 2) }))}</button>` : "",
-         ...grapples.map(g => `<button type="button" class="escape" data-effect="${g.effect.id}"><i class="fa-solid fa-hand-back-fist" inert></i> ${esc(module.format("actionTracker.bar.escapeFrom", { name : g.byName, dc : g.dc }))}</button>`),
-         ...holds.map(t => `<button type="button" class="release" data-target="${(t.document ?? t).uuid}"><i class="fa-solid fa-hand" inert></i> ${esc(module.format("actionTracker.bar.release", { name : t.name }))}</button>`),
+         ...grapples.map(g => `<button type="button" class="escape" data-effect="${g.effect.id}"><i class="fa-solid fa-hand-back-fist" inert></i> ${esc(module.format(g.attach ? "actionTracker.bar.detachFrom" : "actionTracker.bar.escapeFrom", { name : g.byName, dc : g.dc }))}</button>`),
+         ...holds.map(t => { const attached = attachedTo(token)?.document === (t.document ?? t);
+           return `<button type="button" class="release" data-target="${(t.document ?? t).uuid}"${attached ? ` data-attached="1"` : ""}><i class="fa-solid fa-hand" inert></i> ${esc(module.format(attached ? "actionTracker.bar.detach" : "actionTracker.bar.release", { name : t.name }))}</button>`; }),
          ...sleepers.map(t => `<button type="button" class="wake" data-target="${t.id}"><i class="fa-solid fa-bell" inert></i> ${esc(module.format("actionTracker.bar.wake", { name : t.name }))}</button>`)].filter(Boolean);
     const big = buttons.length ? `<div class="big-action">${buttons.join("")}</div>` : "";
     const log = (rec.log ?? []).slice().reverse();
@@ -110,8 +111,12 @@ export class actionBar{
     el.querySelectorAll(".escape").forEach(b => b.addEventListener("click", event => { event.currentTarget.disabled = true; actionTracker.escape(actor, event.currentTarget.dataset.effect); }));
     el.querySelectorAll(".wake").forEach(b => b.addEventListener("click", event => { event.currentTarget.disabled = true;
       actionTracker.wake(actor, token, canvas.tokens.get(event.currentTarget.dataset.target)); }));
-    el.querySelectorAll(".release").forEach(b => b.addEventListener("click", event => { event.currentTarget.disabled = true;
-      cardBuilder.release(token, fromUuidSync(event.currentTarget.dataset.target, { strict : false })); }));
+    el.querySelectorAll(".release").forEach(b => b.addEventListener("click", async event => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      await cardBuilder.release(token, fromUuidSync(button.dataset.target, { strict : false }));
+      /* Detaching itself (a Darkmantle) : 5 ft of its movement (its own Speed again, once detached) */
+      if(button.dataset.attached){ await new Promise(resolve => setTimeout(resolve, 300)); await actionTracker.useMovement(token, -5); } }));
     el.querySelector(".ready-button")?.addEventListener("click", () => actionReady.ready(token, actor));
     el.querySelector(".end-turn")?.addEventListener("click", async event => {
       event.currentTarget.disabled = true;

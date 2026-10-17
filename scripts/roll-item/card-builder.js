@@ -3,7 +3,7 @@ import { gm } from '../gm.js';
 import { uses } from '../uses.js';
 import { logger } from '../log.js';
 import { cells, gridSteps, tokenOf, pushAway } from '../helpers/tokens.js';
-import { pickSpace } from '../helpers/targets.js';
+import { pickSpace, isEnemy } from '../helpers/targets.js';
 import { postTargetCard, registerTargetCards } from '../helpers/target-card.js';
 import { rollOptions, rollOptionDamage, rollOptionD20, rollOptionDamageDice } from './roll-options.js';
 const log = logger.for(import.meta.url);
@@ -32,6 +32,15 @@ const log = logger.for(import.meta.url);
  *     save.fail : { type, duration, endsOn } a failed repeat save turns it into that condition instead (no more saves),
  *     lasting that long; endsOn : "damage" (it takes damage) and / or "wake" (a creature within 5 ft uses its Action :
  *     a Wake button on that creature's action bar). Sleep Breath.
+ *   applyEffect({ when, name, img, duration, speed, noReactions, oneAction, changes })   an Apply button for an effect
+ *                              that isn't a condition (Slowing Breath) : speed multiplies its Speeds (0.5 : halved),
+ *                              noReactions (no Reactions : Rule Limits), oneAction (an Action or a Bonus Action, not
+ *                              both : using one spends both), changes (Foundry's own). duration : "endOfNextTurn" (the
+ *                              end of its next turn), "startOfNextTurn", rounds (a number) or Foundry's duration data.
+ *   attach({ when, escape, check, with })   a fancy grapple (Darkmantle) : "Attached: <it>" on the target (with its
+ *                              conditions), "Attached: <target>" on the one that attached (Speed 0, it moves with the
+ *                              target). The target's Detach (its Action, a `check` : "ath" by default, against escape)
+ *                              or the attacher's Detach (5 ft of its movement) ends both.
  *   push(feet, { when, from })   a Push button (the GM) : the target pushed that far straight away from `from` (the
  *                              card's creature), stopping at walls and creatures.
  *   followUp(item, { when })   a button for the card's owner : that item's attack at the target, part of this use
@@ -52,6 +61,16 @@ export function applyCondition({ type, when = [], with : also = [], duration = n
   insteadOfDamage = false, self = null, label = null } = {}){
   return { kind : "condition", type, when : [when].flat(), with : [also].flat().filter(Boolean), duration, save, escape, repeat,
     insteadOfDamage : !!insteadOfDamage, self, label };
+}
+
+export function applyEffect({ when = [], name = null, img = null, duration = null, speed = null, noReactions = false,
+  oneAction = false, changes = [], label = null } = {}){
+  return { kind : "effect", when : [when].flat(), name, img, duration, speed, noReactions : !!noReactions, oneAction : !!oneAction,
+    changes : [changes].flat().filter(Boolean), label };
+}
+
+export function attach({ when = [], escape = null, check = "ath", with : also = [], label = null } = {}){
+  return { kind : "attach", when : [when].flat(), escape, check, with : [also].flat().filter(Boolean), label };
 }
 
 export function push(feet, { when = [], from = null, label = null } = {}){
@@ -119,6 +138,56 @@ export async function useMovement(thing, feet){
   return actionTracker.useMovement(tokenOf(thing) ?? thing, feet);
 }
 
+/* The creature it's attached to (a Darkmantle's Crush), as a token, or null */
+export function attachedTo(thing){
+  const actor = thing?.actor ?? thing;
+  const effect = actor?.effects?.find?.(e => !e.disabled && e.getFlag(module.id, "attachedTo"));
+  const doc = effect ? fromUuidSync(effect.getFlag(module.id, "attachedTo"), { strict : false }) : null;
+  return doc?.object ?? doc ?? null;
+}
+
+/**
+ * Trample (Centaur's Trampling Charge) : pick a space within `feet`, then move there in a straight line, through the
+ * spaces of creatures of `size` or smaller (a bigger one blocks the way). disengage : no Opportunity Attacks for this
+ * move. It's movement like any other (token.useMovement(50) first : the 50 ft more the charge gives).
+ * Returns the enemies whose space it entered, in order (null : cancelled).
+ *   await token.useMovement(50);
+ *   const trampled = await token.trample(50, { size : "medium", disengage : true });
+ */
+export async function trample(thing, feet, { size = "medium", disengage = false, enemies = true } = {}){
+  const from = tokenOf(thing);
+  if(!from) return null;
+  if(!from.document.isOwner){ ui.notifications.warn(module.format("cardBuilder.teleportOwner", { name : from.name })); return null; }
+  const range = Number(feet) || 0;
+  if(!(range > 0)) return null;
+  const grid = canvas.grid.size;
+  const w = Math.max(1, Math.round(from.document.width ?? 1)), h = Math.max(1, Math.round(from.document.height ?? 1));
+  /* The creatures whose space it passes through on the way to a space, in order */
+  const crossed = space => {
+    const start = { x : from.document.x, y : from.document.y };
+    const steps = Math.max(1, Math.ceil(Math.max(Math.abs(space.x - start.x), Math.abs(space.y - start.y)) / (grid / 2)));
+    const found = [];
+    for(let i = 1; i <= steps; i++){
+      const x = start.x + ((space.x - start.x) * i / steps), y = start.y + ((space.y - start.y) * i / steps);
+      for(const t of canvas.tokens.placeables){
+        if((t === from) || !t.actor || found.includes(t)) continue;
+        const r = { left : t.document.x, top : t.document.y, right : t.document.x + (t.document.width * grid), bottom : t.document.y + (t.document.height * grid) };
+        if((x < r.right - 1) && (x + (w * grid) > r.left + 1) && (y < r.bottom - 1) && (y + (h * grid) > r.top + 1)) found.push(t);
+      }
+    }
+    return found;
+  };
+  const check = space => {
+    const big = crossed(space).find(t => !isSmaller(t, size));
+    return big ? module.format("cardBuilder.throughTooBig", { name : big.name }) : "";
+  };
+  const space = await pickSpace(from, { range, size : w, check, banner : module.format("cardBuilder.throughBanner", { feet : range }) });
+  if(!space) return null;
+  const entered = crossed(space).filter(t => !enemies || isEnemy(t, from));
+  await from.document.move({ x : space.x, y : space.y }, { constrainOptions : { ignoreTokens : true }, ...(disengage ? { [module.id] : { oaSkip : true } } : {}) });
+  return entered;
+}
+
 /* Sizes, smallest first : isSmaller("medium") means Medium or smaller (as stat blocks say it) */
 const SIZES = ["tiny", "sm", "med", "lg", "huge", "grg"];
 const SIZE_NAMES = { tiny : "tiny", small : "sm", medium : "med", large : "lg", huge : "huge", gargantuan : "grg" };
@@ -134,7 +203,7 @@ export function isSmaller(thing, size){
 
 /* The grapples on a creature : [{ effect, dc, by (the grappler : token or actor), byName }] */
 export function grapplesOn(actor){
-  return (actor?.effects?.contents ?? [...(actor?.effects ?? [])]).filter(e => !e.disabled && e.statuses?.has?.("grappled")).map(effect => {
+  return (actor?.effects?.contents ?? [...(actor?.effects ?? [])]).filter(e => !e.disabled && (e.statuses?.has?.("grappled") || e.getFlag(module.id, "grapple")?.attach)).map(effect => {
     const f = effect.getFlag(module.id, "grapple") ?? {};
     let origin = null;
     try { origin = effect.origin ? fromUuidSync(effect.origin, { strict : false }) : null; } catch { origin = null; }
@@ -145,7 +214,7 @@ export function grapplesOn(actor){
     const text = String(item?.system?.description?.value ?? "");
     const dc = Number(f.escape) || Number(save?.save?.dc?.value) || Number(text.match(/escape\s+DC\s+(\d+)/i)?.[1])
       || (grappler ? 8 + (Number(grappler.system?.abilities?.str?.mod) || 0) + (Number(grappler.system?.attributes?.prof) || 0) : 10);
-    return { effect, dc, by, byName : by?.name ?? grappler?.name ?? "?" };
+    return { effect, dc, by, byName : by?.name ?? grappler?.name ?? "?", skill : f.skill ?? null, attach : !!f.attach };
   });
 }
 
@@ -270,6 +339,12 @@ export class CardBuilder{
     return rolls;
   }
 
+  /* The attack roll had Advantage (Darkmantle's Crush : "if the darkmantle had Advantage on the attack roll") */
+  get hadAdvantage(){
+    const roll = this.message.system?.attackRoll;
+    return !!(roll?.hasAdvantage ?? (roll?.options?.advantageMode > 0));
+  }
+
   get targets(){
     const { TargetsField } = dnd5e.dataModels.chatMessage.fields;
     return (this.message.system?.targets ?? []).map(d => TargetsField.resolve(d)?.token).filter(Boolean);
@@ -367,12 +442,14 @@ export class cardBuilder{
     for(const cls of [CONFIG.Actor.documentClass, CONFIG.Token.documentClass, CONFIG.Token.objectClass]){
       add(cls, "isSmaller", function(size){ return isSmaller(this, size); });
       add(cls, "grappling", function(){ return grappling(this); });
+      add(cls, "attachedTo", function(){ return attachedTo(this); });
     }
     for(const cls of [CONFIG.Token.documentClass, CONFIG.Token.objectClass]){
       add(cls, "chargedAt", function(target, feet, options){ return chargedAt(this, target, feet, options); });
       add(cls, "teleport", function(feet, options){ return teleport(this, feet, options); });
       add(cls, "leap", function(feet, options){ return leap(this, feet, options); });
       add(cls, "useMovement", function(feet){ return useMovement(this, feet); });
+      add(cls, "trample", function(feet, options){ return trample(this, feet, options); });
     }
   }
 
@@ -408,6 +485,7 @@ export class cardBuilder{
       if(other) other.delete({ [module.id] : { reason : options?.[module.id]?.reason ?? module.format("cardBuilder.endedWith", { name : effect.name }) } }).catch(() => null);
     });
     gm.handle("cardCondition", (data, user) => this.conditionAsGM(data, user));
+    Hooks.on("moveToken", (doc, movement) => this.followAttached(doc, movement));
     gm.handle("cardPartDone", (data, user) => this.doneAsGM(data, user));
     /* Each target's row : its parts as buttons */
     Hooks.on(`${module.id}.rowButtons`, (message, uuid, buttons, { result } = {}) => {
@@ -424,6 +502,14 @@ export class cardBuilder{
           const name = part.label ?? game.i18n.localize(status?.name ?? part.type);
           /* The condition's own picture and name; once applied, greyed out */
           buttons.push({ id : `part:${index}`, img : status?.img ?? null, icon : "fa-circle-exclamation", disabled : done, label : name });
+        }
+        else if((part.kind === "effect") || (part.kind === "attach")){
+          if(!(game.user.isGM || target?.actor?.isOwner)) return;
+          const item = message.getAssociatedItem?.();
+          /* An attach that brings conditions says so : "Attach (Blinded)" */
+          const also = (part.with ?? []).map(id => game.i18n.localize(CONFIG.statusEffects.find(st => st.id === id)?.name ?? id)).join(", ");
+          const label = part.label ?? ((part.kind === "attach") ? (module.i18n("cardBuilder.attach") + (also ? ` (${also})` : "")) : (part.name ?? item?.name ?? ""));
+          buttons.push({ id : `part:${index}`, img : part.img ?? item?.img ?? null, icon : "fa-circle-exclamation", disabled : done, label });
         }
         else if(part.kind === "push"){
           if(!game.user.isGM) return;
@@ -445,7 +531,7 @@ export class cardBuilder{
     const part = message.getFlag(module.id, KEY)?.parts?.[index];
     if(!part || message.getFlag(module.id, `cardDone.${index}.${uuidKey(uuid)}`)) return;
     const target = fromUuidSync(uuid, { strict : false });
-    if(part.kind === "condition"){
+    if(["condition", "effect", "attach"].includes(part.kind)){
       const ok = await gm.run("cardCondition", { message : message.id, index, target : uuid });
       if(ok) await gm.run("cardPartDone", { message : message.id, index, target : uuid, instead : part.insteadOfDamage });
       return;
@@ -477,7 +563,10 @@ export class cardBuilder{
     if(!part || !actor || !(user.isGM || actor.testUserPermission(user, "OWNER"))) return false;
     const item = message.getAssociatedItem?.();
     const sourceToken = message.getAssociatedToken?.() ?? null;
-    await this.applyConditionTo(actor, part, { origin : item?.uuid ?? null, by : message.getAssociatedActor?.() ?? null, sourceToken, targetToken : fromUuidSync(uuid, { strict : false }) });
+    const context = { origin : item?.uuid ?? null, by : message.getAssociatedActor?.() ?? null, sourceToken, targetToken : fromUuidSync(uuid, { strict : false }) };
+    if(part.kind === "effect") await this.applyEffectTo(actor, part, context);
+    else if(part.kind === "attach") await this.attachTo(actor, part, context);
+    else await this.applyConditionTo(actor, part, context);
     return true;
   }
 
@@ -531,6 +620,9 @@ export class cardBuilder{
   /* A part's duration : rounds (a number) or Foundry's duration data */
   static durationOf(duration){
     if(duration === null || duration === undefined) return null;
+    /* dnd5e's : the end (start) of the affected creature's next turn */
+    if(duration === "endOfNextTurn") return { expiry : "targetEnd" };
+    if(duration === "startOfNextTurn") return { expiry : "targetStart" };
     return (typeof duration === "number") ? { rounds : duration } : duration;
   }
 
@@ -584,6 +676,53 @@ export class cardBuilder{
         img : fromUuidSync(origin ?? "", { strict : false })?.img ?? "icons/svg/aura.svg", origin,
         flags : { [module.id] : { linked : made.uuid, holding : targetToken?.uuid ?? null } } }]);
       if(mine) await made.setFlag(module.id, "linked", mine.uuid);
+    }
+  }
+
+  /* An effect that isn't a condition (Slowing Breath) : its rules and changes, the same one again replaced */
+  static async applyEffectTo(actor, part, { origin = null } = {}){
+    const item = origin ? fromUuidSync(origin, { strict : false }) : null;
+    const name = part.name ?? item?.name ?? module.i18n("cardBuilder.effect");
+    const changes = [...(part.changes ?? [])];
+    if((part.speed !== null) && Number.isFinite(Number(part.speed))) for(const kind of ["walk", "fly", "climb", "swim", "burrow"])
+      changes.push({ key : `system.attributes.movement.speeds.${kind}`, type : "multiply", mode : 1, value : String(part.speed) });
+    const rule = { ...(part.noReactions ? { noReactions : true } : {}), ...(part.oneAction ? { oneAction : true } : {}) };
+    const old = actor.effects.filter(e => (e.name === name) && (e.origin === origin));
+    if(old.length) await actor.deleteEmbeddedDocuments("ActiveEffect", old.map(e => e.id), { [module.id] : { reason : module.format("cardBuilder.replaced", { name }) } }).catch(() => null);
+    await actor.createEmbeddedDocuments("ActiveEffect", [{ name, img : part.img ?? item?.img ?? "icons/svg/aura.svg", origin,
+      duration : this.durationOf(part.duration) ?? {}, changes,
+      flags : { [module.id] : { cardCondition : true, ...(Object.keys(rule).length ? { rule } : {}) } } }]);
+  }
+
+  /* A fancy grapple (Darkmantle's Crush) : "Attached: <it>" on the target, "Attached: <target>" on it (Speed 0, follows) */
+  static async attachTo(actor, part, { origin = null, by = null, sourceToken = null, targetToken = null } = {}){
+    const doer = sourceToken?.actor ?? by;
+    const item = origin ? fromUuidSync(origin, { strict : false }) : null;
+    const img = item?.img ?? "icons/svg/net.svg";
+    const source = sourceToken?.name ?? by?.name ?? "";
+    const byUuid = sourceToken?.uuid ?? by?.uuid ?? null;
+    /* Already attached to it : this one replaces it */
+    const old = actor.effects.filter(e => e.getFlag(module.id, "grapple")?.attach && (e.getFlag(module.id, "grapple")?.by === byUuid));
+    if(old.length) await actor.deleteEmbeddedDocuments("ActiveEffect", old.map(e => e.id), { [module.id] : { reason : module.format("cardBuilder.replaced", { name : source }) } }).catch(() => null);
+    const [made] = await actor.createEmbeddedDocuments("ActiveEffect", [{ name : module.format("cardBuilder.attachedName", { name : source }), img, origin,
+      statuses : [...(part.with ?? [])],
+      flags : { [module.id] : { cardCondition : true, grapple : { by : byUuid, escape : Number(part.escape) || null, skill : part.check ?? "ath", attach : true } } } }]);
+    if(!made || !doer) return;
+    const speed0 = ["walk", "fly", "climb", "swim", "burrow"].map(kind => ({ key : `system.attributes.movement.speeds.${kind}`, type : "override", mode : 5, value : "0" }));
+    const [mine] = await doer.createEmbeddedDocuments("ActiveEffect", [{ name : module.format("cardBuilder.attachedName", { name : targetToken?.name ?? actor.name }), img, origin,
+      changes : speed0, flags : { [module.id] : { linked : made.uuid, holding : targetToken?.uuid ?? null, attachedTo : targetToken?.uuid ?? null } } }]);
+    if(mine) await made.setFlag(module.id, "linked", mine.uuid);
+  }
+
+  /* An attached creature moves with the one it's attached to (the active GM) */
+  static followAttached(doc, movement){
+    if(!game.users.activeGM?.isSelf || !movement?.origin || !movement?.destination) return;
+    /* The hook comes as the move starts : from its origin to its destination */
+    const dx = movement.destination.x - movement.origin.x, dy = movement.destination.y - movement.origin.y;
+    if(!dx && !dy) return;
+    for(const t of doc.parent?.tokens ?? []){
+      if((t === doc) || !t.actor?.effects?.some?.(e => e.getFlag(module.id, "attachedTo") === doc.uuid)) continue;
+      t.move({ x : t.x + dx, y : t.y + dy, action : "displace" }, { constrainOptions : { ignoreTokens : true, ignoreWalls : true }, [module.id] : { oaSkip : true } }).catch(error => log.debug(error));
     }
   }
 }
