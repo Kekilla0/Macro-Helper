@@ -30,7 +30,8 @@ const log = logger.for(import.meta.url);
  *                           object interaction, then the Utilize action; a shield in or out of a hand is the Utilize
  *                           action (Hands).
  *   Movement              : what Foundry measured this turn, against its Speed (Dashing : twice). Rule Limits on
- *                           Block stops a drag past it; Warn says so.
+ *                           Block stops a drag past it; Warn says so. A player dragging its creature on someone else's
+ *                           turn : Rule Limits too (the GM's drags are free : forced movement, setting the scene).
  *   Not counted           : casting times of 1 minute or more, Rituals, follow-ups that aren't a new casting (a
  *                           rider's save, Chromatic Orb's leap : noCast), and uses another one paid for, marked
  *                           config[module.id].economy = "free" (True Strike's attack, Flurry of Blows' second strike);
@@ -242,9 +243,10 @@ export class actionTracker{
     return ((combat.turn ?? 0) >= index) ? combat.round : combat.round - 1;
   }
 
+  /* Every key a turn's record can hold : save() merges into the flag, so a key left out would carry on from the last turn */
   static fresh(combat, round){
     return { combat : combat.id, round, used : { action : 0, bonus : 0, reaction : 0 }, extra : { action : 0, bonus : 0, reaction : 0 },
-      attack : null, light : false, made : 0, swaps : 0, objects : 0, log : [] };
+      attack : null, light : false, nick : false, made : 0, swaps : 0, objects : 0, standing : 0, moreMove : 0, ready : null, log : [] };
   }
 
   /* The started combat it's in (the one being viewed first : a combat with no scene shows on every scene) */
@@ -618,6 +620,15 @@ export class actionTracker{
     await this.save(actor, rec);
   }
 
+  /* A macro's Reaction (an Ochre Jelly's Split) : false when it has none left (spent, or it can't take Reactions);
+     otherwise spent and logged. Out of combat, or the tracker off : true, nothing to spend. */
+  static async useReaction(thing, what = ""){
+    const actor = thing?.actor ?? thing;
+    if(!this.left(actor, "reaction")) return false;
+    if(this.state(actor)) await this.spend(actor, { kind : "reaction", what });
+    return true;
+  }
+
   /* Legendary actions (off its turn) and Lair actions (once a round) : false stops the use */
   static async specialStep(activity, ctx){
     const type = activity.activation?.type || activity.item?.system?.activation?.type;
@@ -805,7 +816,11 @@ export class actionTracker{
     if(!this.enabled() || !["dragging", "keyboard"].includes(movement?.method)) return;
     const actor = token.actor;
     const st = this.state(actor);
-    if(!st?.mine || (st.combatant.tokenId !== token.id)) return;
+    if(!st) return;
+    /* A player moving its creature on someone else's turn : Rule Limits (the GM's moves are free : forced movement) */
+    if(!st.mine && !game.user.isGM)
+      return limits.allow(module.format("actionTracker.notItsTurn", { name : actor.name, turn : st.combat.combatant?.name ?? "" }), { who : actor.name, what : module.i18n("actionTracker.movement") }) ? undefined : false;
+    if(!st.mine || (st.combatant.tokenId !== token.id)) return;
     const action = movement.passed?.waypoints?.at?.(-1)?.action ?? movement.pending?.waypoints?.at?.(-1)?.action ?? token.movementAction;
     const speed = this.movementOf(actor, action);
     const total = this.movedOf(token) + (movement.passed?.cost ?? 0) + (movement.pending?.cost ?? 0) + (Number(st.rec.standing) || 0);
@@ -886,7 +901,9 @@ export class actionTracker{
     const was = actor.getFlag(module.id, "hands") ?? {};
     const before = new Set([was.main, was.off].filter(Boolean));
     const after = new Set([next.main ?? was.main, next.off ?? was.off].filter(Boolean));
-    const moved = [...new Set([...after].filter(id => !before.has(id)).concat([...before].filter(id => !after.has(id))))].map(id => actor.items.get(id)).filter(Boolean);
+    const moved = [...new Set([...after].filter(id => !before.has(id)).concat([...before].filter(id => !after.has(id))))].map(id => actor.items.get(id))
+      /* Unarmed Strike and natural weapons aren't objects : nothing to count */
+      .filter(item => item && !((item.type === "weapon") && ((item.system.type?.value === "natural") || (idOf(item) === "unarmed-strike"))));
     if(!moved.length) return;
     const rec = st.rec;
     let swaps = Number(rec.swaps) || 0, objects = Number(rec.objects) || 0, utilize = 0;

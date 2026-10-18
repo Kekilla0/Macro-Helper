@@ -18,6 +18,8 @@ const log = logger.for(import.meta.url);
  *   Versatile      : two-handed when the other hand is empty, one-handed once something else is held (with Dueling :
  *                    always one-handed, its +2 needs it).
  *   Shields, torches, anything you carry : one hand. Armor is worn, not held.
+ *   Unarmed Strike, natural weapons : part of the body, never in a hand, always equipped (so they're on the sheet's
+ *                    Actions tab), no object interaction.
  * dnd5e's "equipped" follows : what's in a hand is equipped, what leaves it isn't (weapons and shields). Right-click
  * a hand to empty it. Equipping or unequipping a weapon or shield on the sheet puts it in (a free hand) or takes it
  * out; with no hand free, Rule Limits decides. An off-hand attack (the Light extra attack) is with the item in the
@@ -187,7 +189,7 @@ export class hands{
    */
   static of(actor){
     const stored = actor?.getFlag?.(module.id, "hands") ?? {};
-    const has = id => (id && actor.items?.get?.(id)) ? id : null;
+    const has = id => (id && this.canHold(actor.items?.get?.(id))) ? id : null;
     return { main : has(stored.main), off : has(stored.off) };
   }
 
@@ -365,7 +367,7 @@ export class hands{
   static async onEquip(item, changes, options = {}, userId){
     if((userId !== game.user.id) || options[module.id]?.hands) return;
     const actor = item?.parent;
-    if(!this.manages(actor) || !this.isHeldGear(item)) return;
+    if(!this.manages(actor) || !this.isHeldGear(item) || !this.canHold(item)) return;
     const equipped = foundry.utils.getProperty(changes ?? {}, "system.equipped");
     if(equipped === undefined) return;
     const h = this.of(actor);
@@ -387,10 +389,18 @@ export class hands{
     await item.update({ "system.equipped" : false }, { [module.id] : { hands : true } });
   }
 
-  /* Equipped held gear arriving on a character : unequipped (the hands decide what's held) */
+  /* Unarmed Strike and natural weapons : part of the body, never in a hand, always equipped (dnd5e lists only equipped
+     weapons on the sheet's Actions tab) */
+  static isBody(item){
+    return (item?.type === "weapon") && !this.canHold(item);
+  }
+
+  /* Equipped held gear arriving on a character : unequipped (the hands decide what's held); body weapons : equipped */
   static onPreCreate(item, options = {}){
     const actor = item?.parent;
-    if(options[module.id]?.hands || !this.manages(actor) || !this.isHeldGear(item) || !this.canHold(item) || !item.system?.equipped) return;
+    if(options[module.id]?.hands || !this.manages(actor)) return;
+    if(this.isBody(item) && !item.system?.equipped) return item.updateSource({ "system.equipped" : true });
+    if(!this.isHeldGear(item) || !this.canHold(item) || !item.system?.equipped) return;
     item.updateSource({ "system.equipped" : false });
   }
 
@@ -402,9 +412,15 @@ export class hands{
     return actor.items.filter(i => this.isHeldGear(i) && this.canHold(i) && i.system.equipped && !held.has(i.id));
   }
 
-  /* The sheet shows the hands : strays unequipped, a moment later (an Equip being put in a hand finishes first) */
+  /* Body weapons not marked equipped (from before Hands, or unequipped on the sheet) */
+  static bare(actor){
+    return actor.items.filter(i => this.isBody(i) && !i.system.equipped);
+  }
+
+  /* The sheet shows the hands : strays unequipped and body weapons equipped, a moment later (an Equip being put in a
+     hand finishes first) */
   static tidySoon(actor){
-    if(!this.strays(actor).length) return;
+    if(!this.strays(actor).length && !this.bare(actor).length && !this.bodyInHand(actor)) return;
     clearTimeout(this.#tidying.get(actor.uuid));
     this.#tidying.set(actor.uuid, setTimeout(() => {
       this.#tidying.delete(actor.uuid);
@@ -412,8 +428,16 @@ export class hands{
     }, 600));
   }
 
+  /* A body weapon stored in a hand (put there before Hands knew better) */
+  static bodyInHand(actor){
+    const stored = actor?.getFlag?.(module.id, "hands") ?? {};
+    return [stored.main, stored.off].some(id => id && this.isBody(actor.items.get(id)));
+  }
+
   static async tidy(actor){
-    const updates = this.strays(actor).map(i => ({ _id : i.id, "system.equipped" : false }));
+    if(this.bodyInHand(actor)) await this.save(actor, this.of(actor));
+    const updates = this.strays(actor).map(i => ({ _id : i.id, "system.equipped" : false }))
+      .concat(this.bare(actor).map(i => ({ _id : i.id, "system.equipped" : true })));
     if(updates.length) await actor.updateEmbeddedDocuments("Item", updates, { [module.id] : { hands : true } });
     log.debug("Hands tidied", actor.name, updates.length);
   }

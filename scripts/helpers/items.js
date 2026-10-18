@@ -602,6 +602,36 @@ export async function setBaseDamage(item, { number, denomination, types, bonus }
 }
 
 /**
+ * Set an attack's damage to a formula ("2d8 + @mod"), only if it differs : the first damage of its attack (an activity's
+ * own damage part, else the item's base damage), as a custom formula. Its damage type stays unless `type` is given.
+ *   await item.setDamage("1d8 + @mod");
+ * @param {Item} item
+ * @param {string} formula
+ * @param {object} [options]
+ * @param {string|string[]} [options.type]  damage type(s), e.g. "acid"
+ * @returns {Promise<Item|null>}  the fresh item if something changed, null if it was already right (or has no damage)
+ */
+export async function setDamage(item, formula, { type } = {}){
+  if(!item || !formula) return null;
+  const types = (type === undefined) ? null : [type].flat();
+  const same = d => d.custom?.enabled && (d.custom.formula === formula) && (!types || ((d.types.size === types.length) && types.every(t => d.types.has(t))));
+  const activity = item.system?.activities?.find?.(a => a.damage?.parts?.length);
+  if(activity){
+    const parts = activity.damage.parts;
+    if(same(parts[0])) return null;
+    const data = parts.map(p => p.toObject?.() ?? foundry.utils.deepClone(p));
+    data[0].custom = { enabled : true, formula };
+    if(types) data[0].types = types;
+    return updateItem(item, { [`system.activities.${activity.id}.damage.parts`] : data });
+  }
+  const base = item.system?.damage?.base;
+  if(!base || same(base)) return null;
+  const changes = { "system.damage.base.custom" : { enabled : true, formula } };
+  if(types) changes["system.damage.base.types"] = types;
+  return updateItem(item, changes);
+}
+
+/**
  * How an attack would roll against a target, before rolling : "advantage", "disadvantage" or "normal5e" (neither, or
  * both cancelling). The same rules the roll uses (conditions, sight, Dodging, flanking, Help, Sap / Vex, Heavy, Reckless),
  * plus long range / threatened. For the pick map's colours; the keys or prompt you choose aren't known yet.

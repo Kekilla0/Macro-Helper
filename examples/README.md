@@ -4,8 +4,7 @@ Macros built with Macro Helper. To use one, copy the file's contents into a macr
 
 | File | Kind | What it does |
 |---|---|---|
-| [split.js](item-macros/split.js) | Item Macro | Ochre Jelly / Black Pudding **Split**: two copies with half the HP, a size smaller, same space and initiative. |
-| [pseudopod.js](item-macros/pseudopod.js) | Item Macro | Pseudopod damage follows the creature's size (2d8 / 1d8 / 1d4 acid), so it shrinks with each split. |
+| [ochre-jelly-split.js](item-macros/ochre-jelly-split.js) | Item Macro | Ochre Jelly **Split** (a hook on damage): the Reaction's card, then two new jellies a size smaller with half the HP each (the original token is one of them), at its initiative; the Pseudopod's damage follows the new size (homebrew). |
 | [greataxe-cleave.js](item-macros/greataxe-cleave.js) | Item Macro | Orc Soldier Greataxe: one attack roll each against up to 2 Medium or 3 Small targets within 5 ft of each other. Lets the player choose targets on the map. |
 | [pick-and-attack.js](item-macros/pick-and-attack.js) | Item Macro | Click your targets on the map (range shown), then one attack each. Targets beyond reach get a thrown attack when the weapon can be thrown. Checks there are enough to throw, or enough ammunition, before attacking. Settings for count, who can be picked, spacing, long range. Checks the item, attacker and range first. |
 | [multiattack-hand-axe.js](item-macros/multiattack-hand-axe.js) | Item Macro | Orc Warrior Hand Axe: two attacks, and the same target can be picked twice (both axes at one foe, or one each). |

@@ -1,5 +1,5 @@
 import { module } from '../module.js';
-import { tokenOf, actorOf } from './tokens.js';
+import { tokenOf, actorOf, isSpaceFree } from './tokens.js';
 import { gm } from '../gm.js';
 
 /* ---------- Hit points ----------
@@ -459,19 +459,25 @@ export function stepSize(key, steps = -1){
 }
 
 /**
- * Replace a token with copies of itself, sharing its HP (Ochre Jelly / Black Pudding Split). GM only.
- * Copies keep the token's data (conditions, effects, elevation...), land inside the original's space
- * and keep its place in combat. The original is deleted once the copies exist.
+ * Split a token into copies of itself, sharing its HP (Ochre Jelly / Black Pudding Split). GM only.
+ * The token itself is the first copy (anything aimed at it : targets, a card's buttons, its place in combat, stays);
+ * the others are new tokens. Each copy is a new creature : its HP and max HP are its share (so not Bloodied). The new
+ * ones keep its effects and conditions, except what belongs to one creature only : effects tied to someone's
+ * Concentration (Hunter's Mark, Hex, Bane : flags.dnd5e.dependentOn) or linked to another effect (a grapple :
+ * flags.macro-helper.linked) stay with the original. Each takes a space of its own : inside the original's space
+ * first, then the nearest free squares around it (no other creature, no wall in between). In a combat, the new ones
+ * join it at the original's initiative.
  * @param {Token|TokenDocument|Actor} thing
  * @param {object} [options]
  * @param {number} [options.copies=2]
  * @param {number} [options.hp=0.5]          fraction of current HP each copy gets (rounded down), also its max HP
- * @param {number} [options.scale=0.5]       token width / height multiplier
- * @param {boolean} [options.stepSize=true]  also one dnd5e size category smaller
- * @param {boolean} [options.chat=true]      post a line to chat
- * @returns {Promise<TokenDocument[]>}
+ * @param {boolean} [options.stepSize=true]  one dnd5e size category smaller, the token sized from dnd5e's table
+ *                                           (Small 1 square, Tiny half a square)
+ * @param {number} [options.scale]           a token width / height multiplier instead of dnd5e's size table
+ * @param {boolean} [options.chat=true]      tell the GM what happened (a whisper : it gives the HP)
+ * @returns {Promise<TokenDocument[]>}       every copy, the original first
  */
-export async function splitToken(thing, { copies = 2, hp = 0.5, scale = 0.5, stepSize : step = true, chat = true } = {}){
+export async function splitToken(thing, { copies = 2, hp = 0.5, stepSize : step = true, scale = null, chat = true } = {}){
   const source = tokenOf(thing);
   if(!source) return warn("Split : no token to split.");
   if(!game.user.isGM) return warn("Split : only the GM can create and delete tokens.");
@@ -482,53 +488,86 @@ export async function splitToken(thing, { copies = 2, hp = 0.5, scale = 0.5, ste
   const value = Math.floor((source.actor.system.attributes?.hp?.value ?? 0) * hp);
   if(value < 1) return warn(`Split : ${doc.name} doesn't have enough HP to split.`);
 
-  const width = doc.width * scale, height = doc.height * scale;
   const size = source.actor.system.traits?.size;
   const newSize = (step && size) ? stepSize(size, -1) : size;
+  const tokenSize = (scale !== null) ? null : (CONFIG.DND5E.actorSizes?.[newSize]?.token ?? 1);
+  const width = tokenSize ?? doc.width * scale, height = tokenSize ?? doc.height * scale;
 
-  /* Spread the copies over the original's space : corners first, then side by side */
-  const gs = canvas.grid.size;
-  const spots = [
-    { x : doc.x, y : doc.y },
-    { x : doc.x + (doc.width - width) * gs, y : doc.y + (doc.height - height) * gs },
-    { x : doc.x + (doc.width - width) * gs, y : doc.y },
-    { x : doc.x, y : doc.y + (doc.height - height) * gs },
-  ];
-  const positions = [];
-  for(let i = 0; i < copies; i++){
-    let spot = spots[i] ?? spots[0];
-    if(positions.some(p => p.x === spot.x && p.y === spot.y)) spot = { x : doc.x + width * gs * i, y : doc.y };
-    positions.push(spot);
-  }
+  const positions = splitSpaces(source, copies, Math.max(1, Math.round(width)), Math.max(1, Math.round(height)));
+  if(positions.length < copies) return warn(`Split : no room around ${doc.name} for ${copies} creatures.`);
 
+  /* What the new ones don't get : one creature's effects (Concentration, linked), and Bloodied (dnd5e judges it again) */
+  const single = e => e.flags?.dnd5e?.dependentOn || e.flags?.[module.id]?.linked || (e.statuses ?? []).includes("bloodied");
   const data = doc.toObject();
   delete data._id;
-  const tokens = positions.map(pos => {
-    const token = foundry.utils.deepClone(data);
-    Object.assign(token, pos, { width, height });
+  if(Array.isArray(data.delta?.effects)) data.delta.effects = data.delta.effects.filter(e => !single(e));
+  const share = token => {
     foundry.utils.setProperty(token, "delta.system.attributes.hp.value", value);
     foundry.utils.setProperty(token, "delta.system.attributes.hp.max", value);
     foundry.utils.setProperty(token, "delta.system.attributes.hp.temp", 0);
     if(newSize) foundry.utils.setProperty(token, "delta.system.traits.size", newSize);
     return token;
-  });
+  };
+  const tokens = positions.slice(1).map(pos => share(Object.assign(foundry.utils.deepClone(data), pos, { width, height })));
 
-  /* Keep its place in combat */
-  const combatant = game.combat?.combatants.find(c => c.tokenId === doc.id && c.sceneId === doc.parent.id);
+  /* The original : its share, its new size, the first space */
+  await doc.actor.update(share({}).delta);
+  await doc.update({ ...positions[0], width, height }, { animate : false });
 
   /* dnd5e would re-roll unlinked NPC HP on creation otherwise */
   const created = await doc.parent.createEmbeddedDocuments("Token", tokens, { dnd5e : { autoRollNPCHP : "no" } });
-  if(combatant) await game.combat.createEmbeddedDocuments("Combatant", created.map(t => ({
-    tokenId : t.id, sceneId : t.parent.id, actorId : t.actorId,
-    initiative : combatant.initiative, hidden : combatant.hidden,
-  })));
-  await doc.delete();
 
-  if(chat) ChatMessage.implementation.create({
-    speaker : ChatMessage.implementation.getSpeaker({ actor : source.actor }),
-    content : `<p><strong>${doc.name}</strong> splits into ${copies} creatures with <strong>${value} HP</strong> each.</p>`,
-  });
-  return created;
+  /* Its place in combat : every combat it's in, the new ones at its initiative */
+  for(const combat of game.combats){
+    const combatant = combat.combatants.find(m => (m.tokenId === doc.id) && (m.sceneId === doc.parent.id));
+    if(!combatant) continue;
+    await combat.createEmbeddedDocuments("Combatant", created.map(t => ({
+      tokenId : t.id, sceneId : t.parent.id, actorId : t.actorId,
+      initiative : combatant.initiative, hidden : combatant.hidden,
+    })));
+  }
+
+  if(chat){
+    const label = game.i18n.localize(CONFIG.DND5E.actorSizes?.[newSize]?.label ?? "");
+    ChatMessage.implementation.create({
+      speaker : ChatMessage.implementation.getSpeaker({ actor : source.actor, token : doc }),
+      whisper : game.users.filter(u => u.isGM).map(u => u.id),
+      content : `<p><strong>${doc.name}</strong> splits into ${copies}${(newSize !== size) && label ? ` ${label}` : ""} creatures with <strong>${value} HP</strong> each.</p>`,
+    });
+  }
+  return [doc, ...created];
+}
+
+/* Top-left corners (canvas pixels) for `count` blocks of w × h squares : inside the token's space first, then rings
+   around it, each free of other creatures, inside the scene, not behind a wall from the token's centre */
+function splitSpaces(token, count, w, h){
+  const grid = canvas.grid.size;
+  const doc = token.document;
+  const left = Math.round(doc.x / grid), top = Math.round(doc.y / grid);
+  const W = Math.max(1, Math.round(doc.width)), H = Math.max(1, Math.round(doc.height));
+  const rect = canvas.dimensions?.sceneRect;
+  const centre = token.center;
+  const wall = CONFIG.Canvas.polygonBackends?.move;
+  const chosen = [];
+  const overlaps = (gx, gy) => chosen.some(c => (c.gx < gx + w) && (c.gx + w > gx) && (c.gy < gy + h) && (c.gy + h > gy));
+  for(let ring = 0; (ring <= 4) && (chosen.length < count); ring++){
+    const spots = [];
+    for(let gx = left - ring; gx <= left + W - w + ring; gx++) for(let gy = top - ring; gy <= top + H - h + ring; gy++){
+      const inside = (gx >= left) && (gy >= top) && (gx + w <= left + W) && (gy + h <= top + H);
+      const depth = Math.max(left - gx, top - gy, gx + w - (left + W), gy + h - (top + H), 0);
+      if((ring === 0) ? inside : (depth === ring)) spots.push({ gx, gy });
+    }
+    for(const { gx, gy } of spots){
+      if(chosen.length >= count) break;
+      const x = gx * grid, y = gy * grid;
+      if(rect && ((x < rect.x) || (y < rect.y) || (x + w * grid > rect.x + rect.width) || (y + h * grid > rect.y + rect.height))) continue;
+      if(overlaps(gx, gy) || !isSpaceFree(x, y, w, { height : h, ignore : token })) continue;
+      const point = { x : x + w * grid / 2, y : y + h * grid / 2 };
+      if(wall && (ring > 0) && wall.testCollision(centre, point, { type : "move", mode : "any" })) continue;
+      chosen.push({ gx, gy });
+    }
+  }
+  return chosen.map(({ gx, gy }) => ({ x : gx * grid, y : gy * grid }));
 }
 
 function warn(message){

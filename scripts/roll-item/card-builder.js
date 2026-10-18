@@ -7,6 +7,8 @@ import { pickSpace, isEnemy } from '../helpers/targets.js';
 import { postTargetCard, registerTargetCards } from '../helpers/target-card.js';
 import { rollOptions, rollOptionDamage, rollOptionD20, rollOptionDamageDice } from './roll-options.js';
 import { disease } from '../automation/disease.js';
+import { patch } from '../patch.js';
+import { setDamage } from '../helpers/items.js';
 import { noteReason } from './reasons.js';
 const log = logger.for(import.meta.url);
 
@@ -208,6 +210,48 @@ export async function leap(thing, feet, { item = null } = {}){
 export async function useMovement(thing, feet){
   const { actionTracker } = await import('../automation/action-tracker.js');
   return actionTracker.useMovement(tokenOf(thing) ?? thing, feet);
+}
+
+/**
+ * A Reaction a macro takes (an Ochre Jelly's Split) : false if it has none left (already spent this round, or it can't
+ * take Reactions), otherwise spent and logged. Out of combat, or with the Action Tracker off : true.
+ *   if(!await token.useReaction("Split")) return;
+ * @returns {Promise<boolean>}
+ */
+export async function useReaction(thing, what = ""){
+  const { actionTracker } = await import('../automation/action-tracker.js');
+  return actionTracker.useReaction(thing?.actor ?? thing, what);
+}
+
+/**
+ * The damage types a creature was just dealt, before its resistances or immunities (an Ochre Jelly immune to Slashing
+ * is still "subjected to" it). From the options of "dnd5e.preApplyDamage" / "dnd5e.applyDamage" (args[2] / args[3]).
+ *   const [, amount, options] = args;   // "dnd5e.applyDamage"
+ *   if(damageTypes(options).includes("lightning")) ...
+ * @param {object} options
+ * @returns {string[]}
+ */
+export function damageTypes(options){
+  return [...(options?.[module.id]?.damageTypes ?? [])];
+}
+
+/**
+ * Did this damage make it Bloodied (half its HP or fewer, from above half) ? From the options of "dnd5e.applyDamage".
+ *   const [, amount, options] = args;
+ *   if(becameBloodied(actor, options)) ...
+ * @param {Actor|Token|TokenDocument} thing
+ * @param {object} options
+ * @returns {boolean}
+ */
+export function becameBloodied(thing, options){
+  const hp = (thing?.actor ?? thing)?.system?.attributes?.hp;
+  const before = options?.[module.id]?.hpBefore;
+  if(!hp || !Number.isFinite(before)) return false;
+  /* dnd5e's own line : a percentage of its max HP (hp.bloodied, 50 by default) */
+  const max = hp.effectiveMax ?? hp.max;
+  const pct = n => max ? (n / max) * 100 : 100;
+  const line = hp.bloodied ?? CONFIG.DND5E.bloodied?.threshold ?? 50;
+  return (hp.value > 0) && (pct(hp.value) <= line) && (pct(before) > line);
 }
 
 /* The creature it's attached to (a Darkmantle's Crush), as a token, or null */
@@ -521,7 +565,7 @@ export class cardBuilder{
   }
 
   /* Card macros' building blocks, on the documents whatever the Helpers → Methods switches say :
-     item.roll(), token.chargedAt(target, feet), token.teleport(feet, { item }), token.leap(feet, { item }), token.useMovement(feet), creature.isSmaller(size), creature.grappling() (never over an existing method) */
+     item.roll(), token.chargedAt(target, feet), token.teleport(feet, { item }), token.leap(feet, { item }), token.useMovement(feet), token.useReaction(what), item.setDamage(formula), creature.isSmaller(size), creature.grappling() (never over an existing method) */
   static addMethods(){
     const add = (cls, name, fn) => {
       const proto = cls?.prototype;
@@ -530,6 +574,7 @@ export class cardBuilder{
     };
     const self = this;
     add(CONFIG.Item.documentClass, "roll", function(options){ return self.roll(this, options); });
+    add(CONFIG.Item.documentClass, "setDamage", function(formula, options){ return setDamage(this, formula, options); });
     for(const cls of [CONFIG.Actor.documentClass, CONFIG.Token.documentClass, CONFIG.Token.objectClass]){
       add(cls, "isSmaller", function(size){ return isSmaller(this, size); });
       add(cls, "grappling", function(){ return grappling(this); });
@@ -543,6 +588,7 @@ export class cardBuilder{
       add(cls, "teleport", function(feet, options){ return teleport(this, feet, options); });
       add(cls, "leap", function(feet, options){ return leap(this, feet, options); });
       add(cls, "useMovement", function(feet){ return useMovement(this, feet); });
+      add(cls, "useReaction", function(what){ return useReaction(this, what); });
       add(cls, "trample", function(feet, options){ return trample(this, feet, options); });
       add(cls, "pull", function(target, feet){ return pull(this, target, feet); });
       add(cls, "isDifficultTerrain", function(point){ return isDifficultTerrain(this, point); });
@@ -551,6 +597,13 @@ export class cardBuilder{
 
   static register(){
     Hooks.once("setup", () => this.addMethods());
+    /* The damage types dealt, before resistances (damageTypes(options)), and the HP before it (becameBloodied) : dnd5e's
+       hooks after this only see the total */
+    Hooks.once("setup", () => patch.wrap("CONFIG.Actor.documentClass.prototype.applyDamage", function(wrapped, damages, options = {}, ...rest){
+      const types = Array.isArray(damages) ? [...new Set(damages.filter(d => d?.type && (Number(d.value) > 0)).map(d => d.type))] : [];
+      const hpBefore = this.system?.attributes?.hp?.value;
+      return wrapped(damages, { ...options, [module.id] : { ...(options?.[module.id] ?? {}), damageTypes : types, hpBefore } }, ...rest);
+    }));
     Hooks.on("dnd5e.preRollDamageV2", config => rollOptionDamage(config));
     Hooks.on("dnd5e.postAttackRollConfiguration", (rolls, config) => rollOptionD20(rolls, config));
     Hooks.on("dnd5e.postDamageRollConfiguration", (rolls, config) => rollOptionDamageDice(rolls, config));

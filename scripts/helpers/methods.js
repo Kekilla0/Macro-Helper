@@ -5,7 +5,7 @@ import { distanceBetween, getRange, getTokensWithin, highlightRange, pushAway, p
 import { isEnemy, isAlly, getThreats, isThreatened, getEnemiesWithinRange, pickTargets, getFlanker, isFlanking } from './targets.js';
 import { getSize, setStatus, setDefeated, splitToken, damage, heal, tempHP, dropsToZero, isKilledOutright, preventDropToZero, findItem,
   rollSave, addTimedEffect, recoverSpellSlots, usedThisTurn, markUsedThisTurn, getLastDamage, clearLastDamage, stabilize } from './actors.js';
-import { setBaseDamage, updateItem, attackModeFor, isLongRange, isRangedItem, isRangedAttack, canThrow, getAmmunition, pickAndAttack,
+import { setBaseDamage, setDamage, updateItem, attackModeFor, isLongRange, isRangedItem, isRangedAttack, canThrow, getAmmunition, pickAndAttack,
   getUses, hasUses, spendUses, useActivity, useAndApply, multiattack, getHealing, pickAttack, isOtherHandFree, hasShieldEquipped } from './items.js';
 const log = logger.for(import.meta.url);
 
@@ -85,6 +85,7 @@ export const METHODS = {
     canThrow : call(canThrow),                                      // () -> boolean
     getAmmunition : call(getAmmunition),                            // () -> the ammunition Item dnd5e would use | null
     setBaseDamage : call(setBaseDamage),                            // ({ number, denomination, types, bonus }) -> fresh item | null
+    setDamage : call(setDamage),                                    // (formula, { type }) -> fresh item | null
     updateFresh : call(updateItem),                                 // (changes) -> fresh item
     getUses : call(getUses),                                        // () -> { value, max, spent } | null
     hasUses : call(hasUses),                                        // (amount) -> boolean

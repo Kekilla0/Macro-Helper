@@ -27,9 +27,10 @@ const log = logger.for(import.meta.url);
  *   Nick          : the Light property's extra attack is part of the Attack action instead of a Bonus Action, once a
  *                   turn (masteries.nick : the Action Tracker asks), nothing to roll.
  *
- * Topple, Push, Sap, Slow and Vex change the target : outcomes, so only the GM sees and clicks those (nothing happens on
- * its own) : a button on each hit target's row (its token on the left, the mastery on the right, Topple's save result
- * beside it), greyed out once used on that target. Cleave is another attack : its roller's, a card button.
+ * Topple, Push, Sap, Slow and Vex change the target : outcomes, so only the GM sees and clicks those : a button on each
+ * hit target's row (its token on the left, the mastery on the right, Topple's save result beside it), greyed out once
+ * used on that target. Sap, Slow and Vex aren't optional : applying the hit's damage to that target applies them first
+ * (before the damage lands), and greys the button too. Cleave is another attack : its roller's, a card button.
  */
 export class masteries{
   static ACTIONS = ["topple", "push", "sap", "slow", "vex", "cleave"];
@@ -58,6 +59,7 @@ export class masteries{
     foundry.applications.handlebars.loadTemplates({ [`${module.id}.mastery`] : `${module.path}/templates/mastery.hbs` });
     Hooks.on(`${module.id}.cardSections`, (message, sections, { ray } = {}) => { const section = this.cardSection(message, ray ?? null); if(section) sections.push(section); });
     Hooks.on(`${module.id}.cardButton`, (message, id, { ray, event, button } = {}) => { if(id === "mastery") this.clicked(message, ray ?? null, event, button); });
+    Hooks.on(`${module.id}.beforeApplyDamage`, (message, actor, waits) => waits.push(this.beforeDamage(message, actor)));
     /* The outcome masteries : on each hit target's row */
     Hooks.on(`${module.id}.rowButtons`, (message, uuid, buttons, context = {}) => this.rowButtons(message, uuid, buttons, context));
     Hooks.on(`${module.id}.rowButton`, (message, uuid, id, { button } = {}) => {
@@ -226,6 +228,27 @@ export class masteries{
     if(!game.user.isGM) return;
     const notes = await this.apply(message, ray);
     for(const note of notes ?? []) ui.notifications.info(note);
+  }
+
+  /* Sap, Slow and Vex : no choice in them, so applying a hit's damage applies them first (the button greys, as if used) */
+  static AUTO = ["sap", "slow", "vex"];
+
+  static async beforeDamage(message, actor){
+    const system = message?.system;
+    if(!this.enabled() || !system?.masteryOf || !actor) return;
+    const rays = system.rays?.length ? system.rays.map((_, i) => i) : [null];
+    for(const ray of rays){
+      const key = system.masteryOf(ray);
+      if(!this.AUTO.includes(key)) continue;
+      const attacker = message.getAssociatedActor();
+      if(!(game.user.isGM || (actor.isOwner && ((key !== "vex") || attacker?.isOwner)))) continue;
+      for(const token of system.hitTargets(ray).filter(t => t.actor?.uuid === actor.uuid)){
+        const uuid = (token.document ?? token).uuid;
+        if(this.used(message, ray, uuid)) continue;
+        try { await this.apply(message, ray, uuid); }
+        catch(error){ log.error(error); }
+      }
+    }
   }
 
   /**

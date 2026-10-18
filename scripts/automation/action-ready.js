@@ -5,6 +5,7 @@ import { idOf, esc, chooseOption } from '../helpers/utils.js';
 import { cells, gridSteps, canSee } from '../helpers/tokens.js';
 import { pickTargets } from '../helpers/targets.js';
 import { actionTracker } from './action-tracker.js';
+import { hands } from './hands.js';
 import { uses } from '../uses.js';
 const log = logger.for(import.meta.url);
 
@@ -23,7 +24,7 @@ const log = logger.for(import.meta.url);
  *                   answered, the GM's client finishes the move (the GM may Continue or Stop here at any time).
  */
 export class actionReady{
-  static TRIGGERS = ["enemyAttacks", "enemyMoves", "enemyLeaves", "enemyHeals", "allyAttacks", "allyMoves", "allyHeals", "turnStarts"];
+  static TRIGGERS = ["enemyAttacks", "enemyComes", "enemyMoves", "enemyLeaves", "enemyHeals", "allyAttacks", "allyMoves", "allyHeals", "turnStarts"];
   static DEFAULT_REACH = 5;
 
   static register(){
@@ -50,14 +51,33 @@ export class actionReady{
 
   /* ---------- Ready ---------- */
 
-  /* What it can ready : its uses that take an Action */
+  /* Actions with nothing to do as a Reaction once readied movement isn't offered (Dash, Disengage), or that make no sense
+     readied (Dodge, Ready itself) */
+  static NOT_READIED = ["dash", "disengage", "dodge", "ready"];
+
+  /* What it can ready : its uses that take an Action and it could make now. Weapons : held (Hands; else equipped), or
+     part of the body (Unarmed Strike, natural weapons). Spells : prepared, a slot left for a levelled one. Nothing with
+     its uses spent */
   static readyChoices(actor){
     const out = [];
+    const character = actor.type === "character";
+    const held = hands.manages(actor) ? new Set(hands.heldItems(actor).map(i => i.id)) : null;
     for(const item of actor.items){
-      if((item.type === "spell") && (Number(item.system.level) > 0) && (item.system.method === "spell") && !(Number(item.system.prepared) > 0)) continue;
+      if(this.NOT_READIED.includes(idOf(item))) continue;
+      /* Held things (weapons, a torch to swing) : in a hand; body weapons always */
+      if(character && !hands.isBody(item) && ((item.type === "weapon") || (held && hands.canHold(item)))
+        && !(held ? held.has(item.id) : item.system.equipped)) continue;
+      if(item.type === "spell"){
+        const level = Number(item.system.level) || 0;
+        if((level > 0) && (item.system.method === "spell") && !(Number(item.system.prepared) > 0)) continue;
+        if((level > 0) && ["spell", "pact"].includes(item.system.method ?? "spell") && !this.lowestSlot(actor, level)) continue;
+      }
+      if((Number(item.system.uses?.max) > 0) && !(Number(item.system.uses?.value) > 0)) continue;
       for(const activity of item.system.activities ?? []){
         const type = activity.activation?.type || item.system.activation?.type;
-        if(type === "action") out.push({ value : `${item.id}.${activity.id}`, label : (activity.name && (activity.name !== item.name)) ? `${item.name} : ${activity.name}` : item.name });
+        if(type !== "action") continue;
+        if((Number(activity.uses?.max) > 0) && !(Number(activity.uses?.value) > 0)) continue;
+        out.push({ value : `${item.id}.${activity.id}`, label : (activity.name && (activity.name !== item.name)) ? `${item.name} : ${activity.name}` : item.name });
       }
     }
     return out.sort((a, b) => a.label.localeCompare(b.label));
@@ -205,6 +225,15 @@ export class actionReady{
           const reach = this.reachOf(entry.actor);
           hit = (this.feet(from, entry.token) <= reach) && (this.feet(other, entry.token) > reach);
         }
+        /* Comes within the readied use's reach / range : outside it before the move, inside after */
+        if((t === "enemyComes") && (rel === "enemy") && from){
+          const range = this.readyRange(entry.actor, entry.ready);
+          if(range && (this.feet(from, entry.token) > range) && (this.feet(other, entry.token) <= range)){
+            if(!this.sees(entry.token, other)) continue;
+            await this.fire(entry, module.format("actionTracker.happened.comes", { name : other.name, feet : range }));
+          }
+          continue;
+        }
       }
       else if(kind === "turn") hit = (t === "turnStarts") && (entry.ready.turnOf?.token === other.uuid);
       if(!hit || ((kind !== "turn") && !this.sees(entry.token, other))) continue;
@@ -284,6 +313,23 @@ export class actionReady{
     if(!flag || (flag.status !== "pending") || !["initiated", "waited"].includes(status) || !(user.isGM || actor?.testUserPermission(user, "OWNER"))) return false;
     await message.setFlag(module.id, "readyPrompt", { ...flag, status });
     return true;
+  }
+
+  /* How close the readied use reaches : a melee attack's reach (a thrown weapon : its normal range), else its (normal)
+     range; Touch : 5 ft */
+  static readyRange(actor, ready){
+    const item = actor?.items?.get(ready?.item);
+    const activity = item?.system.activities?.get(ready?.activity);
+    if(!activity) return null;
+    const range = activity.range?.override ? activity.range : (item.system.range ?? activity.range ?? {});
+    const melee = (activity.type === "attack") && ((activity.attack?.type?.value ?? "melee") === "melee");
+    const reach = Number(item.system.range?.reach) || (item.system.properties?.has?.("rch") ? 10 : this.DEFAULT_REACH);
+    /* A thrown weapon : as far as it's thrown (normal range) */
+    if(melee) return item.system.properties?.has?.("thr") ? Math.max(reach, Number(item.system.range?.value) || 0) : reach;
+    if(range.units === "touch") return this.DEFAULT_REACH;
+    if(range.units === "ft") return Number(range.value) || null;
+    if(range.units === "mi") return (Number(range.value) || 0) * 5280 || null;
+    return null;
   }
 
   /* ---------- Opportunity Attacks ---------- */

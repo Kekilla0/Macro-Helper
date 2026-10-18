@@ -684,6 +684,10 @@ export function registerMessages(){
   /* Same call dnd5e's damage tray makes : one entry per damage type, dnd5e applies resistances per type */
   const applyDamageRolls = async (message, actor, rolls, { multiplier = 1, part = "hits" } = {}) => {
     if(!rolls.length) return;
+    /* Hook : what a hit does before its damage lands (Sap, Slow, Vex) : a rule pushes its promise into `waits` */
+    const waits = [];
+    Hooks.callAll(`${module.id}.beforeApplyDamage`, message, actor, waits);
+    await Promise.allSettled(waits);
     const damages = aggregateDamageRolls(rolls, { respectProperties : true }).map(roll => ({
       properties : new Set(roll.options.properties ?? []),
       type : roll.options.type,

@@ -628,6 +628,14 @@ export class rollItem{
     log.debug("Self effects", actor.name, item.name, data.length);
   }
 
+  static hideSelfTray(message, html){
+    if(!settings.value("rollItem") || (message?.type !== "usage")) return;
+    let activity = null;
+    try { activity = message.getAssociatedActivity?.(); } catch { return; }
+    if(!activity?.effects?.length || (activity.type === "enchant") || !this.isSelfOnly(activity)) return;
+    html?.querySelector?.("effect-application")?.remove();
+  }
+
   static isSelfOnly(activity){
     const target = activity?.target?.override ? activity.target : (activity?.item?.system?.target ?? activity?.target ?? {});
     const type = target.affects?.type || activity?.target?.affects?.type || "";
@@ -1178,6 +1186,9 @@ export class rollItem{
     if(game.system.id !== "dnd5e") return;
     registerMessages();
     rerolls.register();
+    /* dnd5e's effects tray on a self-only use's card (Rage, Dodge) : its effects are already on its user (selfEffects, or
+       the rule that handles it), so a second way to apply them is only a trap */
+    Hooks.on("dnd5e.renderChatMessage", (message, html) => this.hideSelfTray(message, html));
     /* An attack card still revealing (its dice playing) : its buttons wait (a press then could be lost); the card is
        drawn again once everything shows */
     const wait = (message, html) => {

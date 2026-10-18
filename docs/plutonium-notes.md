@@ -57,6 +57,10 @@ whether the module covers it or you need to edit the item.
 | **Arcane Recovery** (Wizard 1) | Its use comes back on a Short Rest; 2024: once a Long Rest. | Changed when added (and on load): back on a Long Rest. |
 | **Sleep** (spell) | Incapacitated for the minute, no second save. 2024: the save again at the end of its next turn, Unconscious on a failure; damage wakes it. | Changed when added (and on load): a repeating save (end of its turn); a failure makes it Unconscious; it ends on damage. |
 | **Wizard** (class import) | Plutonium asks for the cantrips but not the 6 spellbook spells. | Prepared Spells' Add a Spell adds them. |
+| **Divine Order: Thaumaturge** (Cleric 1, class import) | Plutonium doesn't ask for its extra cantrip. | Import the cantrip yourself (Plutonium's Spells importer onto the actor). |
+| **Favored Enemy** (Ranger 1, class import) | Hunter's Mark arrives twice: one always prepared, and one marked as from Favored Enemy (not prepared). | Delete either copy. |
+| **Versatile** (Human, 2024) | The origin feat list shows the 2014 Alert as plain "Alert" above "Alert [PHB'24]". | Pick the one marked [PHB'24]. |
+| **Languages** (2024 character import) | Neither the species nor the background asks for the character's Common + 2 languages, so only the class's (Deft Explorer) end up on the sheet. | Set them on the sheet. |
 | **Advancement-Backing Items** (Plutonium's world compendium) | Holds features' copies of spells, some with uses of their own (a free Detect Magic once a Long Rest). | The module's compendium lists skip those copies. |
 | **Basic foci** (Amulet, Crystal, Emblem, Orb, Reliquary, Rod, Staff, Wand, Sprig of Mistletoe, Wooden Staff, Yew Wand; instruments) | Not marked with dnd5e's Focus property. | Given it when added to a character (and on load). |
 | **Holy Symbol / Druidic Focus (Varies)** (dnd5e loot) | Loot, which can't be equipped, so it never counts as a focus. | Use an equippable focus (Amulet, Emblem, Sprig of Mistletoe...). |
