@@ -1,5 +1,6 @@
 import { rollOptionRange } from '../roll-item/roll-options.js';
 import { module } from '../module.js';
+import { gm } from '../gm.js';
 
 /**
  * Token / distance helpers. Distances are measured between token footprints on the grid :
@@ -239,17 +240,17 @@ export function highlightRange(origin, feet, { normal, tokens = [], selected = [
  * and at other creatures (a square another token stands in blocks it, like a wall).
  * Measured like everything else here (Range Shape) : with Square, a diagonal square is 5 ft, so 10 ft is 2 diagonal squares.
  * @param {Token|TokenDocument|Actor} thing   who is pushed
- * @param {Token|TokenDocument|Actor} from    who pushes
+ * @param {Token|TokenDocument|Actor|{x : number, y : number}} from   who pushes, or a point on the map (canvas pixels)
  * @param {number} [feet=10]
  * @returns {{ x : number, y : number, feet : number }|null}  the token's new top-left position and how far that is,
  *          null if it can't move at all
  */
 export function pushDestination(thing, from, feet = 10, { toward = false } = {}){
-  const token = tokenOf(thing), source = tokenOf(from);
-  if(!token || !source || (token === source)) return null;
+  const token = tokenOf(thing), origin = pointOf(from);
+  if(!token || !origin || (isPoint(from) ? false : (tokenOf(from) === token))) return null;
 
   const start = token.center;
-  let dx = start.x - source.center.x, dy = start.y - source.center.y;
+  let dx = start.x - origin.x, dy = start.y - origin.y;
   /* A pull : straight toward the source instead (stops at the first creature : the source itself at the latest) */
   if(toward){ dx = -dx; dy = -dy; }
   const norm = isCircular() ? Math.hypot(dx, dy) : Math.max(Math.abs(dx), Math.abs(dy));
@@ -259,10 +260,13 @@ export function pushDestination(thing, from, feet = 10, { toward = false } = {})
   const grid = canvas.grid.size;
   const steps = Math.floor(feet / canvas.scene.grid.distance);
   const { x : x0, y : y0 } = token.document;
+  const rect = canvas.dimensions?.sceneRect;
   let best = null;
   for(let k = 1; k <= steps; k++){
     let x = x0 + (dx * k * grid), y = y0 + (dy * k * grid);
     if(!canvas.grid.isGridless){ x = Math.round(x / grid) * grid; y = Math.round(y / grid) * grid; }
+    /* The map's edge stops it like a wall */
+    if(rect && ((x < rect.x) || (y < rect.y) || (x + token.w > rect.x + rect.width) || (y + token.h > rect.y + rect.height))) break;
     const center = { x : x + (token.w / 2), y : y + (token.h / 2) };
     let blocked = false;
     try { blocked = !!CONFIG.Canvas.polygonBackends.move.testCollision(start, center, { type : "move", mode : "any" }); }
@@ -350,36 +354,95 @@ function occupied(token, x, y){
   });
 }
 
-/**
- * Push a token straight away from another (Shove, the Push mastery, Thunderwave...), see pushDestination.
- * Needs permission to move the token (its owner or the GM).
- * @param {Token|TokenDocument|Actor} thing
- * @param {Token|TokenDocument|Actor} from
- * @param {number} [feet=10]
- * @returns {Promise<number>}  how far it moved, in feet : 0 if it couldn't move at all (a wall right behind it)
- */
-export async function pushAway(thing, from, feet = 10){
-  const token = tokenOf(thing);
-  const destination = pushDestination(token, from, feet);
-  if(!destination || !token.document.canUserModify(game.user, "update")) return 0;
-  await token.document.update({ x : destination.x, y : destination.y });
-  return destination.feet;
+/* A plain { x, y } point on the map (canvas pixels), not a token */
+function isPoint(thing){
+  return (foundry.utils.getType(thing) === "Object") && Number.isFinite(thing.x) && Number.isFinite(thing.y) && !thing.documentName;
+}
+
+/* The point something stands at : a point as it is, a token (or its actor) at its centre */
+function pointOf(thing){
+  if(isPoint(thing)) return { x : thing.x, y : thing.y };
+  return thing ? (tokenOf(thing)?.center ?? null) : null;
 }
 
 /**
- * Pull a token straight toward another (Thorn Whip), square by square, stopping at walls and creatures (so at the
- * latest beside the one pulling). Needs permission to move the token.
- * @param {Token|TokenDocument|Actor} thing   what's pulled
- * @param {Token|TokenDocument|Actor} toward  who pulls
- * @param {number} [feet=10]
- * @returns {Promise<number>}  the feet it moved (0 : blocked or already there)
+ * Forced movement : a creature moved straight away from (push) or toward (pull) a creature or a point, up to `feet`,
+ * square by square, stopping at walls and creatures (see pushDestination). Every push and pull goes through here : the
+ * Push mastery, Shove, smites, spells, card buttons, macros.
+ * Afterwards Hooks "macro-helper.pushed" (token, moved, wanted, item, { direction, name }) : `wanted` is how far it
+ * should have gone (a pull only up to the space beside the one pulling), so a shorter move hit something (Homebrew :
+ * Push Into Obstacles).
+ * Moving a token you can't move asks the GM (a chat card with the GM's button).
+ *   await MacroHelper.forcedMove(target, { from : token, feet : 10, name : "Repelling Blast" })
+ *   await MacroHelper.forcedMove(target, { direction : "toward", from : { x, y }, feet : 15 })    toward a point
+ * @param {Token|TokenDocument|Actor} thing   who is moved
+ * @param {object} options
+ * @param {"away"|"toward"} [options.direction="away"]
+ * @param {number} [options.feet=10]
+ * @param {Token|TokenDocument|Actor|{x : number, y : number}} options.from   who (or where) it moves away from / toward
+ * @param {Item} [options.item]    what moved it (a collision's chat line names it)
+ * @param {string} [options.name]  its name, without an item (default : the item's)
+ * @returns {Promise<number|null>}  how far it moved, in feet (0 : it couldn't move); null : the GM was asked
  */
-export async function pullToward(thing, toward, feet = 10){
-  const token = tokenOf(thing);
-  const destination = pushDestination(token, toward, feet, { toward : true });
-  if(!destination || !token.document.canUserModify(game.user, "update")) return 0;
-  await token.document.update({ x : destination.x, y : destination.y });
-  return destination.feet;
+export async function forcedMove(thing, { direction = "away", feet = 10, from = null, item = null, name = null } = {}){
+  const token = tokenOf(thing), origin = pointOf(from);
+  if(!token?.actor || !origin) return 0;
+  const toward = direction === "toward";
+  const label = name ?? item?.name ?? "";
+  if(!token.document.canUserModify(game.user, "update")){
+    const source = isPoint(from) ? { x : origin.x, y : origin.y } : (tokenOf(from)?.document?.uuid ?? null);
+    await gm.ask("forcedMove", { token : token.document.uuid, direction, feet, from : source, item : item?.uuid ?? null, name : label },
+      { actor : tokenOf(isPoint(from) ? null : from)?.actor ?? null, text : module.format(toward ? "tokens.pullAsk" : "tokens.pushAsk", { name : token.name, feet, item : label }),
+        label : module.format(toward ? "tokens.pullButton" : "tokens.pushButton", { name : token.name, feet }) });
+    return null;
+  }
+
+  /* A pull stops beside the one pulling (or on the point) : that's as far as it should go */
+  let wanted = Number(feet) || 0;
+  if(toward){
+    const source = isPoint(from) ? null : tokenOf(from);
+    const gap = source ? Math.max(0, distanceBetween(token, source) - canvas.scene.grid.distance)
+      : Math.floor(Math.hypot(token.center.x - origin.x, token.center.y - origin.y) / canvas.grid.size) * canvas.scene.grid.distance;
+    wanted = Math.min(wanted, gap);
+  }
+  const destination = wanted ? pushDestination(token, from, wanted, { toward }) : null;
+  if(destination) await token.document.update({ x : destination.x, y : destination.y });
+  const moved = destination?.feet ?? 0;
+  Hooks.callAll(`${module.id}.pushed`, token, moved, wanted, item, { direction, name : label });
+  return moved;
+}
+
+/* The GM's button on a forcedMove card a player's move asked for */
+export async function forcedMoveAsGM({ token : uuid, direction, feet, from, item : itemUuid, name } = {}){
+  const token = fromUuidSync(uuid ?? "", { strict : false })?.object;
+  const source = isPoint(from) ? from : fromUuidSync(from ?? "", { strict : false });
+  const item = itemUuid ? fromUuidSync(itemUuid, { strict : false }) : null;
+  if(!token || !source) return false;
+  return (await forcedMove(token, { direction, feet, from : source, item, name })) !== null;
+}
+
+/**
+ * Push a token straight away from another (Shove, the Push mastery, Thunderwave...) : forcedMove away from `from`.
+ * @param {Token|TokenDocument|Actor} thing
+ * @param {Token|TokenDocument|Actor|{x : number, y : number}} from
+ * @param {number} [feet=10]
+ * @param {object} [options]   forcedMove's item / name
+ * @returns {Promise<number|null>}  how far it moved, in feet : 0 if it couldn't move at all (a wall right behind it)
+ */
+export async function pushAway(thing, from, feet = 10, options = {}){
+  return forcedMove(thing, { ...options, direction : "away", from, feet });
+}
+
+/**
+ * Pull a token straight toward another (Thorn Whip) : forcedMove toward `toward`, at the latest beside it.
+ * @param {Token|TokenDocument|Actor} thing   what's pulled
+ * @param {Token|TokenDocument|Actor|{x : number, y : number}} toward  who (or where) pulls
+ * @param {number} [feet=10]
+ * @param {object} [options]   forcedMove's item / name
+ * @returns {Promise<number|null>}  the feet it moved (0 : blocked or already there)
+ */
+export async function pullToward(thing, toward, feet = 10, options = {}){
+  return forcedMove(thing, { ...options, direction : "toward", from : toward, feet });
 }
 
 /* ---------- Areas (templates) ---------- */

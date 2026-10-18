@@ -8,7 +8,7 @@ import { uses } from '../uses.js';
 import { pickTargets } from '../helpers/targets.js';
 import { findItem, usedThisTurn, markUsedThisTurn, preventDropToZero } from '../helpers/actors.js';
 import { spendUses, getAppliedConditions } from '../helpers/items.js';
-import { tokenOf, pushAway } from '../helpers/tokens.js';
+import { tokenOf, forcedMove } from '../helpers/tokens.js';
 import { masteries } from './masteries.js';
 import { rerolls, extraD20 } from '../roll-item/rerolls.js';
 import { itemFixes } from './item-fixes.js';
@@ -325,9 +325,7 @@ export class feats{
     const actor = message.getAssociatedActor();
     const from = tokenOf(message.getAssociatedToken?.() ?? actor);
     for(const target of message.system.hitTargets(ray)){
-      const moved = await pushAway(target, from, 5);
-      if(settings.value("homebrewPush")) await masteries.pushCollision(target, moved, 5, message.getAssociatedItem());
-      else if(!moved) ui.notifications.info(module.format("rollItem.mastery.blocked", { name : target.name }));
+      await forcedMove(target, { from, feet : 5, item : message.getAssociatedItem() });
     }
     await markUsedThisTurn(actor, "brawlerPush");
     await message.setFlag(module.id, `brawler.${masteries.rayKey(ray)}`, true);

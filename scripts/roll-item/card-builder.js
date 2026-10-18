@@ -2,7 +2,7 @@ import { module } from '../module.js';
 import { gm } from '../gm.js';
 import { uses } from '../uses.js';
 import { logger } from '../log.js';
-import { cells, gridSteps, tokenOf, pushAway, pushDestination, distanceBetween, movedThisTurn } from '../helpers/tokens.js';
+import { cells, gridSteps, tokenOf, forcedMove, forcedMoveAsGM, pushAway, distanceBetween, movedThisTurn } from '../helpers/tokens.js';
 import { pickSpace, isEnemy } from '../helpers/targets.js';
 import { postTargetCard, registerTargetCards } from '../helpers/target-card.js';
 import { rollOptions, rollOptionDamage, rollOptionD20, rollOptionDamageDice } from './roll-options.js';
@@ -122,10 +122,8 @@ export function affectedBy(item){
 /* Pull a creature up to `feet` straight toward this one (Ettercap's Reel), stopping at walls and creatures */
 export async function pull(thing, target, feet = 5){
   const from = tokenOf(thing), to = tokenOf(target);
-  const destination = (from && to) ? pushDestination(to, from, feet, { toward : true }) : null;
-  if(!destination) return 0;
-  await gm.run("cardMove", { token : to.document.uuid, x : destination.x, y : destination.y });
-  return destination.feet;
+  if(!from || !to) return 0;
+  return forcedMove(to, { direction : "toward", from, feet });
 }
 
 export function applyDisease({ when = [], name = null, img = null, ability = "con", dc = null, every = "24h", stages = [], removal = ["save"], cure = "full", label = null } = {}){
@@ -656,6 +654,7 @@ export class cardBuilder{
       add(cls, "hasReaction", function(){ return hasReaction(this); });
       add(cls, "trample", function(feet, options){ return trample(this, feet, options); });
       add(cls, "pull", function(target, feet){ return pull(this, target, feet); });
+      add(cls, "push", function(target, feet, options){ return pushAway(target, this, feet, options); });
       add(cls, "isDifficultTerrain", function(point){ return isDifficultTerrain(this, point); });
     }
   }
@@ -705,6 +704,8 @@ export class cardBuilder{
       return doc.move({ x, y, action : "displace" }, { [module.id] : { oaSkip : true } }).then(() => true);
     });
     gm.handle("applyConditionNow", (data, user) => this.applyNowAsGM(data, user));
+    /* GM : a push / pull a player's macro asked for (forcedMove on a creature they don't own) */
+    gm.handle("forcedMove", data => forcedMoveAsGM(data));
     /* GM : a creature pulled out of the one engulfing it (by a creature its user owns, beside it) */
     gm.handle("cardPullOut", async ({ target : uuid, puller } = {}, user) => {
       const doc = fromUuidSync(uuid ?? "", { strict : false });
@@ -844,9 +845,7 @@ export class cardBuilder{
     if(part.kind === "push"){
       if(!game.user.isGM || !target?.object) return;
       const from = (part.from ? fromUuidSync(part.from, { strict : false })?.object : null) ?? message.getAssociatedToken?.()?.object ?? tokenOf(message.getAssociatedActor?.());
-      const moved = from ? await pushAway(target.object, from, part.feet) : 0;
-      /* Cut short : Homebrew's collision (Prone, 1d6 when it didn't move at all), else "blocked" */
-      Hooks.callAll(`${module.id}.pushed`, target.object, moved, part.feet, message.getAssociatedItem?.() ?? null);
+      if(from) await forcedMove(target.object, { from, feet : part.feet, item : message.getAssociatedItem?.() ?? null, name : part.label });
       await this.doneAsGM({ message : message.id, index, target : uuid });
       return;
     }

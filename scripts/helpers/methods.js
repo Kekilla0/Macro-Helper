@@ -53,7 +53,7 @@ const token = {
   ...creature,
   distanceTo : call(distanceBetween),                               // (other) -> feet
   split : call(splitToken),                                         // ({ copies, hp, scale, stepSize, chat })
-  pushAway : call(pushAway),                                        // (from, feet = 10) -> Promise<number> feet moved, straight away, stops at walls
+  pushAway : call(pushAway),                                        // (from, feet = 10, { item, name }) -> Promise<number> feet moved (forcedMove), straight away, stops at walls
   pushDestination : call(pushDestination),                          // (from, feet = 10) -> { x, y } | null
   addLight : call(addLight),                                        // (light, { key }) -> Promise<boolean>, remembers the light it had
   removeLight : call(removeLight),                                  // ({ key }) -> Promise<boolean>, puts it back when the last source goes

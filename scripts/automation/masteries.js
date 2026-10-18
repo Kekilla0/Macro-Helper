@@ -4,7 +4,7 @@ import { giveMode } from '../roll-item/reasons.js';
 import { settings } from '../settings.js';
 import { limits } from './limits.js';
 import { logger } from '../log.js';
-import { tokenOf, distanceBetween, pushAway } from '../helpers/tokens.js';
+import { tokenOf, distanceBetween, forcedMove } from '../helpers/tokens.js';
 import { getSize, rollSave, setStatus, addTimedEffect, usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
 import { pickAttack, isRangedAttack } from '../helpers/items.js';
 import { rollItem } from '../roll-item/roll-item.js';
@@ -60,7 +60,7 @@ export class masteries{
     Hooks.on(`${module.id}.cardSections`, (message, sections, { ray } = {}) => { const section = this.cardSection(message, ray ?? null); if(section) sections.push(section); });
     Hooks.on(`${module.id}.cardButton`, (message, id, { ray, event, button } = {}) => { if(id === "mastery") this.clicked(message, ray ?? null, event, button); });
     /* Every other push (Repelling Blast, a card macro's push part) : the same Homebrew collision as Push, else "blocked" */
-    Hooks.on(`${module.id}.pushed`, (target, moved, feet, item) => this.afterPush(target, moved, feet, item));
+    Hooks.on(`${module.id}.pushed`, (target, moved, feet, item, { name } = {}) => this.afterPush(target, moved, feet, item, name));
     Hooks.on(`${module.id}.beforeApplyDamage`, (message, actor, waits) => waits.push(this.beforeDamage(message, actor)));
     /* The outcome masteries : on each hit target's row */
     Hooks.on(`${module.id}.rowButtons`, (message, uuid, buttons, context = {}) => this.rowButtons(message, uuid, buttons, context));
@@ -292,9 +292,7 @@ export class masteries{
         }
         case "push" : {
           if(((getSize(actor)?.value ?? 2) > 3) && !limits.allow(module.format("rollItem.mastery.tooBig", { name : target.name }), { notes, who : attacker?.name, what : `Push ${target.name}` })) break;
-          const moved = await pushAway(target, attackerToken, 10);
-          if(settings.value("homebrewPush")) await this.pushCollision(target, moved, 10, item);
-          else if(!moved) notes.push(module.format("rollItem.mastery.blocked", { name : target.name }));
+          await forcedMove(target, { from : attackerToken, feet : 10, item, name : this.label("push") });
           break;
         }
         case "sap" :
@@ -323,9 +321,9 @@ export class masteries{
     return notes;
   }
 
-  static async afterPush(target, moved, feet, item = null){
-    if(!target?.actor) return;
-    if(settings.value("homebrewPush")) return this.pushCollision(target, moved, feet, item);
+  static async afterPush(target, moved, feet, item = null, name = null){
+    if(!target?.actor || (moved >= feet)) return;
+    if(settings.value("homebrewPush")) return this.pushCollision(target, moved, feet, item, name);
     if(!moved) ui.notifications.info(module.format("rollItem.mastery.blocked", { name : target.name }));
   }
 
@@ -335,7 +333,7 @@ export class masteries{
    *   part of it (5 of 10 ft)  -> Prone
    *   not at all               -> Prone, and 1d6 bludgeoning (rolled in chat, applied)
    */
-  static async pushCollision(target, moved, feet, item){
+  static async pushCollision(target, moved, feet, item, name = null){
     if(moved >= feet) return;
     const actor = target.actor;
     await setStatus(actor, "prone", true);
@@ -344,7 +342,7 @@ export class masteries{
     const roll = await new CONFIG.Dice.DamageRoll("1d6", {}, { type : "bludgeoning" }).evaluate();
     await roll.toMessage({
       speaker : ChatMessage.implementation.getSpeaker({ actor, token : target.document }),
-      flavor : module.format("rollItem.mastery.slammed", { name : target.name, item : item?.name ?? "" }),
+      flavor : (item?.name ?? name) ? module.format("rollItem.mastery.slammed", { name : target.name, item : item?.name ?? name }) : module.format("rollItem.mastery.slammedPlain", { name : target.name }),
     });
     await actor.applyDamage([{ value : roll.total, type : "bludgeoning" }], { isDelta : true });
   }

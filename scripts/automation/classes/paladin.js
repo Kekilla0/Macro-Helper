@@ -4,7 +4,7 @@ import { logger } from '../../log.js';
 import { idOf, chooseOption, buttonRow, addButton, makeButton } from '../../helpers/utils.js';
 import { usedThisTurn, markUsedThisTurn, setStatus } from '../../helpers/actors.js';
 import { pickTargets } from '../../helpers/targets.js';
-import { pushAway, distanceBetween } from '../../helpers/tokens.js';
+import { forcedMove, distanceBetween } from '../../helpers/tokens.js';
 import { gm } from '../../gm.js';
 import { uses } from '../../uses.js';
 import { itemFixes } from '../item-fixes.js';
@@ -404,8 +404,7 @@ export class paladin{
     const token = fromUuidSync(uuid, { strict : false })?.object;
     const from = message.getAssociatedToken?.()?.object ?? message.getAssociatedActor?.()?.getActiveTokens?.()?.[0];
     if(!token || !from) return;
-    const moved = await pushAway(token, from, this.pushOf(message));
-    Hooks.callAll(`${module.id}.pushed`, token, moved, this.pushOf(message), message.getAssociatedItem?.() ?? null);
+    await forcedMove(token, { from, feet : this.pushOf(message), item : message.getAssociatedItem?.() ?? null });
     await message.setFlag(module.id, `pushed.${uuid.replaceAll(".", "-")}`, true);
   }
 

@@ -14,7 +14,7 @@ const log = logger.for(import.meta.url);
  * Homebrew rules (the Homebrew settings sub-menu, all off by default) :
  *   Flanking               : melee attacks against a creature with an ally on its opposite side get advantage or +2.
  *   Initiative Each Round  : at the start of every new round, everyone rolls again and the round starts from the top.
- *   Push Into Obstacles    : part of pushing itself (masteries.pushCollision), used by Push, Shove and Tavern Brawler.
+ *   Push Into Obstacles    : part of every push and pull (forcedMove → hook pushed → masteries.pushCollision).
  */
 export class homebrew{
   static register(){

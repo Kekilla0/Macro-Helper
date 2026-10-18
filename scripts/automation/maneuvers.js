@@ -2,7 +2,7 @@ import { module } from '../module.js';
 import { settings } from '../settings.js';
 import { limits } from './limits.js';
 import { logger } from '../log.js';
-import { tokenOf, pushAway } from '../helpers/tokens.js';
+import { tokenOf, forcedMove } from '../helpers/tokens.js';
 import { getSize, setStatus } from '../helpers/actors.js';
 import { masteries } from './masteries.js';
 import { originOf } from '../helpers/utils.js';
@@ -168,9 +168,7 @@ export class maneuvers{
       && !limits.allow(module.format("rollItem.maneuver.tooBig", { name : token.name, action : module.i18n("rollItem.maneuver.shove") }), { who : attacker.name, what : `Shove ${token.name}` })) return;
 
     if(choice === "push"){
-      const moved = await pushAway(token, attackerToken, 5);
-      if(settings.value("homebrewPush")) await masteries.pushCollision(token, moved, 5, card.getAssociatedItem?.());
-      else if(!moved) notes.push(module.format("rollItem.mastery.blocked", { name : token.name }));
+      await forcedMove(token, { from : attackerToken, feet : 5, item : card.getAssociatedItem?.() ?? null });
     }
     else await setStatus(token.actor, "prone", true);
 

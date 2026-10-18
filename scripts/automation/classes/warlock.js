@@ -4,7 +4,7 @@ import { logger } from '../../log.js';
 import { gm } from '../../gm.js';
 import { idOf, chooseOption, whisperOwners, waitFor, originItem } from '../../helpers/utils.js';
 import { pickTargets } from '../../helpers/targets.js';
-import { tokenOf, pushAway } from '../../helpers/tokens.js';
+import { tokenOf, forcedMove } from '../../helpers/tokens.js';
 import { uses } from '../../uses.js';
 import { ranger } from './ranger.js';
 import { TYPES } from '../../roll-item/message.js';
@@ -378,9 +378,7 @@ export class warlock{
     const token = fromUuidSync(uuid, { strict : false })?.object;
     const from = message.getAssociatedToken?.()?.object ?? tokenOf(message.getAssociatedActor?.());
     if(!token || !from) return;
-    const moved = await pushAway(token, from, 10);
-    /* Cut short : Homebrew's collision (Prone, 1d6 when it didn't move at all), else "blocked" */
-    Hooks.callAll(`${module.id}.pushed`, token, moved, 10, message.getAssociatedItem?.() ?? null);
+    const moved = await forcedMove(token, { from, feet : 10, item : message.getAssociatedItem?.() ?? null });
     await message.setFlag(module.id, `repelled.${String(ray ?? "x")}-${token.document.id}`, true);
     log.debug("Repelling Blast", token.name, moved);
   }

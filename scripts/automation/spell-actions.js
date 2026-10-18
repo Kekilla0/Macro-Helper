@@ -15,7 +15,7 @@ import { rollRequests } from '../requests/requests.js';
 import { heldLight } from './held-light.js';
 import { stabilize, addTimedEffect } from '../helpers/actors.js';
 import { pickTargets, pickSpace } from '../helpers/targets.js';
-import { tokenOf, getRange, pullToward, pushAway, addLight, removeLight, getTokensInArea, distanceBetween, canSee } from '../helpers/tokens.js';
+import { tokenOf, getRange, forcedMove, addLight, removeLight, getTokensInArea, distanceBetween, canSee } from '../helpers/tokens.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -269,8 +269,7 @@ export class spellActions{
     const key = `pulled.${uuid.replaceAll(".", "-")}`;
     if(!game.user.isGM || !pull || !token || message.getFlag(module.id, key)) return;
     const from = message.getAssociatedToken?.()?.object ?? tokenOf(message.getAssociatedActor?.());
-    const moved = (token.object && from) ? await pullToward(token.object, from, pull.feet) : 0;
-    if(!moved) ui.notifications.info(module.format("rollItem.mastery.blocked", { name : token.name }));
+    if(token.object && from) await forcedMove(token.object, { direction : "toward", from, feet : pull.feet, item : message.getAssociatedItem?.() ?? null });
     await message.setFlag(module.id, key, true);
   }
 
@@ -293,8 +292,7 @@ export class spellActions{
     const key = `pushed.${uuid.replaceAll(".", "-")}`;
     if(!game.user.isGM || !push || !token || message.getFlag(module.id, key)) return;
     const from = message.getAssociatedToken?.()?.object ?? tokenOf(message.getAssociatedActor?.());
-    const moved = (token.object && from) ? await pushAway(token.object, from, push.feet) : 0;
-    Hooks.callAll(`${module.id}.pushed`, token.object, moved, push.feet, message.getAssociatedItem?.() ?? null);
+    if(token.object && from) await forcedMove(token.object, { from, feet : push.feet, item : message.getAssociatedItem?.() ?? null });
     await message.setFlag(module.id, key, true);
   }
 
