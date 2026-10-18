@@ -4,7 +4,7 @@ import { giveMode } from '../roll-item/reasons.js';
 import { settings } from '../settings.js';
 import { limits } from './limits.js';
 import { logger } from '../log.js';
-import { tokenOf, distanceBetween, forcedMove } from '../helpers/tokens.js';
+import { distanceBetween } from '../helpers/tokens.js';
 import { getSize, rollSave, setStatus, addTimedEffect, usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
 import { pickAttack, isRangedAttack } from '../helpers/items.js';
 import { rollItem } from '../roll-item/roll-item.js';
@@ -64,6 +64,7 @@ export class masteries{
     Hooks.on(`${module.id}.beforeApplyDamage`, (message, actor, waits) => waits.push(this.beforeDamage(message, actor)));
     /* The outcome masteries : on each hit target's row */
     Hooks.on(`${module.id}.rowButtons`, (message, uuid, buttons, context = {}) => this.rowButtons(message, uuid, buttons, context));
+    Hooks.on(`${module.id}.cardMoves`, (message, uuid, moves, context = {}) => this.pushMove(message, uuid, moves, context));
     Hooks.on(`${module.id}.rowButton`, (message, uuid, id, { button } = {}) => {
       if(!String(id).startsWith("mastery|")) return;
       const key = String(id).slice(8);
@@ -94,7 +95,7 @@ export class masteries{
   static rowButtons(message, uuid, buttons, { result, ray = null } = {}){
     if(!this.enabled() || !game.user.isGM || !result?.hit) return;
     const key = message?.system?.masteryOf?.(ray);
-    if(!this.ACTIONS.includes(key) || (key === "cleave")) return;
+    if(!this.ACTIONS.includes(key) || ["cleave", "push"].includes(key)) return;
     if(!message.system.hitTargets(ray).some(t => (t.document ?? t).uuid === uuid)) return;
     const done = message.getFlag(module.id, `mastery.${this.rayKey(ray)}`)?.[this.uuidKey(uuid)];
     const prone = (key === "topple") ? CONFIG.statusEffects.find(s => s.id === "prone") : null;
@@ -108,6 +109,23 @@ export class masteries{
       disabled : this.used(message, ray, uuid),
       result : (typeof done === "object") ? done : null,
     });
+  }
+
+  /* Push : a hit target's move at the bottom of the card (the GM's), Large or smaller unless Rule Limits allows it */
+  static pushMove(message, uuid, moves, { result, ray = null } = {}){
+    if(!this.enabled() || !result?.hit || (message?.system?.masteryOf?.(ray) !== "push")) return;
+    const target = fromUuidSync(uuid, { strict : false });
+    if(!target?.actor) return;
+    const attacker = message.getAssociatedActor();
+    moves.push({ id : "masteryPush", feet : 10, name : this.label("push"), done : this.used(message, ray, uuid),
+      allow : () => {
+        if((getSize(target.actor)?.value ?? 2) <= 3) return true;
+        const notes = [];
+        const ok = limits.allow(module.format("rollItem.mastery.tooBig", { name : target.name }), { notes, who : attacker?.name, what : `Push ${target.name}` });
+        for(const note of notes) ui.notifications.info(note);
+        return ok;
+      },
+      after : () => message.setFlag(module.id, `mastery.${this.rayKey(ray)}`, { ...(message.getFlag(module.id, `mastery.${this.rayKey(ray)}`) ?? {}), [this.uuidKey(uuid)] : true }) });
   }
 
   static async clickedRow(message, ray, uuid, button){
@@ -273,7 +291,6 @@ export class masteries{
     const done = { ...(message.getFlag(module.id, `mastery.${this.rayKey(ray)}`) ?? {}) };
 
     const attacker = message.getAssociatedActor();
-    const attackerToken = tokenOf(message.getAssociatedToken?.() ?? attacker);
     const attack = system.attackOf(ray);
     const item = message.getAssociatedItem?.() ?? null;
     const notes = [];
@@ -288,11 +305,6 @@ export class masteries{
           const result = await rollSave(actor, "con", this.toppleDC(attacker, attack?.options?.ability));
           if(result) done[doneKey] = { total : result.total, success : result.success };
           if(result && !result.success) await setStatus(actor, "prone", true);
-          break;
-        }
-        case "push" : {
-          if(((getSize(actor)?.value ?? 2) > 3) && !limits.allow(module.format("rollItem.mastery.tooBig", { name : target.name }), { notes, who : attacker?.name, what : `Push ${target.name}` })) break;
-          await forcedMove(target, { from : attackerToken, feet : 10, item, name : this.label("push") });
           break;
         }
         case "sap" :

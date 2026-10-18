@@ -4,7 +4,7 @@ import { logger } from '../../log.js';
 import { gm } from '../../gm.js';
 import { idOf, chooseOption, whisperOwners, waitFor, originItem } from '../../helpers/utils.js';
 import { pickTargets } from '../../helpers/targets.js';
-import { tokenOf, forcedMove } from '../../helpers/tokens.js';
+import { tokenOf } from '../../helpers/tokens.js';
 import { uses } from '../../uses.js';
 import { ranger } from './ranger.js';
 import { TYPES } from '../../roll-item/message.js';
@@ -90,8 +90,7 @@ export class warlock{
       summary : actor => this.cantripSummary(actor),
       open : actor => this.chooseCantrips(actor),
     });
-    Hooks.on(`${module.id}.cardButtons`, (message, buttons, context) => this.repelButtons(message, buttons, context));
-    Hooks.on(`${module.id}.cardButton`, (message, id, context) => { if(id?.startsWith?.("repel|")) this.repel(message, id.split("|")[1], context?.ray ?? null); });
+    Hooks.on(`${module.id}.cardMoves`, (message, uuid, moves, context) => this.repelMove(message, uuid, moves, context));
   }
 
   /* ---------- Hex ---------- */
@@ -357,29 +356,16 @@ export class warlock{
 
   /* ---------- Repelling Blast ---------- */
 
-  /* Its cantrip's hits : the GM's push (Large or smaller); Eldritch Blast when no cantrip carries it */
-  static repelButtons(message, buttons, { ray } = {}){
-    if(!game.user.isGM || !this.enabled() || (message.type !== TYPES.attack)) return;
+  /* Its cantrip's hits : the GM's push (Large or smaller, card moves); Eldritch Blast when no cantrip carries it */
+  static repelMove(message, uuid, moves, { result } = {}){
+    if(!this.enabled() || (message.type !== TYPES.attack) || !result?.hit) return;
     const actor = message.getAssociatedActor?.();
     const item = message.getAssociatedItem?.();
     if(!actor?.items?.some?.(i => idOf(i) === this.REPELLING)) return;
     const chosen = actor.items.some(i => (i.type === "spell") && this.carries(i, this.REPELLING));
     if(!(chosen ? this.carries(item, this.REPELLING) : (idOf(item) === this.BLAST))) return;
-    for(const token of message.system.hitTargets?.(ray) ?? []){
-      if(!this.PUSHABLE.includes(token.actor?.system?.traits?.size ?? "med")) continue;
-      const key = `repelled.${String(ray ?? "x")}-${token.document.id}`;
-      if(message.getFlag(module.id, key)) continue;
-      buttons.push({ id : `repel|${token.document.uuid}`, icon : "fa-arrows-left-right", label : module.format("classes.warlock.repel", { name : token.name }) });
-    }
-  }
-
-  static async repel(message, uuid, ray){
-    if(!game.user.isGM) return;
-    const token = fromUuidSync(uuid, { strict : false })?.object;
-    const from = message.getAssociatedToken?.()?.object ?? tokenOf(message.getAssociatedActor?.());
-    if(!token || !from) return;
-    const moved = await forcedMove(token, { from, feet : 10, item : message.getAssociatedItem?.() ?? null });
-    await message.setFlag(module.id, `repelled.${String(ray ?? "x")}-${token.document.id}`, true);
-    log.debug("Repelling Blast", token.name, moved);
+    const token = fromUuidSync(uuid, { strict : false });
+    if(!this.PUSHABLE.includes(token?.actor?.system?.traits?.size ?? "med")) return;
+    moves.push({ id : "repel", feet : 10, name : actor.items.find(i => idOf(i) === this.REPELLING)?.name });
   }
 }

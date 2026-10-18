@@ -1,0 +1,16 @@
+{{!-- Every push and pull the card offers (the GM's), context from card-moves.js :
+      moves : [{ key, uuid, name, img, label, icon, tooltip, done }] --}}
+<div class="macro-helper-moves">
+    {{#each moves}}
+    <section class="icon-row">
+        <img class="token" src="{{ img }}" alt="{{ name }}" inert>
+        <span class="name">{{ name }}</span>
+        <div class="card-buttons">
+            <button type="button" data-action="cardMove" data-key="{{ key }}"{{#if tooltip}} data-tooltip="{{ tooltip }}"{{/if}} {{ disabled done }}>
+                <i class="fa-solid {{#if done}}fa-check{{else}}{{ icon }}{{/if}}" inert></i>
+                <span>{{ label }}</span>
+            </button>
+        </div>
+    </section>
+    {{/each}}
+</div>

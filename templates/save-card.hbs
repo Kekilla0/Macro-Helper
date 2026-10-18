@@ -89,3 +89,6 @@
     {{/each}}
 </effect-application>
 {{/if}}
+
+{{!-- Every push and pull, one button per creature (card-moves.js) --}}
+{{#if moves.length}}{{> "macro-helper.moves" }}{{/if}}

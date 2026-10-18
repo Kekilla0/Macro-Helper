@@ -198,6 +198,29 @@
   gap: 4px;
   margin: 0;
 }
+/* Every push and pull on a card, at its bottom : the creature's picture and name, its button */
+.chat-message .macro-helper-moves {
+  margin-block-start: 6px;
+  padding-block-start: 6px;
+  border-block-start: 1px solid var(--dnd5e-color-gold, var(--color-border));
+}
+.chat-message .macro-helper-moves .icon-row {
+  align-items: center;
+}
+.chat-message .macro-helper-moves img.token {
+  width: 24px;
+  height: 24px;
+  border: none;
+  object-fit: contain;
+}
+.chat-message .macro-helper-moves .name {
+  flex: 1;
+}
+.chat-message .macro-helper-moves .card-buttons {
+  display: flex;
+  gap: 4px;
+  margin: 0;
+}
 .chat-message .macro-helper-mastery,
 .chat-message .macro-helper-extras {
   display: flex;

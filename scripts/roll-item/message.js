@@ -1,4 +1,5 @@
 import { cardBuilder } from './card-builder.js';
+import { cardMoves } from './card-moves.js';
 import { module } from '../module.js';
 import { settings } from '../settings.js';
 import { rollItem } from './roll-item.js';
@@ -58,6 +59,7 @@ export function registerMessages(){
     [`${module.id}.cover`] : `${module.path}/templates/cover.hbs`,
     [`${module.id}.faces`] : `${module.path}/templates/card-faces.hbs`,
     [`${module.id}.card-face`] : `${module.path}/templates/card-face.hbs`,
+    [`${module.id}.moves`] : `${module.path}/templates/moves.hbs`,
   });
 
   /**
@@ -416,7 +418,7 @@ export function registerMessages(){
         apply : applyOf(message, descriptor.token, { hasRolls, owner, hasSave, result, multiplier, labelKey, hideTotal, actor, rolls }),
         /* The save's effects (Turned, Paralyzed...) : the GM applies them once it's rolled, to those they apply to */
         ...effectRow(message, descriptor.token, { hasSave, result, effects, owner }),
-        /* Buttons rules add to this creature's row (Thunderwave's push) : macro-helper.rowButtons */
+        /* Buttons rules add to this creature's row (a mastery's Topple) : macro-helper.rowButtons */
         ruleButtons : ruleButtonsOf(message, descriptor.token, { result, owner }),
       };
     });
@@ -431,6 +433,11 @@ export function registerMessages(){
     const buttons = [];
     Hooks.callAll(`${module.id}.rowButtons`, message, uuid, buttons, { result, owner, ray });
     return buttons.filter(b => b?.id && b?.label).map(({ id, label, icon = "fa-hand-pointer", img = null, tooltip = null, disabled = false, result = null }) => ({ id, label, icon, img, tooltip, disabled, result }));
+  };
+  /* A push / pull button at the bottom of the card (card-moves.js) */
+  const cardMove = (event, button) => {
+    const message = game.messages.get(button.closest("[data-message-id]")?.dataset.messageId);
+    if(message) cardMoves.click(message, button.dataset.key, button);
   };
   const rowRule = (event, button) => {
     const message = game.messages.get(button.closest("[data-message-id]")?.dataset.messageId);
@@ -842,6 +849,7 @@ export function registerMessages(){
         rowReroll : rowReroll,
         rowEffect : RowEffect,
         rowRule : rowRule,
+        cardMove : cardMove,
       },
     }, { inplace : false }));
 
@@ -1321,6 +1329,7 @@ export function registerMessages(){
           if(choice && (choice !== "base")){ ray.damage = null; ray.showTray = false; }
         }
         context.applyHits = canApply && context.rays.some(r => (r.hit && r.showTray) || r.sections.some(s => s.applies));
+        context.moves = cardMoves.context(this.parent);
         return this._hideUnrevealed(context);
       }
 
@@ -1330,7 +1339,7 @@ export function registerMessages(){
         ? [await this.attackRoll.render({ template : ROLL_TEMPLATE, isPrivate : true })]
         : rendered.filter((_, i) => !(rolls[i] instanceof DamageRoll));
       if(context.targets) context.targets = context.targets.map(t => ({ ...maskTarget(t), ...coverShown(t), applied : appliedOn(this.parent, t.token, ["hits", "tray"]) }));
-      /* What rules let you do to a creature with no save (Thorn Whip's pull) : a row each, like a save card's */
+      /* What rules let you do to a creature with no save (a mastery's Topple) : a row each, like a save card's */
       if(this.parent.isContentVisible && !this.isMulti){
         const attack = this.attackRoll;
         context.ruleRows = buildRows(this.parent, { targets : this.targets })
@@ -1350,6 +1359,8 @@ export function registerMessages(){
       const noSave = (this.parent.getFlag(module.id, "cardParts")?.removed ?? []).some(r => (r === "save") || (r === "*"));
       if(this.rider?.id && !noSave) context.rider = await this._prepareRiderContext(options);
       if(context.buttons && context.rider) context.buttons.rider = context.rider.hasDamage;
+      /* Every push and pull, at the bottom : one button per creature */
+      context.moves = cardMoves.context(this.parent);
 
       return this._hideUnrevealed(context);
     }
@@ -1368,6 +1379,7 @@ export function registerMessages(){
       context.sections = [];
       context.extras = null;
       context.rider = null;
+      context.moves = [];
       context.applyHits = false;
       context.buttons = null;
       context.effects = [];
@@ -1638,6 +1650,7 @@ export function registerMessages(){
         rowReroll : rowReroll,
         rowEffect : RowEffect,
         rowRule : rowRule,
+        cardMove : cardMove,
       },
     }, { inplace : false }));
 
@@ -1801,6 +1814,7 @@ export function registerMessages(){
       context.sections = [];
       if(this.parent.isContentVisible) Hooks.callAll(`${module.id}.cardSections`, this.parent, context.sections, { ray : null });
       context.sections = context.sections.filter(s => s?.partial);
+      context.moves = cardMoves.context(this.parent);
 
       return context;
     }

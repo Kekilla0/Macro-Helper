@@ -4,7 +4,7 @@ import { logger } from '../../log.js';
 import { idOf, chooseOption, buttonRow, addButton, makeButton } from '../../helpers/utils.js';
 import { usedThisTurn, markUsedThisTurn, setStatus } from '../../helpers/actors.js';
 import { pickTargets } from '../../helpers/targets.js';
-import { forcedMove, distanceBetween } from '../../helpers/tokens.js';
+import { distanceBetween } from '../../helpers/tokens.js';
 import { gm } from '../../gm.js';
 import { uses } from '../../uses.js';
 import { itemFixes } from '../item-fixes.js';
@@ -62,7 +62,7 @@ export class paladin{
     gm.handle("paladinSmiteCard", (data, user) => this.smiteCardAsGM(data, user));
     /* A smite on the card : its spell's face (name and rules) under the weapon's, like the spell's own card */
     Hooks.on(`${module.id}.cardFaces`, (message, faces) => this.smiteFaces(message, faces));
-    Hooks.on("dnd5e.renderChatMessage", (message, html) => this.pushButtons(message, html));
+    Hooks.on(`${module.id}.cardMoves`, (message, uuid, moves, { result } = {}) => this.pushMove(message, moves, result));
     Hooks.on(`${module.id}.cardButton`, (message, id, context) => {
       if(id === "smite") this.smite(message, context?.ray ?? null);
     });
@@ -383,29 +383,11 @@ export class paladin{
     return spell ? (this.PUSHES[idOf(spell)] ?? 0) : 0;
   }
 
-  /* Under the save on the card, for the GM */
-  static pushButtons(message, html){
-    if(!game.user.isGM || !this.enabled() || (message.type !== TYPES.attack) || !this.pushOf(message)) return;
-    if(!html.querySelector(`.${module.id}-rider`)) return;
-    const row = buttonRow(html, { key : `${module.id}-smite-push`, into : `.${module.id}-rider` });
-    if(row.childElementCount) return;
-    for(const [uuid, outcome] of message.system.outcomes ?? []){
-      if(outcome !== "failure") continue;
-      const token = fromUuidSync(uuid, { strict : false });
-      if(!token) continue;
-      const done = !!message.getFlag(module.id, `pushed.${uuid.replaceAll(".", "-")}`);
-      addButton(row, makeButton({ icon : "fa-arrows-left-right", once : true, disabled : done,
-        text : module.format("classes.paladin.push", { name : token.name, feet : this.pushOf(message) }), onClick : () => this.push(message, uuid) }));
-    }
-  }
-
-  static async push(message, uuid){
-    if(!game.user.isGM) return;
-    const token = fromUuidSync(uuid, { strict : false })?.object;
-    const from = message.getAssociatedToken?.()?.object ?? message.getAssociatedActor?.()?.getActiveTokens?.()?.[0];
-    if(!token || !from) return;
-    await forcedMove(token, { from, feet : this.pushOf(message), item : message.getAssociatedItem?.() ?? null });
-    await message.setFlag(module.id, `pushed.${uuid.replaceAll(".", "-")}`, true);
+  /* A creature that failed its save : the GM's push (card moves) */
+  static pushMove(message, moves, result){
+    if(!this.enabled() || (message.type !== TYPES.attack) || (result?.success !== false)) return;
+    const feet = this.pushOf(message);
+    if(feet) moves.push({ id : "smitePush", feet, name : fromUuidSync(message.system.rider.item, { strict : false })?.name });
   }
 
   /* From the sheet : the latest attack card of this actor (among the last messages) with a melee hit not yet smitten */

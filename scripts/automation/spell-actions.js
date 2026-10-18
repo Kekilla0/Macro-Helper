@@ -15,7 +15,7 @@ import { rollRequests } from '../requests/requests.js';
 import { heldLight } from './held-light.js';
 import { stabilize, addTimedEffect } from '../helpers/actors.js';
 import { pickTargets, pickSpace } from '../helpers/targets.js';
-import { tokenOf, getRange, forcedMove, addLight, removeLight, getTokensInArea, distanceBetween, canSee } from '../helpers/tokens.js';
+import { tokenOf, getRange, addLight, removeLight, getTokensInArea, distanceBetween, canSee } from '../helpers/tokens.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -143,10 +143,8 @@ export class spellActions{
 
   static register(){
     if(game.system.id !== "dnd5e") return;
-    Hooks.on(`${module.id}.rowButtons`, (message, uuid, buttons, { result } = {}) => this.pullButton(message, uuid, buttons, result));
-    Hooks.on(`${module.id}.rowButton`, (message, uuid, id) => { if(id === "spellPull") this.pull(message, uuid); });
-    Hooks.on(`${module.id}.rowButtons`, (message, uuid, buttons, { result } = {}) => this.pushButton(message, uuid, buttons, result));
-    Hooks.on(`${module.id}.rowButton`, (message, uuid, id) => { if(id === "spellPush") this.push(message, uuid); });
+    Hooks.on(`${module.id}.cardMoves`, (message, uuid, moves, { result } = {}) => this.pullMove(message, uuid, moves, result));
+    Hooks.on(`${module.id}.cardMoves`, (message, uuid, moves, { result } = {}) => this.pushMove(message, uuid, moves, result));
     uses.onItem("byHealth", (item, ctx, next) => this.byHealthStep(item, ctx, next));
     uses.onActivity("spareTheDying", (activity, ctx, next) => this.stabilizeStep(activity, ctx, next));
     Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.afterEnchant(activity, usage, results));
@@ -250,50 +248,24 @@ export class spellActions{
 
   /* ========== Pull (Thorn Whip) ========== */
 
-  /* On the line of a creature the attack hit (the GM's) : Large or smaller */
-  static pullButton(message, uuid, buttons, result){
-    if(!game.user.isGM || !this.enabled() || (message.type !== TYPES.attack) || !result?.hit) return;
+  /* A creature the attack hit, Large or smaller : the GM's pull (card moves) */
+  static pullMove(message, uuid, moves, result){
+    if(!this.enabled() || (message.type !== TYPES.attack) || !result?.hit) return;
     const pull = this.PULLS[idOf(message.getAssociatedItem?.())];
     const token = pull ? fromUuidSync(uuid, { strict : false }) : null;
     if(!token) return;
     const size = token.actor?.system?.traits?.size ?? "med";
     if(this.SIZES.indexOf(size) > this.SIZES.indexOf(pull.maxSize)) return;
-    const done = !!message.getFlag(module.id, `pulled.${uuid.replaceAll(".", "-")}`);
-    buttons.push({ id : "spellPull", icon : "fa-arrows-to-dot", disabled : done,
-      label : module.format(done ? "spellActions.pulled" : "spellActions.pullShort", { feet : pull.feet }) });
-  }
-
-  static async pull(message, uuid){
-    const pull = this.PULLS[idOf(message.getAssociatedItem?.())];
-    const token = fromUuidSync(uuid, { strict : false });
-    const key = `pulled.${uuid.replaceAll(".", "-")}`;
-    if(!game.user.isGM || !pull || !token || message.getFlag(module.id, key)) return;
-    const from = message.getAssociatedToken?.()?.object ?? tokenOf(message.getAssociatedActor?.());
-    if(token.object && from) await forcedMove(token.object, { direction : "toward", from, feet : pull.feet, item : message.getAssociatedItem?.() ?? null });
-    await message.setFlag(module.id, key, true);
+    moves.push({ id : "spellPull", direction : "toward", feet : pull.feet });
   }
 
   /* ========== Push (Thunderwave) ========== */
 
-  /* On the row of a creature that failed its save (the GM's) */
-  static pushButton(message, uuid, buttons, result){
-    if(!game.user.isGM || !this.enabled() || (message.type !== TYPES.save) || !result || result.success) return;
+  /* A creature that failed its save : the GM's push (card moves) */
+  static pushMove(message, uuid, moves, result){
+    if(!this.enabled() || (message.type !== TYPES.save) || !result || result.success) return;
     const push = this.PUSHES[idOf(message.getAssociatedItem?.())];
-    const token = push ? fromUuidSync(uuid, { strict : false }) : null;
-    if(!token) return;
-    const done = !!message.getFlag(module.id, `pushed.${uuid.replaceAll(".", "-")}`);
-    buttons.push({ id : "spellPush", icon : "fa-arrows-left-right-to-line", disabled : done,
-      label : module.format(done ? "spellActions.pushed" : "spellActions.push", { feet : push.feet }) });
-  }
-
-  static async push(message, uuid){
-    const push = this.PUSHES[idOf(message.getAssociatedItem?.())];
-    const token = fromUuidSync(uuid, { strict : false });
-    const key = `pushed.${uuid.replaceAll(".", "-")}`;
-    if(!game.user.isGM || !push || !token || message.getFlag(module.id, key)) return;
-    const from = message.getAssociatedToken?.()?.object ?? tokenOf(message.getAssociatedActor?.());
-    if(token.object && from) await forcedMove(token.object, { from, feet : push.feet, item : message.getAssociatedItem?.() ?? null });
-    await message.setFlag(module.id, key, true);
+    if(push) moves.push({ id : "spellPush", feet : push.feet });
   }
 
   /* ========== By health (Toll the Dead) ========== */

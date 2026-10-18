@@ -199,7 +199,7 @@
 {{!-- Sections rules add (macro-helper.cardSections) : a weapon mastery's button, Graze's damage on a miss --}}
 {{#each sections}}{{> (lookup . "partial") context }}{{/each}}
 
-{{!-- What rules let you do to each creature, no save (Thorn Whip's pull) : a row each, like a save card's --}}
+{{!-- What rules let you do to each creature, no save (a mastery's Topple) : a row each, like a save card's --}}
 {{#if ruleRows.length}}{{> "macro-helper.rows" rows=ruleRows }}{{/if}}
 
 {{!-- Effects the attack applies (Guiding Bolt, Ray of Frost) --}}
@@ -257,3 +257,6 @@
     {{/if}}
 </div>
 {{/with}}
+
+{{!-- Every push and pull, one button per creature (card-moves.js) --}}
+{{#if moves.length}}{{> "macro-helper.moves" }}{{/if}}

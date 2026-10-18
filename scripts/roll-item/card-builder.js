@@ -60,7 +60,7 @@ const log = logger.for(import.meta.url);
  *                              moved into its space and moving with it, its damage at the start of its turns; Escape
  *                              (Athletics against escape) or a creature beside it pulling it out leaves it beside.
  *   immunity({ when, duration })   immune to this item of this creature that long (Ghast's Stench) : target.isImmuneTo(item).
- *   push(feet, { when, from })   a Push button (the GM) : the target pushed that far straight away from `from` (the
+ *   push(feet, { when, from })   a Push button at the bottom of the card (the GM, card moves) : the target pushed that far straight away from `from` (the
  *                              card's creature), stopping at walls and creatures.
  *   choice : "name"   (applyCondition, applyEffect, push, followUp) parts sharing a choice are one or the other : once
  *                              one is used on a target, the others are gone from its row (Spiked Shield : Prone or Push).
@@ -815,11 +815,6 @@ export class cardBuilder{
             : (part.kind === "engulf") ? module.i18n("cardBuilder.engulf") : (part.kind === "immunity") ? module.i18n("cardBuilder.immunity") : (part.name ?? item?.name ?? ""));
           buttons.push({ id : `part:${index}`, img : part.img ?? item?.img ?? null, icon : "fa-circle-exclamation", disabled : done, label });
         }
-        else if(part.kind === "push"){
-          if(!game.user.isGM) return;
-          buttons.push({ id : `part:${index}`, icon : "fa-arrows-left-right-to-line", disabled : done,
-            label : part.label ?? module.format(done ? "cardBuilder.pushed" : "cardBuilder.push", { feet : part.feet }) });
-        }
         else if(part.kind === "followUp"){
           if(!message.isOwner) return;
           buttons.push({ id : `part:${index}`, icon : "fa-hand-fist", disabled : done, label : part.label ?? part.item });
@@ -828,6 +823,18 @@ export class cardBuilder{
     });
     Hooks.on(`${module.id}.rowButton`, (message, uuid, id) => {
       if(String(id).startsWith("part:")) this.press(message, uuid, Number(String(id).slice(5)));
+    });
+    /* Its push parts : at the bottom of the card with every other push (card moves) */
+    Hooks.on(`${module.id}.cardMoves`, (message, uuid, moves, { result } = {}) => {
+      const parts = message.getFlag?.(module.id, KEY)?.parts ?? [];
+      parts.forEach((part, index) => {
+        if((part.kind !== "push") || !this.shown(part, uuid, result)) return;
+        const done = !!message.getFlag(module.id, `cardDone.${index}.${uuidKey(uuid)}`);
+        if(part.choice && !done && parts.some((p, i) => (i !== index) && (p.choice === part.choice) && message.getFlag(module.id, `cardDone.${i}.${uuidKey(uuid)}`))) return;
+        if(part.insteadOfDamage && !done && Object.keys(fromUuidSync(uuid, { strict : false })?.actor?.getFlag?.(module.id, `applied.${message.id}`) ?? {}).length) return;
+        moves.push({ id : `part:${index}`, feet : part.feet, from : part.from, name : part.label, label : part.label, done,
+          after : () => this.doneAsGM({ message : message.id, index, target : uuid }) });
+      });
     });
   }
 
@@ -840,13 +847,6 @@ export class cardBuilder{
     if(["condition", "effect", "attach", "disease", "engulf", "immunity"].includes(part.kind)){
       const ok = await gm.run("cardCondition", { message : message.id, index, target : uuid });
       if(ok) await gm.run("cardPartDone", { message : message.id, index, target : uuid, instead : part.insteadOfDamage });
-      return;
-    }
-    if(part.kind === "push"){
-      if(!game.user.isGM || !target?.object) return;
-      const from = (part.from ? fromUuidSync(part.from, { strict : false })?.object : null) ?? message.getAssociatedToken?.()?.object ?? tokenOf(message.getAssociatedActor?.());
-      if(from) await forcedMove(target.object, { from, feet : part.feet, item : message.getAssociatedItem?.() ?? null, name : part.label });
-      await this.doneAsGM({ message : message.id, index, target : uuid });
       return;
     }
     if(part.kind === "followUp"){

@@ -8,7 +8,6 @@ import { uses } from '../uses.js';
 import { pickTargets } from '../helpers/targets.js';
 import { findItem, usedThisTurn, markUsedThisTurn, preventDropToZero } from '../helpers/actors.js';
 import { spendUses, getAppliedConditions } from '../helpers/items.js';
-import { tokenOf, forcedMove } from '../helpers/tokens.js';
 import { masteries } from './masteries.js';
 import { rerolls, extraD20 } from '../roll-item/rerolls.js';
 import { itemFixes } from './item-fixes.js';
@@ -71,12 +70,11 @@ export class feats{
     Hooks.on(`${module.id}.cardButtons`, (message, buttons, context) => {
       this.savageButtons(message, buttons, context);
       this.luckyButtons(message, buttons, context);
-      this.brawlerButtons(message, buttons, context);
     });
+    Hooks.on(`${module.id}.cardMoves`, (message, uuid, moves, context) => this.brawlerMove(message, moves, context));
     Hooks.on(`${module.id}.cardButton`, (message, id, context) => {
       this.savageClicked(message, id, context);
       this.luckyClicked(message, id, context);
-      this.brawlerClicked(message, id, context);
     });
     Hooks.on("dnd5e.preRollDamageV2", config => {
       this.healingRerolls(config);
@@ -312,23 +310,15 @@ export class feats{
     return !!(actor && findItem(actor, this.BRAWLER) && ((id === "unarmed-strike") || (id === this.BRAWLER)));
   }
 
-  /* The push is an outcome : the GM's button, once per turn */
-  static brawlerButtons(message, buttons, { ray } = {}){
-    if(!this.enabled() || !game.user.isGM || !message.system?.isHitOn?.(ray) || !this.isBrawlerStrike(message)) return;
+  /* The push is an outcome : the GM's (card moves), once per turn */
+  static brawlerMove(message, moves, { result, ray } = {}){
+    if(!this.enabled() || !result?.hit || !this.isBrawlerStrike(message)) return;
     const actor = message.getAssociatedActor();
-    if(usedThisTurn(actor, "brawlerPush") || message.getFlag(module.id, `brawler.${masteries.rayKey(ray)}`)) return;
-    buttons.push({ id : "brawler-push", label : module.i18n("feats.brawler.push"), icon : "fa-hand" });
-  }
-
-  static async brawlerClicked(message, id, { ray } = {}){
-    if((id !== "brawler-push") || !game.user.isGM || !this.isBrawlerStrike(message)) return;
-    const actor = message.getAssociatedActor();
-    const from = tokenOf(message.getAssociatedToken?.() ?? actor);
-    for(const target of message.system.hitTargets(ray)){
-      await forcedMove(target, { from, feet : 5, item : message.getAssociatedItem() });
-    }
-    await markUsedThisTurn(actor, "brawlerPush");
-    await message.setFlag(module.id, `brawler.${masteries.rayKey(ray)}`, true);
+    const key = `brawler.${masteries.rayKey(ray)}`;
+    const done = !!message.getFlag(module.id, key);
+    if(!done && usedThisTurn(actor, "brawlerPush")) return;
+    moves.push({ id : "brawlerPush", feet : 5, name : findItem(actor, this.BRAWLER)?.name, done,
+      after : async () => { await markUsedThisTurn(actor, "brawlerPush"); await message.setFlag(module.id, key, true); } });
   }
 
   /* ---------- Healer ---------- */
