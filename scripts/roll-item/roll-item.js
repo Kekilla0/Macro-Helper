@@ -1178,6 +1178,14 @@ export class rollItem{
     if(game.system.id !== "dnd5e") return;
     registerMessages();
     rerolls.register();
+    /* An attack card still revealing (its dice playing) : its buttons wait (a press then could be lost); the card is
+       drawn again once everything shows */
+    const wait = (message, html) => {
+      if((message?.type !== TYPES.attack) || (rollItem.revealOf(message) >= 2)) return;
+      for(const button of html?.querySelectorAll?.("button") ?? []){ button.disabled = true; button.dataset.tooltip = game.i18n.localize("rollItem.rolling"); }
+    };
+    Hooks.on("renderChatMessageHTML", wait);
+    Hooks.on("dnd5e.renderChatMessage", wait);
     Hooks.on("dnd5e.preUseActivity", rollItem.onPreUse);
     Hooks.on("dnd5e.postUseActivity", rollItem.onPostUse);
     /* A roll's breakdown : each die's total signed (+ added, - taken off, as Blade Ward's 1d4) when there's more than one part */

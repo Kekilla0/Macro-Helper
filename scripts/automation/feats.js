@@ -1,12 +1,12 @@
 import { module } from '../module.js';
-import { whisperOwners, esc } from '../helpers/utils.js';
+import { whisperOwners, esc, idOf } from '../helpers/utils.js';
 import { settings } from '../settings.js';
 import { limits } from './limits.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
 import { uses } from '../uses.js';
 import { pickTargets } from '../helpers/targets.js';
-import { findItem, usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
+import { findItem, usedThisTurn, markUsedThisTurn, preventDropToZero } from '../helpers/actors.js';
 import { spendUses, getAppliedConditions } from '../helpers/items.js';
 import { tokenOf, pushAway } from '../helpers/tokens.js';
 import { masteries } from './masteries.js';
@@ -19,6 +19,13 @@ const log = logger.for(import.meta.url);
  * and applied at the stage they affect. Each is a small, self-contained rule.
  *
  *   Tiefling (2024) : the species item's Darkvision is 60 ft (Plutonium's gives 120) : an item fix.
+ *   Relentless Endurance : (an Orc, a creature with the trait) dropped to 0 HP but not killed outright : 1 HP instead,
+ *                     once until a Long Rest (the item's own uses, or the module's mark when it has none); said in chat.
+ *   Tortle          : Claws : its Unarmed Strike deals 1d6 + its modifier Slashing (unless it already rolls a die).
+ *                     Shell Defense : using it puts on "Shell Defense" : +4 AC, advantage on STR / CON saves,
+ *                     disadvantage on DEX saves, Prone, Speed 0, no Reactions, and no Action or Bonus Action but Emerge
+ *                     (Rule Limits); its action bar's Emerge button, or Shell Defense used again (a toggle), ends it
+ *                     (a Bonus Action), still Prone.
  *   Save traits     : advantage on saves against a condition (Brave : Frightened, Fey Ancestry : Charmed, Dwarven
  *                     Resilience : Poisoned), for saves rolled from a card whose activity applies it.
  *   Savage Attacker : a button on each weapon hit (for its owner) rolls the damage again as an alternative,
@@ -74,9 +81,20 @@ export class feats{
     Hooks.on("dnd5e.preRollDamageV2", config => {
       this.healingRerolls(config);
       this.enhancedUnarmedStrike(config);
+      this.tortleClaws(config);
     });
     Hooks.on("dnd5e.preRollSavingThrowV2", (config, dialog, message) => this.onPreRollSave(config, message));
     Hooks.on("dnd5e.preUseActivity", activity => this.battleMedicKit(activity));
+    Hooks.on("dnd5e.postUseActivity", activity => this.shellDefense(activity));
+    /* Shell Defense again while in the shell : a toggle, it emerges (nothing else happens) */
+    uses.onActivity("shellToggle", async (activity, ctx, next) => {
+      const actor = activity?.actor;
+      if(!this.speciesEnabled() || (idOf(activity?.item) !== this.SHELL) || !actor?.effects?.some?.(e => e.getFlag(module.id, "rule")?.shell)) return next();
+      await this.emerge(actor);
+      return null;
+    });
+    Hooks.on("dnd5e.preApplyDamage", (actor, amount, updates, options) => this.relentless(actor, amount, updates, options));
+    Hooks.on("dnd5e.restCompleted", (actor, result) => { if(result?.longRest && actor?.isOwner && actor.getFlag(module.id, "relentlessUsed")) actor.unsetFlag(module.id, "relentlessUsed"); });
     Hooks.on("dnd5e.postUseActivity", activity => this.battleMedicSpendKit(activity));
     Hooks.on(`${module.id}.preApplyRow`, (message, actor) => this.battleMedicHitDie(message, actor));
     Hooks.on(`${module.id}.saveHint`, (message, actor, ability, { adv }) => { const trait = this.saveTraitFor(actor, message); if(trait) adv.push(trait.name); });
@@ -346,6 +364,86 @@ export class feats{
       const i = (roll.parts ?? []).findIndex(p => String(p).replace(/\s+/g, "") === base.replace(/\s+/g, ""));
       if(i >= 0){ roll.parts[i] = enhanced; log.debug("Enhanced Unarmed Strike", activity.actor?.name); return; }
     }
+  }
+
+  /* ---------- Relentless Endurance ---------- */
+
+  static RELENTLESS = "relentless-endurance";
+
+  /* Dropped to 0 but not killed outright : 1 HP, once until a Long Rest. dnd5e's pending update is changed now
+     (no await before it); the use and the message follow. */
+  static relentless(actor, amount, updates, options = {}){
+    if(!(this.speciesEnabled() || this.enabled()) || !(amount > 0) || !actor?.isOwner) return;
+    /* By identifier, or by name (case and anything in parentheses ignored : "Relentless Endurance (1/Day)") */
+    const plain = n => String(n ?? "").replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+    const item = actor.items?.find?.(i => ((i.identifier ?? i.system?.identifier) === this.RELENTLESS) || (plain(i.name) === "relentless endurance"));
+    if(!item) return;
+    const uses = item.system?.uses;
+    const tracked = Number(uses?.max) > 0;
+    if(tracked ? !(Number(uses.value) > 0) : actor.getFlag(module.id, "relentlessUsed")) return;
+    if(!preventDropToZero(actor, amount, updates, { hp : 1, massiveDamage : true })) return;
+    (async () => {
+      if(tracked) await item.update({ "system.uses.spent" : (Number(uses.spent) || 0) + 1 });
+      else await actor.setFlag(module.id, "relentlessUsed", true);
+      await ChatMessage.implementation.create({ speaker : ChatMessage.implementation.getSpeaker({ actor }),
+        content : `<p>${esc(module.format("species.relentless", { name : actor.name, item : item.name }))}</p>` });
+      const { combatLog } = await import('./combat-log.js');
+      await combatLog.add(actor, module.format("species.relentlessLog", { item : item.name }));
+    })().catch(error => log.debug(error));
+  }
+
+  /* ---------- Tortle ---------- */
+
+  static isTortle(actor){
+    return !!actor?.items?.some?.(i => (i.type === "race") && String(i.system?.identifier ?? "").startsWith("tortle"));
+  }
+
+  /* Claws : the Unarmed Strike's own damage is 1d6 + its modifier, Slashing */
+  static tortleClaws(config){
+    if(!this.speciesEnabled()) return;
+    const activity = config?.subject;
+    const item = activity?.item;
+    if((activity?.type !== "attack") || ((item?.identifier ?? item?.system?.identifier) !== "unarmed-strike")) return;
+    if(!this.isTortle(activity.actor) || !findItem(activity.actor, "claws")) return;
+    const base = item.system.damage?.base?.formula;
+    for(const roll of config.rolls ?? []){
+      const i = (roll.parts ?? []).findIndex(p => base && (String(p).replace(/\s+/g, "") === base.replace(/\s+/g, "")));
+      if(i < 0) continue;
+      if(!/\d*d\d+/i.test(base)) roll.parts[i] = "1d6 + @mod";
+      roll.options ??= {};
+      roll.options.type = "slashing";
+      roll.options.types = ["slashing"];
+      log.debug("Tortle Claws", activity.actor?.name);
+      return;
+    }
+  }
+
+  static SHELL = "shell-defense";
+
+  /* Shell Defense used : in its shell until it emerges */
+  static async shellDefense(activity){
+    const item = activity?.item, actor = activity?.actor;
+    if(!this.speciesEnabled() || !actor?.isOwner || ((item?.identifier ?? item?.system?.identifier) !== this.SHELL)) return;
+    if(actor.effects.some(e => e.getFlag(module.id, "rule")?.shell)) return;
+    const changes = [
+      { key : "system.attributes.ac.bonus", type : "add", mode : 2, value : "4" },
+      { key : "system.abilities.str.save.roll.mode", type : "add", mode : 2, value : "1" },
+      { key : "system.abilities.con.save.roll.mode", type : "add", mode : 2, value : "1" },
+      { key : "system.abilities.dex.save.roll.mode", type : "add", mode : 2, value : "-1" },
+      ...["walk", "fly", "climb", "swim", "burrow"].map(kind => ({ key : `system.attributes.movement.speeds.${kind}`, type : "override", mode : 5, value : "0" })),
+    ];
+    await actor.createEmbeddedDocuments("ActiveEffect", [{ name : item.name, img : item.img, origin : item.uuid, changes,
+      flags : { [module.id] : { rule : { shell : true, noReactions : true } } } }]);
+    if(!actor.statuses?.has?.("prone")) await actor.toggleStatusEffect("prone", { active : true });
+  }
+
+  /* Emerge (its Bonus Action) : out of the shell, still Prone */
+  static async emerge(actor){
+    const shell = actor?.effects?.filter?.(e => e.getFlag(module.id, "rule")?.shell) ?? [];
+    if(!shell.length) return;
+    const { actionTracker } = await import('./action-tracker.js');
+    await actor.deleteEmbeddedDocuments("ActiveEffect", shell.map(e => e.id), { [module.id] : { reason : module.i18n("species.emerged") } });
+    await actionTracker.spend(actor, { kind : "bonus", what : module.i18n("species.emerge") }).catch(() => null);
   }
 
   /* Healing Rerolls : a spell's healing dice reroll 1s (once), for a caster with the Healer feat */

@@ -5,6 +5,26 @@ import { rollItem } from './roll-item.js';
 import { extraD20, rerolls, addDie } from './rerolls.js';
 import { originOf, addNote, plainText } from '../helpers/utils.js';
 
+/* Dice So Nice still rolling a save's dice (on this client) : its result waits for them, then its card is drawn again;
+   a card's own dice (healing, damage) are waited for before anything is applied from it */
+const diceRolling = new Set();
+const diceDone = id => {
+  if(!diceRolling.delete(id)) return;
+  const origin = originOf(game.messages.get(id));
+  if(origin) ui.chat?.updateMessage?.(origin);
+};
+Hooks.on("createChatMessage", m => {
+  /* A d20 roll that belongs to a card (a save rolled from its row) */
+  if(!game.dice3d || !(m.rolls?.[0] instanceof CONFIG.Dice.D20Roll) || m.getFlag?.("dice-so-nice", "skip") || !originOf(m)) return;
+  diceRolling.add(m.id);
+  setTimeout(() => diceDone(m.id), 10000);
+});
+Hooks.on("diceSoNiceRollComplete", id => diceDone(id));
+const diceLanded = async message => {
+  if(!game.dice3d?.waitFor3DAnimationByMessageID || !message?.rolls?.length || message.getFlag?.("dice-so-nice", "skip")) return;
+  await Promise.race([game.dice3d.waitFor3DAnimationByMessageID(message.id), new Promise(resolve => setTimeout(resolve, 8000))]).catch(() => null);
+};
+
 /* Declared in module.json documentTypes.ChatMessage, Foundry prefixes them with the module id */
 export const TYPES = {
   attack : `${module.id}.rollItem`,
@@ -114,6 +134,12 @@ export function registerMessages(){
   const saveResultsOf = message => {
     const results = new Map();
     for(const save of message.getAssociatedRolls?.("save") ?? []){
+      /* Its dice still rolling here : not known yet */
+      if(diceRolling.has(save.id)){
+        const uuid = save.getAssociatedToken()?.uuid;
+        if(uuid) results.set(uuid, { rolling : true, total : null, success : undefined, message : save });
+        continue;
+      }
       const outcome = saveOutcome(save);
       const uuid = save.getAssociatedToken()?.uuid;
       if(!outcome || !uuid) continue;
@@ -354,6 +380,9 @@ export function registerMessages(){
       const { actor } = TargetsField.resolve(descriptor);
       const owner = game.user.isGM || !!actor?.isOwner;
       const result = results.get(descriptor.token) ?? null;
+      /* Its save's dice still rolling : nothing to read or apply yet */
+      if(result?.rolling) return { uuid : descriptor.token, name : shown.name, img : shown.img, saves : [], pending : false, rerollButtons : [],
+        result : { total : "…", success : null, detail : "" }, ruleButtons : [] };
       /* An NPC's save total stays behind the DM screen; whether it saved shows */
       const hideTotal = !game.user.isGM && dmScreen && !actor?.hasPlayerOwner;
       const multiplier = multiplierFor(result, onSave);
@@ -521,6 +550,8 @@ export function registerMessages(){
 
   /* A row's damage / healing : only the target's owner (or the GM) can apply it, sized by its save */
   const applyRow = async (message, button, { rolls = [], targets = [] } = {}) => {
+    /* Not before its dice have landed (healing applied while its die still rolled) */
+    await diceLanded(message);
     const uuid = button.dataset.target;
     const descriptor = targets.find(t => t.token === uuid) ?? { token : uuid };
     const { actor } = TargetsField.resolve(descriptor);

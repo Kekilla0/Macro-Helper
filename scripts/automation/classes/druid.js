@@ -28,6 +28,9 @@ const log = logger.for(import.meta.url);
  *                    The form carries a "Wild Shape" effect lasting half the Druid level in hours; the form ends when
  *                    that time is up, or when the creature is Incapacitated or dies (those conditions go with the
  *                    Druid). Uses spent while shifted (a new form, Wild Companion) are kept when the form ends.
+ *   Linked effects : the form and the Druid share their effects. One that ends on either ends on the other too (the
+ *                    form failing its Concentration save ends the Druid's Concentration); a new one on the form is put
+ *                    on the Druid as well (it keeps it once the form ends). Not while the form is being left.
  *   Familiars      : Wild Companion's familiar is the Find Familiar handling (automation/familiars.js).
  *   Spells         : none in a form (2024), from the form (Wild Companion) or the Druid's own sheet while its form is
  *                    out; the spells dnd5e keeps on the form (Circle of the Moon's) are fine. Rule Limits decides; on
@@ -72,6 +75,8 @@ export class druid{
     Hooks.on("dnd5e.transformActorV2", (actor, source, data, transform) => this.onTransform(actor, data, transform));
     Hooks.on("createActiveEffect", effect => this.onEffect(effect));
     Hooks.on("updateActiveEffect", effect => this.onEffect(effect));
+    Hooks.on("createActiveEffect", (effect, options) => this.linkNew(effect, options));
+    Hooks.on("deleteActiveEffect", (effect, options) => this.endPartner(effect, options));
     Hooks.on("updateItem", (item, changes) => this.keepUses(item, changes));
     Hooks.on("dnd5e.postUseActivity", (activity, usage) => this.onUse(activity, usage));
     Hooks.on("dnd5e.restCompleted", (actor, result, config) => this.onRest(actor, result, config));
@@ -477,7 +482,10 @@ export class druid{
         }
       }
     }
-    const reverted = await actor.revertOriginalForm({ renderSheet : false });
+    this.#reverting.add(actor.id);
+    let reverted;
+    try { reverted = await actor.revertOriginalForm({ renderSheet : false }); }
+    finally { setTimeout(() => this.#reverting.delete(actor.id), 2000); }
     return (reverted?.documentName === "Token") ? reverted.actor : (reverted ?? null);
   }
 
@@ -510,6 +518,54 @@ export class druid{
     const expired = !!effect.getFlag(module.id, "wildShape") && !!effect.duration?.expired;
     if(!down && !expired) return;
     await this.endWildShape(actor, module.i18n(down ? "classes.druid.incapacitated" : "classes.druid.expired"));
+  }
+
+  /* ---------- The form's and the Druid's effects, linked ---------- */
+
+  static #reverting = new Set();
+
+  /* The other side : the Druid for a form, the form on the scene for the Druid */
+  static partnerActor(actor){
+    if(this.isWildShaped(actor)) return game.actors.get(actor.getFlag("dnd5e", "originalActor")) ?? null;
+    return this.formOf(actor);
+  }
+
+  /* Its partner effect there : the one it's linked to, else the same effect dnd5e copied (its name and origin) */
+  static partnerEffect(effect, other){
+    const linked = effect.getFlag(module.id, "wildLink");
+    const byLink = linked ? other.effects.find(e => (e.uuid === linked) || (e.getFlag(module.id, "wildLink") === effect.uuid)) : null;
+    if(byLink) return byLink;
+    return other.effects.find(e => (e.name === effect.name) && ((e.origin ?? null) === (effect.origin ?? null))
+      && ([...(e.statuses ?? [])].sort().join() === [...(effect.statuses ?? [])].sort().join())) ?? null;
+  }
+
+  static skipLink(effect, actor){
+    if(!this.enabled() || !game.users.activeGM?.isSelf || (actor?.documentName !== "Actor")) return true;
+    if(effect.getFlag?.(module.id, "wildShape") || effect.getFlag?.(module.id, "auraOf")) return true;
+    const form = this.isWildShaped(actor) ? actor : this.formOf(actor);
+    return !form || this.#reverting.has(form.id);
+  }
+
+  /* Ended on one side : ended on the other */
+  static async endPartner(effect, options = {}){
+    const actor = effect?.parent;
+    if(options?.[module.id]?.wildLink || this.skipLink(effect, actor)) return;
+    const other = this.partnerActor(actor);
+    const partner = other ? this.partnerEffect(effect, other) : null;
+    if(partner) await partner.delete({ [module.id] : { wildLink : true, reason : module.i18n("classes.druid.linkedEnded") } }).catch(error => log.debug(error));
+  }
+
+  /* New on the form : on the Druid too, linked */
+  static async linkNew(effect, options = {}){
+    const actor = effect?.parent;
+    if(options?.[module.id]?.wildLink || this.skipLink(effect, actor) || !this.isWildShaped(actor)) return;
+    const original = this.partnerActor(actor);
+    if(!original || this.partnerEffect(effect, original)) return;
+    const data = effect.toObject();
+    delete data._id;
+    foundry.utils.setProperty(data, `flags.${module.id}.wildLink`, effect.uuid);
+    const [copy] = await original.createEmbeddedDocuments("ActiveEffect", [data], { [module.id] : { wildLink : true } }).catch(() => []);
+    if(copy) await effect.setFlag(module.id, "wildLink", copy.uuid);
   }
 
   /* The form's conditions that end it go with the Druid (reverting drops the form's effects : Unconscious at 0 HP) */

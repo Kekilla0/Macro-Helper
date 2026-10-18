@@ -529,6 +529,9 @@ export class actionTracker{
     const cost = this.costOf(activity, ctx.config);
     const st = cost ? this.state(actor) : null;
     if(!st) return next();
+    /* In its shell (a Tortle's Shell Defense) : nothing but Emerge (its action bar's button) */
+    if(actor.effects?.some?.(e => !e.disabled && e.getFlag(module.id, "rule")?.shell)
+      && !limits.allow(module.format("species.inShell", { name : actor.name }), { who : actor.name, what : activity.item?.name ?? "" })) return null;
     const plan = this.plan(activity, cost, st);
     const own = ctx.config?.[module.id] ?? {};
     if(own.readied){ plan.readied = true; plan.ask = false; plan.offTurn = null; }

@@ -247,12 +247,13 @@ export function setTargets(tokens){
  * @param {boolean} [options.includeSelf=false]      the origin's own token can be picked too (Healing Hands, Mage Armor)
  * @param {boolean} [options.sight=true]             only tokens the origin's token can see (Vision Rules setting); false : any
  * @param {Function} [options.tokenColor]          (token) => "advantage" | "normal5e" | "disadvantage" : a colour per candidate (attacks)
+ * @param {Function} [options.tokenWhy]            (token) => { mode, advantage : [], disadvantage : [] } : shown hovering it
  * @param {boolean} [options.long] [options.thrown]  passed to getRange
  * @returns {Promise<Token[]>}  the picks, empty if cancelled or nothing in range
  */
 export async function pickTargets(origin, { count = 1, range, disposition = "enemy", numberAllowed = Infinity, within = Infinity,
   confirm = "auto", setTargets : target = true, useTargets = true, repeat = false, long = false, thrown = false, normalRange, notice = "", filter : only, includeSelf = false,
-  sight = true, tokenColor } = {}){
+  sight = true, tokenColor, tokenWhy } = {}){
   const from = tokenOf(origin);
   if(!from) return warn(module.i18n("helpers.pick.noToken"));
   if(!useTargets) canvas.tokens.setTargets([]);
@@ -273,7 +274,7 @@ export async function pickTargets(origin, { count = 1, range, disposition = "ene
     return Array.from({ length : count }, (_, i) => targeted[Math.floor(i * targeted.length / count)]);
   }
 
-  const picks = await pickOnMap(from, feet, candidates, { count, numberAllowed, within, confirm, repeat, normalRange, notice, includeSelf, tokenColor });
+  const picks = await pickOnMap(from, feet, candidates, { count, numberAllowed, within, confirm, repeat, normalRange, notice, includeSelf, tokenColor, tokenWhy });
   if(target && picks.length) setTargets(picks);
   return picks;
 }
@@ -284,7 +285,7 @@ function warn(message){
 }
 
 /* The clicking itself : overlay, banner, click + key listeners, all removed at the end */
-function pickOnMap(from, feet, candidates, { count, numberAllowed, within, confirm, repeat = false, normalRange, notice = "", includeSelf = false, tokenColor }){
+function pickOnMap(from, feet, candidates, { count, numberAllowed, within, confirm, repeat = false, normalRange, notice = "", includeSelf = false, tokenColor, tokenWhy }){
   const allowed = picks => Math.min(count, typeof numberAllowed === "function" ? numberAllowed(picks) : numberAllowed);
   const highlight = highlightRange(from, feet, { tokens : candidates, normal : normalRange, showSelf : includeSelf, tokenColor });
   const hasLong = Number.isFinite(normalRange) && (normalRange < feet);
@@ -306,7 +307,31 @@ function pickOnMap(from, feet, candidates, { count, numberAllowed, within, confi
         + (message ? `<span class="warning">${message}</span>` : "");
     };
 
+    /* Hovering a candidate : why it's green or red (advantage, disadvantage and their reasons) */
+    const tip = document.createElement("div");
+    tip.className = `${module.id}-pick-tip`;
+    tip.hidden = true;
+    if(tokenWhy) document.body.append(tip);
+    const onHover = event => {
+      if(!tokenWhy) return;
+      const point = onMap(event.target) ? canvas.canvasCoordinatesFromClient({ x : event.clientX, y : event.clientY }) : null;
+      const token = point ? candidates.find(t => t.bounds.contains(point.x, point.y)) : null;
+      const why = token ? tokenWhy(token) : null;
+      const lines = why ? [
+        ...(why.advantage?.length ? [`<div class="adv">${Handlebars.escapeExpression(module.i18n("helpers.pick.advantage"))} : ${why.advantage.map(r => Handlebars.escapeExpression(r)).join(" · ")}</div>`] : []),
+        ...(why.disadvantage?.length ? [`<div class="dis">${Handlebars.escapeExpression(module.i18n("helpers.pick.disadvantage"))} : ${why.disadvantage.map(r => Handlebars.escapeExpression(r)).join(" · ")}</div>`] : []),
+      ] : [];
+      if(!lines.length){ tip.hidden = true; return; }
+      if((why.mode === "normal5e") && why.advantage?.length && why.disadvantage?.length) lines.push(`<div>${Handlebars.escapeExpression(module.i18n("helpers.pick.cancel"))}</div>`);
+      tip.innerHTML = `<strong>${Handlebars.escapeExpression(token.name)}</strong>${lines.join("")}`;
+      tip.style.left = `${event.clientX + 16}px`;
+      tip.style.top = `${event.clientY + 16}px`;
+      tip.hidden = false;
+    };
+
     const finish = result => {
+      window.removeEventListener("pointermove", onHover, true);
+      tip.remove();
       window.removeEventListener("pointerdown", onPointer, true);
       window.removeEventListener("contextmenu", onMenu, true);
       window.removeEventListener("keydown", onKey, true);
@@ -370,6 +395,7 @@ function pickOnMap(from, feet, candidates, { count, numberAllowed, within, confi
     };
 
     window.addEventListener("pointerdown", onPointer, true);
+    window.addEventListener("pointermove", onHover, true);
     window.addEventListener("contextmenu", onMenu, true);
     window.addEventListener("keydown", onKey, true);
     status();

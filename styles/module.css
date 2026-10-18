@@ -494,6 +494,7 @@
 #macro-helper-action-bar .escape { background: #6a4a1f; border: 2px solid #d0a050; }
 .chat-message button[data-action="rowRule"] img { width: 16px; height: 16px; border: none; vertical-align: middle; margin-right: 2px; }
 #macro-helper-action-bar .pull-out { background: #3f6a3a; border: 2px solid #8fd08a; }
+#macro-helper-action-bar .emerge { background: #3f5a3a; border: 2px solid #9fc08f; }
 #macro-helper-action-bar .random-move { background: #6a3f7a; border: 2px solid #c08fe0; }
 #macro-helper-action-bar .wake { background: #3a3f7a; border: 2px solid #8f96e0; }
 #macro-helper-action-bar .release { background: #2f5a3a; border: 2px solid #6fbf7f; }
@@ -509,3 +510,9 @@
 .chat-message .macro-helper-attack-box > .damage-type-label { /* centred on the roll's box, past the row's icon (16px + 8px gap), like a damage type */
   align-self: stretch; text-align: center; margin-left: 24px; font-family: Roboto, sans-serif; font-size: 10px; font-weight: 400;
   text-transform: uppercase; line-height: 12.5px; color: rgb(153, 153, 153); }
+
+/* The pick map : why a candidate is green (advantage) or red (disadvantage), hovering it */
+.macro-helper-pick-tip { position: fixed; z-index: 1000; pointer-events: none; max-width: 340px; padding: 6px 10px; border-radius: 6px;
+  background: rgba(20, 18, 24, 0.95); border: 1px solid #666; color: #eee; font-size: 13px; line-height: 1.4; }
+.macro-helper-pick-tip .adv { color: #6fcf7a; }
+.macro-helper-pick-tip .dis { color: #e07070; }

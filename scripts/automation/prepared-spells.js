@@ -125,10 +125,25 @@ export class preparedSpells{
     return Math.max(0, swaps + free - added);
   }
 
+  /* Its changes, said apart : new spells to add (room left under the maximum) and swaps (one spell for another) */
+  static changesText(actor, cls){
+    const { base, swaps } = this.stateOf(actor, cls);
+    if(swaps < 0) return module.i18n("preparedSpells.any");
+    const max = this.maxOf(actor, cls);
+    const next = this.preparedIds(actor, cls);
+    const free = (max === null) ? 0 : Math.max(0, max - base.length);
+    const added = next.filter(id => !base.includes(id)).length;
+    const toAdd = (max === null) ? 0 : Math.max(0, max - next.length);
+    const swapsLeft = Math.max(0, swaps - Math.max(0, added - free));
+    const parts = [];
+    if(toAdd) parts.push(module.format("preparedSpells.toAdd", { n : toAdd }));
+    parts.push(module.format("preparedSpells.swapsLeft", { n : swapsLeft }));
+    return parts.join(" · ");
+  }
+
   static summary(actor, cls){
-    const left = this.changesLeft(actor, cls);
     return module.format("preparedSpells.summary", { cls : actor.classes?.[cls]?.name ?? cls, count : this.preparedIds(actor, cls).length,
-      max : this.maxOf(actor, cls) ?? "—", changes : (left === "any") ? module.i18n("preparedSpells.any") : module.format("preparedSpells.left", { left }) });
+      max : this.maxOf(actor, cls) ?? "—", changes : this.changesText(actor, cls) });
   }
 
   /* ---------- The window ---------- */

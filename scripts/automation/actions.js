@@ -27,8 +27,11 @@ const log = logger.for(import.meta.url);
  *                      advantage. Ends when used, or at the start of your next turn (out of combat : when used).
  *     Stabilize      : a creature at 0 HP within 5 ft. WIS (Medicine) DC 10 : on a success it's Stable (stabilize()).
  *
- * Monsters get Dash, Disengage, Dodge and Help from Macro Helper's Actions compendium (the ones they lack), when their
- * token is placed and when a combat they're in starts (the active GM's client).
+ * Every creature (characters and monsters) has Macro Helper's default actions : Dash, Disengage, Dodge, Help and Unarmed
+ * Strike (its Grapple and Shove), from the Actions compendium, when its token is placed, when a combat it's in starts,
+ * and (characters) when the world loads (the active GM's client). Another item with the same identifier (dnd5e's own
+ * Unarmed Strike, Plutonium's "Claw Attack") is replaced by ours, so the features that change it (a Tortle's Claws,
+ * Martial Arts) change ours.
  *
  * Help's choices and picks happen before dnd5e uses the activity (beforeUse, from Roll Item's use wrapper), so its
  * card targets who was picked and says what for. The marks it leaves go on the enemy / the ally, who the helper
@@ -49,9 +52,13 @@ export class actions{
 
   static register(){
     if(game.system.id !== "dnd5e") return;
-    /* Monsters : the basic actions, when placed and when a combat starts */
+    /* Every creature : the default actions, when placed, when a combat starts, and (characters) once the world is ready */
     Hooks.on("createToken", token => this.giveBasics(token.actor));
     Hooks.on("combatStart", combat => { for(const c of combat.combatants) this.giveBasics(c.actor); });
+    /* Characters at load : a moment after (the rest of the world's load work done first), one at a time */
+    Hooks.once("ready", () => setTimeout(async () => {
+      for(const a of game.actors.filter(a => a.type === "character")) await this.giveBasics(a).catch(error => log.debug(error));
+    }, 5000));
     /* Dodge, Dash and Disengage mark the creature here, not through Roll Item */
     Hooks.on(`${module.id}.selfEffects`, activity => !(this.enabled() && [this.DODGE, this.DASH, this.DISENGAGE, this.HELP].includes(idOf(activity?.item))));
     Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.onUse(activity, usage, results));
@@ -305,13 +312,14 @@ export class actions{
   }
 
   /* A creature at 0 HP within 5 ft first (none : nothing spent), then the use, then it's Stable (no check) */
-  /* ---------- Monsters' basic actions ---------- */
+  /* ---------- Every creature's default actions ---------- */
 
-  static BASICS = ["dash", "disengage", "dodge", "help"];
+  static BASICS = ["dash", "disengage", "dodge", "help", "unarmed-strike"];
 
   static async giveBasics(actor){
-    if(!this.enabled() || !game.users.activeGM?.isSelf || (actor?.type !== "npc")) return;
-    const missing = this.BASICS.filter(id => !actor.items.some(i => idOf(i) === id));
+    if(!this.enabled() || !game.users.activeGM?.isSelf || !["npc", "character"].includes(actor?.type)) return;
+    const ours = i => !!i.getFlag?.(module.id, "basicAction");
+    const missing = this.BASICS.filter(id => !actor.items.some(i => (idOf(i) === id) && ours(i)));
     if(!missing.length) return;
     const pack = game.packs.get(`${module.id}.actions`);
     if(!pack) return;
@@ -322,8 +330,15 @@ export class actions{
       const doc = entry ? await pack.getDocument(entry._id) : null;
       if(doc) docs.push(foundry.utils.mergeObject(doc.toObject(), { _id : null, [`flags.${module.id}.basicAction`] : true }, { inplace : false }));
     }
-    if(docs.length) await actor.createEmbeddedDocuments("Item", docs.map(d => { delete d._id; return d; })).catch(error => log.debug("Basic actions", error));
+    if(!docs.length) return;
+    /* Ours first; only once they're on the creature, the other copies of those actions go (dnd5e's Unarmed Strike,
+       Plutonium's Claw Attack) : nothing is lost if adding fails */
+    const made = await actor.createEmbeddedDocuments("Item", docs.map(d => { delete d._id; return d; })).catch(error => { log.debug("Default actions", error); return []; });
+    const added = new Set((made ?? []).map(i => idOf(i)));
+    const others = actor.items.filter(i => added.has(idOf(i)) && !ours(i));
+    if(others.length) await actor.deleteEmbeddedDocuments("Item", others.map(i => i.id)).catch(error => log.debug("Default actions", error));
   }
+
 
   static async healersKitStep(activity, ctx, next){
     if(!this.enabled() || !this.isKitStabilize(activity) || !activity.actor?.isOwner) return next();

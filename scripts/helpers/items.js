@@ -235,6 +235,9 @@ export async function pickAttack(item, { count = 1, disposition = "nonAlly", wit
       /* An attack can go at a creature you can't see (in fog, Invisible) : the roll gives the disadvantage, the colours show it */
       sight : false,
       tokenColor : t => predictMode(attack, t, { attackMode : attackModeFor(item, t, { long }), disadvantage : longOrThreat(t) }),
+      /* Hovering a coloured candidate : why */
+      tokenWhy : t => predictModeWhy(attack, t, { attackMode : attackModeFor(item, t, { long }), disadvantage : longOrThreat(t),
+        disadvantageWhy : isLongRange(item, t) ? module.i18n("helpers.pick.whyLong") : module.i18n("helpers.pick.whyThreatened") }),
     });
     if(!targets.length) return null;   // cancelled, or nothing in range (pickTargets said which)
 
@@ -610,9 +613,21 @@ export async function setBaseDamage(item, { number, denomination, types, bonus }
  * @returns {"advantage"|"normal5e"|"disadvantage"}
  */
 export function predictMode(activity, target, { attackMode, disadvantage = false } = {}){
+  return predictModeWhy(activity, target, { attackMode, disadvantage }).mode;
+}
+
+/**
+ * predictMode with its reasons (for the pick map's hover) : { mode, advantage : [reasons], disadvantage : [reasons] }.
+ * @param {string} [options.disadvantageWhy]  the reason for options.disadvantage (long range, threatened)
+ */
+export function predictModeWhy(activity, target, { attackMode, disadvantage = false, disadvantageWhy = "" } = {}){
   const roll = { options : {} };
   const config = { subject : activity, rolls : [roll], attackMode, ability : activity?.ability, [module.id] : { target : target?.document?.uuid } };
   rollModes.apply(config);
   const adv = !!roll.options.advantage, dis = !!roll.options.disadvantage || !!disadvantage;
-  return (adv && !dis) ? "advantage" : (dis && !adv) ? "disadvantage" : "normal5e";
+  const noted = roll.options[module.id]?.reasons ?? [];
+  const why = mode => noted.filter(r => r.mode === mode).map(r => r.reason).filter(Boolean);
+  const disWhy = why("disadvantage");
+  if(disadvantage && disadvantageWhy) disWhy.push(disadvantageWhy);
+  return { mode : (adv && !dis) ? "advantage" : (dis && !adv) ? "disadvantage" : "normal5e", advantage : adv ? why("advantage") : [], disadvantage : dis ? disWhy : [] };
 }

@@ -32,9 +32,12 @@ export class creatureTraits{
     return (game.system.id === "dnd5e") && !!settings.value("featRules");
   }
 
+  /* By identifier, or by name : case and anything in parentheses ignored ("Relentless Endurance (1/Day)") */
   static has(actor, name){
     const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-    return !!actor?.items?.some?.(i => (idOf(i) === slug) || ((i.name ?? "").toLowerCase() === name.toLowerCase()));
+    const plain = n => String(n ?? "").replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+    const wanted = plain(name);
+    return !!actor?.items?.some?.(i => (idOf(i) === slug) || (plain(i.name) === wanted));
   }
 
   static register(){

@@ -85,3 +85,4 @@ whether the module covers it or you need to edit the item.
 | **Euphoria Breath / Stench Spray / Prone Deficiency** (Faerie Dragons, Flumph) | Plain conditions: no random movement, no aura, no die roll; Stench Spray's duration ("for hours") lost its dice. | Card / hook macros (local, not SRD). |
 | **Death Burst** (Gas Spore Fungus) | "Poisoned for hours" lost its dice (1d12), nothing kills at the end. | Hook macro (local, not SRD): `duration : { hours : "1d12" }, expire : { status : "dead" }`. |
 | **Engulf** (Gelatinous Cube) | A plain Restrained on a failure; nothing moves, no repeat acid, no escape. | Card macro: trample + engulf + push. |
+| **Tortle's Claw Attack** (Unarmed Strike) | Its custom damage "1d6-1" bakes in the STR modifier, and dnd5e adds @mod again (1d6 - 1 - 1). | Item data for the GM : make the custom formula `1d6`. The Tortle Claws rule (1d6 + modifier, Slashing) covers dnd5e's own Unarmed Strike. |

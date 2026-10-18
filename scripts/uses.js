@@ -42,6 +42,7 @@ export class uses{
       "fastForward",   // Roll Item : one attack with its riders skips dnd5e's choice of activity
     ],
     activity : [
+      "shellToggle",   // Species : a Tortle's Shell Defense used while in its shell : it emerges instead (a Bonus Action)
       "castingBusy",   // Casting : a long cast under way : using anything else asks, then fails the cast
       "noReactions",   // Spell effects : a Reaction while an effect forbids them (Arms of Hadar) : Rule Limits
       "offScene",      // Roll Item : no token on the scene being viewed : no targets (it can't see them)
