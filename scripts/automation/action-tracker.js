@@ -7,7 +7,7 @@ import { limits } from './limits.js';
 import { combatLog } from './combat-log.js';
 import { grapplesOn } from '../roll-item/card-builder.js';
 import { idOf, esc } from '../helpers/utils.js';
-import { getTokensWithin } from '../helpers/tokens.js';
+import { getTokensWithin, movedThisTurn } from '../helpers/tokens.js';
 import { masteries } from './masteries.js';
 const log = logger.for(import.meta.url);
 
@@ -85,6 +85,8 @@ export class actionTracker{
     Hooks.on("createActiveEffect", (effect, options, userId) => this.fromEffect(effect, userId));
     Hooks.on("dnd5e.postUseActivity", activity => this.onUsed(activity));
     Hooks.on("preMoveToken", (token, movement) => this.preMove(token, movement));
+    /* token.hasReaction() (card macros) : false when its Reaction is spent or it can't take one */
+    Hooks.on(`${module.id}.hasReaction`, actor => this.left(actor, "reaction") ? undefined : false);
     Hooks.on("moveToken", (token, movement, options, user) => this.logMove(token, movement, user));
     Hooks.on("preUpdateActor", (actor, changes, options) => this.preHands(actor, changes, options));
     Hooks.on("updateActor", (actor, changes, options, userId) => this.onHands(actor, options, userId));
@@ -219,7 +221,7 @@ export class actionTracker{
   static async standUp(actor, token){
     const st = this.state(actor);
     if(!st || !actor.statuses?.has?.("prone")) return;
-    const cost = Math.floor(this.speedOf(actor, "walk") / (actor.statuses?.has?.("dashing") ? 4 : 2));
+    const cost = Math.floor(this.speedOf(actor, "walk") / (this.isDashing(actor) ? 4 : 2));
     const moved = token ? this.movedOf(token) : 0;
     const left = this.speedOf(actor, "walk") - moved - (Number(st.rec.standing) || 0);
     if((cost > left) && !limits.allow(module.format("actionTracker.cantStand", { name : actor.name, cost, left }), { who : actor.name, what : module.i18n("actionTracker.standUp") })) return;
@@ -782,7 +784,12 @@ export class actionTracker{
     const m = actor?.system?.attributes?.movement ?? {};
     const kind = ["fly", "swim", "climb", "burrow"].includes(action) ? action : "walk";
     const speed = Number(m[kind]) || ((kind !== "walk") ? Number(m.walk) || 0 : 0);
-    return speed * (actor.statuses?.has?.("dashing") ? 2 : 1);
+    return speed * (this.isDashing(actor) ? 2 : 1);
+  }
+
+  /* Dashing : the status (Dissonant Whispers' flee), or the Dash action's own mark (Dash, Step of the Wind) */
+  static isDashing(actor){
+    return !!(actor?.statuses?.has?.("dashing") || actor?.effects?.some?.(e => !e.disabled && e.getFlag(module.id, "dash")));
   }
 
   /* Its movement this turn : its Speed, and what macros added (token.useMovement(50) : Trampling Charge, like a Dash) */
@@ -796,19 +803,7 @@ export class actionTracker{
 
   /* Feet moved this turn (Foundry clears the history when a turn starts); a teleport (Misty Step) spends none */
   static movedOf(token){
-    const doc = token?.document ?? token;
-    const history = doc?.movementHistory ?? [];
-    if(history.length < 2) return 0;
-    try {
-      if(!history.some(w => this.isTeleport(w.action))) return Math.round(doc.measureMovementPath(history).cost ?? 0);
-      let cost = 0;
-      for(let i = 1; i < history.length; i++){
-        if(this.isTeleport(history[i].action)) continue;
-        cost += doc.measureMovementPath([history[i - 1], history[i]]).cost ?? 0;
-      }
-      return Math.round(cost);
-    }
-    catch { return 0; }
+    return movedThisTurn(token);
   }
 
   /* A drag on its turn past its Speed : Rule Limits */
@@ -895,7 +890,8 @@ export class actionTracker{
   /* What goes into a hand on its turn : a weapon free with an attack, else the free interaction, else Utilize; a shield : Utilize */
   static preHands(actor, changes, options){
     const next = foundry.utils.getProperty(changes ?? {}, `flags.${module.id}.hands`);
-    if(!next || !this.enabled()) return;
+    /* A creature's first hand change starts from the shield the GM marked equipped : bookkeeping, free */
+    if(!next || !this.enabled() || options?.[module.id]?.handsAdopt) return;
     const st = this.state(actor);
     if(!st?.mine) return;
     const was = actor.getFlag(module.id, "hands") ?? {};

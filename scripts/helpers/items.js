@@ -3,7 +3,7 @@ import { settings } from '../settings.js';
 import { conditions } from '../automation/conditions.js';
 import { hands } from '../automation/hands.js';
 import { rollItem } from '../roll-item/roll-item.js';
-import { tokenOf, actorOf, distanceBetween, getRange, isOutOfAction } from './tokens.js';
+import { tokenOf, actorOf, distanceBetween, getRange, isOutOfAction, hasLineOfSight } from './tokens.js';
 import { pickTargets, getThreats } from './targets.js';
 import { findItem, usedThisTurn } from './actors.js';
 import { uses } from '../uses.js';
@@ -70,7 +70,7 @@ export function attackModeFor(item, target, { long = true } = {}){
   const versatile = !!item?.system?.properties?.has("ver") && modes.includes("oneHanded") && modes.includes("twoHanded");
   /* Dueling : a Versatile weapon is meant for one hand (its +2 needs it). With Hands : two-handed only when in both */
   const dueling = item?.actor?.items?.some?.(i => ["dueling", "fighting-style-dueling"].includes(i.identifier ?? i.system?.identifier));
-  const held = hands.manages(item?.actor) ? hands.handOf(item.actor, item) : null;
+  const held = (hands.manages(item?.actor) && hands.inUse(item.actor)) ? hands.handOf(item.actor, item) : null;
   /* The Light weapon's extra attack : off-hand (no ability modifier) */
   const offhand = modes.includes("offhand") && isExtraLightAttack(item);
   const melee = offhand ? "offhand"
@@ -97,7 +97,7 @@ export function attackModeFor(item, target, { long = true } = {}){
 export function isExtraLightAttack(item){
   const actor = item?.actor;
   if(!actor || !item.system?.properties?.has?.("lgt")) return false;
-  if(hands.manages(actor)) return hands.handOf(actor, item) === "off";
+  if(hands.manages(actor) && hands.inUse(actor)) return hands.handOf(actor, item) === "off";
   if(usedThisTurn(actor, `light.${item.id}`)) return false;
   /* Out of combat : a different Light weapon attacked within the last minute */
   if(!game.combat?.started){
@@ -171,12 +171,15 @@ function attackFailed(item, message, error){
  * @param {string|Activity} [options.activity]       attack activity, or its id / name, default the first
  * @param {boolean} [options.used=false]             dnd5e has already used the activity : don't refuse it for having no uses left
  * @param {Function} [options.filter]              only tokens that pass (token) => boolean can be picked (Cleave : next to the first)
+ * @param {number|Function} [options.numberAllowed]  how many the group may have, or (picks) => number (Massive Swing : by size)
+ *                                                   Creatures behind a wall (total cover) are never offered.
  * @param {number} [options.rangeMultiplier=1]     a stretched range (Distant Spell : double, Touch becomes 30 ft)
  * @returns {Promise<{ attack : Activity, targets : Token[], attackMode : Function, disadvantage : Function }|null>}
  *          null if cancelled or refused (with a notification saying why)
  */
 export async function pickAttack(item, { count = 1, disposition = "nonAlly", within = Infinity, long = true, confirm = "auto",
-  clearTargets = true, strict = true, threatened : threatRule = true, repeat = false, activity, used = false, filter , rangeMultiplier = 1} = {}){
+  clearTargets = true, strict = true, threatened : threatRule = true, repeat = false, activity, used = false, filter , rangeMultiplier = 1,
+  numberAllowed = Infinity } = {}){
   const fail = (message, error) => attackFailed(item, message, error);
 
   try {
@@ -227,9 +230,11 @@ export async function pickAttack(item, { count = 1, disposition = "nonAlly", wit
 
     /* Pick : each candidate coloured by how the attack would roll against it */
     const longOrThreat = t => isLongRange(item, t) || (threatened && isRangedAttack(item, t));
+    /* Behind a wall (total cover) : not a target. Unseen (darkness, Invisible) still is, at disadvantage */
+    const reachable = t => hasLineOfSight(attacker, t) && (!filter || filter(t));
     const targets = await pickTargets(item, {
       count : Math.max(1, Math.floor(count) || 1),
-      range, within, disposition, confirm, notice, repeat, filter,
+      range, within, numberAllowed, disposition, confirm, notice, repeat, filter : reachable,
       normalRange : shownNormal,
       useTargets : !clearTargets,
       /* An attack can go at a creature you can't see (in fog, Invisible) : the roll gives the disadvantage, the colours show it */

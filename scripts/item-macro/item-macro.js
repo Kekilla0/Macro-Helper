@@ -4,7 +4,7 @@ import { uses } from '../uses.js';
 import { logger } from '../log.js';
 import { MacroEditor } from './editor.js';
 import { itemHooks } from './item-hooks.js';
-import { applyCondition, engulf, immunity, web, applyDisease, suppressOA, applyEffect, attach, followUp, extraDamage, shareDamage, push, damageTypes, becameBloodied } from '../roll-item/card-builder.js';
+import { applyCondition, engulf, immunity, web, applyDisease, suppressOA, passThrough, applyEffect, attach, followUp, extraDamage, shareDamage, push, damageTypes, becameBloodied, cardBuilder } from '../roll-item/card-builder.js';
 import { limits } from '../automation/limits.js';
 const log = logger.for(import.meta.url);
 
@@ -47,7 +47,7 @@ export class itemMacro{
     /* Card builder parts, to append to the card item.roll() returns */
     /* ruleLimit("...") : Rule Limits for something the rules don't allow (true : go ahead) */
     const ruleLimit = text => limits.allow(text, { who : actor?.name ?? "", what : item?.name ?? "" });
-    return { actor, token, item, activity, hook : null, args : [], applyCondition, engulf, immunity, web, applyDisease, suppressOA, applyEffect, attach, followUp, extraDamage, shareDamage, push, damageTypes, becameBloodied, ruleLimit, ...extra };
+    return { actor, token, item, activity, hook : null, args : [], applyCondition, engulf, immunity, web, applyDisease, suppressOA, passThrough, applyEffect, attach, followUp, extraDamage, shareDamage, push, damageTypes, becameBloodied, ruleLimit, ...extra };
   }
 
   static async execute(target, scope = this.scope(target)){
@@ -76,7 +76,13 @@ export class itemMacro{
     const data = this.get(target);
     if(!data || data.mode === "default") return wrapped(...args);
 
-    const result = await this.execute(target, this.scope(target, extra));
+    /* item.roll() inside it is this use (an Opportunity Attack, a readied use : their cost and target) */
+    const itemUuid = (this.isActivity(target) ? target.item : target)?.uuid;
+    const own = extra?.usage?.[module.id];
+    if(itemUuid && own) cardBuilder.inherited.set(itemUuid, own);
+    let result;
+    try { result = await this.execute(target, this.scope(target, extra)); }
+    finally { if(itemUuid && own) cardBuilder.inherited.delete(itemUuid); }
     if(data.mode === "macro" || result === false) return;
 
     return wrapped(...args);

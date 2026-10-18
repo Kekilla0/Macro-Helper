@@ -2,7 +2,7 @@ import { module } from '../module.js';
 import { gm } from '../gm.js';
 import { uses } from '../uses.js';
 import { logger } from '../log.js';
-import { cells, gridSteps, tokenOf, pushAway, pushDestination, distanceBetween } from '../helpers/tokens.js';
+import { cells, gridSteps, tokenOf, pushAway, pushDestination, distanceBetween, movedThisTurn } from '../helpers/tokens.js';
 import { pickSpace, isEnemy } from '../helpers/targets.js';
 import { postTargetCard, registerTargetCards } from '../helpers/target-card.js';
 import { rollOptions, rollOptionDamage, rollOptionD20, rollOptionDamageDice } from './roll-options.js';
@@ -62,6 +62,8 @@ const log = logger.for(import.meta.url);
  *   immunity({ when, duration })   immune to this item of this creature that long (Ghast's Stench) : target.isImmuneTo(item).
  *   push(feet, { when, from })   a Push button (the GM) : the target pushed that far straight away from `from` (the
  *                              card's creature), stopping at walls and creatures.
+ *   choice : "name"   (applyCondition, applyEffect, push, followUp) parts sharing a choice are one or the other : once
+ *                              one is used on a target, the others are gone from its row (Spiked Shield : Prone or Push).
  *   followUp(item, { when })   a button for the card's owner : that item's attack at the target, part of this use
  *                              (no Action of its own for the Action Tracker).
  *   extraDamage(formula, { type, when })   more damage on the hit, in the hit's own damage line (by type), rolled
@@ -78,10 +80,10 @@ const uuidKey = uuid => String(uuid).replaceAll(".", "-");
 
 export function applyCondition({ type, when = [], with : also = [], duration = null, save = null, escape = null, repeat = null,
   insteadOfDamage = false, self = null, label = null, noReactions = false, oneAction = false, until = null, aura = null,
-  removal = [], randomMove = false, expire = null } = {}){
+  removal = [], randomMove = false, expire = null, choice = null } = {}){
   return { kind : "condition", type, when : [when].flat(), with : [also].flat().filter(Boolean), duration, save, escape, repeat,
     insteadOfDamage : !!insteadOfDamage, self, label, noReactions : !!noReactions, oneAction : !!oneAction, until, aura,
-    removal : [removal].flat().filter(Boolean), randomMove : !!randomMove, expire };
+    removal : [removal].flat().filter(Boolean), randomMove : !!randomMove, expire, choice };
 }
 
 export function engulf({ when = [], escape = null, damage = null, type = null, label = null } = {}){
@@ -130,6 +132,14 @@ export function applyDisease({ when = [], name = null, img = null, ability = "co
   return { kind : "disease", when : [when].flat(), name, img, ability, dc, every, stages : [stages].flat().filter(Boolean), removal : [removal].flat(), cure, label };
 }
 
+/* In an "It moves through a creature's space" item-hook macro : it may (dnd5e would block it : Orc Bloodrunner's
+   Unimpeded through a Prone creature) */
+export function passThrough(args){
+  const result = args?.[2];
+  if(result && (typeof result === "object")) result.through = true;
+  return true;
+}
+
 /* In a "Before an Opportunity Attack" item-hook macro : this move provokes none (Deer's Agile) */
 export function suppressOA(args){
   const info = args?.[1];
@@ -138,23 +148,23 @@ export function suppressOA(args){
 }
 
 export function applyEffect({ when = [], name = null, img = null, duration = null, speed = null, noReactions = false,
-  oneAction = false, changes = [], label = null } = {}){
+  oneAction = false, changes = [], label = null, choice = null } = {}){
   return { kind : "effect", when : [when].flat(), name, img, duration, speed, noReactions : !!noReactions, oneAction : !!oneAction,
-    changes : [changes].flat().filter(Boolean), label };
+    changes : [changes].flat().filter(Boolean), label, choice };
 }
 
 export function attach({ when = [], escape = null, check = "ath", with : also = [], label = null } = {}){
   return { kind : "attach", when : [when].flat(), escape, check, with : [also].flat().filter(Boolean), label };
 }
 
-export function push(feet, { when = [], from = null, label = null } = {}){
+export function push(feet, { when = [], from = null, label = null, choice = null } = {}){
   const by = from ? ((from.document ?? from)?.uuid ?? null) : null;
-  return { kind : "push", feet : Number(feet) || 0, from : by, when : [when].flat(), label };
+  return { kind : "push", feet : Number(feet) || 0, from : by, when : [when].flat(), label, choice };
 }
 
-export function followUp(item, { when = [], label = null } = {}){
+export function followUp(item, { when = [], label = null, choice = null } = {}){
   const name = (typeof item === "string") ? item : (item?.name ?? "");
-  return { kind : "followUp", item : name, when : [when].flat(), label };
+  return { kind : "followUp", item : name, when : [when].flat(), label, choice };
 }
 
 export function extraDamage(formula, { type = null, when = [], label = null } = {}){
@@ -218,6 +228,16 @@ export async function useMovement(thing, feet){
  *   if(!await token.useReaction("Split")) return;
  * @returns {Promise<boolean>}
  */
+/**
+ * Has it its Reaction now ? (no Action Tracker, or out of combat : true; it can't take Reactions : false). Right away,
+ * for a hook macro that has to decide before its first await (Juke's Advantage on the save it's about to roll).
+ *   if(!token.hasReaction()) return;
+ * @returns {boolean}
+ */
+export function hasReaction(thing){
+  return Hooks.call(`${module.id}.hasReaction`, thing?.actor ?? thing) !== false;
+}
+
 export async function useReaction(thing, what = ""){
   const { actionTracker } = await import('../automation/action-tracker.js');
   return actionTracker.useReaction(thing?.actor ?? thing, what);
@@ -484,6 +504,41 @@ export class CardBuilder{
     return (this.message.system?.targets ?? []).map(d => TargetsField.resolve(d)?.token).filter(Boolean);
   }
 
+  /* The targets its attack hit (every attack, on a card with several), as the card judges them now */
+  get hits(){
+    const system = this.message.system;
+    if(!system?.hitTargets) return [];
+    const rays = system.rays?.length ? system.rays.map((_, i) => i) : [null];
+    return [...new Set(rays.flatMap(ray => system.hitTargets(ray)))];
+  }
+
+  /**
+   * Waits until this card's damage is applied to a target (its Apply pressed), then gives its Hit Points after it.
+   * Orc Fury's Relentless : did its attack drop the target to 0 ?
+   *   const hp = await card.damageApplied(target);
+   * @param {Token|TokenDocument|Actor} target
+   * @param {object} [options]
+   * @param {number} [options.timeout]   ms to wait (none by default) : then null
+   * @returns {Promise<number|null>}      its HP once the damage is on, null if the card went away or time ran out
+   */
+  damageApplied(target, { timeout = null } = {}){
+    const actor = target?.actor ?? target;
+    const id = this.message.id;
+    const done = () => !!Object.keys(actor?.getFlag?.(module.id, `applied.${id}`) ?? {}).length;
+    const hp = () => Number(actor?.system?.attributes?.hp?.value) || 0;
+    if(!actor) return Promise.resolve(null);
+    if(done()) return Promise.resolve(hp());
+    return new Promise(resolve => {
+      let timer = null;
+      const finish = value => { Hooks.off("updateActor", onActor); Hooks.off("deleteChatMessage", onDelete); clearTimeout(timer); resolve(value); };
+      const onActor = changed => { if((changed === actor) && done()) finish(hp()); };
+      const onDelete = message => { if(message.id === id) finish(null); };
+      Hooks.on("updateActor", onActor);
+      Hooks.on("deleteChatMessage", onDelete);
+      if(timeout) timer = setTimeout(() => finish(null), timeout);
+    });
+  }
+
   /* A part, after the others; its target facts (functions) judged now, for each target */
   append(part){
     if(!part?.kind) return this;
@@ -497,7 +552,8 @@ export class CardBuilder{
     return this.#change(state => state.parts.push(stored));
   }
 
-  /* An item's own effect off the card (by its condition, or its name), or a part appended before */
+  /* An item's own effect off the card (by its condition, or its name), a part appended before, or "save" : the attack's
+     on-hit save (its rider) */
   remove(what){
     return this.#change(state => {
       if(typeof what === "string") state.removed.push(what.toLowerCase());
@@ -512,6 +568,11 @@ export class CardBuilder{
 }
 
 export class cardBuilder{
+  /* The use an item macro is running for, by item uuid : item.roll() inside it is that use (an Opportunity Attack stays
+     the Reaction, a readied use stays readied, its target stays its target) */
+  static inherited = new Map();
+  static INHERIT = ["economy", "oa", "readied", "skipPick", "useTargets"];
+
   /* item.roll() : the item's normal use, its card as a CardBuilder (null : nothing was rolled) */
   static async roll(item, { post = true, activity = null, uses : shared = null, ...options } = {}){
     /* uses : another item's uses spend for this one (a wyrmling's two breaths share one Recharge 5–6) : checked first */
@@ -521,7 +582,9 @@ export class cardBuilder{
     /* Several activities (Plutonium's two Talons) : the one asked for, else dnd5e asks */
     const list = [...(item.system?.activities ?? [])];
     const chosen = (activity === null) ? null : (Number.isInteger(activity) ? list[activity] : list.find(a => (a.id === activity) || (a.name === activity)));
-    const config = { [module.id] : { skipMacro : true, ...(options.cost ? { economy : options.cost } : {}) } };
+    const from = this.inherited.get(item.uuid) ?? {};
+    const kept = Object.fromEntries(this.INHERIT.filter(k => from[k] !== undefined).map(k => [k, from[k]]));
+    const config = { [module.id] : { ...kept, skipMacro : true, ...(options.cost ? { economy : options.cost } : {}) } };
     /* Targets given : no pick, those are the targets */
     if(Array.isArray(options.targets)){
       canvas.tokens.setTargets(options.targets.map(t => (t.object ?? t)?.id).filter(Boolean));
@@ -588,7 +651,9 @@ export class cardBuilder{
       add(cls, "teleport", function(feet, options){ return teleport(this, feet, options); });
       add(cls, "leap", function(feet, options){ return leap(this, feet, options); });
       add(cls, "useMovement", function(feet){ return useMovement(this, feet); });
+      add(cls, "movedThisTurn", function(){ return movedThisTurn(this); });
       add(cls, "useReaction", function(what){ return useReaction(this, what); });
+      add(cls, "hasReaction", function(){ return hasReaction(this); });
       add(cls, "trample", function(feet, options){ return trample(this, feet, options); });
       add(cls, "pull", function(target, feet){ return pull(this, target, feet); });
       add(cls, "isDifficultTerrain", function(point){ return isDifficultTerrain(this, point); });
@@ -655,15 +720,35 @@ export class cardBuilder{
     Hooks.on("deleteActiveEffect", effect => {
       if(game.users.activeGM?.isSelf && effect.getFlag?.(module.id, "engulfedBy")) this.leaveEngulf(effect).catch(error => log.debug(error));
     });
-    /* "A creature enters its space" (hook macros) : a move ending inside another creature's space (Ooze Cube) */
+    /* "A creature enters its space" (hook macros) : a move ending inside another creature's space (Ooze Cube).
+       "Enters a creature's space" : the mover's side, any square of the move through another creature's space
+       (Orc Bloodrunner's Unimpeded), once per creature per move */
     Hooks.on("moveToken", (doc, movement, options = {}) => {
       /* Not the module's own placing (into an engulfing creature, following one) */
       if(!game.users.activeGM?.isSelf || !movement?.destination || options?.[module.id]?.oaSkip) return;
       const grid = canvas.grid.size, at = movement.destination;
+      const overlaps = (p, t) => (p.x < t.x + (t.width * grid)) && (p.x + (doc.width * grid) > t.x) && (p.y < t.y + (t.height * grid)) && (p.y + (doc.height * grid) > t.y);
+      /* Every square along the move (its waypoints are only where it turned), not the one it started on */
+      const corners = [movement.origin, ...(movement.passed?.waypoints ?? []), at].filter(Boolean);
+      const path = [];
+      for(let i = 1; i < corners.length; i++){
+        const a = corners[i - 1], b = corners[i];
+        const steps = Math.max(1, Math.ceil(Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y)) / grid));
+        for(let k = 1; k <= steps; k++) path.push({ x : a.x + (b.x - a.x) * k / steps, y : a.y + (b.y - a.y) * k / steps });
+      }
       for(const t of doc.parent?.tokens ?? []){
         if((t === doc) || !t.actor) continue;
-        const over = (at.x < t.x + (t.width * grid)) && (at.x + (doc.width * grid) > t.x) && (at.y < t.y + (t.height * grid)) && (at.y + (doc.height * grid) > t.y);
-        if(over) Hooks.callAll(`${module.id}.entersSpace`, t, doc);
+        if(overlaps(at, t)) Hooks.callAll(`${module.id}.entersSpace`, t, doc);
+        if(path.some(p => overlaps(p, t))) Hooks.callAll(`${module.id}.entersCreatureSpace`, doc, t);
+      }
+    });
+    /* "It moves through a creature's space" (hook macros) : a creature dnd5e's movement automation would stop it at
+       (an enemy within one size of it); passThrough(args) lets it through. On the mover's client, as it's measured */
+    Hooks.on("dnd5e.determineOccupiedGridSpaceBlocking", (space, token, options, found) => {
+      for(const other of [...(found ?? [])]){
+        const result = { through : false };
+        Hooks.callAll(`${module.id}.movesThrough`, token?.document, other?.document, result);
+        if(result.through) found.delete(other);
       }
     });
     /* "Any creature's turn starts" (hook macros) : every creature's, for the creatures around it (Ghast's Stench) */
@@ -708,6 +793,8 @@ export class cardBuilder{
       parts.forEach((part, index) => {
         if(!this.shown(part, uuid, result)) return;
         const done = !!message.getFlag(module.id, `cardDone.${index}.${uuidKey(uuid)}`);
+        /* One of a choice : another of it already used on this target, this one is gone */
+        if(part.choice && !done && parts.some((p, i) => (i !== index) && (p.choice === part.choice) && message.getFlag(module.id, `cardDone.${i}.${uuidKey(uuid)}`))) return;
         const target = fromUuidSync(uuid, { strict : false });
         /* This or the damage : once the damage is applied to it, the choice is made */
         if(part.insteadOfDamage && !done && Object.keys(target?.actor?.getFlag?.(module.id, `applied.${message.id}`) ?? {}).length) return;
@@ -746,6 +833,8 @@ export class cardBuilder{
   static async press(message, uuid, index){
     const part = message.getFlag(module.id, KEY)?.parts?.[index];
     if(!part || message.getFlag(module.id, `cardDone.${index}.${uuidKey(uuid)}`)) return;
+    const parts = message.getFlag(module.id, KEY)?.parts ?? [];
+    if(part.choice && parts.some((p, i) => (i !== index) && (p.choice === part.choice) && message.getFlag(module.id, `cardDone.${i}.${uuidKey(uuid)}`))) return;
     const target = fromUuidSync(uuid, { strict : false });
     if(["condition", "effect", "attach", "disease", "engulf", "immunity"].includes(part.kind)){
       const ok = await gm.run("cardCondition", { message : message.id, index, target : uuid });
@@ -756,7 +845,8 @@ export class cardBuilder{
       if(!game.user.isGM || !target?.object) return;
       const from = (part.from ? fromUuidSync(part.from, { strict : false })?.object : null) ?? message.getAssociatedToken?.()?.object ?? tokenOf(message.getAssociatedActor?.());
       const moved = from ? await pushAway(target.object, from, part.feet) : 0;
-      if(!moved) ui.notifications.info(module.format("rollItem.mastery.blocked", { name : target.name }));
+      /* Cut short : Homebrew's collision (Prone, 1d6 when it didn't move at all), else "blocked" */
+      Hooks.callAll(`${module.id}.pushed`, target.object, moved, part.feet, message.getAssociatedItem?.() ?? null);
       await this.doneAsGM({ message : message.id, index, target : uuid });
       return;
     }

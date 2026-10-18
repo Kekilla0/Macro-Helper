@@ -26,7 +26,7 @@ const log = logger.for(import.meta.url);
  *   Step of the Wind   : like Patient Defense : the free use : Dash; with a Focus Point : Dash and Disengage. Plutonium's
  *                        item (one Focus Point activity, its own uses) is given the free activity when it lands.
  *   Unarmored Movement : its speed only while wearing no armor and holding no shield (its effect follows).
- *   Uncanny Metabolism : a button on the Monk's initiative roll (its owner and the GM) while its use is left : uses
+ *   Uncanny Metabolism : (Homebrew's Initiative Each Round : only the combat's first roll) a button on the Monk's initiative roll (its owner and the GM) while its use is left : uses
  *                        the item (Focus Points back, the healing roll).
  */
 export class monk{
@@ -351,10 +351,17 @@ export class monk{
   }
 
   /* The compact initiative card : at its foot */
+  /* "When you roll Initiative" : once a combat. Homebrew's Initiative Each Round re-rolls it every round : only the
+     combat's first roll offers it (it can't be saved for later) */
+  static firstInitiative(combat){
+    return !settings.value("homebrewInitiative") || !combat || ((Number(combat.round) || 0) <= 1);
+  }
+
   static metabolismFoot(combatant, add){
     const combat = combatant?.combat ?? combatant?.parent;
     const key = `${combat?.id}.${combat?.round}`;
     const found = this.metabolismOf(combatant?.actor, key);
+    if(found && !found.used && !this.firstInitiative(combat)) return;
     if(found) add("fa-yin-yang", this.metabolismLabel(found.item, combatant.name), () => this.useMetabolism(found.item, key), { disabled : found.used });
   }
 
@@ -364,6 +371,7 @@ export class monk{
     const actor = ChatMessage.implementation.getSpeakerActor?.(message.speaker) ?? game.actors.get(message.speaker?.actor);
     const found = this.metabolismOf(actor, message.id);
     if(!found) return;
+    if(!found.used && !this.firstInitiative(game.combat)) return;
     const latest = game.messages.contents.findLast(m => m.getFlag?.("core", "initiativeRoll") && (m.speaker?.actor === message.speaker?.actor));
     if(latest && (latest.id !== message.id)) return;
     if(html.querySelector(`.${module.id}-initiative-feet`)) return;

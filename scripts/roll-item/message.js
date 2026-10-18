@@ -489,6 +489,11 @@ export function registerMessages(){
         start : { time : game.time.worldTime, ...(game.combat?.started ? { combat : game.combat.id, round : game.combat.round, turn : game.combat.turn ?? 0 } : {}) },
         flags : { [module.id] : { fromCard : message.id } } });
       if(duration && !(doc.duration?.seconds || doc.duration?.rounds || doc.duration?.turns || doc.duration?.value)) d.duration = duration;
+      /* A plain condition (one condition, no changes : Plutonium's Prone, Poisoned with the item's picture) : the
+         condition's own icon and name, like every condition the module applies */
+      const statuses = [...(d.statuses ?? [])];
+      const condition = (statuses.length === 1) && !(d.changes?.length) ? CONFIG.statusEffects.find(c => c.id === statuses[0]) : null;
+      if(condition){ d.img = condition.img; d.name = game.i18n.localize(condition.name); }
       delete d._id;
       return d;
     });
@@ -1341,7 +1346,9 @@ export function registerMessages(){
       const choice = this.choiceOf(null);
       if(choice && (choice !== "base")) context.damage = null;
 
-      if(this.rider?.id) context.rider = await this._prepareRiderContext(options);
+      /* A card macro took the save off (card.remove("save") : Haymaker against a Large creature) */
+      const noSave = (this.parent.getFlag(module.id, "cardParts")?.removed ?? []).some(r => (r === "save") || (r === "*"));
+      if(this.rider?.id && !noSave) context.rider = await this._prepareRiderContext(options);
       if(context.buttons && context.rider) context.buttons.rider = context.rider.hasDamage;
 
       return this._hideUnrevealed(context);

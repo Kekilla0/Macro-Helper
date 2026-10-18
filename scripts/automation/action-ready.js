@@ -24,7 +24,7 @@ const log = logger.for(import.meta.url);
  *                   answered, the GM's client finishes the move (the GM may Continue or Stop here at any time).
  */
 export class actionReady{
-  static TRIGGERS = ["enemyAttacks", "enemyComes", "enemyMoves", "enemyLeaves", "enemyHeals", "allyAttacks", "allyMoves", "allyHeals", "turnStarts"];
+  static TRIGGERS = ["enemyAttacks", "enemyComes", "enemyMoves", "enemyLeaves", "enemyHeals", "enemyStands", "allyAttacks", "allyMoves", "allyHeals", "turnStarts"];
   static DEFAULT_REACH = 5;
 
   static register(){
@@ -41,6 +41,8 @@ export class actionReady{
     Hooks.on("createChatMessage", message => this.onCard(message));
     Hooks.on("moveToken", (token, movement, options) => this.onMove(token, movement, options));
     Hooks.on("updateCombat", (combat, changes) => this.onTurn(combat, changes));
+    /* Stands up : its Prone ends (an archer waiting until it's up, not at disadvantage) */
+    Hooks.on("deleteActiveEffect", effect => this.onProneEnds(effect));
     /* Opportunity Attacks : the mover's client, before the move */
     Hooks.on("preMoveToken", (token, movement, options) => this.preMove(token, movement, options));
   }
@@ -210,7 +212,7 @@ export class actionReady{
     });
   }
 
-  static async check(kind, other, { from = null } = {}){
+  static async check(kind, other, { from = null, to = null } = {}){
     if(!this.enabled() || !game.users.activeGM?.isSelf || !other) return;
     for(const entry of this.waiting(other.parent)){
       if(entry.token === other) continue;
@@ -219,16 +221,17 @@ export class actionReady{
       let hit = false;
       if(kind === "attacks") hit = (t === `${rel}Attacks`);
       else if(kind === "heals") hit = (t === `${rel}Heals`);
+      else if(kind === "stands") hit = (t === `${rel}Stands`);
       else if(kind === "moves"){
         hit = (t === `${rel}Moves`);
         if((t === "enemyLeaves") && (rel === "enemy") && from){
           const reach = this.reachOf(entry.actor);
-          hit = (this.feet(from, entry.token) <= reach) && (this.feet(other, entry.token) > reach);
+          hit = (this.feet(from, entry.token) <= reach) && (this.feet(to ?? other, entry.token) > reach);
         }
-        /* Comes within the readied use's reach / range : outside it before the move, inside after */
-        if((t === "enemyComes") && (rel === "enemy") && from){
+        /* Moves within the readied use's reach / range : the move ends inside it (coming in, or moving about in it) */
+        if((t === "enemyComes") && (rel === "enemy")){
           const range = this.readyRange(entry.actor, entry.ready);
-          if(range && (this.feet(from, entry.token) > range) && (this.feet(other, entry.token) <= range)){
+          if(range && (this.feet(to ?? other, entry.token) <= range)){
             if(!this.sees(entry.token, other)) continue;
             await this.fire(entry, module.format("actionTracker.happened.comes", { name : other.name, feet : range }));
           }
@@ -258,8 +261,17 @@ export class actionReady{
 
   static onMove(token, movement){
     if(!this.enabled() || !game.users.activeGM?.isSelf) return;
-    const from = movement?.origin ? { x : movement.origin.x, y : movement.origin.y, width : token.width, height : token.height, elevation : movement.origin.elevation ?? 0 } : null;
-    this.check("moves", token, { from });
+    /* Where it went : the hook comes as the move starts, the document isn't there yet */
+    const at = p => p ? { x : p.x, y : p.y, width : p.width ?? token.width, height : p.height ?? token.height, elevation : p.elevation ?? 0 } : null;
+    this.check("moves", token, { from : at(movement?.origin), to : at(movement?.destination) });
+  }
+
+  static onProneEnds(effect){
+    if(!this.enabled() || !game.users.activeGM?.isSelf || !effect?.statuses?.has?.("prone")) return;
+    const actor = effect.parent;
+    if((actor?.documentName !== "Actor") || actor.statuses?.has?.("prone")) return;
+    const token = actor.token ?? actor.getActiveTokens?.(false, true)?.[0] ?? null;
+    if(token) this.check("stands", token);
   }
 
   static onTurn(combat, changes){
@@ -334,41 +346,49 @@ export class actionReady{
 
   /* ---------- Opportunity Attacks ---------- */
 
-  /* Its reach : its melee attacks' (Reach weapons 10 ft), else none */
+  /* What it holds to attack with : held weapons (Hands; a creature before its hands are in use : what the GM marked
+     equipped), or equipped ones without Hands. Natural weapons and Unarmed Strike are always there */
+  static heldWeapons(actor){
+    if(hands.manages(actor)) return new Set(hands.heldItems(actor).map(i => i.id));
+    return new Set((actor?.items ?? []).filter(i => (i.type === "weapon") && (i.system.equipped || (actor.type === "npc"))).map(i => i.id));
+  }
+
+  static meleeAttackOf(item){
+    return item?.system?.activities?.find?.(a => (a.type === "attack") && ((a.attack?.type?.value ?? "melee") === "melee")) ?? null;
+  }
+
+  /* Its reach : its held melee weapons' (Reach : 10 ft) and its natural ones, else none */
   static reachOf(actor){
+    const held = this.heldWeapons(actor);
     let reach = 0;
     for(const item of actor?.items ?? []){
-      if(!item.system?.activities?.some?.(a => a.type === "attack")) continue;
-      if((item.type === "weapon") && (actor.type === "character") && !item.system.equipped) continue;
-      const attack = item.system.activities.find(a => a.type === "attack");
-      const melee = (attack?.attack?.type?.value ?? attack?.actionType ?? "melee") === "melee" || /^m/.test(attack?.actionType ?? "");
-      if(!melee) continue;
-      const props = item.system.properties;
-      const rch = !!(props?.has?.("rch"));
+      if(!this.meleeAttackOf(item)) continue;
+      if((item.type === "weapon") && !hands.isBody(item) && !held.has(item.id)) continue;
+      const rch = !!(item.system.properties?.has?.("rch"));
       reach = Math.max(reach, Number(item.system.range?.reach) || (rch ? 10 : this.DEFAULT_REACH));
     }
     return reach;
   }
 
-  /* The weapon an Opportunity Attack is made with : a melee attack in a hand, else any melee attack */
+  /* The weapon an Opportunity Attack is made with : a melee weapon it holds, else a natural weapon or Unarmed Strike
+     (never one it isn't holding : there's no drawing a weapon on someone else's turn) */
   static oaAttackOf(actor){
-    const melee = actor.items.filter(i => i.system?.activities?.some?.(a => (a.type === "attack") && ((a.attack?.type?.value ?? "melee") === "melee")));
-    const held = actor.getFlag?.(module.id, "hands") ?? {};
-    const inHand = i => [held.main, held.off].includes(i.id);
-    const pick = melee.find(i => inHand(i) && (i.type === "weapon")) ?? melee.find(i => i.system.equipped && (i.type === "weapon") && (idOf(i) !== "unarmed-strike"))
-      ?? melee.find(i => i.type === "weapon") ?? melee[0];
-    return pick?.system.activities.find(a => a.type === "attack") ?? null;
+    const held = this.heldWeapons(actor);
+    const melee = actor.items.filter(i => this.meleeAttackOf(i));
+    const pick = melee.find(i => (i.type === "weapon") && !hands.isBody(i) && held.has(i.id))
+      ?? melee.find(i => hands.isBody(i) && (idOf(i) !== "unarmed-strike")) ?? melee.find(i => idOf(i) === "unarmed-strike")
+      ?? melee.find(i => i.type !== "weapon");
+    return pick ? this.meleeAttackOf(pick) : null;
   }
 
   /* Two melee weapons in hand : which one */
   static async chooseOAAttack(actor){
-    const held = actor.getFlag?.(module.id, "hands") ?? {};
-    const inHand = [...new Set([held.main, held.off])].map(id => actor.items.get(id))
-      .filter(i => (i?.type === "weapon") && i.system.activities?.some?.(a => (a.type === "attack") && ((a.attack?.type?.value ?? "melee") === "melee")));
+    const held = this.heldWeapons(actor);
+    const inHand = actor.items.filter(i => (i.type === "weapon") && !hands.isBody(i) && held.has(i.id) && this.meleeAttackOf(i));
     if(inHand.length < 2) return this.oaAttackOf(actor);
     const id = await chooseOption({ title : module.i18n("actionTracker.oa.attack"), icon : "fa-solid fa-hand-fist", prompt : module.i18n("actionTracker.oa.which"),
       options : inHand.map(i => ({ value : i.id, label : i.name })) });
-    return id ? actor.items.get(id)?.system.activities.find(a => a.type === "attack") ?? null : null;
+    return id ? this.meleeAttackOf(actor.items.get(id)) : null;
   }
 
   /* Feet between a footprint ({x, y, width, height, elevation}) and a token */

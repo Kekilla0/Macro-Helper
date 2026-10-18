@@ -59,6 +59,8 @@ export class masteries{
     foundry.applications.handlebars.loadTemplates({ [`${module.id}.mastery`] : `${module.path}/templates/mastery.hbs` });
     Hooks.on(`${module.id}.cardSections`, (message, sections, { ray } = {}) => { const section = this.cardSection(message, ray ?? null); if(section) sections.push(section); });
     Hooks.on(`${module.id}.cardButton`, (message, id, { ray, event, button } = {}) => { if(id === "mastery") this.clicked(message, ray ?? null, event, button); });
+    /* Every other push (Repelling Blast, a card macro's push part) : the same Homebrew collision as Push, else "blocked" */
+    Hooks.on(`${module.id}.pushed`, (target, moved, feet, item) => this.afterPush(target, moved, feet, item));
     Hooks.on(`${module.id}.beforeApplyDamage`, (message, actor, waits) => waits.push(this.beforeDamage(message, actor)));
     /* The outcome masteries : on each hit target's row */
     Hooks.on(`${module.id}.rowButtons`, (message, uuid, buttons, context = {}) => this.rowButtons(message, uuid, buttons, context));
@@ -319,6 +321,12 @@ export class masteries{
     await message.setFlag(module.id, `mastery.${this.rayKey(ray)}`, done);
     log.debug("Mastery", key, "from", message.id, "on", targets.map(t => t.name));
     return notes;
+  }
+
+  static async afterPush(target, moved, feet, item = null){
+    if(!target?.actor) return;
+    if(settings.value("homebrewPush")) return this.pushCollision(target, moved, feet, item);
+    if(!moved) ui.notifications.info(module.format("rollItem.mastery.blocked", { name : target.name }));
   }
 
   /**

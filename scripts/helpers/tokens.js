@@ -629,3 +629,46 @@ export function canSeePoint(viewer, point){
   if((mode === "conditions") || !canvas.ready || !canvas.visibility?.tokenVision || !v.document.sight?.enabled) return !blinded;
   return detects(v, [{ x : point.x, y : point.y, elevation : v.document.elevation ?? 0 }]);
 }
+
+/**
+ * Feet it has moved this turn (Foundry clears a token's movement history when a turn starts); teleports (Misty Step,
+ * token.teleport) don't count. Orc Bloodrunner's Spiked Shield : token.movedThisTurn() >= 10.
+ * @param {Token|TokenDocument|Actor} thing
+ * @returns {number}
+ */
+export function movedThisTurn(thing){
+  const doc = tokenOf(thing)?.document ?? thing?.document ?? thing;
+  const history = doc?.movementHistory ?? [];
+  if(history.length < 2) return 0;
+  const teleport = action => !!CONFIG.Token.movement?.actions?.[action]?.teleport;
+  try {
+    if(!history.some(w => teleport(w.action))) return Math.round(doc.measureMovementPath(history).cost ?? 0);
+    let cost = 0;
+    for(let i = 1; i < history.length; i++){
+      if(teleport(history[i].action)) continue;
+      cost += doc.measureMovementPath([history[i - 1], history[i]]).cost ?? 0;
+    }
+    return Math.round(cost);
+  }
+  catch { return 0; }
+}
+
+/**
+ * Is there a line from one token to any part of another that no sight-blocking wall cuts (not total cover) ? Walls only :
+ * darkness, Invisible or Blinded don't matter here (an attack can go at a creature you can't see, at disadvantage).
+ * From the viewer's centre to the other's centre and the four corners of its space (pulled in a little).
+ * @param {Token|TokenDocument|Actor} viewer
+ * @param {Token|TokenDocument|Actor} target
+ * @returns {boolean}
+ */
+export function hasLineOfSight(viewer, target){
+  const v = tokenOf(viewer), t = tokenOf(target);
+  const backend = CONFIG.Canvas.polygonBackends?.sight;
+  if(!v || !t || (v === t) || !backend) return true;
+  const from = v.center;
+  const { x, y } = t.document;
+  const w = t.w ?? (t.document.width * canvas.grid.size), h = t.h ?? (t.document.height * canvas.grid.size);
+  const inset = Math.min(w, h) * 0.15;
+  const points = [t.center, { x : x + inset, y : y + inset }, { x : x + w - inset, y : y + inset }, { x : x + inset, y : y + h - inset }, { x : x + w - inset, y : y + h - inset }];
+  return points.some(p => !backend.testCollision(from, p, { type : "sight", mode : "any" }));
+}

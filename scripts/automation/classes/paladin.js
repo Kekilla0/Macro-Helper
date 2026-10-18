@@ -59,6 +59,7 @@ export class paladin{
   static register(){
     if(game.system.id !== "dnd5e") return;
     Hooks.on(`${module.id}.cardButtons`, (message, buttons, context) => this.cardButtons(message, buttons, context));
+    gm.handle("paladinSmiteCard", (data, user) => this.smiteCardAsGM(data, user));
     /* A smite on the card : its spell's face (name and rules) under the weapon's, like the spell's own card */
     Hooks.on(`${module.id}.cardFaces`, (message, faces) => this.smiteFaces(message, faces));
     Hooks.on("dnd5e.renderChatMessage", (message, html) => this.pushButtons(message, html));
@@ -196,17 +197,27 @@ export class paladin{
   }
 
   static cardButtons(message, buttons, { ray } = {}){
-    if(!this.enabled() || !message.isOwner) return;
+    if(!this.enabled()) return;
+    /* The card's roller, or the character's owner (the GM rolled for them : the card's part goes through the GM) */
     const actor = message.getAssociatedActor?.();
+    if(!message.isOwner && !(actor?.isOwner && !game.user.isGM)) return;
     const kind = this.hitKind(message, ray);
     if(!actor?.isOwner || !kind || this.smitten(message, ray)) return;
     const choices = this.choicesFor(actor, { kind });
     if(!choices.length) return;
-    /* Action Tracker : no Bonus Action left, no button */
-    if(!actionTracker.left(actor, "bonus")) return;
+    /* A smite is a Bonus Action : only on its own turn (not an Opportunity Attack or a readied attack), one left */
+    if(this.offTurn(actor) || !actionTracker.left(actor, "bonus")) return;
     /* Only the Ranger's strikes apply : "Strike" */
     const smite = choices.some(c => !this.HIT_NEEDS[idOf(c.spell)]);
     buttons.push({ id : "smite", label : module.i18n(smite ? "classes.paladin.smite" : "classes.paladin.strike"), icon : smite ? "fa-sun" : "fa-crosshairs" });
+  }
+
+  /* In a started combat, someone else's turn */
+  static offTurn(actor){
+    const combat = game.combat;
+    if(!combat?.started || !combat.combatant) return false;
+    const current = combat.combatant.actor;
+    return !!current && (current !== actor) && (current.uuid !== actor?.uuid);
   }
 
   /* The creature the attack hit (its Fiend / Undead die) */
@@ -262,20 +273,18 @@ export class paladin{
 
     const target = this.targetOf(message, ray);
     const damage = this.NO_HIT_DAMAGE.includes(idOf(choice.spell)) ? null : this.damageOf(choice.spell, choice.level, target);
+    let roll = null;
     if(damage){
       const isCritical = !!message.system.attackOf(ray)?.isCritical;
-      const roll = await new CONFIG.Dice.DamageRoll(damage.formula, {}, { type : damage.type, types : [damage.type], isCritical, properties : ["mgc"] }).evaluate();
-      await message.system.addDamage([roll], { key : "smite", ray, formula : damage.formula,
-        label : module.format("classes.paladin.smiteLabel", { spell : choice.spell.name, level : choice.level }) });
+      roll = await new CONFIG.Dice.DamageRoll(damage.formula, {}, { type : damage.type, types : [damage.type], isCritical, properties : ["mgc"] }).evaluate();
     }
-    await message.setFlag(module.id, `smite.${masteries.rayKey(ray)}`, choice.spell.id);
+    /* The card's part : here when it's this user's card, else the GM's client (the GM rolled the attack for them) */
+    const card = { message : message.id, ray, spell : choice.spell.id, level : choice.level, formula : damage?.formula ?? null, roll : roll ? roll.toJSON() : null };
+    if(message.isOwner) await this.writeCard(card);
+    else if(!await gm.run("paladinSmiteCard", card)) return false;
     await this.pay(actor, choice);
     await markUsedThisTurn(actor, "smite");
     await actionTracker.spend(actor, { kind : "bonus", what : choice.spell.name }).catch(error => log.debug(error));
-    await this.rider(message, choice.spell);
-    /* Hail of Thorns : everyone within 5 ft of the target saves, on this card (its save and damage, like Ice Knife's) */
-    const around = this.AROUND_TARGET[idOf(choice.spell)];
-    if(around && target) await this.aroundRider(message, choice.spell, choice.level, target, around);
     /* Concentration (Wrathful, Searing...) : on the spell, as if cast */
     if(choice.spell.system.properties?.has?.("concentration")){
       const activity = choice.spell.system.activities?.contents?.[0];
@@ -283,6 +292,34 @@ export class paladin{
     }
     log.debug("Smite", actor.name, choice.spell.name, choice.level, damage?.formula);
     return true;
+  }
+
+  /* The smite on the card : its damage, the smitten mark, its save (Wrathful...) or its burst (Hail of Thorns) */
+  static async writeCard({ message : id, ray = null, spell : spellId, level, formula = null, roll = null } = {}){
+    const message = game.messages.get(id);
+    const actor = message?.getAssociatedActor?.();
+    const spell = actor?.items?.get(spellId);
+    if(!message || !spell) return false;
+    if(roll){
+      const damage = CONFIG.Dice.DamageRoll.fromData(roll);
+      await message.system.addDamage([damage], { key : "smite", ray, formula,
+        label : module.format("classes.paladin.smiteLabel", { spell : spell.name, level }) });
+    }
+    await message.setFlag(module.id, `smite.${masteries.rayKey(ray)}`, spell.id);
+    await this.rider(message, spell);
+    /* Hail of Thorns : everyone within 5 ft of the target saves, on this card (its save and damage, like Ice Knife's) */
+    const around = this.AROUND_TARGET[idOf(spell)];
+    const target = this.targetOf(message, ray);
+    if(around && target) await this.aroundRider(message, spell, level, target, around);
+    return true;
+  }
+
+  /* GM : a player's smite on a card the GM rolled for their character */
+  static async smiteCardAsGM(data = {}, user){
+    const message = game.messages.get(data.message);
+    const actor = message?.getAssociatedActor?.();
+    if(!actor || !(user.isGM || actor.testUserPermission(user, "OWNER")) || this.smitten(message, data.ray ?? null)) return false;
+    return this.writeCard(data);
   }
 
   /* The free use or the slot */
@@ -368,7 +405,7 @@ export class paladin{
     const from = message.getAssociatedToken?.()?.object ?? message.getAssociatedActor?.()?.getActiveTokens?.()?.[0];
     if(!token || !from) return;
     const moved = await pushAway(token, from, this.pushOf(message));
-    if(!moved) ui.notifications.info(module.format("rollItem.mastery.blocked", { name : token.name }));
+    Hooks.callAll(`${module.id}.pushed`, token, moved, this.pushOf(message), message.getAssociatedItem?.() ?? null);
     await message.setFlag(module.id, `pushed.${uuid.replaceAll(".", "-")}`, true);
   }
 

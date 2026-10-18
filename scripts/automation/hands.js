@@ -209,6 +209,8 @@ export class hands{
 
   /* The items in the hands (one entry each, a two-handed one once) */
   static heldItems(actor){
+    /* A creature whose hands aren't in use yet : what the GM marked equipped */
+    if(!this.inUse(actor)) return actor.items.filter(i => this.isHeldGear(i) && this.canHold(i) && i.system.equipped);
     const h = this.of(actor);
     return [...new Set([h.main, h.off].filter(Boolean))].map(id => actor.items.get(id)).filter(Boolean);
   }
@@ -221,8 +223,30 @@ export class hands{
   }
 
   /* Is this actor's equipment run by the hands ? (a character, with the setting on) */
+  /* Characters, and creatures (NPCs) : those only once the GM's gear is used (nothing is put in their hands for them) */
   static manages(actor){
-    return this.enabled() && (actor?.type === "character");
+    return this.enabled() && ["character", "npc"].includes(actor?.type);
+  }
+
+  static isNpc(actor){
+    return actor?.type === "npc";
+  }
+
+  /* A creature's hands are in use once something was put in one (its first attack with a weapon, the GM's drag) */
+  static inUse(actor){
+    return !this.isNpc(actor) || !!actor?.getFlag?.(module.id, "hands");
+  }
+
+  /* A creature's first hand change : the shield the GM marked equipped goes in a hand first, free (bookkeeping, not an
+     object interaction), so picking up a one-handed weapon keeps it */
+  static async adopt(actor){
+    if(!this.isNpc(actor) || this.inUse(actor)) return;
+    const shield = actor.items.find(i => this.isShield(i) && i.system.equipped);
+    await actor.update({ [`flags.${module.id}.hands`] : { main : null, off : shield?.id ?? null } }, { [module.id] : { handsAdopt : true } });
+  }
+
+  static isShield(item){
+    return (item?.type === "equipment") && (item.system?.type?.value === "shield");
   }
 
   /**
@@ -277,6 +301,10 @@ export class hands{
       const item = actor.items.get(id);
       if(item && !held.has(id) && this.isHeldGear(item) && item.system.equipped) updates.push({ _id : id, "system.equipped" : false });
     }
+    /* A creature : whatever else the GM had marked equipped (a shield, a second weapon) isn't held any more */
+    if(this.isNpc(actor)) for(const item of actor.items){
+      if(!held.has(item.id) && !was.has(item.id) && this.isHeldGear(item) && this.canHold(item) && item.system.equipped) updates.push({ _id : item.id, "system.equipped" : false });
+    }
     await actor.setFlag(module.id, "hands", { main : next.main ?? null, off : next.off ?? null });
     if(updates.length) await actor.updateEmbeddedDocuments("Item", updates, { [module.id] : { hands : true } });
     await this.syncLights(actor, held, was);
@@ -290,6 +318,7 @@ export class hands{
 
   static async put(actor, item, slot){
     if(!this.canHold(item)) return ui.notifications.warn(module.format("hands.cantHold", { item : item?.name ?? "" }));
+    await this.adopt(actor);
     await this.save(actor, this.placed(actor, this.of(actor), item, slot));
   }
 
@@ -311,7 +340,9 @@ export class hands{
     if(!this.manages(actor)) return;
     if(actor.isOwner) this.tidySoon(actor);
     const root = (html instanceof HTMLElement) ? html : html?.[0];
-    const portrait = root?.querySelector(".sidebar .portrait") ?? app.element?.querySelector?.(".sidebar .portrait");
+    /* A character sheet's portrait is in its sidebar, a creature's (NPC sheet) in its header */
+    const where = ".sidebar .portrait, .sheet-header .portrait";
+    const portrait = root?.querySelector(where) ?? app.element?.querySelector?.(where);
     if(!portrait || portrait.querySelector(`.${module.id}-hands`)) return;
     const h = this.of(actor);
     const editable = app.isEditable ?? actor.isOwner;
@@ -376,6 +407,8 @@ export class hands{
       return;
     }
     if(this.handOf(actor, item)) return;
+    await this.adopt(actor);
+    if(this.handOf(actor, item)) return;
     const free = this.isTwoHanded(item) ? ((!h.main && !h.off) ? "main" : null)
       : !h.main ? "main" : !h.off ? "off" : null;
     if(free) return this.save(actor, this.placed(actor, h, item, free));
@@ -398,7 +431,7 @@ export class hands{
   /* Equipped held gear arriving on a character : unequipped (the hands decide what's held); body weapons : equipped */
   static onPreCreate(item, options = {}){
     const actor = item?.parent;
-    if(options[module.id]?.hands || !this.manages(actor)) return;
+    if(options[module.id]?.hands || !this.manages(actor) || this.isNpc(actor)) return;
     if(this.isBody(item) && !item.system?.equipped) return item.updateSource({ "system.equipped" : true });
     if(!this.isHeldGear(item) || !this.canHold(item) || !item.system?.equipped) return;
     item.updateSource({ "system.equipped" : false });
@@ -420,6 +453,7 @@ export class hands{
   /* The sheet shows the hands : strays unequipped and body weapons equipped, a moment later (an Equip being put in a
      hand finishes first) */
   static tidySoon(actor){
+    if(this.isNpc(actor)) return;
     if(!this.strays(actor).length && !this.bare(actor).length && !this.bodyInHand(actor)) return;
     clearTimeout(this.#tidying.get(actor.uuid));
     this.#tidying.set(actor.uuid, setTimeout(() => {

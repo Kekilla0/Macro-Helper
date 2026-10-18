@@ -379,7 +379,8 @@ export class warlock{
     const from = message.getAssociatedToken?.()?.object ?? tokenOf(message.getAssociatedActor?.());
     if(!token || !from) return;
     const moved = await pushAway(token, from, 10);
-    if(!moved) ui.notifications.info(module.format("rollItem.mastery.blocked", { name : token.name }));
+    /* Cut short : Homebrew's collision (Prone, 1d6 when it didn't move at all), else "blocked" */
+    Hooks.callAll(`${module.id}.pushed`, token, moved, 10, message.getAssociatedItem?.() ?? null);
     await message.setFlag(module.id, `repelled.${String(ray ?? "x")}-${token.document.id}`, true);
     log.debug("Repelling Blast", token.name, moved);
   }

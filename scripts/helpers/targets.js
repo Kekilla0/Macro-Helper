@@ -270,8 +270,13 @@ export async function pickTargets(origin, { count = 1, range, disposition = "ene
     ? [...game.user.targets].filter(t => ((t !== from) || includeSelf) && (distanceBetween(from, t) <= feet) && (!filter || filter(t)))
     : [];
   if(targeted.length){
-    if(!repeat || (targeted.length >= count)) return targeted.slice(0, count);
-    return Array.from({ length : count }, (_, i) => targeted[Math.floor(i * targeted.length / count)]);
+    /* Your own targets follow the same group rules as a pick (how many, within how far of each other) : else you pick */
+    const rules = (typeof numberAllowed === "function") || Number.isFinite(numberAllowed) || Number.isFinite(within);
+    const allowed = Math.min(count, typeof numberAllowed === "function" ? numberAllowed(targeted) : numberAllowed);
+    const fits = !rules || ((targeted.length <= allowed) && (!Number.isFinite(within) || isValidGroup(targeted, { within }).valid));
+    if(fits && (!repeat || (targeted.length >= count))) return targeted.slice(0, count);
+    if(!fits) ui.notifications.info(module.i18n("helpers.pick.targetsDontFit"));
+    else return Array.from({ length : count }, (_, i) => targeted[Math.floor(i * targeted.length / count)]);
   }
 
   const picks = await pickOnMap(from, feet, candidates, { count, numberAllowed, within, confirm, repeat, normalRange, notice, includeSelf, tokenColor, tokenWhy });

@@ -130,7 +130,10 @@ export class combatLog{
     const { TargetsField } = dnd5e.dataModels.chatMessage.fields;
     const targets = (message.system.targets ?? []).map(d => TargetsField.resolve(d)?.token?.name ?? d.name ?? "?");
     const crit = attack.isCritical ? ` ${module.i18n("combatLog.crit")}` : attack.isFumble ? ` ${module.i18n("combatLog.fumble")}` : "";
-    const step = (actor.getFlag(module.id, "economy")?.log ?? []).slice().reverse().find(e => e.barOnly && (e.item === item));
+    /* This attack's own step (an Opportunity Attack has none : not the Action attack from its own last turn) */
+    const made = Number(message.timestamp) || Date.now();
+    const step = (actor.getFlag(module.id, "economy")?.log ?? []).slice().reverse()
+      .find(e => e.barOnly && (e.item === item) && (Math.abs((Number(e.at) || 0) - made) < 15000));
     const place = step ? [step.kind ? module.i18n(`actionTracker.${step.kind}`) : "", step.nth].filter(Boolean).join(", ") : "";
     await this.add(actor, module.format("combatLog.attack", { item : place ? `${item} (${place})` : item, total : attack.total, targets : targets.join(", ") || "—" }) + crit, { numbers : true });
   }

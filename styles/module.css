@@ -399,6 +399,11 @@
 .macro-helper-hand > i.fa-hand.flip { transform : scaleX(-1); }
 .macro-helper-hand.both { border-style : double; border-width : 3px; }
 .macro-helper-hand .link { position : absolute; right : 1px; bottom : 1px; font-size : 9px; color : #fff; text-shadow : 0 0 2px #000; }
+/* A creature's (NPC sheet) portrait, in its header : smaller slots on its bottom corners */
+.sheet-header .portrait:has(> .macro-helper-hands) { position : relative; }
+.sheet-header .portrait > .macro-helper-hands { left : -6px; right : -6px; top : 38%; bottom : auto; z-index : 2; }
+.sheet-header .portrait > .macro-helper-hands .macro-helper-hand { width : 30px; height : 30px; border-radius : 6px; }
+.sheet-header .portrait > .macro-helper-hands .macro-helper-hand > i.fa-hand { font-size : 13px; }
 
 /* Effects the module applied itself : the card's apply buttons greyed out */
 .chat-message.macro-helper-auto-applied effect-application .apply-button,

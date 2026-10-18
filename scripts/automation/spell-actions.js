@@ -294,7 +294,7 @@ export class spellActions{
     if(!game.user.isGM || !push || !token || message.getFlag(module.id, key)) return;
     const from = message.getAssociatedToken?.()?.object ?? tokenOf(message.getAssociatedActor?.());
     const moved = (token.object && from) ? await pushAway(token.object, from, push.feet) : 0;
-    if(!moved) ui.notifications.info(module.format("rollItem.mastery.blocked", { name : token.name }));
+    Hooks.callAll(`${module.id}.pushed`, token.object, moved, push.feet, message.getAssociatedItem?.() ?? null);
     await message.setFlag(module.id, key, true);
   }
 
