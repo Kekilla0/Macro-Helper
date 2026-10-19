@@ -114,11 +114,8 @@ export class rogue{
     const actor = message.getAssociatedActor?.();
     if(!this.enabled() || !actor?.isOwner || message.system.extraRolls?.(ray, this.KEY)?.length || !this.qualifies(message, ray)) return false;
     const formula = this.formulaOf(actor);
-    const item = message.getAssociatedItem?.();
-    const type = [...(item?.system?.damage?.base?.types ?? [])][0] ?? "piercing";
-    const isCritical = !!message.system.attackOf(ray)?.isCritical;
-    const roll = await new CONFIG.Dice.DamageRoll(formula, {}, { type, types : [type], isCritical }).evaluate();
-    await message.system.addDamage([roll], { key : this.KEY, ray, label : this.itemOf(actor)?.name ?? "Sneak Attack", onHit : true, formula });
+    const type = [...(message.getAssociatedItem?.()?.system?.damage?.base?.types ?? [])][0] ?? "piercing";
+    await message.system.extraDamage(formula, { key : this.KEY, type, ray, label : this.itemOf(actor)?.name ?? "Sneak Attack", rollData : {} });
     log.debug("Sneak Attack rolled", actor.name, formula);
     return true;
   }

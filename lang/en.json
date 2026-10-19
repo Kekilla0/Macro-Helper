@@ -1072,6 +1072,7 @@
   "tokens.pushButton" : "Push {name} {feet} ft",
   "tokens.pullButton" : "Pull {name} {feet} ft",
   "tokens.push" : "Push {feet} ft",
+  "chatPictures.otherScene" : "{name} is on another scene ({scene}).",
   "tokens.pull" : "Pull {feet} ft",
   "tokens.pushed" : "Pushed {feet} ft",
   "tokens.pulled" : "Pulled {feet} ft",

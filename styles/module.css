@@ -198,6 +198,11 @@
   gap: 4px;
   margin: 0;
 }
+/* A creature's picture on a card : click it to find its token (chat-pictures.js) */
+.chat-message img.token[data-token]:not([data-token=""]) {
+  cursor: pointer;
+}
+
 /* Every push and pull on a card, at its bottom : the creature's picture and name, its button */
 .chat-message .macro-helper-moves {
   margin-block-start: 6px;

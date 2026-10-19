@@ -1,5 +1,6 @@
 import { cardBuilder } from './card-builder.js';
 import { cardMoves } from './card-moves.js';
+import { damageRoll } from './extra-damage.js';
 import { module } from '../module.js';
 import { settings } from '../settings.js';
 import { rollItem } from './roll-item.js';
@@ -1053,6 +1054,31 @@ export function registerMessages(){
       /* Already shown : Dice So Nice mustn't animate the added rolls a second time */
       if(game.dice3d) update["flags.dice-so-nice.skip"] = true;
       await this.parent.update(update);
+    }
+
+    /**
+     * The extra-damage lego : more damage on one attack, in its own box with its own Apply (Hunter's Mark, Hex, Sneak
+     * Attack) : card.extraDamage("1d6", { key : "hex", type : "necrotic", magical : true, ray }). Once per key per
+     * attack (a second call does nothing); doubled when that attack is a crit.
+     * @param {string} formula
+     * @param {object} options
+     * @param {string} options.key              what it is, one box per key
+     * @param {string|null} [options.type]      its damage type (default : the weapon's)
+     * @param {string} [options.label]          the box's title (default : the key)
+     * @param {number|null} [options.ray]       which attack on a multi card
+     * @param {boolean} [options.onHit=true]    its Apply only on a hit
+     * @param {boolean} [options.magical=false]
+     * @param {object} [options.rollData]       default : the card's activity's
+     * @returns {Promise<DamageRoll|null>}       null when it's already there
+     */
+    async extraDamage(formula, { key, type = null, label = null, ray = null, onHit = true, magical = false, rollData = null } = {}){
+      if(!formula || !key || this.extraRolls(ray, key).length) return null;
+      const item = this.parent.getAssociatedItem?.();
+      const kind = type ?? [...(item?.system?.damage?.base?.types ?? [])][0] ?? this.damageRolls?.[0]?.options?.type ?? null;
+      const data = rollData ?? this.parent.getAssociatedActivity?.()?.getRollData?.() ?? this.parent.getAssociatedActor?.()?.getRollData?.() ?? {};
+      const roll = await damageRoll(formula, { type : kind, crit : !!this.attackOf(ray)?.isCritical, magical, rollData : data });
+      await this.addDamage([roll], { key, label : label ?? key, ray, onHit, formula });
+      return roll;
     }
 
     /**

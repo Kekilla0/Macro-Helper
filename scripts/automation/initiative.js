@@ -266,7 +266,7 @@ export class initiative{
       .sort((a, b) => b.roll.total - a.roll.total)
       .map(({ roll, combatant }) => `
         <li class="macro-helper-row" data-combatant="${combatant.id}">
-          <img class="token" src="${esc(combatant.img)}" alt="">
+          <img class="token" src="${esc(combatant.img)}" alt="" data-token="${esc(combatant.token?.uuid ?? "")}">
           <span class="name">${esc(combatant.name)}</span>
           <span class="result" data-tooltip="${esc(`${roll.result} = ${roll.total}`)}">${roll.total}</span>
         </li>`).join("");

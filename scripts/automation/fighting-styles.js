@@ -13,6 +13,7 @@ import { conditions } from './conditions.js';
 import { limits } from './limits.js';
 import { hands } from './hands.js';
 import { actionTracker } from './action-tracker.js';
+import { grappling } from '../roll-item/card-builder.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -349,12 +350,9 @@ export class fightingStyles{
 
   /* ---------- Unarmed Fighting : 1d4 to the grappled, at the start of its turn ---------- */
 
-  /* Creatures this one grapples : Grappled, from one of its items */
+  /* Creatures this one grapples (the grapple lego's record, or a Grappled from one of its items) */
   static grappledBy(actor){
-    return (canvas.tokens?.placeables ?? []).filter(t => t.actor?.statuses?.has("grappled") && t.actor.effects.some(e => {
-      const origin = e.origin ? fromUuidSync(e.origin, { strict : false }) : null;
-      return e.statuses?.has?.("grappled") && (origin?.actor === actor);
-    }));
+    return grappling(actor).filter(t => t?.document);
   }
 
   /* Its turn starts : a card for its owner, a button per grappled creature (active GM posts it) */

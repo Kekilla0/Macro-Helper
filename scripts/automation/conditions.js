@@ -45,7 +45,14 @@ export class conditions{
     /* A hit on a Paralyzed / Unconscious target from within 5 ft : Roll Item's damage is a crit */
     Hooks.on(`${module.id}.preDamage`, (activity, config, attack) => { if(this.autoCrit(activity, attack)) config.isCritical = true; });
     /* An effect on a creature named like a condition but without its status : the status added (its token icon, the rules) */
-    Hooks.on("preCreateActiveEffect", effect => { this.statusFromName(effect); this.showOnToken(effect); });
+    Hooks.on("preCreateActiveEffect", effect => { this.statusFromName(effect); this.conditionIcon(effect); this.showOnToken(effect); });
+    /* A token shows an icon for every condition it has : an effect giving more than its picture shows (Engulfed's
+       Restrained, a grapple's Blinded) draws those conditions' icons beside it */
+    Hooks.once("setup", () => patch.wrap("CONFIG.Token.objectClass.prototype._drawEffects", async function(wrapped, ...args){
+      const result = await wrapped(...args);
+      await conditions.drawConditionIcons(this);
+      return result;
+    }));
     patch.wrap("CONFIG.Actor.documentClass.prototype.toggleStatusEffect", async function(wrapped, statusId, options = {}){
       return conditions.toggleOff(this, statusId, options, wrapped);
     });
@@ -70,6 +77,49 @@ export class conditions{
     if(!effect.statuses?.has?.(status.id)) change.statuses = [...(effect.statuses ?? []), status.id];
     if(status.img && (effect.img !== status.img)) change.img = status.img;
     if(Object.keys(change).length) effect.updateSource(change);
+  }
+
+  /* An effect that gives one of the rules' conditions shows dnd5e's icon for it, whatever it's named (Wrathful Smite's
+     Frightened, Hold Person's Paralyzed); several conditions, a pseudo one (Burning, Diseased) or none (Rage) : its own.
+     dnd5e's own status effects (Exhaustion's levels) and effects that keep their picture (Engulfed, Attached) aren't touched. */
+  static conditionIcon(effect){
+    if((effect?.parent?.documentName !== "Actor") || effect.transfer || effect.getFlag?.(module.id, "ownImg")) return;
+    const types = CONFIG.DND5E?.conditionTypes ?? {};
+    const found = this.conditionsOf(effect);
+    if(found.length !== 1) return;
+    const status = CONFIG.statusEffects.find(s => s.id === found[0]);
+    if(status?._id && (effect.id === status._id || effect._id === status._id)) return;
+    const img = status?.img ?? types[found[0]].img;
+    if(img && (effect.img !== img)) effect.updateSource({ img });
+  }
+
+  /* The rules' conditions an effect gives, without those another of them already brings (Paralyzed's Incapacitated) */
+  static conditionsOf(effect){
+    const types = CONFIG.DND5E?.conditionTypes ?? {};
+    const ids = [...(effect?.statuses ?? [])].filter(id => types[id] && !types[id].pseudo);
+    const implied = new Set(ids.flatMap(id => [...(CONFIG.statusEffects.find(s => s.id === id)?.statuses ?? []), ...(types[id].statuses ?? [])]));
+    return ids.filter(id => !implied.has(id));
+  }
+
+  /* The icons Foundry left out : each condition whose icon no shown effect already has, one per condition */
+  static async drawConditionIcons(token){
+    const SHOW = CONST.ACTIVE_EFFECT_SHOW_ICON;
+    const shown = token.actor?.appliedEffects?.filter(e => (e.showIcon === SHOW.ALWAYS) || ((e.showIcon === SHOW.CONDITIONAL) && e.isTemporary)) ?? [];
+    if(!shown.length || !token.effects) return;
+    const have = new Set(shown.map(e => e.img));
+    const extra = [];
+    for(const effect of shown){
+      for(const id of this.conditionsOf(effect)){
+        const img = CONFIG.statusEffects.find(s => s.id === id)?.img ?? CONFIG.DND5E.conditionTypes[id]?.img;
+        if(img && !have.has(img)){ have.add(img); extra.push(img); }
+      }
+    }
+    if(!extra.length) return;
+    const start = token.effects.children.length;
+    const icons = await Promise.all(extra.map(img => token._drawEffect(img, null)));
+    icons.forEach((icon, i) => { if(icon) icon.zIndex = start + i; });
+    token.effects.sortChildren();
+    token.renderFlags.set({ refreshEffects : true });
   }
 
   /* Off (or a toggle while it's on) : the effects carrying only this condition go too, then dnd5e's own if it has one */

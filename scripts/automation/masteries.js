@@ -5,7 +5,8 @@ import { settings } from '../settings.js';
 import { limits } from './limits.js';
 import { logger } from '../log.js';
 import { distanceBetween } from '../helpers/tokens.js';
-import { getSize, rollSave, setStatus, addTimedEffect, usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
+import { getSize, addTimedEffect, usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
+import { giveCondition } from '../roll-item/card-builder.js';
 import { pickAttack, isRangedAttack } from '../helpers/items.js';
 import { rollItem } from '../roll-item/roll-item.js';
 const log = logger.for(import.meta.url);
@@ -302,9 +303,9 @@ export class masteries{
       done[doneKey] = true;
       switch(key){
         case "topple" : {
-          const result = await rollSave(actor, "con", this.toppleDC(attacker, attack?.options?.ability));
-          if(result) done[doneKey] = { total : result.total, success : result.success };
-          if(result && !result.success) await setStatus(actor, "prone", true);
+          const { save } = await giveCondition(target, "prone", { save : "con", dc : this.toppleDC(attacker, attack?.options?.ability),
+            from : item, by : message.getAssociatedToken?.() ?? attacker });
+          if(save) done[doneKey] = save;
           break;
         }
         case "sap" :
@@ -348,7 +349,7 @@ export class masteries{
   static async pushCollision(target, moved, feet, item, name = null){
     if(moved >= feet) return;
     const actor = target.actor;
-    await setStatus(actor, "prone", true);
+    await giveCondition(target, "prone", { from : item });
     if(moved > 0) return;
 
     const roll = await new CONFIG.Dice.DamageRoll("1d6", {}, { type : "bludgeoning" }).evaluate();

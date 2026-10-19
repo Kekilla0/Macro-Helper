@@ -549,7 +549,7 @@ export class feats{
 
     const rows = allies.map(c => `
       <li class="macro-helper-row">
-        <img class="token" src="${esc(c.img)}" alt="">
+        <img class="token" src="${esc(c.img)}" alt="" data-token="${esc(c.token?.uuid ?? "")}">
         <span class="name">${esc(c.name)}</span>
         <span class="result">${c.initiative ?? "—"}</span>
         <button type="button" data-macro-helper-alert="${c.id}"><i class="fa-solid fa-right-left" inert></i> ${module.i18n("feats.alert.swap")}</button>

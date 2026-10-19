@@ -5,6 +5,7 @@ import { idOf, chooseOption, buttonRow, addButton, makeButton } from '../../help
 import { usedThisTurn, markUsedThisTurn, setStatus } from '../../helpers/actors.js';
 import { pickTargets } from '../../helpers/targets.js';
 import { distanceBetween } from '../../helpers/tokens.js';
+import { damageRoll } from '../../roll-item/extra-damage.js';
 import { gm } from '../../gm.js';
 import { uses } from '../../uses.js';
 import { itemFixes } from '../item-fixes.js';
@@ -275,8 +276,7 @@ export class paladin{
     const damage = this.NO_HIT_DAMAGE.includes(idOf(choice.spell)) ? null : this.damageOf(choice.spell, choice.level, target);
     let roll = null;
     if(damage){
-      const isCritical = !!message.system.attackOf(ray)?.isCritical;
-      roll = await new CONFIG.Dice.DamageRoll(damage.formula, {}, { type : damage.type, types : [damage.type], isCritical, properties : ["mgc"] }).evaluate();
+      roll = await damageRoll(damage.formula, { type : damage.type, crit : !!message.system.attackOf(ray)?.isCritical, magical : true });
     }
     /* The card's part : here when it's this user's card, else the GM's client (the GM rolled the attack for them) */
     const card = { message : message.id, ray, spell : choice.spell.id, level : choice.level, formula : damage?.formula ?? null, roll : roll ? roll.toJSON() : null };

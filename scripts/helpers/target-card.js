@@ -52,7 +52,7 @@ function renderRows(message, html){
     li.className = "macro-helper-row";
     const done = message.getFlag(module.id, `targetCardDone.${index}`);
     const may = game.user.isGM || !!token?.actor?.isOwner;
-    li.innerHTML = `<img class="token" src="${esc(token?.texture?.src ?? token?.actor?.img ?? "icons/svg/mystery-man.svg")}" alt="">
+    li.innerHTML = `<img class="token" src="${esc(token?.texture?.src ?? token?.actor?.img ?? "icons/svg/mystery-man.svg")}" alt="" data-token="${esc(row.token ?? "")}">
       <span class="name">${esc(token?.name ?? "?")}</span>
       <span class="macro-helper-row-apply">${done
         ? `<span class="applied healing"><i class="fa-solid fa-check" inert></i> ${esc(row.done || row.label)}</span>`

@@ -2,7 +2,8 @@ import { module } from '../../module.js';
 import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
 import { gm } from '../../gm.js';
-import { idOf, chooseOption, whisperOwners, waitFor, originItem } from '../../helpers/utils.js';
+import { idOf, chooseOption, whisperOwners, originItem } from '../../helpers/utils.js';
+import { eachAttack } from '../../roll-item/extra-damage.js';
 import { pickTargets } from '../../helpers/targets.js';
 import { tokenOf } from '../../helpers/tokens.js';
 import { uses } from '../../uses.js';
@@ -189,19 +190,10 @@ export class warlock{
     if(!this.enabled() || (message.type !== TYPES.attack)) return;
     const attacker = message.getAssociatedActor?.();
     if(!attacker || !this.hexOf(attacker)) return;
-    if(message.getFlag(module.id, "reveal") !== undefined){
-      await waitFor(() => (game.messages.get(message.id)?.getFlag(module.id, "reveal") ?? 2) >= 2, { timeout : 15000 });
-      message = game.messages.get(message.id) ?? message;
-    }
-    const { TargetsField } = dnd5e.dataModels.chatMessage.fields;
-    const rays = message.system.isMulti ? message.system.rays.map((_, i) => i) : [null];
-    for(const ray of rays){
-      const hexed = (message.system.targetsOf?.(ray) ?? []).some(t => this.hexedBy(TargetsField.resolve(t)?.token, attacker));
-      if(!hexed || message.system.extraRolls(ray, "hex").length) continue;
-      const isCritical = !!message.system.attackOf(ray)?.isCritical;
-      const roll = await new CONFIG.Dice.DamageRoll("1d6", {}, { type : "necrotic", types : ["necrotic"], isCritical, properties : ["mgc"] }).evaluate();
-      await message.system.addDamage([roll], { key : "hex", ray, label : "Hex", onHit : true, formula : "1d6" });
-    }
+    await eachAttack(message, async (card, ray, tokens) => {
+      if(!tokens.some(t => this.hexedBy(t, attacker))) return;
+      await card.system.extraDamage("1d6", { key : "hex", type : "necrotic", magical : true, ray, label : "Hex" });
+    });
   }
 
   static async onConcentrationEnd(effect){

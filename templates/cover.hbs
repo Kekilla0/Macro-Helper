@@ -4,7 +4,7 @@
 <ul class="unlist macro-helper-rows macro-helper-cover">
     {{#each targets}}
     <li class="macro-helper-row">
-        <img class="token" src="{{ img }}" alt="">
+        <img class="token" src="{{ img }}" alt="" data-token="{{ uuid }}">
         <span class="name">{{ name }}</span>
         <span class="macro-helper-row-apply">
             <i class="fa-fw fa-solid fa-shield-halved" data-tooltip="{{ localize "cover.title" }}" aria-label="{{ localize "cover.title" }}"></i>

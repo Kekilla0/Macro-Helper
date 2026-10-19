@@ -205,7 +205,7 @@ export class actionReady{
       speaker : ChatMessage.implementation.getSpeaker({ actor : entry.actor, token : entry.token }),
       whisper : [...new Set([...owners, ...game.users.filter(u => u.isGM).map(u => u.id)])],
       content : `<div class="${module.id}-ready-card"><p><strong>${esc(module.i18n("actionTracker.ready.triggered"))}</strong> ${esc(text)}</p>
-        <ul class="unlist macro-helper-rows"><li class="macro-helper-row"><img class="token" src="${esc(entry.token.texture?.src ?? entry.actor.img)}" alt="">
+        <ul class="unlist macro-helper-rows"><li class="macro-helper-row"><img class="token" src="${esc(entry.token.texture?.src ?? entry.actor.img)}" alt="" data-token="${esc(entry.token.uuid)}">
         <span class="name">${esc(entry.token.name)}</span><span class="${module.id}-ready-what">${esc(module.format("actionTracker.ready.marker", { what : entry.ready.name, trigger : this.triggerText(entry.ready) }))}</span>
         <span class="macro-helper-row-apply ${module.id}-ready-answer"></span></li></ul></div>`,
       flags : { [module.id] : { readyPrompt : { actor : entry.actor.uuid, token : entry.token.uuid, status : "pending", at : entry.ready.at } } },
@@ -482,7 +482,7 @@ export class actionReady{
       const li = document.createElement("li");
       li.className = "macro-helper-row";
       const may = (flag.status === "pending") && (row.status === "pending") && (game.user.isGM || t?.actor?.isOwner);
-      li.innerHTML = `<img class="token" src="${esc(t?.texture?.src ?? t?.actor?.img ?? "")}" alt=""><span class="name">${esc(t?.name ?? "?")}</span>
+      li.innerHTML = `<img class="token" src="${esc(t?.texture?.src ?? t?.actor?.img ?? "")}" alt="" data-token="${esc(row.token ?? "")}"><span class="name">${esc(t?.name ?? "?")}</span>
         <span class="macro-helper-row-apply">${(row.status !== "pending") ? `<span class="applied">${esc(module.i18n(`actionTracker.oa.${row.status}`))}</span>`
           : may ? `<button type="button" data-answer="attacked"><i class="fa-solid fa-hand-fist" inert></i> ${esc(module.i18n("actionTracker.oa.attack"))}</button>
                    <button type="button" data-answer="passed"><i class="fa-solid fa-forward" inert></i> ${esc(module.i18n("actionTracker.oa.pass"))}</button>` : ""}</span>`;

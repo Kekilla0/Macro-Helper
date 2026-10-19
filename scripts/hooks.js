@@ -38,6 +38,7 @@ import { compendiums } from './automation/compendiums.js';
 import { limits } from './automation/limits.js';
 import { rollRequests } from './requests/requests.js';
 import { hands } from './automation/hands.js';
+import { chatPictures } from './helpers/chat-pictures.js';
 import { heldLight } from './automation/held-light.js';
 import { ammunition } from './automation/ammunition.js';
 import { gm } from './gm.js';
@@ -66,6 +67,7 @@ Hooks.once("init", ()=> {
   api.register();
   rollItem.register();
   cardBuilder.register();
+  chatPictures.register();
   masteries.register();
   maneuvers.register();
   conditions.register();

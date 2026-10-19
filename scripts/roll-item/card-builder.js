@@ -9,6 +9,8 @@ import { rollOptions, rollOptionDamage, rollOptionD20, rollOptionDamageDice } fr
 import { disease } from '../automation/disease.js';
 import { patch } from '../patch.js';
 import { setDamage } from '../helpers/items.js';
+import { rollSave } from '../helpers/actors.js';
+import { damageRoll } from './extra-damage.js';
 import { noteReason } from './reasons.js';
 const log = logger.for(import.meta.url);
 
@@ -323,13 +325,41 @@ export async function trample(thing, feet, { size = "medium", disengage = false,
   return entered;
 }
 
-/* A condition straight on a creature, no card (Flumph's Prone Deficiency) : applyCondition's options; from : the item */
+/* A condition straight on a creature, no card (Flumph's Prone Deficiency) : applyCondition's options; from : the item,
+   by : the creature doing it (default : the item's owner) */
 export async function applyConditionNow(thing, spec = {}){
   const actor = thing?.actor ?? thing;
-  const doc = thing?.document ?? ((thing?.documentName === "TokenDocument") ? thing : actor?.token ?? actor?.getActiveTokens?.(false, true)?.[0]?.document ?? null);
+  const doc = thing?.document ?? ((thing?.documentName === "Token") ? thing : actor?.token ?? actor?.getActiveTokens?.(false, true)?.[0]?.document ?? null);
   if(!actor) return false;
   const part = applyCondition(spec);
-  return gm.run("applyConditionNow", { actor : actor.uuid, token : doc?.uuid ?? null, part, origin : spec.from?.uuid ?? spec.from ?? null });
+  const by = spec.by ? (tokenOf(spec.by)?.document ?? spec.by.actor ?? spec.by) : null;
+  return gm.run("applyConditionNow", { actor : actor.uuid, token : doc?.uuid ?? null, part, origin : spec.from?.uuid ?? spec.from ?? null, by : by?.uuid ?? null });
+}
+
+/**
+ * The condition lego : a creature gets a condition now, the way every rule gives one (Topple, Shove, a push into a
+ * wall, a monster's Prone). Read as : target.applyCondition("prone", { save : "con", dc : 13, from : item }).
+ *   save, dc     it saves first (the ability, the DC) : a success and it doesn't get it
+ *   duration     rounds, "endOfNextTurn" / "startOfNextTurn" / "endOfMyNextTurn", or Foundry's duration data
+ *   repeat       "end" / "start" : it saves again (same ability and DC) at that point of each of its turns, ending it
+ *   from, by     the item, and the creature doing it (default : the item's owner) : its name, its origin
+ *   ...          applyCondition's other options (with, escape, label, insteadOfDamage...)
+ * Already under it : the harsher one stays. Done by the GM's client; its owner or the GM may ask.
+ * @returns {Promise<{ applied : boolean, save : { total : number, success : boolean }|null }>}
+ */
+export async function giveCondition(thing, type, { save = null, dc = null, repeat = null, ...options } = {}){
+  const actor = thing?.actor ?? thing;
+  if(!actor || !type) return { applied : false, save : null };
+  let rolled = null;
+  if(save && Number.isFinite(Number(dc))){
+    rolled = await rollSave(thing, save, Number(dc));
+    if(!rolled) return { applied : false, save : null };
+    rolled = { total : rolled.total, success : rolled.success };
+    if(rolled.success) return { applied : false, save : rolled };
+  }
+  const again = (repeat && save && Number.isFinite(Number(dc))) ? { ability : save, dc : Number(dc), repeat } : null;
+  const applied = !!(await applyConditionNow(thing, { ...options, type, ...(again ? { save : again } : {}) }));
+  return { applied, save : rolled };
 }
 
 /* Is that point difficult terrain for this creature (for now : another creature's space, as dnd5e judges it) */
@@ -353,6 +383,27 @@ export function isSmaller(thing, size){
 
 /* ---------- Grapples ---------- */
 
+/* The 2024 escape DC of a grapple : 8 + the grappler's Strength modifier + its Proficiency Bonus */
+export function escapeDC(grappler){
+  const actor = grappler?.actor ?? grappler;
+  if(!actor?.system) return 10;
+  return 8 + (Number(actor.system.abilities?.str?.mod) || 0) + (Number(actor.system.attributes?.prof) || 0);
+}
+
+/**
+ * The grapple lego : grappler.grapple(target, { escape, with, from }) (the Grapple action, a monster's grab).
+ *   escape   its escape DC (default : escapeDC, 8 + STR + proficiency)
+ *   with     more conditions held with it (Blinded, Restrained) : they end with it
+ *   from     the item; applyCondition's other options too (duration, repeat damage, self...)
+ * The target gets "Grappled" with who holds it and the DC : Escape on its action bar (its Action), Release on the
+ * grappler's (any time), and grapplesOn / grappling read it back.
+ * @returns {Promise<{ applied : boolean, save : null }>}
+ */
+export async function grapple(grappler, target, { escape = null, ...options } = {}){
+  const by = tokenOf(grappler) ?? grappler;
+  return giveCondition(target, "grappled", { ...options, escape : Number(escape) || escapeDC(by), by });
+}
+
 /* The grapples on a creature : [{ effect, dc, by (the grappler : token or actor), byName }] */
 export function grapplesOn(actor){
   return (actor?.effects?.contents ?? [...(actor?.effects ?? [])]).filter(e => !e.disabled && (e.statuses?.has?.("grappled") || e.getFlag(module.id, "grapple")?.attach)).map(effect => {
@@ -364,8 +415,7 @@ export function grapplesOn(actor){
     const grappler = by?.actor ?? by;
     const save = [...(item?.system?.activities ?? [])].find(a => a.type === "save");
     const text = String(item?.system?.description?.value ?? "");
-    const dc = Number(f.escape) || Number(save?.save?.dc?.value) || Number(text.match(/escape\s+DC\s+(\d+)/i)?.[1])
-      || (grappler ? 8 + (Number(grappler.system?.abilities?.str?.mod) || 0) + (Number(grappler.system?.attributes?.prof) || 0) : 10);
+    const dc = Number(f.escape) || Number(save?.save?.dc?.value) || Number(text.match(/escape\s+DC\s+(\d+)/i)?.[1]) || escapeDC(grappler);
     return { effect, dc, by, byName : by?.name ?? grappler?.name ?? "?", skill : f.skill ?? null, attach : !!f.attach };
   });
 }
@@ -484,9 +534,7 @@ export class CardBuilder{
       const facts = Object.values(part.facts ?? {});
       if(facts.length && !facts.some(Boolean)) continue;
       const type = part.type ?? this.message.system?.damageRolls?.[0]?.options?.type ?? null;
-      const roll = new CONFIG.Dice.DamageRoll(part.formula, rollData, { type, types : type ? [type] : [], isCritical : !!attack?.isCritical });
-      await roll.evaluate();
-      rolls.push(roll);
+      rolls.push(await damageRoll(part.formula, { type, crit : !!attack?.isCritical, rollData }));
     }
     return rolls;
   }
@@ -639,8 +687,9 @@ export class cardBuilder{
     for(const cls of [CONFIG.Actor.documentClass, CONFIG.Token.documentClass, CONFIG.Token.objectClass]){
       add(cls, "isSmaller", function(size){ return isSmaller(this, size); });
       add(cls, "grappling", function(){ return grappling(this); });
+      add(cls, "grapple", function(target, options){ return grapple(this, target, options); });
       add(cls, "attachedTo", function(){ return attachedTo(this); });
-      add(cls, "applyCondition", function(spec){ return applyConditionNow(this, spec); });
+      add(cls, "applyCondition", function(type, options){ return (typeof type === "string") ? giveCondition(this, type, options) : applyConditionNow(this, type); });
       add(cls, "isType", function(type){ return isType(this, type); });
       add(cls, "isImmuneTo", function(item){ return isImmuneTo(this, item); });
     }
@@ -1034,7 +1083,7 @@ export class cardBuilder{
     if(old.length) await actor.deleteEmbeddedDocuments("ActiveEffect", old.map(e => e.id), { [module.id] : { reason : module.format("cardBuilder.replaced", { name : source }) } }).catch(() => null);
     const [made] = await actor.createEmbeddedDocuments("ActiveEffect", [{ name : module.format("cardBuilder.attachedName", { name : source }), img, origin,
       statuses : [...(part.with ?? [])],
-      flags : { [module.id] : { cardCondition : true, grapple : { by : byUuid, escape : Number(part.escape) || null, skill : part.check ?? "ath", attach : true } } } }]);
+      flags : { [module.id] : { cardCondition : true, ownImg : true, grapple : { by : byUuid, escape : Number(part.escape) || null, skill : part.check ?? "ath", attach : true } } } }]);
     if(!made || !doer) return;
     const speed0 = ["walk", "fly", "climb", "swim", "burrow"].map(kind => ({ key : `system.attributes.movement.speeds.${kind}`, type : "override", mode : 5, value : "0" }));
     const [mine] = await doer.createEmbeddedDocuments("ActiveEffect", [{ name : module.format("cardBuilder.attachedName", { name : targetToken?.name ?? actor.name }), img, origin,
@@ -1060,12 +1109,14 @@ export class cardBuilder{
     }
   }
 
-  static async applyNowAsGM({ actor : uuid, token : tokenUuid, part, origin } = {}, user){
+  static async applyNowAsGM({ actor : uuid, token : tokenUuid, part, origin, by : byUuid = null } = {}, user){
     const actor = fromUuidSync(uuid ?? "", { strict : false });
     if(!actor || !part || !(user.isGM || actor.testUserPermission(user, "OWNER"))) return false;
     const targetToken = tokenUuid ? fromUuidSync(tokenUuid, { strict : false }) : null;
     const item = origin ? fromUuidSync(origin, { strict : false }) : null;
-    await this.applyConditionTo(actor, part, { origin, by : item?.actor ?? actor, sourceToken : null, targetToken });
+    const doer = byUuid ? fromUuidSync(byUuid, { strict : false }) : null;
+    const sourceToken = (doer?.documentName === "Token") ? doer : null;
+    await this.applyConditionTo(actor, part, { origin, by : sourceToken?.actor ?? doer ?? item?.actor ?? actor, sourceToken, targetToken });
     return true;
   }
 
@@ -1210,7 +1261,7 @@ export class cardBuilder{
     const damage = part.damage ? `(${part.damage})${part.type ? `[${part.type}]` : ""}` : null;
     const [made] = await actor.createEmbeddedDocuments("ActiveEffect", [{ name : module.format("cardBuilder.engulfedName", { name : cube.name }),
       img : item?.img ?? status?.img ?? "icons/svg/acid.svg", origin, statuses : ["restrained"],
-      flags : { [module.id] : { cardCondition : true, engulfedBy : cube.uuid, pullDamage : damage,
+      flags : { [module.id] : { cardCondition : true, ownImg : true, engulfedBy : cube.uuid, pullDamage : damage,
         grapple : { by : cube.uuid, escape : Number(part.escape) || null, skill : "ath", attach : true, engulf : true },
         ...(damage ? { repeat : { label : "start", from : { item : origin, actor : cube.actor?.uuid ?? null }, roll : null,
           when : { at : "start", of : cube.actor?.uuid ?? null }, damage } } : {}) } } }]);

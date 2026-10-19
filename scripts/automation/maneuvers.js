@@ -2,7 +2,8 @@ import { module } from '../module.js';
 import { settings } from '../settings.js';
 import { limits } from './limits.js';
 import { logger } from '../log.js';
-import { getSize, setStatus } from '../helpers/actors.js';
+import { getSize } from '../helpers/actors.js';
+import { giveCondition, grapple } from '../roll-item/card-builder.js';
 import { masteries } from './masteries.js';
 import { originOf } from '../helpers/utils.js';
 import { conditions } from './conditions.js';
@@ -101,7 +102,8 @@ export class maneuvers{
     Hooks.on(`${module.id}.cardButton`, (message, id, { button } = {}) => { if(id === "shove") this.shoveClicked(message, button); });
     Hooks.on(`${module.id}.preApplyEffects`, (message, actor, effects, { uuid } = {}) => {
       if(this.ofCard(message) === "shove"){ this.shoveAsGM(message, uuid); return false; }
-      return this.mayGrapple(message, actor);
+      if(this.ofCard(message) === "grapple"){ this.grappleAsGM(message, uuid); return false; }
+      return true;
     });
     /* The GM's row button : the shover's choice (nothing until it's made) */
     Hooks.on(`${module.id}.rowEffect`, (message, uuid, row, { success } = {}) => this.shoveRow(message, uuid, row, success));
@@ -178,8 +180,27 @@ export class maneuvers{
     if(attacker && !this.fits(token.actor, attacker)
       && !limits.allow(module.format("rollItem.maneuver.tooBig", { name : token.name, action : module.i18n("rollItem.maneuver.shove") }), { who : attacker.name, what : `Shove ${token.name}` })) return;
 
-    await setStatus(token.actor, "prone", true);
+    await giveCondition(token, "prone", { from : card.getAssociatedItem?.() ?? null, by : card.getAssociatedToken?.() ?? attacker });
     await card.setFlag(module.id, `effects.${key}`, true);
+  }
+
+  /**
+   * The GM's row button on a Grapple card : the grapple lego (who holds it, the card's DC to escape), once, on a
+   * creature that failed its save and no more than one size larger (Rule Limits decides past that).
+   * @param {ChatMessage} card
+   * @param {string} uuid   the target's token uuid
+   */
+  static async grappleAsGM(card, uuid){
+    if(!game.user.isGM || !uuid) return;
+    const key = this.keyOf(uuid);
+    if(card.getFlag(module.id, `effects.${key}`)) return ui.notifications.info(module.i18n("rollItem.maneuver.done"));
+    if(card.system.outcomes?.get(uuid) !== "failure") return ui.notifications.info(module.i18n("rollItem.maneuver.notFailed"));
+    const token = fromUuidSync(uuid, { strict : false });
+    if(!token?.actor || !this.mayGrapple(card, token.actor)) return;
+    const grappler = card.getAssociatedToken?.() ?? card.getAssociatedActor();
+    const { applied } = await grapple(grappler, token, { from : card.getAssociatedItem?.() ?? null,
+      escape : card.getAssociatedActivity?.()?.save?.dc?.value ?? null });
+    if(applied) await card.setFlag(module.id, `effects.${key}`, true);
   }
 
   /* Grapple : only a creature no more than one size larger than the grappler (Rule Limits decides past that) */

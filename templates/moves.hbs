@@ -3,7 +3,7 @@
 <div class="macro-helper-moves">
     {{#each moves}}
     <section class="icon-row">
-        <img class="token" src="{{ img }}" alt="{{ name }}" inert>
+        <img class="token" src="{{ img }}" alt="{{ name }}" data-token="{{ uuid }}">
         <span class="name">{{ name }}</span>
         <div class="card-buttons">
             <button type="button" data-action="cardMove" data-key="{{ key }}"{{#if tooltip}} data-tooltip="{{ tooltip }}"{{/if}} {{ disabled done }}>

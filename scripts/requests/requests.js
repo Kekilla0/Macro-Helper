@@ -313,7 +313,7 @@ export class rollRequests{
       const rollButton = canRoll ? `<button type="button" class="save" data-request-roll="${esc(row.key)}"><i class="fa-solid fa-dice-d20" inert></i> ${esc(module.i18n("requests.roll"))}</button>`
         : !entry ? `<span class="pending"><i class="fa-solid fa-hourglass-half" inert></i></span>` : "";
       if(request.compact && entry && roll) feet.push(...this.footButtons(request, row, entry, actor, roll));
-      return `<li class="macro-helper-row"><img class="token" src="${esc(row.img)}" alt=""><span class="name">${esc(row.name)}</span><span class="macro-helper-row-actions">${rollButton}${resultHtml}${reroll}${debug}</span></li>`;
+      return `<li class="macro-helper-row"><img class="token" src="${esc(row.img)}" alt="" data-token="${esc(row.token ?? "")}"><span class="name">${esc(row.name)}</span><span class="macro-helper-row-actions">${rollButton}${resultHtml}${reroll}${debug}</span></li>`;
     }).join("");
   }
 

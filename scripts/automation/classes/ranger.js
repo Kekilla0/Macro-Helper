@@ -3,7 +3,8 @@ import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
 import { gm } from '../../gm.js';
 import { casting } from '../casting.js';
-import { idOf, chooseOption, whisperOwners, waitFor } from '../../helpers/utils.js';
+import { idOf, chooseOption, whisperOwners } from '../../helpers/utils.js';
+import { eachAttack } from '../../roll-item/extra-damage.js';
 import { pickTargets } from '../../helpers/targets.js';
 import { tokenOf } from '../../helpers/tokens.js';
 import { uses } from '../../uses.js';
@@ -230,22 +231,11 @@ export class ranger{
     if(!this.enabled() || (message.type !== TYPES.attack)) return;
     const attacker = message.getAssociatedActor?.();
     if(!attacker || !this.markOf(attacker)) return;
-    /* Roll Item's staged card : attack first, then damage : the mark's die rolls with the damage */
-    if(message.getFlag(module.id, "reveal") !== undefined){
-      await waitFor(() => (game.messages.get(message.id)?.getFlag(module.id, "reveal") ?? 2) >= 2, { timeout : 15000 });
-      message = game.messages.get(message.id) ?? message;
-    }
-    const rays = message.system.isMulti ? message.system.rays.map((_, i) => i) : [null];
-    for(const ray of rays){
-      /* Every attack at it, hit or miss (no die would tell a miss); its Apply only on a hit */
-      const { TargetsField } = dnd5e.dataModels.chatMessage.fields;
-      const marked = (message.system.targetsOf?.(ray) ?? []).some(t => this.markedBy(TargetsField.resolve(t)?.token, attacker));
-      if(!marked || message.system.extraRolls(ray, "huntersMark").length) continue;
-      const isCritical = !!message.system.attackOf(ray)?.isCritical;
-      const roll = await new CONFIG.Dice.DamageRoll("1d6", {}, { type : "force", types : ["force"], isCritical, properties : ["mgc"] }).evaluate();
-      const spell = this.spellOf(attacker);
-      await message.system.addDamage([roll], { key : "huntersMark", ray, label : spell?.name ?? "Hunter's Mark", onHit : true, formula : "1d6" });
-    }
+    /* Every attack at it, hit or miss (no die would tell a miss); its Apply only on a hit */
+    await eachAttack(message, async (card, ray, tokens) => {
+      if(!tokens.some(t => this.markedBy(t, attacker))) return;
+      await card.system.extraDamage("1d6", { key : "huntersMark", type : "force", magical : true, ray, label : this.spellOf(attacker)?.name ?? "Hunter's Mark" });
+    });
   }
 
   /* Concentration on Hunter's Mark ended : the caster's mark goes (active GM) */
