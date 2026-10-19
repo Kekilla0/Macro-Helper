@@ -22,8 +22,8 @@ const log = logger.for(import.meta.url);
  *
  *   Ancients  Nature's Wrath   Restrained : the Strength save again at the end of each of its turns (Spells :
  *                              repeating effects).
- *   Devotion  Sacred Weapon    the Paladin's token sheds Bright Light 20 ft and Dim Light 20 ft more while the
- *                              enchantment lasts.
+ *   Devotion  Sacred Weapon    once the enchantment is on a weapon, the Paladin's token sheds Bright Light 20 ft
+ *                              and Dim Light 20 ft more while it lasts.
  *   Glory     Inspiring Smite  after Divine Smite : a card offers it (a Channel Divinity use) : 2d8 + Paladin level
  *                              temporary Hit Points, divided among creatures you pick within 30 ft (you too). Your own
  *                              at once; others' : the GM's button.
@@ -47,6 +47,7 @@ export class paladinOaths{
     if(game.system.id !== "dnd5e") return;
     repeating.TABLE[this.WRATH] ??= { label : "end", roll : { type : "save", ability : "str" } };
     Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.afterUse(activity, results));
+    Hooks.on("createActiveEffect", (effect, options, userId) => this.sacredStarts(effect, userId));
     Hooks.on("deleteActiveEffect", effect => this.sacredEnds(effect));
     Hooks.on(`${module.id}.smite`, (actor, spell) => this.afterSmite(actor, spell));
     subclasses.onOffer("inspiringSmite", actor => this.inspiringSmite(actor));
@@ -61,13 +62,19 @@ export class paladinOaths{
     const id = idOf(activity.item);
     const actor = activity.getUsageToken?.()?.actor ?? activity.actor;
     try {
-      if(id === this.SACRED) await addLight(tokenOf(actor), this.LIGHT, { key : "sacredWeapon" });
-      else if(id === this.VOW) await this.vow(actor, activity, results);
+      if(id === this.VOW) await this.vow(actor, activity, results);
     }
     catch(error){ log.error(error); ui.notifications.warn(error.message); }
   }
 
   /* ---------- Devotion ---------- */
+
+  /* The enchantment on a weapon (not the use itself) : the light, on the client that applied it */
+  static async sacredStarts(effect, userId){
+    if(!this.enabled() || (userId !== game.user.id) || !effect?.isAppliedEnchantment || (idOf(originItem(effect)) !== this.SACRED)) return;
+    const actor = originItem(effect)?.actor;
+    if(actor) await addLight(tokenOf(actor), this.LIGHT, { key : "sacredWeapon" });
+  }
 
   /* The enchantment gone : its light too */
   static async sacredEnds(effect){

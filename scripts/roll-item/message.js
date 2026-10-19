@@ -368,14 +368,14 @@ export function registerMessages(){
   };
 
   /* A row's damage / healing Apply : nothing to apply (0 : immune, or no damage on a save) : no button */
-  const applyOf = (message, uuid, { hasRolls, owner, hasSave, result, multiplier, labelKey, hideTotal, actor, rolls }) => {
-    if(!hasRolls || !owner || (hasSave && !result) || appliedOn(message, uuid, ["rows"]) || (multiplier === 0)) return null;
+  const applyOf = (message, uuid, { hasRolls, owner, hasSave, result, multiplier, labelKey, hideTotal, actor, rolls, part = "rows" }) => {
+    if(!hasRolls || !owner || (hasSave && !result) || appliedOn(message, uuid, [part]) || (multiplier === 0)) return null;
     const amount = rowAmount(message, actor, rolls, multiplier);
     if(amount && (amount.amount === 0)) return null;
     return { multiplier, label : labelKey, ...(hideTotal ? {} : (amount ?? {})) };
   };
 
-  const buildRows = (message, { targets = [], hasSave = false, abilities = [], dc, onSave, hasRolls = false, rolls = [], isHeal = false, bonus = "", effects = [] } = {}) => {
+  const buildRows = (message, { targets = [], hasSave = false, abilities = [], dc, onSave, hasRolls = false, rolls = [], isHeal = false, bonus = "", effects = [], part = "rows" } = {}) => {
     if(!targets.length || !message.isContentVisible) return [];
     const results = saveResultsOf(message);
     const dmScreen = settings.value("rollItemDmScreen");
@@ -400,10 +400,12 @@ export function registerMessages(){
         uuid : descriptor.token,
         name : shown.name,
         img : shown.img,
+        /* Another part's rows (a save card's healing : Land's Aid) : its own Apply and applied amount */
+        part : (part === "rows") ? "" : part,
         saveMessage : result?.message?.id ?? "",
         canReroll : !!saveOptions?.reroll && !result?.auto,
         rerollButtons : result?.auto ? [] : (saveOptions?.buttons ?? []).map(({ id, icon, label }) => ({ id, icon, label })),
-        applied : appliedOn(message, descriptor.token, ["rows"]),
+        applied : appliedOn(message, descriptor.token, [part]),
         saves : (hasSave && !result && owner) ? abilities.map(ability => ({
           ability, label : `${String(CONFIG.DND5E.abilities[ability]?.abbreviation ?? ability).toUpperCase()} ${dc ?? ""}`.trim(),
           hint : saveHint(message, actor, ability, { dc, bonus, cover : (ability === "dex") ? COVER[cover] : 0 }),
@@ -417,7 +419,7 @@ export function registerMessages(){
           detail : (!hideTotal && result.message) ? rollDetail(result.message.rolls?.[0], result.shift ?? 0) : "",
         } : null,
         /* Once applied from this card, the amount shows instead */
-        apply : applyOf(message, descriptor.token, { hasRolls, owner, hasSave, result, multiplier, labelKey, hideTotal, actor, rolls }),
+        apply : applyOf(message, descriptor.token, { hasRolls, owner, hasSave, result, multiplier, labelKey, hideTotal, actor, rolls, part }),
         /* The save's effects (Turned, Paralyzed...) : the GM applies them once it's rolled, to those they apply to */
         ...effectRow(message, descriptor.token, { hasSave, result, effects, owner }),
         /* Buttons rules add to this creature's row (a mastery's Topple) : macro-helper.rowButtons */
@@ -549,7 +551,7 @@ export function registerMessages(){
   }
 
   /* A row's damage / healing : only the target's owner (or the GM) can apply it, sized by its save */
-  const applyRow = async (message, button, { rolls = [], targets = [] } = {}) => {
+  const applyRow = async (message, button, { rolls = [], targets = [], part = "rows" } = {}) => {
     /* Not before its dice have landed (healing applied while its die still rolled) */
     await diceLanded(message);
     const uuid = button.dataset.target;
@@ -560,7 +562,7 @@ export function registerMessages(){
     /* Hook : a rule can add to applying (Battle Medic spends the target's Hit Die) or stop it (return false) */
     if(Hooks.call(`${module.id}.preApplyRow`, message, actor, { multiplier }) === false) return;
     button.disabled = true;
-    await applyDamageRolls(message, actor, rolls, { multiplier, part : "rows" });
+    await applyDamageRolls(message, actor, rolls, { multiplier, part });
   };
 
   /* Does an attack roll hit this AC : crits always, fumbles never, no AC known counts as a hit */
@@ -1784,8 +1786,40 @@ export function registerMessages(){
       return rerollLowest(this.parent, this.damageRolls, n);
     }
 
+    /* Not its healing part's (healRolls) */
     get damageRolls(){
-      return this.parent.rolls.filter(r => r instanceof DamageRoll);
+      return this.parent.rolls.filter(r => (r instanceof DamageRoll) && (tagOf(r).part !== "heal"));
+    }
+
+    /**
+     * A second activity's healing on this card, under its save's rows (Land's Aid : the save and its damage, then the
+     * healing of one creature in the area) : rolled now, a row of its own for each creature it heals.
+     * @param {Activity} activity   a heal activity
+     * @param {Token[]} tokens      who it heals
+     * @returns {Promise<boolean>}
+     */
+    async addHealing(activity, tokens = []){
+      if(!this.parent.isOwner || !tokens.length) return false;
+      const rolls = tag(await rollItem.rollDamage(activity, null), { part : "heal" });
+      if(!rolls.length) return false;
+      const targets = tokens.flatMap(t => TargetsField.getDescriptors([t.object ?? t]));
+      await replaceRolls(this.parent, { rolls : [...this.parent.rolls, ...rolls], shown : rolls });
+      await this.parent.setFlag(module.id, "healing", { label : activity.name || activity.item?.name || "", targets });
+      return true;
+    }
+
+    get healRolls(){
+      return this.parent.rolls.filter(r => (r instanceof DamageRoll) && (tagOf(r).part === "heal"));
+    }
+
+    _prepareHealContext(){
+      const healing = this.parent.getFlag(module.id, "healing");
+      const rolls = this.healRolls;
+      if(!healing?.targets?.length || !rolls.length || !this.parent.isContentVisible) return null;
+      const damage = damageContext(this.parent, rolls);
+      damage.showTray = false;
+      return { label : healing.label, damage,
+        rows : buildRows(this.parent, { targets : healing.targets, hasRolls : true, rolls, isHeal : true, part : "heal" }) };
     }
 
     rayDamage(index){
@@ -1920,6 +1954,7 @@ export function registerMessages(){
       context.sections = [];
       if(this.parent.isContentVisible) Hooks.callAll(`${module.id}.cardSections`, this.parent, context.sections, { ray : null });
       context.sections = context.sections.filter(s => s?.partial);
+      context.healing = this._prepareHealContext();
       context.moves = cardMoves.context(this.parent);
       context.extras = this.buttonsContext();
 
@@ -1949,7 +1984,9 @@ export function registerMessages(){
       const activity = rerollStart(this, target);
       if(!activity) return;
 
-      const keep = this.parent.rolls.filter(r => !(r instanceof DamageRoll));
+      /* Its healing part (Land's Aid) stays */
+      const old = this.damageRolls;
+      const keep = this.parent.rolls.filter(r => !old.includes(r));
       const damage = [];
       if(this.isMulti) for(const i of this.rays.keys()) damage.push(...await this._rollRay(activity, i));
       else damage.push(...await rollItem.rollDamage(activity, null));
@@ -1967,7 +2004,8 @@ export function registerMessages(){
 
       const damage = await this._rollRay(activity, index);
       if(!damage.length) return target.disabled = false;
-      const rolls = this.parent.rolls.filter(r => !(r instanceof DamageRoll) || tagOf(r).ray !== index);
+      const old = this.rayDamage(index);
+      const rolls = this.parent.rolls.filter(r => !old.includes(r));
       await replaceRolls(this.parent, { rolls : [...rolls, ...damage], shown : damage });
     }
 
@@ -1999,6 +2037,10 @@ export function registerMessages(){
     /* A target's damage / healing, from its row (applyRow) */
     /** @this {RollItemSaveData} */
     static async #rowApply(event, target){
+      if(target.dataset.part === "heal"){
+        const targets = this.parent.getFlag(module.id, "healing")?.targets ?? [];
+        return applyRow(this.parent, target, { rolls : this.healRolls, targets, part : "heal" });
+      }
       await applyRow(this.parent, target, { rolls : this.damageRolls, targets : this.targets });
     }
 

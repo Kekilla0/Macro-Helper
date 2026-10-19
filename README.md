@@ -52,6 +52,7 @@ The main pieces, as methods on tokens, actors and items. Most also exist as `Mac
 | `card.append(part)`, `card.remove("prone")` | Add a part to a card, or take one of the item's own effects off. |
 | `applyCondition`, `applyEffect`, `push`, `extraDamage`, `followUp` | Card parts. Each is shown on a target's row, `when` its result calls for it (`"hit"`, `"fail"`, or a check per target). |
 | `MacroHelper.onHit({ feature, when, formula, once, cost })` | A button after a qualifying hit that adds damage in its own box (Divine Fury, Hand of Harm, a Battle Master maneuver). |
+| `card.system.addHealing(activity, tokens)` | A second activity's healing on a save card, under the saves, with its own row and Apply (Land's Aid). |
 | `MacroHelper.cutDamage(card, token, { amount, label })` | A card's damage to one creature made lower when applied (Interception, Deflect Attacks, Protective Field). |
 | `token.actor.save("con", 13, { from : item })` | The save lego: one save, rolled the way every rule rolls it. |
 | `token.applyCondition("prone", { save, dc, duration, repeat })`, `token.grapple(target)` | A condition, or a grapple, straight on a creature with no card. |

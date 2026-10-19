@@ -15,7 +15,9 @@ const log = logger.for(import.meta.url);
  * Druid subclasses, level 3 (Subclasses setting). The circle spells are the import's; Circle Forms is Wild Shape's
  * (classes/druid.js). Star Map's free Guiding Bolts aren't in Plutonium's data (the spell is cast as usual).
  *
- *   Land   Land's Aid          after its save card : a card offers its healing (one creature in the area).
+ *   Land   Land's Aid          on its save card : once the area is placed, pick the one creature in it that heals;
+ *                              the healing is rolled onto the same card, under the saves (its own row and Apply).
+ *                              Roll Item off : a card offers the healing instead.
  *   Sea    Wrath of the Sea    its save cards (Manifest, the Bonus Action save) : a failed save pushes a Large or
  *                              smaller creature 15 ft away (the GM's Push at the card's bottom). The spray lasts 10
  *                              minutes, until the Druid is Incapacitated; at the start of each of its turns while it
@@ -53,7 +55,7 @@ export class druidCircles{
     const id = idOf(activity.item);
     const actor = activity.getUsageToken?.()?.actor ?? activity.actor;
     try {
-      if((id === this.LANDS_AID) && (activity.type === "save")) await this.landsAid(actor, activity.item, activity);
+      if((id === this.LANDS_AID) && (activity.type === "save")) await this.landsAid(actor, activity.item, activity, results);
       else if((id === this.WRATH) && (activity.type === "save")){
         if(this.isManifest(activity)) await this.manifest(actor, activity.item);
         await this.wrathPush(results);
@@ -66,25 +68,40 @@ export class druidCircles{
 
   /* ---------- Land ---------- */
 
-  /* The healing's one creature is in the save's area (not an area of its own) : who's in it now, picked on the click */
-  static async landsAid(actor, item, activity){
+  /* The healing's one creature is in the save's area (not an area of its own) : who's in it now. On our save card :
+     picked now, its healing rolled onto that card */
+  static async landsAid(actor, item, activity, results){
     const heal = [...(item.system.activities ?? [])].find(a => a.type === "heal");
     if(!heal) return;
     const areas = canvas.scene?.regions?.filter(r => r.getFlag("dnd5e", "activity") === activity?.uuid) ?? [];
     const inside = [...new Set(areas.flatMap(r => getTokensInArea(r, { includeHidden : true })))].map(t => t.document.uuid);
+    const card = await uses.cardOf(results);
+    const message = (card?.documentName === "ChatMessage") ? card : (card?.message ?? null);
+    if(message?.isOwner && message.system?.addHealing){
+      const target = await this.landsAidPick(actor, inside);
+      if(target) await message.system.addHealing(heal, [target]);
+      return;
+    }
     await subclasses.offer(actor, { key : "landsAid", label : heal.name || item.name, data : { item : item.uuid, heal : heal.id, inside },
       text : module.format("subclasses.druid.landsAid", { name : actor.name }) });
   }
 
   static async landsAidHeal(actor, { item : uuid, heal, inside = [] } = {}){
     const item = fromUuidSync(uuid ?? "", { strict : false });
+    if(!item) return false;
+    const target = await this.landsAidPick(actor, inside);
+    if(!target) return false;
+    return !!await cardBuilder.roll(item, { activity : heal, targets : [target] });
+  }
+
+  /* The one creature healed : in the area (any within 60 ft when no area was placed) */
+  static async landsAidPick(actor, inside = []){
     const me = tokenOf(actor);
-    if(!item || !me) return false;
+    if(!me) return null;
     const allowed = inside.map(u => fromUuidSync(u, { strict : false })?.object).filter(Boolean);
     const [target] = await pickTargets(me, { count : 1, range : 60, disposition : "any", includeSelf : true, confirm : "auto", useTargets : false,
       ...(allowed.length ? { filter : t => allowed.includes(t) } : {}) }) ?? [];
-    if(!target) return false;
-    return !!await cardBuilder.roll(item, { activity : heal, targets : [target] });
+    return target ?? null;
   }
 
   /* ---------- Sea ---------- */

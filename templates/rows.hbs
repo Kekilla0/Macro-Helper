@@ -35,7 +35,7 @@
         {{#with apply}}
         <span class="macro-helper-apply-group">
         {{#if amount includeZero=true}}<span class="amount {{#if healing}}healing{{else}}damage{{/if}}" data-tooltip="{{ localize "rollItem.row.wouldApply" }}">{{ amount }}</span>{{/if}}
-        <button type="button" class="apply" data-action="rowApply" data-target="{{ ../uuid }}" data-multiplier="{{ multiplier }}">
+        <button type="button" class="apply" data-action="rowApply" data-target="{{ ../uuid }}" data-multiplier="{{ multiplier }}"{{#if ../part}} data-part="{{ ../part }}"{{/if}}>
             <i class="fa-solid fa-reply-all fa-flip-horizontal" inert></i> {{ localize label }}
         </button>
         </span>

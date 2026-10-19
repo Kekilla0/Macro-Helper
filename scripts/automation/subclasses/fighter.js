@@ -18,6 +18,8 @@ import { conditions } from '../conditions.js';
 import { actions } from '../actions.js';
 import { hands } from '../hands.js';
 import { actionTracker } from '../action-tracker.js';
+import { itemFixes } from '../item-fixes.js';
+import { uses } from '../../uses.js';
 import { subclasses } from './common.js';
 const log = logger.for(import.meta.url);
 
@@ -84,7 +86,7 @@ export class fighterArchetypes{
     Hooks.on(`${module.id}.saveCardButtons`, (message, buttons) => this.saveFieldButtons(message, buttons));
     Hooks.on(`${module.id}.cardButton`, (message, id, { ray } = {}) => this.cardClicked(message, String(id), ray ?? null));
     Hooks.on(`${module.id}.rerollButtons`, (message, buttons, { actor, roll }) => this.checkButtons(message, buttons, actor, roll));
-    Hooks.on("dnd5e.postUseActivity", activity => this.afterUse(activity));
+    Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.afterUse(activity, results));
     rollModes.add("feint", config => this.feintMode(config));
     gm.handle("fighterMove", (data, user) => this.moveAsGM(data, user));
     /* Commander's Strike : one of the Attack action's attacks, given to an ally (its Reaction attack) */
@@ -93,6 +95,20 @@ export class fighterArchetypes{
       subclasses.onUseStep(id, (activity, ctx, next) => this.commandersStrike(activity, ctx, next));
     }
     Hooks.on(`${module.id}.damageType`, (activity, info) => this.presetType(activity, info));
+    itemFixes.add({ name : "Lunging / Feinting Attack, Bait and Switch", where : "owned", plan : item => this.maneuverFix(item) });
+  }
+
+  /* Plutonium rolls Lunging / Feinting Attack's die as damage on use (asking its type) : the die goes on the next hit.
+     Bait and Switch's card offers twelve "Baited AC +n" effects : the module puts the card's die on the AC chosen. */
+  static maneuverFix(item){
+    if(!this.enabled()) return null;
+    const id = this.maneuverId(item);
+    const update = {};
+    for(const activity of item.system.activities ?? []){
+      if(this.PRIMED.includes(id) && (activity.type === "damage") && activity.damage?.parts?.length) update[`system.activities.${activity.id}.damage.parts`] = [];
+      if((id === "bait-and-switch") && activity.effects?.length) update[`system.activities.${activity.id}.effects`] = [];
+    }
+    return Object.keys(update).length ? { update } : null;
   }
 
   /* ---------- Battle Master ---------- */
@@ -196,7 +212,7 @@ export class fighterArchetypes{
   }
 
   /* After a maneuver's own use (its Bonus Action) */
-  static async afterUse(activity){
+  static async afterUse(activity, results = null){
     if(!this.enabled() || !activity?.actor?.isOwner) return;
     const id = this.maneuverId(activity.item);
     const actor = activity.getUsageToken?.()?.actor ?? activity.actor;
@@ -212,25 +228,33 @@ export class fighterArchetypes{
       }
       else if(id === "evasive-footwork"){
         await actions.mark(actor, "disengage", "actions.disengage.mark", "icons/skills/movement/arrow-upward-yellow.webp");
-        await this.acBonus(actor, activity.item, actor);
+        await this.acBonus(actor, activity.item, actor, await this.cardDie(results));
       }
-      else if(id === "bait-and-switch") await this.baitAndSwitch(actor, activity.item);
+      else if(id === "bait-and-switch") await this.baitAndSwitch(actor, activity.item, await this.cardDie(results));
       else if(id === "telekinetic-movement") await this.telekinetic(actor, activity.item);
       else if(id === this.WAR_BOND) await this.summonBonded(actor, activity);
     }
     catch(error){ log.error(error); ui.notifications.warn(error.message); }
   }
 
-  /* The die on a creature's AC until the start of the Fighter's next turn */
-  static async acBonus(fighter, item, onto){
-    const roll = await this.rollDie(fighter);
-    const data = { name : module.format("subclasses.fighter.acBonus", { item : item.name, n : roll.total }), img : item.img, origin : item.uuid,
-      changes : [{ key : "system.attributes.ac.bonus", type : "add", mode : 2, value : String(roll.total) }] };
+  /* The die the use's own card rolled (Plutonium's AC Bonus formula), if it did */
+  static async cardDie(results){
+    const card = await uses.cardOf(results);
+    const message = (card?.documentName === "ChatMessage") ? card : (card?.message ?? null);
+    const total = Number(message?.system?.formulaRolls?.[0]?.total);
+    return Number.isFinite(total) ? total : null;
+  }
+
+  /* The die on a creature's AC until the start of the Fighter's next turn (the card's roll, else rolled now) */
+  static async acBonus(fighter, item, onto, total = null){
+    const n = Number.isFinite(total) ? total : (await this.rollDie(fighter)).total;
+    const data = { name : module.format("subclasses.fighter.acBonus", { item : item.name, n }), img : item.img, origin : item.uuid,
+      changes : [{ key : "system.attributes.ac.bonus", type : "add", mode : 2, value : String(n) }] };
     if(onto.isOwner) await addTimedEffect(onto, data, { of : fighter, until : "turnStart" });
     else await subclasses.giveEffect(onto, data, { from : item, until : "turnStart", of : fighter });
   }
 
-  static async baitAndSwitch(actor, item){
+  static async baitAndSwitch(actor, item, total = null){
     const me = tokenOf(actor);
     const [other] = await pickTargets(me, { count : 1, range : 5, disposition : "ally", confirm : "auto", useTargets : false }) ?? [];
     if(!me || !other) return;
@@ -240,7 +264,7 @@ export class fighterArchetypes{
     const who = await chooseOption({ title : item.name, icon : "fa-solid fa-shield", prompt : module.i18n("subclasses.fighter.baitWho"),
       options : [me, other].map(t => ({ value : t.document.uuid, label : t.name })) });
     const onto = who ? fromUuidSync(who, { strict : false })?.actor : null;
-    if(onto) await this.acBonus(actor, item, onto);
+    if(onto) await this.acBonus(actor, item, onto, total);
   }
 
   /* A token moved to a space (its owner, else the GM's button) */
@@ -336,7 +360,9 @@ export class fighterArchetypes{
   /* The swept creature's damage : the weapon's type, no question */
   static presetType(activity, { types, preset }){
     const kept = this.#sweepType;
-    if(kept && (kept.item === activity?.item?.id) && ((Date.now() - kept.at) < 15000) && types.includes(kept.type)) preset.type = kept.type;
+    /* While its use window may still be open, and its rerolls (2 minutes) */
+    if(!kept || (kept.item !== activity?.item?.id) || ((Date.now() - kept.at) > 120000) || !types.includes(kept.type)) return;
+    preset.type = kept.type;
   }
 
   /* Precision : the die onto the missed attack roll */

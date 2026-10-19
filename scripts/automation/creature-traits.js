@@ -51,7 +51,7 @@ export class creatureTraits{
       return wrapped(waypoints, options);
     });
     Hooks.on(`${module.id}.cardButtons`, (message, buttons, context) => this.parryButtons(message, buttons, context));
-    Hooks.on(`${module.id}.cardButton`, (message, id) => { if(String(id).startsWith("parry|")) this.parry(message, String(id).slice(6)); });
+    Hooks.on(`${module.id}.cardButton`, (message, id) => { if(String(id).startsWith("traitParry|")) this.parry(message, String(id).slice(11)); });
     gm.handle("traitParry", (data, user) => this.parryAsGM(data, user));
   }
 
@@ -106,7 +106,7 @@ export class creatureTraits{
       const actor = token?.actor;
       if(!actor || !(game.user.isGM || actor.isOwner) || message.getFlag(module.id, this.parryKey(token.uuid))) continue;
       if(!this.has(actor, "Parry") || !this.holdsWeapon(actor) || this.OUT.some(s => actor.statuses?.has?.(s)) || !actionTracker.left(actor, "reaction")) continue;
-      buttons.push({ id : `parry|${token.uuid}`, icon : "fa-shield", label : module.i18n("traits.parry"),
+      buttons.push({ id : `traitParry|${token.uuid}`, icon : "fa-shield", label : module.i18n("traits.parry"),
         tooltip : module.format("traits.parryTip", { name : token.name, ac : this.PARRY_AC }) });
     }
   }

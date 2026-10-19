@@ -69,6 +69,18 @@
 {{> "macro-helper.cover" }}
 {{#if targetRows.length}}{{> "macro-helper.rows" rows=targetRows }}{{/if}}
 
+{{!-- A second activity's healing (Land's Aid) : its roll, then a row for each creature it heals --}}
+{{#with healing}}
+<div class="macro-helper-healing">
+    <section class="icon-row ray-header">
+        <i class="fa-fw fa-solid fa-heart" inert></i>
+        <span class="roboto-upper">{{ label }}</span>
+    </section>
+    {{#with damage}}{{> "macro-helper.damage-rows" }}{{/with}}
+    {{> "macro-helper.rows" rows=rows }}
+</div>
+{{/with}}
+
 {{!-- Save results (dnd5e "Chat Card Summary" setting) --}}
 {{#each summaries}}
 <div class="card-summary" data-message-id="{{ id }}" data-target-uuid="{{ token.uuid }}">{{{ html }}}</div>
