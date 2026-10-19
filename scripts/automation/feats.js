@@ -11,6 +11,7 @@ import { spendUses, getAppliedConditions } from '../helpers/items.js';
 import { masteries } from './masteries.js';
 import { rerolls, extraD20 } from '../roll-item/rerolls.js';
 import { itemFixes } from './item-fixes.js';
+import { onDamage } from '../roll-item/damage.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -76,10 +77,10 @@ export class feats{
       this.savageClicked(message, id, context);
       this.luckyClicked(message, id, context);
     });
-    Hooks.on("dnd5e.preRollDamageV2", config => {
-      this.healingRerolls(config);
-      this.enhancedUnarmedStrike(config);
-      this.tortleClaws(config);
+    onDamage((attack, damage) => {
+      this.healingRerolls(attack, damage);
+      this.enhancedUnarmedStrike(attack, damage);
+      this.tortleClaws(attack, damage);
     });
     Hooks.on("dnd5e.preRollSavingThrowV2", (config, dialog, message) => this.onPreRollSave(config, message));
     Hooks.on("dnd5e.preUseActivity", activity => this.battleMedicKit(activity));
@@ -337,21 +338,12 @@ export class feats{
   static BRAWLER = "tavern-brawler";
 
   /* Tavern Brawler : the Unarmed Strike's base damage "1 + STR" becomes "1d4r1 + STR" */
-  static enhancedUnarmedStrike(config){
-    if(!this.enabled()) return;
-    const activity = config?.subject;
-    const item = activity?.item;
-    if((activity?.type !== "attack") || ((item?.identifier ?? item?.system?.identifier) !== "unarmed-strike")) return;
-    if(!findItem(activity.actor, this.BRAWLER)) return;
+  static enhancedUnarmedStrike(attack, damage){
+    if(!this.enabled() || !attack.isAttack || !attack.unarmed || !findItem(attack.actor, this.BRAWLER)) return;
     /* Unarmed Fighting's d6 / d8 is the better die (fighting-styles.js) */
-    if(activity.actor.items?.some?.(i => ["unarmed-fighting", "fighting-style-unarmed-fighting"].includes(i.identifier ?? i.system?.identifier))) return;
-    const base = item.system.damage?.base?.formula;
-    if(!base || /\d*d\d+/i.test(base)) return;
-    const enhanced = "1d4r1 + @mod";
-    for(const roll of config.rolls ?? []){
-      const i = (roll.parts ?? []).findIndex(p => String(p).replace(/\s+/g, "") === base.replace(/\s+/g, ""));
-      if(i >= 0){ roll.parts[i] = enhanced; log.debug("Enhanced Unarmed Strike", activity.actor?.name); return; }
-    }
+    if(attack.actor.items?.some?.(i => ["unarmed-fighting", "fighting-style-unarmed-fighting"].includes(i.identifier ?? i.system?.identifier))) return;
+    if(!attack.baseDamage || /\d*d\d+/i.test(attack.baseDamage)) return;
+    if(damage.setBase("1d4r1 + @mod")) log.debug("Enhanced Unarmed Strike", attack.actor?.name);
   }
 
   /* ---------- Relentless Endurance ---------- */
@@ -387,23 +379,11 @@ export class feats{
   }
 
   /* Claws : the Unarmed Strike's own damage is 1d6 + its modifier, Slashing */
-  static tortleClaws(config){
-    if(!this.speciesEnabled()) return;
-    const activity = config?.subject;
-    const item = activity?.item;
-    if((activity?.type !== "attack") || ((item?.identifier ?? item?.system?.identifier) !== "unarmed-strike")) return;
-    if(!this.isTortle(activity.actor) || !findItem(activity.actor, "claws")) return;
-    const base = item.system.damage?.base?.formula;
-    for(const roll of config.rolls ?? []){
-      const i = (roll.parts ?? []).findIndex(p => base && (String(p).replace(/\s+/g, "") === base.replace(/\s+/g, "")));
-      if(i < 0) continue;
-      if(!/\d*d\d+/i.test(base)) roll.parts[i] = "1d6 + @mod";
-      roll.options ??= {};
-      roll.options.type = "slashing";
-      roll.options.types = ["slashing"];
-      log.debug("Tortle Claws", activity.actor?.name);
-      return;
-    }
+  static tortleClaws(attack, damage){
+    if(!this.speciesEnabled() || !attack.isAttack || !attack.unarmed) return;
+    if(!this.isTortle(attack.actor) || !findItem(attack.actor, "claws")) return;
+    const own = /\d*d\d+/i.test(attack.baseDamage) ? null : "1d6 + @mod";
+    if(damage.setBase(own, { type : "slashing" })) log.debug("Tortle Claws", attack.actor?.name);
   }
 
   static SHELL = "shell-defense";
@@ -435,13 +415,9 @@ export class feats{
   }
 
   /* Healing Rerolls : a spell's healing dice reroll 1s (once), for a caster with the Healer feat */
-  static healingRerolls(config){
-    if(!this.enabled()) return;
-    const activity = config?.subject;
-    if((activity?.type !== "heal") || (activity.item?.type !== "spell") || !findItem(activity.actor, this.HEALER)) return;
-    for(const roll of config.rolls ?? []){
-      roll.parts = (roll.parts ?? []).map(part => String(part).replace(/(\d*d\d+)(?![a-z0-9])/gi, "$1r1"));
-    }
+  static healingRerolls(attack, damage){
+    if(!this.enabled() || (attack.type !== "heal") || !attack.spell || !findItem(attack.actor, this.HEALER)) return;
+    damage.reroll(1);
   }
 
   /**

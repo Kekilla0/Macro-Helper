@@ -11,6 +11,7 @@ import { patch } from '../patch.js';
 import { setDamage } from '../helpers/items.js';
 import { rollSave } from '../helpers/actors.js';
 import { damageRoll } from './extra-damage.js';
+import { onDamage } from './damage.js';
 import { noteReason } from './reasons.js';
 const log = logger.for(import.meta.url);
 
@@ -754,7 +755,7 @@ export class cardBuilder{
       const hpBefore = this.system?.attributes?.hp?.value;
       return wrapped(damages, { ...options, [module.id] : { ...(options?.[module.id] ?? {}), damageTypes : types, hpBefore } }, ...rest);
     }));
-    Hooks.on("dnd5e.preRollDamageV2", config => rollOptionDamage(config));
+    onDamage(rollOptionDamage);
     Hooks.on("dnd5e.postAttackRollConfiguration", (rolls, config) => rollOptionD20(rolls, config));
     Hooks.on("dnd5e.postDamageRollConfiguration", (rolls, config) => rollOptionDamageDice(rolls, config));
     /* "Its turn starts" / "Its turn ends" (hook macros) : about the creature whose turn it is (actor, token, combat) */

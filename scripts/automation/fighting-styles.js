@@ -14,6 +14,7 @@ import { limits } from './limits.js';
 import { hands } from './hands.js';
 import { actionTracker } from './action-tracker.js';
 import { grappling } from '../roll-item/card-builder.js';
+import { onDamage, attackOf } from '../roll-item/damage.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -51,7 +52,7 @@ export class fightingStyles{
     if(game.system.id !== "dnd5e") return;
     Hooks.on("dnd5e.preRollAttackV2", config => this.onPreRollAttack(config));
     rollModes.add("protection", config => this.protectedMode(config));
-    Hooks.on("dnd5e.preRollDamageV2", config => this.onPreRollDamage(config));
+    onDamage((attack, damage) => this.onDamage(attack, damage));
     Hooks.on("dnd5e.calculateDamage", (actor, damages, options) => this.intercepted(actor, damages, options));
     for(const hook of ["createItem", "updateItem", "deleteItem"]){
       Hooks.on(hook, (item, ...rest) => this.onGear(item, rest.at(-1)));
@@ -77,19 +78,7 @@ export class fightingStyles{
     return !!item?.effects?.some?.(e => e.transfer && !e.disabled);
   }
 
-  /* ---------- What the attack is ---------- */
-
-  static attackInfo(config){
-    const activity = config?.subject;
-    const item = activity?.item;
-    if((activity?.type !== "attack") || (item?.type !== "weapon")) return null;
-    const mode = String(config.attackMode ?? config.rolls?.[0]?.options?.attackMode ?? "");
-    const props = item.system.properties ?? new Set();
-    const melee = String(item.system.type?.value ?? "").endsWith("M");
-    const thrown = mode.startsWith("thrown");
-    return { activity, item, actor : activity.actor, mode, props, melee, thrown, twoHanded : props.has("two") || (mode === "twoHanded"),
-      unarmed : idOf(item) === "unarmed-strike" };
-  }
+  /* ---------- What the attack is : attackOf (the damage lego) ---------- */
 
   /* Other weapons in hand (natural weapons and Unarmed Strike don't count) */
   static otherWeapons(actor, item){
@@ -110,15 +99,14 @@ export class fightingStyles{
   static onPreRollAttack(config){
     if(!this.enabled()) return;
     const roll = config.rolls?.[0];
-    const info = this.attackInfo(config);
-    if(roll && info){
+    const attack = attackOf(config);
+    if(roll && attack.isAttack && attack.weapon){
       /* Archery : +2 with Ranged weapons. Plutonium's own effect gives it to any ranged weapon attack, a thrown melee
          weapon too (taken off again); the compendium's feat has no effect, it's added here when it applies */
-      const archery = this.styleOf(info.actor, "archery");
+      const archery = this.styleOf(attack.actor, "archery");
       if(archery){
-        const ranged = !info.melee;
-        if(this.effectOn(archery) && info.melee && info.thrown) this.addPart(roll, "-2");
-        else if(!this.effectOn(archery) && ranged) this.addPart(roll, "2");
+        if(this.effectOn(archery) && attack.meleeWeapon && attack.thrown) this.addPart(roll, "-2");
+        else if(!this.effectOn(archery) && !attack.meleeWeapon) this.addPart(roll, "2");
       }
     }
   }
@@ -147,50 +135,43 @@ export class fightingStyles{
 
   /* ---------- Damage : Dueling, Great Weapon, Thrown Weapon, Two-Weapon, Unarmed ---------- */
 
-  static onPreRollDamage(config){
-    if(!this.enabled()) return;
-    const info = this.attackInfo(config);
-    const roll = config.rolls?.[0];
-    if(!info || !roll) return;
-    const { actor, item } = info;
+  /* The damage lego's rule for the fighting styles that change a weapon's damage */
+  static onDamage(attack, damage){
+    if(!this.enabled() || !attack.isAttack || !attack.weapon) return;
+    const { actor, item } = attack;
 
     /* Dueling */
     const dueling = this.styleOf(actor, "dueling");
     if(dueling){
-      const qualifies = info.melee && !info.thrown && !info.twoHanded && !info.unarmed && !this.otherWeapons(actor, item).length;
+      const qualifies = attack.meleeWeapon && !attack.thrown && !attack.twoHanded && !attack.unarmed && !this.otherWeapons(actor, item).length;
       const given = this.effectOn(dueling);
-      if(given && !qualifies) this.addPart(roll, "-2");
-      else if(!given && qualifies) this.addPart(roll, "2");
+      if(given && !qualifies) damage.add("-2");
+      else if(!given && qualifies) damage.add("2");
     }
 
     /* Great Weapon Fighting : 1s and 2s on the damage dice count as 3 */
-    if(this.styleOf(actor, "great-weapon-fighting") && info.melee && !info.thrown && info.twoHanded){
-      for(const r of config.rolls ?? []){
-        r.parts = (r.parts ?? []).map(p => /min/i.test(String(p)) ? p : String(p).replace(/(\d*)d(\d+)/gi, "$1d$2min3"));
-      }
+    if(this.styleOf(actor, "great-weapon-fighting") && attack.meleeWeapon && !attack.thrown && attack.twoHanded){
+      damage.minDie(3);
       log.debug("Great Weapon Fighting", item.name);
     }
 
     /* Thrown Weapon Fighting */
-    if(this.styleOf(actor, "thrown-weapon-fighting") && info.thrown && info.props.has("thr")) this.addPart(roll, "2");
+    if(this.styleOf(actor, "thrown-weapon-fighting") && attack.thrown && attack.properties.has("thr")) damage.add("2");
 
     /* Two-Weapon Fighting : the modifier dnd5e leaves off a Light weapon's extra attack */
-    if(this.styleOf(actor, "two-weapon-fighting") && info.mode.endsWith("offhand") && (Number(roll.data?.mod) > 0)) this.addPart(roll, "@mod");
+    if(this.styleOf(actor, "two-weapon-fighting") && attack.offHand && (damage.modifier > 0)) damage.add("@mod");
 
     /* Unarmed Fighting */
-    if(info.unarmed && this.styleOf(actor, "unarmed-fighting")) this.unarmedDamage(config, info);
+    if(attack.unarmed && this.styleOf(actor, "unarmed-fighting")) this.unarmedDamage(attack, damage);
   }
 
-  static unarmedDamage(config, { actor, item }){
-    const base = item.system.damage?.base?.formula;
+  static unarmedDamage(attack, damage){
+    const base = attack.baseDamage;
     /* Already a die of its own (a Monk's Martial Arts) : left alone */
     if(!base || /\d*d\d+/i.test(base)) return;
-    const empty = !this.otherWeapons(actor, item).length && !hasShieldEquipped(actor);
+    const empty = !this.otherWeapons(attack.actor, attack.item).length && !hasShieldEquipped(attack.actor);
     const formula = `1d${empty ? 8 : 6} + @abilities.str.mod`;
-    for(const roll of config.rolls ?? []){
-      const i = (roll.parts ?? []).findIndex(p => String(p).replace(/\s+/g, "") === base.replace(/\s+/g, ""));
-      if(i >= 0){ roll.parts[i] = formula; log.debug("Unarmed Fighting", actor.name, formula); return; }
-    }
+    if(damage.setBase(formula)) log.debug("Unarmed Fighting", attack.actor.name, formula);
   }
 
   /* ---------- Defense ---------- */

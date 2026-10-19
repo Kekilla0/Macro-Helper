@@ -9,6 +9,7 @@ import { getSize, addTimedEffect, usedThisTurn, markUsedThisTurn } from '../help
 import { giveCondition, cardBuilder } from '../roll-item/card-builder.js';
 import { pickAttack, isRangedAttack } from '../helpers/items.js';
 import { rollItem } from '../roll-item/roll-item.js';
+import { onDamage } from '../roll-item/damage.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -55,7 +56,7 @@ export class masteries{
     if(game.system.id !== "dnd5e") return;
     rollModes.add("masteries", config => this.onPreRollAttack(config));
     Hooks.on("dnd5e.rollAttackV2", rolls => this.onRollAttack(rolls));
-    Hooks.on("dnd5e.preRollDamageV2", config => this.onPreRollDamage(config));
+    onDamage((attack, damage) => this.onDamage(attack, damage));
     /* Roll Item's attack cards : each attack's mastery section, and its button */
     foundry.applications.handlebars.loadTemplates({ [`${module.id}.mastery`] : `${module.path}/templates/mastery.hbs` });
     Hooks.on(`${module.id}.cardSections`, (message, sections, { ray } = {}) => { const section = this.cardSection(message, ray ?? null); if(section) sections.push(section); });
@@ -462,10 +463,8 @@ export class masteries{
   }
 
   /* Cleave's second attack : no ability modifier on its damage, unless it's negative */
-  static onPreRollDamage(config){
-    if(!config?.[module.id]?.tags?.noMod) return;
-    for(const roll of config.rolls ?? []){
-      if(roll.data && (Number(roll.data.mod) > 0)) roll.data.mod = 0;
-    }
+  /* Cleave's extra attack : no positive ability modifier */
+  static onDamage(attack, damage){
+    if(attack.tags?.noMod) damage.noModifier();
   }
 }

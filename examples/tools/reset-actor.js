@@ -1,7 +1,7 @@
 /**
  * Reset actor (GM, for testing builds) : the selected token's actor is deleted and remade blank, same name, type,
  * image, folder and ownership, and a linked token for it goes back where the selected one stood. Nothing carries over
- * (items, classes, proficiencies, effects, flags). With the default-actions.js Hook Macro on, the new token gets
+ * (items, classes, proficiencies, effects, flags). With the Default Actions setting on, the new token gets
  * Dodge, Help and Unarmed Strike again.
  *
  * Setup : Script macro (GM). Select one token, run it, confirm.

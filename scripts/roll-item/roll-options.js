@@ -56,14 +56,9 @@ export function rollOptionModes(config){
 }
 
 /* The damage roll : another damage type */
-export function rollOptionDamage(config){
-  const type = rollOptions.of(config?.subject)?.damageType;
-  if(!type) return;
-  for(const roll of config.rolls ?? []){
-    roll.options ??= {};
-    roll.options.type = type;
-    roll.options.types = [type];
-  }
+export function rollOptionDamage(attack, damage){
+  const type = rollOptions.of(attack.activity)?.damageType;
+  if(type) damage.setType(type);
 }
 
 /* Forced dice : each die term of the built rolls gives these faces instead of rolling (still dice : crits, icons,

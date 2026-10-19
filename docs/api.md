@@ -1,0 +1,228 @@
+# Macro reference
+
+Every helper, method, card part and hook a macro can use. The [README](../README.md) lists the main pieces; [the examples](../examples/README.md) show them in use.
+
+## Helpers
+
+Small functions for macros, available as `MacroHelper.x(...)` or `game.modules.get("macro-helper").api.x(...)`.
+
+| Helper | What it does |
+|---|---|
+| `tokenOf(thing)` | The canvas token for a token, token document, actor or item. Falls back to your selected token. |
+| `actorOf(thing)` | The actor for a token, token document, actor or item. |
+| `distanceBetween(a, b)` | Feet between two tokens, edge to edge on the grid, including the height gap from their elevation. Adjacent squares, diagonals included, are 5 ft. Further out it follows the **Range Shape** setting (Homebrew): *Square* (the rules: every diagonal step is 5 ft, the default) or *Circle* (true distance). |
+| `canSee(viewer, target)` | Whether one token can see another by its own sight (Vision Rules): walls, light, darkvision, Blinded, Invisible. Without sight to work it out (vision off on the token or the scene), only the conditions count: Blinded sees nothing, Invisible can't be seen. Always true when the setting is off. |
+| `getRange(item, { long, thrown })` | How far an item reaches: a melee weapon's reach, a ranged weapon's range, or a spell's range. |
+| `forcedMove(thing, { direction, feet, from, item, name })` | Every push and pull: moves a token straight away from (`direction: "away"`, the default) or toward (`"toward"`) `from`, a token or a point on the map `{ x, y }`, up to `feet`, square by square, stopping at walls and other creatures (a pull at the latest beside the one pulling). It's measured by the **Range Shape** setting (Homebrew). A move cut short hits something: with **Push Into Obstacles** (Homebrew) that's Prone, plus 1d6 bludgeoning if it didn't move at all. Moving a token you can't move asks the GM (a chat card with the GM's button). Returns the feet moved (0 if blocked straight away), or `null` when the GM was asked. The Push mastery, Shove, Tavern Brawler, Thunderous Smite, Repelling Blast, Thunderwave, Thorn Whip and card macros' `push` all use it, and their buttons sit at the bottom of the card, one per creature with its picture and name (`macro-helper.cardMoves`). |
+| `pushAway(thing, from, feet, { item, name })`, `pullToward(thing, toward, feet, { item, name })`, `pushDestination(thing, from, feet)` | `forcedMove` away or toward, and where a push would leave the token without moving it. |
+| `addLight(thing, light, { key })`, `removeLight(thing, { key })`, `hasLight(thing, key)` | Give a token light (`{ bright, dim, color, animation }`) and take it away again. The token's original light comes back when the last source (`key`: "light", "torch"…) is removed. |
+| `getTokensInArea(area, { includeHidden, filter })` | The tokens inside a template (a Region in v14). A token counts when any square of its space is inside. |
+| `getTokensWithin(origin, feet, { disposition, includeDead, includeHidden, filter, includeSelf })` | Tokens within a distance, nearest first. `disposition` is `"any"`, `"enemy"` or `"ally"`. |
+| `highlightRange(origin, feet, { normal, tokens, selected })` | Shows a range on the map, on your screen only: blue within `normal`, red from there out to `feet` (long range), orange candidates and green picks. Returns `{ select, clear }`. |
+| `isEnemy(a, b)`, `isAlly(a, b)` | Compares the two tokens' dispositions. |
+| `getFlanker(attacker, target)`, `isFlanking(attacker, target)` | The attacker's ally flanking the target with them (DMG rule: both next to it, on opposite sides or corners), or `null`. |
+| `isThreatened(thing, { range, includeIncapacitated, includeHidden })` | Whether an enemy (opposite disposition) is within 5 ft, not counting incapacitated, dead or GM-hidden ones. In 5e, ranged attacks made while threatened have disadvantage. |
+| `getThreats(thing, { range, includeIncapacitated, includeHidden })` | Those creatures (Hostile or Neutral, not Incapacitated, able to see it), nearest first. |
+| `getEnemiesWithinRange(item, { numberOfEnemies, range, long, thrown })` | Your targets in range first, then every other enemy in range, nearest first. |
+| `selectTargets(tokens, { numberAllowed, within, setTargets, prompt, origin })` | Picks a group of targets standing within `within` ft of each other. `numberAllowed` is a number or `group => number`. With `prompt`, and no targets of your own, you choose the targets in a dialog, with the range and your picks shown on the map. **Async**, so use `await`. |
+| `isValidGroup(tokens, { numberAllowed, within })` | Checks a group against those rules. Returns `{ valid, reason }`. |
+| `setTargets(tokens)` | Replaces your targets. |
+| `getSize(thing)` | dnd5e size, e.g. `{ key: "lg", value: 3, label: "Large" }`. |
+| `stepSize(key, steps)` | Another size category, e.g. `stepSize("lg", -1)` → `"med"`. |
+| `setStatus(thing, status, active, { overlay })` | Turns a condition on or off. It never flips a status that's already in that state. |
+| `setDefeated(thing, defeated)` | Marks the creature defeated, or not, in the current combat. |
+| `stabilize(thing)` | A creature at 0 HP: resets its death saves and makes it Stable. The GM does it when you don't own the creature. Returns true when it worked. |
+| `damage(thing, value, type, { properties, multiplier, ignore })` | Damages a creature through dnd5e, so resistances, immunities and temp HP apply. `value` can be a number, a formula (`"2d6 + 3"`), or parts `[{ value, type }]`. |
+| `heal(thing, value)` | Heals a creature, up to its max HP. `value` can be a number or a formula. |
+| `tempHP(thing, value, source)` | Gives temp HP. The higher of the current and new amount is kept (they don't stack). `source` is recorded in `flags["macro-helper"].tempHP` when applied. |
+| `dropsToZero(thing, amount)` | Whether this much damage drops a creature that's still up to 0 HP (temp HP soak first). |
+| `isKilledOutright(thing, amount)` | Whether it's massive damage: what's left after reaching 0 HP is at least the creature's HP max. |
+| `preventDropToZero(thing, amount, updates, { hp, massiveDamage })` | For "reduced to 0 but not killed outright" features. Use it in a `dnd5e.preApplyDamage` Hook Macro, before any `await`: it changes dnd5e's pending update so the creature stays on `hp` (1). Massive damage still kills unless `massiveDamage: false`. Returns whether it kept them up. |
+| `getLastDamage(thing)`, `clearLastDamage(thing)` | The last damage a creature took through dnd5e's damage application, and the card that dealt it: `{ amount, message, at }`. For reactions that reduce damage, like Stone's Endurance. A reaction clears it once it's used it, and any rest clears it. |
+| `usedThisTurn(thing, key)`, `markUsedThisTurn(thing, key)` | "Once per turn" in combat (Savage Attacker, Sneak Attack): whether it's been used this turn, and marking it used. Out of combat there are no turns, so it's never used. |
+| `rollSave(thing, ability, dc, options)` | The save lego, the same as `actor.save(...)` below. Returns `{ success, total, roll }`. |
+| `addTimedEffect(thing, effectData, { of, until })` | Adds an effect that lasts until the start (`"turnStart"`) or end (`"turnEnd"`) of someone's next turn in combat (`of`, default the creature itself). The active GM removes it then, or when the combat ends. Made out of combat: if a combat begins with that creature in it, it lasts until its first turn there; otherwise it ends after 30 seconds of game time. The same effect (name and origin) already there lasts from now instead of being added twice. |
+| `recoverSpellSlots(thing, { levels, maxLevel, item, chat })` | A dialog to choose expended spell slots to recover, up to a combined level, and none above `maxLevel` (5). Used for Arcane Recovery and Natural Recovery. With `item`, it needs a use left and spends one. Returns `{ level: recovered }`. |
+| `findItem(thing, query, { type })` | One of the actor's items by name (any case), identifier, id or uuid. `query` can be several (`["Relentless Endurance", "Relentless"]`, first match wins) or a function. |
+| `splitToken(thing, { copies, hp, stepSize, scale, chat })` | Splits a token into copies one size smaller (sized from dnd5e's table: Small a square, Tiny half), each a new creature with half its HP as its HP and max HP (so not Bloodied), each in a space of its own (its space first, then the nearest free squares). The token itself is the first copy, so targets, card buttons and its place in combat stay with it; the new ones join its combats at its initiative and keep its effects, except those that belong to one creature (tied to someone's Concentration, like Hunter's Mark or Bane, or linked, like a grapple). Whispers the GM what happened. GM only. Returns every copy, the original first. |
+| `pickAndAttack(item, { count, repeat, disposition, within, long, confirm, clearTargets, strict, threatened, event })` | The whole attack in one call: clears your targets, you pick on the map, then one attack roll per pick. With `repeat`, a target can be picked more than once (Multiattack: both attacks at one foe). Fewer picks than `count` is fine: press Enter. Targets beyond reach get thrown at when the weapon can be thrown, targets at long range are attacked with disadvantage, and so are ranged or thrown attacks while the attacker is threatened (melee attacks aren't). Nobody attacks with what they don't have (quantity 0, not enough to throw or shoot) unless `strict: false`. Problems show as notifications. It returns the card, as `item.roll({ use: false })` does (`card.message`: the chat message). |
+| `pickAttack(item, { count, repeat, activity, used, within, numberAllowed, ... })` | The picking half of `pickAndAttack`: checks, the map pick, and the ammunition and throw checks. `within` and `numberAllowed` (a number or `picks => number`) make it a group pick (one attack roll per creature, all within `within` ft of each other). Returns `{ attack, targets, attackMode, disadvantage }` to pass to `rollItem`, or `null`. For when you want to pick now and roll your own way. |
+| `isOtherHandFree(item)`, `hasShieldEquipped(thing)` | From what's equipped: whether the hand not holding this weapon is free (no shield, no other weapon), and whether a shield is equipped. |
+| `attackModeFor(item, target, { long })` | The attack mode: Versatile weapons `"twoHanded"` when the other hand is free, else `"oneHanded"`; weapons that can be thrown, `"thrown"` beyond reach (within thrown range), otherwise the melee mode. `null` when dnd5e's usual mode is fine. |
+| `isLongRange(item, target)` | Whether a target is beyond the weapon's normal range but within its long range (ranged or thrown), where 5e attacks have disadvantage. |
+| `isRangedItem(item)` | Whether the item is a ranged attack by nature: a ranged weapon or a ranged spell attack. A Dagger isn't. |
+| `isRangedAttack(item, target)` | Whether attacking this target is a ranged attack: a ranged item, or a thrown weapon thrown at it. |
+| `canThrow(item)` | Whether the weapon has the Thrown property. |
+| `getAmmunition(item)` | The ammunition item dnd5e would use for the weapon's attack, or `null`. |
+| `pickTargets(origin, { count, range, disposition, numberAllowed, within, confirm, useTargets, repeat, filter })` | Pick targets by clicking them on the map, with the range and candidates shown. Enter confirms, Esc cancels. With `repeat`, clicking a picked token picks it again and right click takes one away; the picks come back once per pick (`[A, A, B]`). Targets you already have in range are used as they are; `useTargets: false` clears them and always asks. **Async**. |
+| `pickSpace(origin, { range, size, occupied, seen, check })` | Click a space on the map within `range` ft: unoccupied (unless `occupied`), not behind a wall that blocks movement, or with `seen` one the creature can see. Returns the space's top-left corner on the grid `{ x, y }` (canvas pixels, snapped to the grid), or `null` (Esc). |
+| `multiattack(thing, plan, { repeat, event, attack })` | A Multiattack written out, e.g. `[{ weapon: "Bite", count: 1 }, { weapon: "Claw", count: 2 }]`, made weapon by weapon: a pick on the map and a card per weapon. `weapon: ["Shortsword", "Longbow"]` asks how to split the attacks first. `repeat` (default `true`) lets a target take more than one of a weapon's attacks. Enter stops with fewer picks, and Esc skips that weapon. |
+| `useAndApply(item, { activity, to, max, event })` | Uses the item the dnd5e way, then applies the healing or damage it rolled to `to` (default yourself), never more than `max`. A two-line Second Wind: `return item.useAndApply();` |
+| `getAppliedConditions(card)` | The conditions a chat card's activity applies (its effects' statuses, and an on-hit rider's), e.g. `Set { "frightened" }`. Used by Brave: is this save against Frightened? |
+| `getHealing(item, { average })` | How much an item heals, as a formula: its Heal activity, else its Utility roll formula, else its description ("heal 11 hit points" gives `"11"`, "regains 10 (3d6) hit points" gives `"3d6"`, or `"10"` with `average`). `null` if it doesn't say. |
+| `getUses(item)` | The item's limited uses `{ value, max, spent }`, or `null` if it has none. |
+| `hasUses(item, amount)` | Whether it has that many uses left. Items without limited uses always do. |
+| `spendUses(item, amount, { warn })` | Uses up `amount` (1) uses, or gives them back if negative. Returns the fresh item, or `null` if there weren't enough (with a warning). |
+| `useActivity(item, { activity, configure, event })` | Uses the item the dnd5e way (its card, uses, spell slot, action, effects) from inside its own Item Macro, with no dialog unless `configure`. Returns dnd5e's results, or `null` if it couldn't be used, so the macro can stop there. |
+| `updateItem(item, changes)` | Updates an item and returns the fresh copy. Items on unlinked tokens are rebuilt when updated. |
+| `setBaseDamage(item, { number, denomination, types, bonus })` | Sets a weapon's base damage, only if it's different. |
+| `setDamage(item, formula, { type })` | Sets an attack's damage to a formula (`"1d8 + @mod"`): its attack's first damage part, else its base damage. Only if it's different; returns the fresh item. |
+| `wait(ms)`, `waitFor(condition, { interval, timeout })` | Small async helpers. |
+| `rollItem(item, { activity, count, targets, attackMode, disadvantage, event })` | The older way to roll an item as a Roll Item card (see below); `item.roll(...)` is the one to use, `item.roll({ use: false })` for an attack with no use. `targets` gives one attack per token, in order (the same token twice is two attacks at it), instead of spreading `count` over your targets. `attackMode` is a dnd5e mode (`"thrown"`…), or a function `target => mode` that picks one per target. `disadvantage` is `true`, or `target => boolean` per target. Thrown attacks and ammunition are used up, as with dnd5e's own attacks. |
+
+### Methods on tokens, actors and items
+
+The helpers are also added as methods on the things they act on. Turn this off in the **Helpers** settings.
+
+| On | Methods |
+|---|---|
+| Token | `save(ability, dc, opts)`, `getCreatureSize()`, `distanceTo(other)`, `getTokensWithin(feet, opts)`, `isEnemy(other)`, `isAlly(other)`, `isThreatened()`, `getThreats()`, `canSee(other)`, `setStatus(...)`, `setDefeated(...)`, `stabilize()`, `damage(value, type)`, `heal(value)`, `tempHP(value, source)`, `dropsToZero(amount)`, `isKilledOutright(amount)`, `preventDropToZero(amount, updates, opts)`, `findItem(query, opts)`, `split(opts)`, `highlightRange(feet, opts)`, `pickTargets(opts)` |
+| TokenDocument | The same as Token, without `highlightRange`. |
+| Actor | `save(ability, dc, opts)`, `getCreatureSize()`, `getTokensWithin(...)`, `isEnemy(...)`, `isAlly(...)`, `isThreatened()`, `getThreats()`, `canSee(...)`, `setStatus(...)`, `setDefeated(...)`, `stabilize()`, `damage(...)`, `heal(...)`, `tempHP(...)`, `dropsToZero(...)`, `isKilledOutright(...)`, `preventDropToZero(...)`, `findItem(...)`, `usedThisTurn(key)`, `markUsedThisTurn(key)`, `multiattack(plan, opts)` |
+| Item | `target(opts)`, `pickAndAttack(opts)`, `pickAttack(opts)`, `getRange(opts)`, `getEnemiesWithinRange(opts)`, `pickTargets(opts)`, `attackModeFor(target)`, `isLongRange(target)`, `isRangedItem()`, `isRangedAttack(target)`, `canThrow()`, `getAmmunition()`, `multiattack(plan, opts)`, `useAndApply(opts)`, `getHealing(opts)`, `getUses()`, `hasUses(amount)`, `spendUses(amount)`, `useActivity(opts)`, `setBaseDamage(damage)`, `setDamage(formula, opts)`, `updateFresh(changes)`, `rollItem(opts)` |
+
+A method is never added over an existing one from Foundry, the system or another module. That's why size is `getCreatureSize()`: Foundry's own `getSize()` is the token's size in pixels.
+
+```js
+// Greataxe: hit up to 2 Medium, or 3 Small, targets within 5 ft of each other
+const enemies = item.getEnemiesWithinRange();
+const numberAllowed = group => {
+  const sizes = group.map(t => t.getCreatureSize()?.value ?? 2);
+  return sizes.some(s => s >= 3) ? 1 : sizes.some(s => s === 2) ? 2 : 3;
+};
+const group = await MacroHelper.selectTargets(enemies, { numberAllowed, within : 5, setTargets : true, prompt : true, origin : item });
+if(group.length) return item.rollItem({ count : group.length });
+```
+
+## Item Macro
+
+- **Storing a macro:** store a macro on any item, or on a dnd5e activity, from the **</>** button in its sheet's title bar. The button turns gold once a macro is set. **Button in Title Bar** is each user's own setting (off puts it in the ⋯ menu); players see it once **Allow Players to Edit** is on.
+- **The editor** is Foundry's own macro editor. Players need Foundry's script macro permission, and the GM can stop players editing item macros altogether with **Allow Players to Edit**. Items with a macro still run it for everyone.
+- **When it runs:** choose **Default only**, **Macro only**, or **Macro, then Default**. In the last mode, the macro can return `false` to skip the default.
+- **Variables:** macros get `item`, `activity`, `actor`, `token`, `speaker`, `event`, `usage`, `dialog`, `message` and `scope`, plus `hook` and `args` (below; `null` and `[]` when the item is used).
+- **Run on Hooks (GMs, items):** a passive feature's macro can also run when a hook fires, e.g. Relentless Endurance on *Damage about to apply*. It only listens while the creature has a token on the scene you're viewing, so nothing is left behind when it isn't on the battlefield.
+  - **Only About This Creature** (on by default) runs it only when the hook is about this creature: the damaged actor, its token, its item, or its turn.
+  - **Run For** is *Owner, where it happens*, meaning the client where the hook fires if that user owns the creature. Use *Active GM (once)* for hooks that fire for everyone, like *Actor changed* or *Combat turn*.
+  - Only macros saved by a GM run from hooks. If a player changes one, its hooks stop until a GM saves it again.
+  - The macro runs inside the hook, so until its first `await` it can change what the hook passed.
+- **Card macros** (with Roll Item): a macro that only adds what's different to an item's normal card. Set it to **Macro only**; `item.roll()` runs the item's normal use (targets, attack, damage, Hands, the Action Tracker...) and returns its card, already posted. Then:
+  - `card.append(part)` adds a part, shown in each target's row in the order appended; `card.remove("prone")` takes off one of the item's own effects (by its condition or name); `card.clear()` takes them all off, to build the rest yourself.
+  - `applyCondition({ when, type, with, duration, save, escape, repeat, insteadOfDamage, self })`: an Apply button (the target's owner or the GM) for one effect with the condition's own icon and name. `with` puts more conditions in that same effect, ending with it (a grapple's Blinded and Restrained); the name then says where it's from (*Grappled: Animated Rug*). `save : { ability, dc, repeat : "end" }` ends it on a save at each of its turns; `escape : 13` is a grapple's escape DC; `repeat : { at : "start", damage, type }` deals damage at each of its turns; `insteadOfDamage` makes it this or the hit's damage for that target; `self : "Smothering"` puts a linked effect on the creature that did it (either ending ends the other). A creature already under that condition keeps the harsher one (the longer, then the one with no save, then the higher DC).
+  - `save : { ability, dc, repeat, fail : { type, duration, endsOn } }`: a failed repeat save turns it into that condition instead (no more saves), lasting `duration` from then; `endsOn: ["damage", "wake"]`: it ends when the creature takes damage, or when a creature within 5 ft uses its Action (a **Wake** button on that creature's action bar, on its turn).
+  - `push(30, { when, from })`: a **Push 30 ft** button for the GM at the bottom of the card: the target pushed straight away from `from` (the card's creature), stopping at walls and creatures.
+  - `applyEffect({ when, name, duration, speed, noReactions, oneAction, changes })`: an Apply button for an effect that isn't a condition (named after the item unless `name` says otherwise). `speed: 0.5` halves its Speeds; `noReactions`: it can't take Reactions (none offered: Opportunity Attacks, Parry...; one used anyway follows Rule Limits); `oneAction`: an Action or a Bonus Action on its turn, not both (using one spends the other); `changes`: Foundry's own. `duration: "endOfNextTurn"` (or `"startOfNextTurn"`, rounds, Foundry's data). The same effect again replaces it.
+  - `applyCondition` also takes `noReactions` and `oneAction` (as `applyEffect`; Dretch's Fetid Cloud), and `duration: "endOfMyNextTurn"` / `"startOfMyNextTurn"`: the next turn of the one that did it (Dust Mephit's Blinding Breath).
+  - More `applyCondition` options: `until: web({ name, ac, hp, vulnerable, immune, resist })`: it lasts until that object is destroyed: a token on the target's space with that AC, Hit Points and damage traits, which moves with it; at 0 HP the token goes and the condition ends (Ettercap's Web Strand). `aura: { radius, type }`: every other creature within that radius of it has that condition while there. `removal: ["rest"]`: a Long Rest ends it. `duration: { hours: "1d4" }`: rolled when applied. `randomMove`: on its turn, a **Random move** button on its action bar: a d8 for the direction, a d(movement ÷ 5) for how many squares, again until its movement is used (stopped by a wall or a creature, that roll's rest is lost and it rolls again).
+  - `applyCondition` `expire: { status: "dead" }`: if it runs its full time (not ended sooner), that status (a Gas Spore's poison). `repeat: { at, damage, type, of: "source" }`: the damage comes at the start / end of the turns of the one that did it.
+  - `engulf({ when, escape, damage, type })`: inside it (a Gelatinous Cube): *Engulfed: <it>* (Restrained); the target is moved into its space and moves with it, and takes the damage at the start of its turns. **Escape <it> (DC n)** on the target's action bar (its Action, Athletics), or **Pull <name> out (Action)** on the bar of a creature within 5 ft of it (Athletics against the same DC; the puller takes that damage): it lands in the nearest free space beside it. `token.trample(feet, { endInside: true })`: it may end its move on the creatures it passes through.
+  - `immunity({ when, duration })`: immune to this item of this creature that long; `target.isImmuneTo(item)`. `target.isType("undead")`: its creature type. `item.roll({ saveDisadvantage: true })`: the card's saves with Disadvantage.
+  - Hook **It moves through a creature's space** (`args`: its token, the other, a result; on the mover's client, use *Owner*): a creature dnd5e's movement automation would stop it at (an enemy within one size of it); `passThrough(args)` lets it through (Prone creatures for an Unimpeded orc).
+  - Hooks **A creature enters its space** (`args`: its token, the one that entered), **It enters a creature's space** (`args`: its token, the creature whose space it moved into or through, each square of the move; once per creature per move) and **Any creature's turn starts** (`args`: that creature, its token; untick *only about itself*).
+  - `target.actor.save("con", 13, { from: item })`: the save lego, the one way every rule makes a creature save (a card's row, an on-hit save, repeat saves, Topple): no dialog (`dialog: true` for dnd5e's), the advantage keys held (`event`), the bonus of the item's save activity (`from`), `bonus: "1d4"`, `cover: 2` (DEX only), linked to a card (`card: message`). An NPC's is a private GM roll with the DM Screen on (`secret: false` to show it). It returns `{ success, total, roll }` (`success` is `null` without a DC), or `null` if it wasn't rolled (not its owner). Tokens have it too.
+  - `token.applyCondition("prone", { save, dc, duration, repeat, from, by })`: the condition straight on it, no card, the same way every rule gives one (Topple, Shove's Prone, a push into a wall). `save: "con", dc: 13`: it saves first and a success resists it; `duration`: rounds, `"endOfNextTurn"` and the like, or Foundry's duration data; `repeat: "end"` (or `"start"`): it saves again at that point of each of its turns, ending it on a success; `from`: the item, `by`: who does it. It returns `{ applied, save }`. The other options of `applyCondition` (`with`, `escape`, `label`...) work too, and the older `token.applyCondition({ type, ... })` still does. Already under it: the harsher one stays. `MacroHelper.giveCondition(target, "prone", options)` is the same. `MacroHelper.affectedBy(item)`: the creatures under an effect from that item. `token.pull(target, 25)` / `token.push(target, 10)`: the target pulled straight toward it or pushed straight away, through `forcedMove` (Ettercap's Reel). `token.isDifficultTerrain({ x, y })`: is that point difficult terrain for it (for now: another creature's space, as dnd5e judges it).
+  - Hook **Gains a condition** (`args`: the creature, the condition's id, the effect; use *Active GM (once)*): a trait that reacts to a condition landing on it (a Flumph's Prone Deficiency).
+  - `applyDisease({ when, name, ability, dc, every, stages, cure, removal })`: a disease: one effect that cascades, all its data on the effect. `stages`: what each failure brings, in order (`{ type, with, hpMax, changes }`; `hpMax` a number or a formula like `"-1d10"`, rolled each time); the first comes with the failed save, each failed repeat save adds the next, and past the last the last comes again; conditions and changes add up. `every` (`"24h"`, `"1 day"`, `"10 minutes"`): as game time passes, its owner gets a card to roll the save again. `cure`: `"full"` (a success ends it) or `"stage"` (a success takes off the latest stage; at the first, it ends). `removal`: `"save"`, `"rest"` (a Long Rest ends it), `"magical"` (only magic, by hand). Its Hit Point maximum loss stays on the effect, so a rest doesn't bring it back.
+  - Hooks **Drops to 0 HP** (its Hit Points go from above 0 to 0; use *Active GM (once)*; Dust Mephit's Death Burst) and **Before an Opportunity Attack** (a move about to be checked; `suppressOA(args)`: it provokes none; Deer's Agile).
+  - `attach({ when, escape, check, with })`: a fancy grapple (a Darkmantle): **Attach** puts *Attached: <it>* on the target (with the conditions in `with`, ending with it) and *Attached: <target>* on the attacker (Speed 0; it moves with the target). The target's **Detach <it> (DC n)** on its action bar: its Action, a `check` (Athletics by default) against `escape`; the attacker's **Detach from <target> (5 ft)**: 5 ft of its movement. Either ends both. `token.attachedTo()`: the creature it's attached to. `card.hadAdvantage`: the card's attack roll had Advantage.
+  - `followUp("Bite", { when })`: a button for the card's owner: that item's attack at the target, part of this use (no Action of its own).
+  - `choice: "name"` on `applyCondition`, `applyEffect`, `push` and `followUp`: parts sharing a choice are one or the other; once one is used on a target, the others are gone (Prone or Push 10 ft).
+  - `card.remove("save")`: the attack's on-hit save taken off the card (a STR save that only applies to Medium or smaller targets).
+  - `card.hits`: the targets its attack hit, as the card judges them now. `await card.damageApplied(target)`: waits until the card's damage is applied to that target (its Apply pressed), then gives its Hit Points (null if the card is deleted, or after `{ timeout }` ms).
+  - `extraDamage("2d4", { type, when })`: more damage on the hit, added to the hit's own damage line (by type), when a target's facts hold; doubled on a critical hit.
+  - `item.roll()` inside an item's own macro is the use that ran the macro: an Opportunity Attack stays the Reaction (at the creature that provoked it), a readied use stays readied. In the macro, `usage` is that use's config (`usage["macro-helper"]?.oa` : an Opportunity Attack).
+  - `item.roll({ ... })` options, all optional: `use: false` (an attack that's part of something else, like Cleave's or a Multiattack's: no dnd5e use, so no uses or slots spent, no macro run, not counted by the Action Tracker; picked on the map as usual unless `targets` are given; attacks only); `activity` (index, id or name, when it has several: only that one is rolled, not the item's other damage activities, which the macro adds itself); `uses` (another item's name: its use is spent for this one, checked first; none left: a notice and no use. A wyrmling's two breaths sharing one Recharge 5–6: `item.roll({ uses : "Fire Breath" })`); `advantage` / `disadvantage` (`true`, a check `target => …`, or `{ when, reason }`: real advantage on that target's roll, also shown in the target picker); `targets` (a list of tokens: no pick; or a check: the picker only offers those); `cost` (`"free"`, `"action"`, `"bonus"`, `"reaction"`: what the Action Tracker counts); `attackBonus` (`"+2"`); `critical` (a critical hit on that roll or higher); `ignoreCover`; `damageType` (its damage is that type instead); `range` (feet, instead of the item's: everything) / `reach` (feet: a melee weapon's reach only, its thrown range stays); `d20` (`15`, or `[15, 3]` die by die: what the attack's d20 shows); `damageDice` (`4`, or `[6, 1, 3]`: what the damage dice show, in order across its rolls, crit dice included; past the list's end, its last value).
+  - `item.target({ activity })`: who the item is for, read off it the way a use reads it, with nothing rolled or spent; it returns the tokens (`null`: cancelled) and makes them your targets. Self: the caster. An area: you place it, whoever is inside comes back ("each creature of your choice": you choose among them), and an instantaneous area is removed once read (a lasting one, like Web, stays). An attack: picked like an attack (range, long range, thrown). A heal, save or effect: picked like one (its range, how many). The target checks (Sanctuary, out of reach) and the *targets* hook run as for a use. Then `item.roll({ targets })` rolls it at them, without placing an instantaneous area again.
+  - `when`: `"hit"` / `"miss"` are judged live (Shield, cover and rerolls change them); `"fail"` / `"save"` once the target's save is rolled (a save card); a function `target => …` is judged once per target when appended; `true` / `false` as given. Changes made together reach the card in one update.
+  - `grappler.grapple(target, { escape, with, from })`: the grapple lego (the Grapple action uses it too): the target gets *Grappled: <grappler>* with who holds it and its escape DC (default 8 + Strength modifier + Proficiency Bonus, `MacroHelper.escapeDC(grappler)`), so its **Escape** and the grappler's **Release** work; `with: ["blinded", "restrained"]` adds conditions that end with it, and `applyCondition`'s other options work too. `token.grappling()`: the creatures it's grappling (read from their Grappled effects). `shareDamage(args, other, 0.5)` in a *Damage about to apply* hook: it takes only that part, and `other` gets a card with the same amount and an **Apply** button (its owner or the GM). `ruleLimit("...")`: Rule Limits for something the rules don't allow (`true`: go ahead).
+  - Hooks **Its turn starts** / **Its turn ends** (Run on Hooks): about the creature whose turn it is (use *Active GM (once)*).
+  - Checks for `when`: `target.isSmaller("large")` (that size or smaller), `token.movedThisTurn()` (feet it has moved this turn, any path; teleports don't count), and `token.chargedAt(target, 30)` (its last stretch of movement this turn straight at the target, at least that far, ending within reach).
+  - `token.teleport(40, { item })`: pick an unoccupied space within 40 ft it can see (its sight: walls, light, its senses; not while Blinded), then the item's use (its card, its cost; Esc on the pick: nothing used), then it teleports there, at the same elevation (no movement spent, no Opportunity Attacks, *Teleported 15 ft* in its turn's log). Without `item`, just the pick and the move.
+  - `token.leap(30, { item })`: the same pick (unoccupied, within 30 ft, not through a wall that blocks movement), the item's use, then it jumps there; leaving a creature's reach provokes an Opportunity Attack as a drag does (a teleport or a push doesn't); the leap's distance isn't counted as movement. `token.useMovement(-10)`: 10 ft of its movement this turn spent (past its movement: Rule Limits); `token.useMovement(50)`: 50 ft more movement this turn (an action that moves it up to its Speed, like a Dash). A Leap that costs 10 ft: `if(!await token.leap(30, { item })) return; await token.useMovement(-10);`.
+  - `token.hasReaction()`: whether it has its Reaction right now (out of combat or without the Action Tracker: yes), for a hook macro that must decide before its first `await` (Advantage on the save it's about to roll).
+  - `token.useReaction("Split")`: a Reaction the macro takes without a card (`item.roll()` posts the item's card and spends it too); `false` when it has none left this round (or can't take Reactions), otherwise spent and logged in the Action Tracker (out of combat: `true`).
+  - In a `"dnd5e.applyDamage"` hook: `damageTypes(options)` lists the damage types it was dealt, before its resistances and immunities (an Ochre Jelly immune to Slashing is still "subjected to" it); `becameBloodied(actor, options)` says whether this damage made it Bloodied.
+  - `token.trample(50, { size, disengage })`: pick a space within 50 ft, then it moves there in a straight line through the spaces of creatures of `size` or smaller (a bigger one in the way: refused); `disengage`: no Opportunity Attacks for that move. It's movement like any other. Returns the enemies whose space it entered, in order (`null`: cancelled), for `item.roll({ targets })`.
+  - A passive trait in a hook: *Before any attack roll* / *Before any saving throw* get the roll's config as `args[0]` (`args[0].advantage = true`). (dnd5e's own Bloodied condition).
+
+## Hook Macros
+
+Run a world macro when something happens in the game, without installing a module for it.
+
+**Allow Players to Create** (Hook Macros setting, off by default): players get the *Run on Hooks* fields on macros they own. A player's hook macro only ever runs on that player's own client, never the GM's or anyone else's.
+
+1. Open a world macro (GM only).
+2. Expand **Run on Hooks** under the Type line.
+3. Pick hooks from the list, or type any hook name under **Custom Hooks**.
+4. Choose **Run For**:
+   - **Active GM (once):** the default, and right for most things.
+   - **Every client:** runs wherever the hook fires. dnd5e roll hooks need this, because they only fire on the roller's client.
+
+The macro gets `hook` (the hook's name) and `args` (its arguments). Only macros written by a GM run from hooks.
+
+The macro runs inside the hook, so until its first `await` it can still change what the hook passed, such as the pending update in *Damage about to apply*. Returning `false` doesn't cancel the hook. For a feature that belongs to one creature, use an item macro's **Run on Hooks** instead (see Item Macro): it only listens while that creature is on the scene.
+
+```js
+// Run on "Turn changed" (combatTurnChange)
+const [combat] = args;
+ChatMessage.create({ content : `It's ${combat.combatant?.name}'s turn.` });
+```
+
+
+### Stage hooks: how feats plug in
+
+Roll Item does four things: **Target**, **Attack**, **Save** and **Damage**, all on one card. It knows nothing about anyone's feats, and nothing about System Automation either: every rule (masteries, Grapple and Shove, Lucky, Bardic Inspiration, Rule Limits...) plugs into the card through the same hooks. A feat that changes a roll is an item macro on the feat, set to **Run on Hooks** (see Item Macro), using these hooks:
+
+| Hook | Arguments | Use it to |
+|---|---|---|
+| `macro-helper.targets` | `activity, tokens` | The targets picked or found in an area. Remove some from `tokens` (splice it) to drop them, e.g. Humanoids only. What's left becomes the targets. |
+| `macro-helper.preAttack` | `activity, rollConfig` | Change an attack before it's rolled (`rollConfig.advantage` / `.disadvantage`). Return `false` to stop it. `rollConfig["macro-helper"].target` is the target's token uuid. |
+| `macro-helper.attack` | `activity, roll` | React to an attack roll. |
+| `macro-helper.preDamage` | `activity, config, attack` | Change damage before it's rolled. Return `false` to skip it. |
+| `macro-helper.damage` | `activity, rolls, attack` | React to a damage roll. |
+| `macro-helper.cardButtons` | `message, buttons, { ray }` | Add a button to an attack on the card: push `{ id, label, icon }`. Runs every time the card is drawn. |
+| `macro-helper.cardButton` | `message, id, { ray, event, button }` | Your button was clicked. `button` is the button itself. |
+| `macro-helper.cardNotes` | `message, notes, { ray }` | Add a note to the card: push `{ text, icon, tooltip }`. |
+| `macro-helper.cardSections` | `message, sections, { ray }` | Add a section under an attack (or to a save card): push `{ partial, context }`, where `partial` is a Handlebars partial you loaded. Its buttons use `data-action="cardButton" data-id="..."`. With `applies : true` its damage counts for **Apply Hits**. Weapon masteries and Shove's buttons use this. |
+| `macro-helper.cardFaces` | `message, faces` | Show something else that went into the use under the item's description, laid out like the item (its header, its description folding under it): push `{ uuid, name, img, subtitle, description }`. With a `uuid` and no `description`, that item's description is shown. Metamagic uses this. |
+| `macro-helper.selfEffects` | `activity` | Return `false` when your rule puts a self-only activity's effects on the creature itself (Rage, Dodge, Innate Sorcery), so Roll Item doesn't. |
+| `macro-helper.damageType` | `activity, { index, types, preset }` | Settle a damage part's type without asking: set `preset.type` (one of `types`). A pact weapon's normal type. |
+| `macro-helper.preRollItem` | `activity, usage` | Return `false` to leave an activity to dnd5e (Bardic Inspiration's die isn't rolled on a card). |
+| `macro-helper.isRider` | `activity` | Return `false` when a save on the item isn't an on-hit rider (Grapple and Shove are alternatives to the attack). |
+| `macro-helper.saveOutcome` | `saveMessage, outcome` | Change how a save turned out: `outcome.success`, and `outcome.auto` for an automatic failure's reason. |
+| `macro-helper.autoFail` | `actor, ability, found` | Push a reason when a creature fails a save without rolling (Paralyzed: STR and DEX). |
+| `macro-helper.saveHint` | `message, actor, ability, { adv, dis, ignore }` | Name advantage or disadvantage on a save button's hint (push a name), or add an effect to `ignore` when it gives nothing right now. |
+| `macro-helper.preApplyRow` | `message, actor, { multiplier }` | A row's damage is about to be applied. Return `false` to stop it. |
+| `macro-helper.preApplyEffects` | `message, actor, effects, { uuid, button }` | A row's effects are about to be applied (GM). Return `false` to stop it, or to do it yourself (Grapple on a creature too big; Shove carries out the shover's choice). |
+| `macro-helper.rowEffect` | `message, uuid, row, { success, effects }` | The GM's effect button on a row: set `row.show` (false hides it), `row.names` (what it applies) or `row.done`. Shove shows the shover's choice there. |
+| `macro-helper.rowButtons` | `message, uuid, buttons, { result, owner }` | Add a button to a creature's row: push `{ id, label, icon, disabled }`. Topple is one. |
+| `macro-helper.cardMoves` | `message, uuid, moves, { result, ray }` | Offer a push or pull of that creature at the bottom of the card (the GM's button, with its picture and name): push `{ id, feet, direction, from, name, label, done, allow, after }`. `direction` is `"away"` (default) or `"toward"`; `from` a token, its uuid or a point (default: the card's creature); `done` when your rule keeps its own record; `allow()` can stop the click; `after(moved)` runs once it moved. `result` is `{ hit }` on attack cards and `{ success }` once a save is rolled. The card runs `forcedMove` and remembers it was used. Every push and pull in the module uses this. |
+| `macro-helper.rowButton` | `message, uuid, id, { event, button }` | A row button from `rowButtons` was clicked. |
+| `macro-helper.rerollButtons` | `message, buttons, { actor, roll }` | Add a button beside **Reroll** on a save or check (on its message and on card rows): push `{ id, icon, label, run }`. Lucky, Bardic Inspiration and Tactical Mind use this. |
+| `macro-helper.rerollable` | `message` | Return `false` when a save or check can't be changed at all (an automatic failure). |
+| `macro-helper.preReroll` | `who, what` | Return `false` to stop a reroll. Rule Limits uses this; with System Automation off, rerolls are never blocked. |
+
+**Turn starts:** `Hooks.on("macro-helper.turnStart", (combat, combatant) => ...)` runs on the active GM's client once for each creature's turn, after the order is settled. A round with **Initiative Each Round**, or a combat whose initiative is rolled automatically, waits for the roll first. Use it for anything at the start of a turn: Foundry's `combatTurnChange` names whoever was first *before* everyone rerolled. Repeating effects and Unarmed Fighting use it.
+
+The card's `message.system` gives a macro what it needs:
+- `isHitOn(ray)`: did that attack hit?
+- `rollDamage(ray)`: roll its damage again, the way the card did, crits included.
+- `setDamageType(type, ray)`: change the type of an attack's own damage once it's rolled (a pact weapon's Necrotic).
+- `extraDamage("1d6", { key, type, label, ray, magical })`: the extra-damage lego (Hunter's Mark, Hex, Sneak Attack): rolls the formula (typed, the weapon's type by default; doubled when that attack is a critical hit) into its own labelled box with its own APPLY, which shows only on a hit. It's added once per `key` per attack, so a second call does nothing. It returns the roll, or `null` if it was already there.
+- `addDamage(rolls, { key, label, ray, alternative })`: add damage in its own labelled box with its own APPLY. With `alternative`, it replaces the attack's damage rather than adding to it, and applying one hides the other.
+- `extraRolls(ray, key)`: damage a macro already added.
+
+`MacroHelper.damageRoll("2d6", { type, crit, magical })` rolls one extra damage roll (typed, dice doubled on a crit), the way every rule does. `MacroHelper.eachAttack(card, async (card, ray, tokens) => ...)` runs once for each attack on an attack card, after Roll Item shows its damage, with the tokens that attack was aimed at. Hunter's Mark and Hex are built from it plus `extraDamage`: `if(tokens.some(isMarked)) await card.system.extraDamage("1d6", { key, type, ray })`.
+- `addedRollsOf(ray, part)`: rolls a rule added to every attack (Graze's damage).
+- `targetHits(ray)`: that attack's `{ targets, hits }`.
+
+`ray` is the attack's number on a card with several attacks, or `null` for a single attack.
+
+The hooks only run until the macro's first `await`, so change rolls before awaiting anything. The built-in Savage Attacker in [scripts/automation/feats.js](../scripts/automation/feats.js) is the model: it uses the same two card-button hooks a macro would.
+
+Choose which activity types use Roll Item cards in the **Roll Item** settings. Any item can also be rolled from a macro, and each returns its card:
+
+```js
+item.roll();                                  // its normal use : uses, slots, the Action Tracker, its card
+item.roll({ use : false });                   // an attack that's part of something else (Cleave) : no use spent
+item.roll({ use : false, targets : [orc] });  // ... at these targets, no pick
+```

@@ -11,6 +11,7 @@ import { actions } from '../actions.js';
 import { patch } from '../../patch.js';
 import { restChoices } from '../rest-choices.js';
 import { chooseOne } from '../../helpers/creatures.js';
+import { onDamage } from '../../roll-item/damage.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -89,7 +90,7 @@ export class sorcerer{
     Hooks.on("dnd5e.renderChatMessage", (message, html) => this.saveCardButtons(message, html));
     Hooks.on("preCreateActiveEffect", (effect, data, options, userId) => { if(userId === game.user.id) this.extendEffect(effect); });
     Hooks.on("dnd5e.preRollConcentrationV2", config => this.extendedConcentration(config));
-    Hooks.on("dnd5e.preRollDamageV2", config => this.transmute(config));
+    onDamage((attack, damage) => this.transmute(attack, damage));
     /* Innate Sorcery's DC : Sorcerer spells only (dnd5e's bonus is to every spell) */
     patch.wrap("CONFIG.DND5E.activityTypes.save.documentClass.prototype.prepareFinalData", function(wrapped, ...args){
       const result = wrapped(...args);
@@ -341,15 +342,10 @@ export class sorcerer{
   /* ---------- Transmuted Spell ---------- */
 
   /* Its damage (cast now, or rolled again from its card within the minute) : the chosen type instead */
-  static transmute(config){
-    const item = config?.subject?.item;
-    const chosen = item ? this.#transmuted.get(item.uuid) : null;
+  static transmute(attack, damage){
+    const chosen = attack.item ? this.#transmuted.get(attack.item.uuid) : null;
     if(!this.enabled() || !chosen || ((Date.now() - chosen.at) > 60000)) return;
-    for(const roll of config.rolls ?? []){
-      const options = roll.options ?? (roll.options = {});
-      if(this.TRANSMUTABLE.includes(options.type)) options.type = chosen.type;
-      if(Array.isArray(options.types)) options.types = options.types.map(t => this.TRANSMUTABLE.includes(t) ? chosen.type : t);
-    }
+    damage.setType(chosen.type, { only : this.TRANSMUTABLE });
   }
 
   /* ---------- Careful Spell, Heightened Spell : the save card's rows ---------- */

@@ -5,7 +5,7 @@ whether the module covers it or you need to edit the item.
 
 | Item | Issue | What to do |
 |---|---|---|
-| **Reckless Attack** (Barbarian 2) | No activity at all; its "Reckless Attack" effect has no changes. | Run [upgrade-items.js](../examples/item-macros/upgrade-items.js) on the character: it copies Reckless Attack from the Actions compendium and keeps it under Barbarian. |
+| **Reckless Attack** (Barbarian 2) | No activity at all; its "Reckless Attack" effect has no changes. | Run [upgrade-items.js](../examples/tools/upgrade-items.js) on the character: it copies Reckless Attack from the Actions compendium and keeps it under Barbarian. |
 | **Tavern Brawler** (feat) | Its 1d4 + STR "Enhanced Unarmed Strike" is a separate attack on the feat; the Unarmed Strike itself is unchanged. | Nothing: the module makes the Unarmed Strike roll 1d4 + STR (rerolling 1s). The feat's own attack can be deleted. |
 | **Divine Order: Thaumaturge** (Cleric 1) | Its effects add WIS to Arcana / Religion with the old keys `system.skills.arc.bonuses.check` / `system.skills.rel.bonuses.check`, which dnd5e 6 doesn't apply (a skill's bonus is now `system.skills.<skill>.roll.bonus`). | Changed when added (and on load) to `system.skills.arc.roll.bonus` and `system.skills.rel.roll.bonus`. |
 | **Draconic Flight** (Dragonborn) | Given at level 1 with a use; the rule gives it at character level 5. | Delete it on characters below level 5. |

@@ -8,6 +8,7 @@ import { findItem, addTimedEffect } from '../../helpers/actors.js';
 import { originOf, idOf } from '../../helpers/utils.js';
 import { giveMode } from '../../roll-item/reasons.js';
 import { conditions } from '../conditions.js';
+import { onDamage } from '../../roll-item/damage.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -47,7 +48,7 @@ export class barbarian{
     Hooks.on("dnd5e.postUseActivity", (activity, usage) => this.onUse(activity, usage));
     rollModes.add("reckless", config => this.onPreRollAttack(config));
     Hooks.on("dnd5e.rollAttackV2", (rolls, { subject } = {}) => this.onAttack(subject, rolls?.[0]));
-    Hooks.on("dnd5e.preRollDamageV2", config => this.rageDamage(config));
+    onDamage((attack, damage) => this.rageDamage(attack, damage));
     Hooks.on("dnd5e.preRollSavingThrowV2", config => this.dangerSense(config));
     Hooks.on(`${module.id}.saveHint`, (message, actor, ability, { ignore }) => this.dangerSenseHint(actor, ability, ignore));
     Hooks.on("createChatMessage", message => this.onCard(message));
@@ -260,36 +261,16 @@ export class barbarian{
 
   /* Rage damage : only attacks using Strength. dnd5e adds it to every melee weapon attack (DEX finesse too) and to no
      ranged one (STR thrown) : take it off / put it on in the damage formula */
-  static rageDamage(config){
-    const activity = config?.subject;
-    if((activity?.type !== "attack") || (activity.item?.type !== "weapon")) return;
-    const actor = activity.actor;
-    if(!this.isRaging(actor)) return;
-    const change = this.rageEffects(actor).flatMap(e => [...(e.system?.changes ?? e.changes ?? [])])
+  /* Rage's damage bonus is for attacks made with Strength (a thrown weapon too, 2024), never another ability : dnd5e
+     adds it to every melee weapon attack, so it's taken off a Dexterity one and added to a Strength-thrown one */
+  static rageDamage(attack, damage){
+    if(!attack.isAttack || !attack.weapon || !this.isRaging(attack.actor)) return;
+    const change = this.rageEffects(attack.actor).flatMap(e => [...(e.system?.changes ?? e.changes ?? [])])
       .find(c => ["system.bonuses.mwak.damage", "system.rolls.damage.mwak.bonus"].includes(c.key));
     const bonus = String(change?.value ?? "").replace(/^\s*\+\s*/, "").trim();
     if(!bonus) return;
-    const ability = config.ability ?? config.rolls?.[0]?.options?.ability ?? activity.ability;
-    const action = String(activity.getActionType?.(config.attackMode) ?? "");
-    const roll = config.rolls?.[0];
-    if(!roll) return;
-    if(action.startsWith("m") && (ability !== "str")) roll.parts = this.withoutBonus(roll.parts ?? [], bonus);
-    else if(action.startsWith("r") && (ability === "str")) roll.parts = [...(roll.parts ?? []), bonus];
-  }
-
-  /* The parts without Rage's bonus : dnd5e adds the melee damage bonus as one part (Rage's, maybe with others) */
-  static withoutBonus(parts, bonus){
-    const flat = s => String(s).replace(/\s+/g, "");
-    const target = flat(bonus).replace(/^\+/, "");
-    for(let i = 0; i < parts.length; i++){
-      const part = flat(parts[i]);
-      if(!part.includes(target)) continue;
-      const rest = part.replace(`+${target}`, "").replace(target, "").replace(/^\+/, "");
-      const copy = [...parts];
-      if(rest) copy[i] = rest; else copy.splice(i, 1);
-      return copy;
-    }
-    return [...parts, `-(${bonus})`];   // not found : cancel it instead
+    if(attack.melee && (attack.ability !== "str")) damage.remove(bonus);
+    else if(attack.ranged && (attack.ability === "str")) damage.add(bonus);
   }
 
   /* Wearing heavy armor */
