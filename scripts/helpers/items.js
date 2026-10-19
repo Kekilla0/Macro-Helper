@@ -119,13 +119,13 @@ export function isExtraLightAttack(item){
  *   repeat : true lets the same target be picked more than once (Multiattack : both axes at one orc, or one each).
  *   Fewer picks than `count` is fine : Enter confirms, one attack per pick.
  * Problems are shown as a notification (and the console for errors), nothing is thrown.
- * This rolls the attack directly, like item.rollItem() : no dnd5e use (no spell slot or uses spent).
+ * This rolls the attack directly, item.roll({ use : false }) : no dnd5e use (no spell slot or uses spent).
  * Roll Item's "Pick Targets" setting does the same picking inside dnd5e's own use instead.
  *
  * @param {Item} item
  * @param {object} [options]       see pickAttack, plus :
  * @param {Event} [options.event]  for advantage / disadvantage keys
- * @returns {Promise<object|null>}  Roll Item's result, null if cancelled or refused
+ * @returns {Promise<CardBuilder|null>}  its card (card.message), null if cancelled or refused
  */
 export async function pickAndAttack(item, { event, ...options } = {}){
   const picked = await pickAttack(item, options);
@@ -134,10 +134,11 @@ export async function pickAndAttack(item, { event, ...options } = {}){
   try {
     /* Attack : each target gets thrown at or hit, with disadvantage at long range or for a ranged attack while threatened.
        dnd5e combines it with advantage (keys, effects) and uses up what that attack needs */
-    const { attack, targets, attackMode, disadvantage } = picked;
-    const result = await rollItem.roll(item, { activity : attack.id, count : targets.length, targets, attackMode, disadvantage, event });
-    if(!result) return attackFailed(item, module.i18n("helpers.attack.noRoll"));
-    return result;
+    const { attack, targets } = picked;
+    const { cardBuilder } = await import('../roll-item/card-builder.js');
+    const card = await cardBuilder.roll(item, { use : false, attack, picked, count : targets.length, event });
+    if(!card) return attackFailed(item, module.i18n("helpers.attack.noRoll"));
+    return card;
   }
   catch(error){
     return attackFailed(item, module.i18n("helpers.attack.error"), error);

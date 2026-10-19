@@ -614,31 +614,116 @@ export class rollItem{
   static async attackAfterUse(activity, usage, area = null){
     const event = usage.event;
     const scaling = activity.item.getFlag("dnd5e", "scaling") ?? 0;
-    /* What rules noted on the use : a note for the card, a stretched range (Distant Spell) */
+    /* What rules noted on the use : a note for the card */
     const note = usage?.[module.id]?.note ?? null;
     const cardFlags = usage?.[module.id]?.cardFlags ?? null;
-    const rangeMultiplier = Number(usage?.[module.id]?.rangeMultiplier) || 1;
     /* An area already chose the targets; a rule set them (a leap, a sustained spell : usage useTargets) */
     if(area) return this.rollActivity(activity, { event, scaling, note, cardFlags, targets : area.length ? area : undefined });
     if(usage?.[module.id]?.useTargets && game.user.targets.size) return this.rollActivity(activity, { event, scaling, note, cardFlags, targets : [...game.user.targets] });
+    const picked = await this.pickAttackFor(activity, usage);
+    if(!picked) return this.cancelUse(activity);
+    if(!picked.targets.length) return this.rollActivity(activity, { event, scaling, note, cardFlags });
+    const { targets, count, attackMode, disadvantage } = picked;
+    return this.rollActivity(activity, { event, scaling, note, cardFlags, count, targets, attackMode, disadvantage });
+  }
+
+  /* ---------- The targeting lego ---------- */
+
+  /**
+   * Who an item is for, read off it the way a use reads it, with nothing rolled or spent : item.target(). Then
+   * item.roll({ targets }) rolls it at them (an instantaneous area isn't placed again).
+   * @param {Item} item
+   * @param {object} [options]
+   * @param {string} [options.activity]  id or name, default the one a use would roll
+   * @returns {Promise<Token[]|null>}  null : cancelled
+   */
+  static async target(item, { activity } = {}){
+    const list = [...(item?.system?.activities ?? [])];
+    const chosen = (activity ? list.find(a => (a.id === activity) || (a.name === activity)) : null) ?? this.getActivity(item, activity) ?? list[0];
+    if(!chosen) return null;
+    return (await this.targetsFor(chosen))?.targets ?? null;
+  }
+
+  /**
+   * The targeting lego, by what the activity aims at :
+   *   self      the caster
+   *   an area   placed now (dnd5e's placement : range, Self cones and cubes), whoever is inside ("each creature of your
+   *             choice" : chosen among them); an instantaneous area is removed once read, a lasting one stays
+   *   an attack picked like an attack (range, long range, thrown, ammunition) : pickAttackFor
+   *   creatures picked on the map (a heal, save, effect or damage aimed at creatures) : pickFor
+   *   else      your targets
+   * Picks go through the target checks (Sanctuary) and the macro-helper.targets hook, and become your targets.
+   * @param {Activity} activity
+   * @param {object} [options]
+   * @param {object} [options.usage]  the use's config (Distant Spell's range, skipPick...)
+   * @returns {Promise<{ targets : Token[], count?, attackMode?, disadvantage? }|null>}  null : cancelled
+   */
+  static async targetsFor(activity, { usage = {} } = {}){
+    if(!activity) return null;
+    if(this.isSelfOnly(activity)){
+      const caster = tokenOf(activity.item);
+      const targets = (caster && (caster.document.parent === canvas.scene)) ? [caster] : [];
+      if(canvas.ready) canvas.tokens.setTargets(targets.map(t => t.id));
+      return { targets };
+    }
+    if(activity.target?.template?.type && canvas.ready){
+      const regions = await dnd5e.canvas.TemplatePlacement.fromActivity(activity) ?? [];
+      if(!regions.length) return null;
+      const inside = await this.chooseInArea(activity, this.areaTokens(activity, regions));
+      this.announceTargets(activity, inside, { keepEmpty : true });
+      const duration = activity.duration ?? {};
+      if((duration.units === "inst") && !duration.concentration) await canvas.scene.deleteEmbeddedDocuments("Region", regions.map(r => r.id).filter(id => canvas.scene.regions.has(id)));
+      return { targets : inside };
+    }
+    if(activity.type === "attack") return this.pickAttackFor(activity, usage);
+    const targets = await this.pickFor(activity, usage);
+    return targets ? { targets } : null;
+  }
+
+  /**
+   * An attack's targets : picked on the map with the Pick Targets setting (range, long range and thrown, the
+   * threatened rule, ammunition; several attacks can pick a target again), else your targets. Checked (Sanctuary).
+   * @param {Activity} activity
+   * @param {object} [usage]       the use's config (Distant Spell's rangeMultiplier)
+   * @param {object} [options]
+   * @param {number} [options.count]  attacks, default the activity's (rays)
+   * @returns {Promise<{ targets : Token[], count?, attackMode?, disadvantage? }|null>}  null : cancelled; no targets :
+   *          roll with none
+   */
+  static async pickAttackFor(activity, usage = {}, { count } = {}){
     const pick = settings.value("rollItemPick");
     const attacker = tokenOf(activity.item);
     if((pick === "off") || !canvas.ready || !attacker || (attacker.document.parent !== canvas.scene)){
-      if(!game.user.targets.size) return this.rollActivity(activity, { event, scaling, note, cardFlags });
+      if(!game.user.targets.size) return { targets : [] };
       const checked = await this.checkTargets(activity, [...game.user.targets]);
-      if(!checked?.length) return this.cancelUse(activity);
-      return this.rollActivity(activity, { event, scaling, note, cardFlags, targets : checked });
+      return checked?.length ? { targets : checked } : null;
     }
-
-    const count = this.countFor(activity);
-    const picked = await pickAttack(activity.item, { activity, count, repeat : count > 1, clearTargets : pick === "always", used : true, rangeMultiplier, filter : rollOptionFilter(activity) ?? undefined });
-    if(!picked) return this.cancelUse(activity);
-    const { attackMode, disadvantage } = picked;
+    const n = this.countFor(activity, count);
+    const rangeMultiplier = Number(usage?.[module.id]?.rangeMultiplier) || 1;
+    const picked = await pickAttack(activity.item, { activity, count : n, repeat : n > 1, clearTargets : pick === "always", used : true, rangeMultiplier, filter : rollOptionFilter(activity) ?? undefined });
+    if(!picked) return null;
     const targets = await this.checkTargets(activity, picked.targets);
-    if(!targets?.length) return this.cancelUse(activity);
-    if(!this.announceTargets(activity, targets)) return this.cancelUse(activity);
+    if(!targets?.length || !this.announceTargets(activity, targets)) return null;
     /* Fewer picks than rays : the rays are spread over the picks (3 rays, A and B -> A A B) */
-    return this.rollActivity(activity, { event, scaling, note, cardFlags, count : Math.max(count, targets.length), targets, attackMode, disadvantage });
+    return { targets, count : Math.max(n, targets.length), attackMode : picked.attackMode, disadvantage : picked.disadvantage };
+  }
+
+  /**
+   * Creatures a heal, save or effect is aimed at : picked on the map with the Pick Targets setting (pickSpec : its
+   * range, how many, who), else your targets. Checked (Sanctuary).
+   * @returns {Promise<Token[]|null>}  null : cancelled
+   */
+  static async pickFor(activity, usage = {}){
+    const spec = this.pickSpec(activity, usage);
+    if(spec){
+      const picks = await this.checkTargets(activity, await pickTargets(activity.item, spec));
+      return (picks?.length && this.announceTargets(activity, picks)) ? picks : null;
+    }
+    if(!game.user.targets.size || usage?.[module.id]?.skipPick) return [...game.user.targets];
+    const checked = await this.checkTargets(activity, [...game.user.targets]);
+    if(!checked?.length) return null;
+    canvas.tokens.setTargets(checked.map(t => t.id));
+    return checked;
   }
 
   /**
@@ -711,17 +796,9 @@ export class rollItem{
         const picked = await rollItem.pickForNormal(activity, ctx.config);
         if(picked === false) return;
       }
-      const spec = rollItem.pickSpec(activity, ctx.config);
-      if(spec){
-        const picks = await rollItem.checkTargets(activity, await pickTargets(activity.item, spec));
-        if(!picks?.length || !rollItem.announceTargets(activity, picks)) return;
-      }
-      /* No pick (your own targets) : the same checks, before it's used (attacks check theirs after the pick) */
-      else if((activity.type !== "attack") && game.user.targets.size && !ctx.config?.[module.id]?.skipPick){
-        const checked = await rollItem.checkTargets(activity, [...game.user.targets]);
-        if(!checked?.length) return;
-        canvas.tokens.setTargets(checked.map(t => t.id));
-      }
+      /* Creatures it's aimed at, picked (or your targets, checked) before it's used : closing the pick spends nothing.
+         Attacks pick theirs after the use (the ray count is known then), areas once placed */
+      if((activity.type !== "attack") && !(await rollItem.pickFor(activity, ctx.config))) return;
       return next();
     });
     /* Attack + save rider items skip dnd5e's activity choice (sheet, hotbar, anything calling item.use) */
@@ -928,14 +1005,20 @@ export class rollItem{
   static targetArea(activity, results){
     const templates = results?.templates ?? [];
     if(!templates.length || !settings.value("rollItem") || !settings.value("rollItemTemplateTargets") || !canvas.ready) return null;
-    const template = activity?.target?.template ?? {};
-    const emanation = (CONFIG.DND5E.areaTargetTypes?.[template.type]?.template === "emanation") && !template.stationary;
-    const caster = (this.isFromSelf(activity) || this.isCubeFromSelf(activity) || emanation) ? tokenOf(activity.item) : null;
-    /* GM-hidden creatures are in it too (the card shows them to players as Unknown with the DM screen) */
-    const inside = [...new Set(templates.flatMap(t => getTokensInArea(t, { includeHidden : true })))].filter(t => t !== caster);
+    const inside = this.areaTokens(activity, templates);
     this.announceTargets(activity, inside, { keepEmpty : true });
     log.debug("Area targets", activity.item?.name, inside.map(t => t.name));
     return inside;
+  }
+
+  /* Who is inside an activity's placed areas : the caster too, except for their own cone, line or Self cube, or an
+     emanation (2024 : it leaves out the creature it comes from). GM-hidden creatures are in it too (the card shows
+     them to players as Unknown with the DM screen) */
+  static areaTokens(activity, templates){
+    const template = activity?.target?.template ?? {};
+    const emanation = (CONFIG.DND5E.areaTargetTypes?.[template.type]?.template === "emanation") && !template.stationary;
+    const caster = (this.isFromSelf(activity) || this.isCubeFromSelf(activity) || emanation) ? tokenOf(activity.item) : null;
+    return [...new Set(templates.flatMap(t => getTokensInArea(t, { includeHidden : true })))].filter(t => t !== caster);
   }
 
   /* ---------- Target checks ---------- */

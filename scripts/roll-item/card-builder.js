@@ -619,8 +619,10 @@ export class cardBuilder{
   static inherited = new Map();
   static INHERIT = ["economy", "oa", "readied", "skipPick", "useTargets"];
 
-  /* item.roll() : the item's normal use, its card as a CardBuilder (null : nothing was rolled) */
-  static async roll(item, { post = true, activity = null, uses : shared = null, ...options } = {}){
+  /* item.roll() : the item's normal use, its card as a CardBuilder (null : nothing was rolled).
+     use : false : an attack that's part of something else (Cleave, a Multiattack) : no dnd5e use (no uses or slots
+     spent, no macro, not counted by the Action Tracker), straight to its card (rollFree) */
+  static async roll(item, { post = true, activity = null, uses : shared = null, use = true, ...options } = {}){
     /* uses : another item's uses spend for this one (a wyrmling's two breaths share one Recharge 5–6) : checked first */
     const pool = shared ? (item.actor?.items?.getName(shared) ?? item.actor?.items?.get(shared) ?? null) : null;
     if(shared && !pool){ ui.notifications.warn(module.format("cardBuilder.noItem", { name : shared })); return null; }
@@ -636,15 +638,23 @@ export class cardBuilder{
       canvas.tokens.setTargets(options.targets.map(t => (t.object ?? t)?.id).filter(Boolean));
       config[module.id].skipPick = true;
       config[module.id].useTargets = true;
+      /* Its targets are known (item.target() read its area) : an instantaneous area isn't placed again; a lasting one
+         (Web, Spirit Guardians) is the spell itself on the map, so it is */
+      const aimed = chosen ?? list.find(a => a.target?.template?.type);
+      const duration = aimed?.duration ?? {};
+      if(aimed?.target?.template?.type && (duration.units === "inst") && !duration.concentration) config.create = { measuredTemplate : false };
     }
     const keys = [chosen?.uuid, item.uuid];
     /* An activity named : only it is rolled (not the item's other damage activities : Plutonium's split charge damage) */
     rollOptions.set(keys, chosen ? { ...options, only : true } : options);
     let made = null;
     try {
-      const results = chosen ? await chosen.use(config) : await item.use(config);
-      if(!results) return null;
-      made = await uses.cardOf(results);
+      if(use === false) made = (await this.rollFree(item, chosen, options))?.message ?? null;
+      else {
+        const results = chosen ? await chosen.use(config) : await item.use(config);
+        if(!results) return null;
+        made = await uses.cardOf(results);
+      }
     }
     finally { rollOptions.clear(keys); }
     /* The card itself (the use may hand back its data, or the message) */
@@ -656,6 +666,31 @@ export class cardBuilder{
     if(pool) await pool.update({ "system.uses.spent" : (Number(pool.system.uses.spent) || 0) + 1 });
     if(!post) log.debug("item.roll : the card is already posted by the use; post : false is not supported yet");
     return new CardBuilder(message);
+  }
+
+  /**
+   * item.roll({ use : false }) : the attack straight onto its card, no dnd5e use. Targets given : those (one attack
+   * each); else picked on the map like a normal use (the Pick Targets setting; item.roll's targets check filters it),
+   * else your targets. item.roll's advantage / disadvantage options apply through its roll options, like a normal use.
+   * Internal options : attack (the attack activity, the item's other damage still rolled, where activity rolls only
+   * that one), picked (a pickAttack result already made : its targets, attack modes and long range disadvantage),
+   * count (attacks), tags (rules' marks : Cleave's { noMod }).
+   * @returns {Promise<object|null>}  Roll Item's result ({ message, ... }), null if cancelled
+   */
+  static async rollFree(item, chosen, { attack = null, picked = null, targets, count, tags, event } = {}){
+    const { rollItem } = await import('./roll-item.js');
+    const activity = chosen ?? ((typeof attack === "string") ? item.system?.activities?.get(attack) : attack) ?? rollItem.getActivity(item);
+    if(activity?.type !== "attack"){ ui.notifications.warn(module.format("cardBuilder.freeAttackOnly", { name : item?.name ?? "" })); return null; }
+    /* No targets given : picked like a normal use's attack (the targeting lego) */
+    if(!picked && !Array.isArray(targets)){
+      picked = await rollItem.pickAttackFor(activity, {}, { count });
+      if(!picked) return null;
+      if(!picked.targets.length) picked = null;
+      else count = picked.count ?? count;
+    }
+    if(picked) targets = picked.targets;
+    else if(!Array.isArray(targets)) targets = undefined;
+    return rollItem.roll(item, { activity : activity.id, event, count, attackMode : picked?.attackMode, disadvantage : picked?.disadvantage, targets, tags });
   }
 
   /* The item's own effects the card shows : those not removed */
@@ -683,6 +718,7 @@ export class cardBuilder{
     };
     const self = this;
     add(CONFIG.Item.documentClass, "roll", function(options){ return self.roll(this, options); });
+    add(CONFIG.Item.documentClass, "target", async function(options){ const { rollItem } = await import('./roll-item.js'); return rollItem.target(this, options); });
     add(CONFIG.Item.documentClass, "setDamage", function(formula, options){ return setDamage(this, formula, options); });
     for(const cls of [CONFIG.Actor.documentClass, CONFIG.Token.documentClass, CONFIG.Token.objectClass]){
       add(cls, "isSmaller", function(size){ return isSmaller(this, size); });

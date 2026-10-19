@@ -770,6 +770,7 @@
   "species.emergeButton" : "Emerge (Bonus Action)",
   "species.emerged" : "emerged",
   "cardBuilder.noItem" : "No attack called {name} on this creature.",
+  "cardBuilder.freeAttackOnly" : "{name}: item.roll({ use : false }) is for attacks only.",
   "cardBuilder.replaced" : "(replaced by a harsher {name})",
   "combatLog.title" : "Combat Log",
   "combatLog.attack" : "{item} : {total} at {targets}",

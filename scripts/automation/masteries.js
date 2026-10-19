@@ -6,7 +6,7 @@ import { limits } from './limits.js';
 import { logger } from '../log.js';
 import { distanceBetween } from '../helpers/tokens.js';
 import { getSize, addTimedEffect, usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
-import { giveCondition } from '../roll-item/card-builder.js';
+import { giveCondition, cardBuilder } from '../roll-item/card-builder.js';
 import { pickAttack, isRangedAttack } from '../helpers/items.js';
 import { rollItem } from '../roll-item/roll-item.js';
 const log = logger.for(import.meta.url);
@@ -412,9 +412,9 @@ export class masteries{
     });
     if(!picked) return;
 
-    const { attack, targets, attackMode, disadvantage } = picked;
-    const result = await rollItem.roll(item, { activity : attack.id, count : 1, targets, attackMode, disadvantage, event, tags : { noMod : true } });
-    if(!result) return;
+    const { attack } = picked;
+    const card = await cardBuilder.roll(item, { use : false, attack, picked, count : 1, event, tags : { noMod : true } });
+    if(!card) return;
     await markUsedThisTurn(attacker, "cleave");
     await message.setFlag(module.id, `mastery.${this.rayKey(ray)}`, true);
   }

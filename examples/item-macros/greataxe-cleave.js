@@ -6,7 +6,7 @@
  * How   : your targets are used first. With no targets and a choice to make, a dialog lets you pick,
  *         with the reach, the candidates and your picks shown on the map.
  *         One Roll Item card with an attack block (attack, damage, APPLY) per target.
- * Uses  : item.getEnemiesWithinRange(), token.getCreatureSize(), MacroHelper.selectTargets(), item.rollItem()
+ * Uses  : item.getEnemiesWithinRange(), token.getCreatureSize(), MacroHelper.selectTargets(), item.roll({ use : false })
  */
 
 const enemies = item.getEnemiesWithinRange();
@@ -29,4 +29,4 @@ const group = await MacroHelper.selectTargets(enemies, {
 });
 if(!group.length) return;   // chooser closed : no attack
 
-return item.rollItem({ count : group.length, event : scope.event });
+return item.roll({ use : false, targets : group, event : scope.event });
