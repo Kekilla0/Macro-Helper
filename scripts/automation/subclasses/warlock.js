@@ -21,7 +21,7 @@ const log = logger.for(import.meta.url);
  *                                    against anyone but you until the start of your next turn; Spells : effect rules).
  *   Fiend         Dark One's Blessing  an enemy it dropped to 0 HP, or one within 10 ft of it : CHA + Warlock level
  *                                    temporary Hit Points (at least 1).
- *   Great Old One Psychic Spells     a Warlock spell's attack card : Psychic on it turns its damage Psychic; Warlock
+ *   Great Old One Psychic Spells     a Warlock spell's attack or save card : Psychic on it turns its damage Psychic; Warlock
  *                                    Enchantment and Illusion spells need no Verbal or Somatic components.
  */
 export class warlockPatrons{
@@ -42,6 +42,7 @@ export class warlockPatrons{
     Hooks.on("dnd5e.applyDamage", (actor, amount, options) => this.onDown(actor, amount, options));
     gm.handle("darkOnesBlessing", data => this.blessingAsGM(data));
     Hooks.on(`${module.id}.cardButtons`, (message, buttons, { ray } = {}) => this.psychicButton(message, buttons, ray ?? null));
+    Hooks.on(`${module.id}.saveCardButtons`, (message, buttons) => this.psychicButton(message, buttons, null, { save : true }));
     Hooks.on(`${module.id}.cardButton`, (message, id, { ray } = {}) => { if(id === "psychicSpells") message.system.setDamageType?.("psychic", ray ?? null); });
     Hooks.on(`${module.id}.components`, (activity, need) => {
       const item = activity?.item;
@@ -126,8 +127,9 @@ export class warlockPatrons{
 
   /* ---------- Great Old One ---------- */
 
-  static psychicButton(message, buttons, ray){
-    if(!this.enabled() || (message.type !== TYPES.attack) || !message.system?.isHitOn?.(ray)) return;
+  /* An attack card that hits, or a save card (its damage, whoever saved) */
+  static psychicButton(message, buttons, ray, { save = false } = {}){
+    if(!this.enabled() || (save ? ((message.type !== TYPES.save) || !message.system?.dealsDamage) : ((message.type !== TYPES.attack) || !message.system?.isHitOn?.(ray)))) return;
     const actor = message.getAssociatedActor?.();
     const item = message.getAssociatedItem?.();
     if(!actor?.isOwner || !this.isWarlockSpell(item) || !subclasses.has(actor, this.PSYCHIC)) return;

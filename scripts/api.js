@@ -11,7 +11,7 @@ import { rollRequests } from './requests/requests.js';
 import { damageRoll, eachAttack } from './roll-item/extra-damage.js';
 import { onHit, hitOf } from './roll-item/hit-bonus.js';
 import { cutDamage, cutsOf } from './roll-item/damage-cuts.js';
-import { applyCondition, engulf, immunity, isType, isImmuneTo, web, affectedBy, pull, applyConditionNow, giveCondition, grapple, escapeDC, isDifficultTerrain, applyDisease, suppressOA, passThrough, applyEffect, attach, attachedTo, trample, followUp, extraDamage, shareDamage, chargedAt, isSmaller, grappling, teleport, leap, useMovement, useReaction, hasReaction, damageTypes, becameBloodied, push, cardBuilder } from './roll-item/card-builder.js';
+import { applyCondition, engulf, immunity, isType, isImmuneTo, web, affectedBy, pull, applyConditionNow, giveCondition, grapple, escapeDC, isDifficultTerrain, applyDisease, suppressOA, passThrough, applyEffect, attach, attachedTo, trample, followUp, extraDamage, shareDamage, chargedAt, isSmaller, grappling, teleport, leap, useMovement, useReaction, hasReaction, reactionMove, reactionMoveOf, reactionAttack, reactionMoveRows, reactionAttackRows, damageTypes, becameBloodied, push, cardBuilder } from './roll-item/card-builder.js';
 
 /* Public functions for macros : MacroHelper.x(...) or game.modules.get("macro-helper").api.x(...) */
 export class api{
@@ -20,7 +20,7 @@ export class api{
       rollItem : (...args)=> rollItem.roll(...args),
       /* Card builder : the normal use's card to append to, and its parts */
       roll : (item, options) => cardBuilder.roll(item, options),
-      applyCondition, engulf, immunity, isType, isImmuneTo, web, affectedBy, pull, applyConditionNow, giveCondition, grapple, escapeDC, isDifficultTerrain, applyDisease, suppressOA, passThrough, applyEffect, attach, attachedTo, trample, followUp, extraDamage, shareDamage, chargedAt, isSmaller, grappling, teleport, leap, useMovement, useReaction, hasReaction, damageTypes, becameBloodied, push,
+      applyCondition, engulf, immunity, isType, isImmuneTo, web, affectedBy, pull, applyConditionNow, giveCondition, grapple, escapeDC, isDifficultTerrain, applyDisease, suppressOA, passThrough, applyEffect, attach, attachedTo, trample, followUp, extraDamage, shareDamage, chargedAt, isSmaller, grappling, teleport, leap, useMovement, useReaction, hasReaction, reactionMove, reactionMoveOf, reactionAttack, reactionMoveRows, reactionAttackRows, damageTypes, becameBloodied, push,
 
       /* Extra damage : one roll (typed, doubled on a crit), and each attack on a card with its targets */
       damageRoll, eachAttack,

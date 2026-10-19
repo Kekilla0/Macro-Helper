@@ -10,7 +10,7 @@ import { chooseOne } from '../../helpers/creatures.js';
 import { giveMode } from '../../roll-item/reasons.js';
 import { onHit, hitOf } from '../../roll-item/hit-bonus.js';
 import { cutDamage } from '../../roll-item/damage-cuts.js';
-import { cardBuilder, giveCondition, isSmaller } from '../../roll-item/card-builder.js';
+import { cardBuilder, giveCondition, isSmaller, reactionAttack, reactionMoveRows, reactionAttackRows } from '../../roll-item/card-builder.js';
 import { addDie, rerolls } from '../../roll-item/rerolls.js';
 import { TYPES } from '../../roll-item/message.js';
 import { rollModes } from '../roll-modes.js';
@@ -36,17 +36,22 @@ const log = logger.for(import.meta.url);
  *                  with the die as extra damage. Evasive Footwork : Disengage, the die on its AC until its next turn.
  *                  Bait and Switch : swap places with a willing creature within 5 ft, the die on one of your ACs.
  *                  Ambush (Stealth, Initiative), Commanding Presence (Intimidation, Performance, Persuasion), Tactical
- *                  Assessment (History, Investigation, Insight) : a button on that check adds the die.
- *   Psi Warrior    Psionic Energy Dice : the Psionic Power item's uses. Protective Field : a creature it sees within
- *                  30 ft (itself too) is hit : a button (its Reaction, a die) takes die + INT (at least 1) off the
- *                  card's damage to it. Psionic Strike : once on each of its turns, a weapon hit on a creature within
+ *                  Assessment (History, Investigation, Insight) : a button on that check adds the die. Maneuvering
+ *                  Attack (a hit maneuver) : a willing ally may move half its Speed with its Reaction, no Opportunity
+ *                  Attack from the target (reactionMove). Commander's Strike : one of the Attack action's attacks
+ *                  (Action Tracker), a die spent : the ally's card, Attack (Reaction) with the die on its damage
+ *                  (reactionAttack). Riposte uses reactionAttack too.
+ *   Psi Warrior    Psionic Energy Dice : the Psionic Energy Die item's uses (else Psionic Power's). Protective Field : a creature it sees within
+ *                  30 ft (itself too) is hit, or is on a save card's damage : a button (its Reaction, a die) takes
+ *                  die + INT (at least 1) off the card's damage to it. Psionic Strike : once on each of its turns, a weapon hit on a creature within
  *                  30 ft : die + INT Force. Telekinetic Movement : a willing creature you see within 30 ft moves up to
  *                  30 ft to a space you pick (the GM's button for one you don't own).
  *   Eldritch Knight War Bond : Summon Weapon puts a bonded weapon (War Bonded) in your hand.
  */
 export class fighterArchetypes{
   /* The hit maneuvers : a die spent on the hit, its damage on the card, then their effect */
-  static HIT = ["trip-attack", "pushing-attack", "menacing-attack", "goading-attack", "disarming-attack", "distracting-strike"];
+  static HIT = ["trip-attack", "pushing-attack", "menacing-attack", "goading-attack", "disarming-attack", "distracting-strike", "maneuvering-attack"];
+  static COMMANDERS = "commanders-strike";
   /* Their die was spent by the Bonus Action : it goes on the next hit this turn */
   static PRIMED = ["lunging-attack", "feinting-attack"];
   static CHECKS = { "ambush" : ["ste"], "commanding-presence" : ["itm", "prf", "per"], "tactical-assessment" : ["his", "inv", "ins"] };
@@ -60,14 +65,14 @@ export class fighterArchetypes{
   static register(){
     if(game.system.id !== "dnd5e") return;
     for(const id of this.HIT){
-      onHit({ id, feature : id, icon : "fa-chess-knight", enabled : () => this.enabled(),
+      onHit({ id, feature : actor => this.has(actor, id), icon : "fa-chess-knight", enabled : () => this.enabled(),
         when : hit => !this.maneuvered(hit) && ((id !== "trip-attack" && id !== "pushing-attack") || !hit.target || isSmaller(hit.target, "large")),
         cost : hit => ({ item : this.diceOf(hit.actor), amount : 1 }),
         formula : hit => this.dieOf(hit.actor),
         after : hit => this.rider(id, hit) });
     }
     for(const id of this.PRIMED){
-      onHit({ id, feature : id, icon : "fa-chess-knight", enabled : () => this.enabled(), ownTurn : true,
+      onHit({ id, feature : actor => this.has(actor, id), icon : "fa-chess-knight", enabled : () => this.enabled(), ownTurn : true,
         when : hit => !this.maneuvered(hit) && !!this.primed(hit.actor, id, hit.target) && ((id !== "lunging-attack") || hit.melee),
         formula : hit => this.dieOf(hit.actor),
         after : hit => this.primed(hit.actor, id, hit.target)?.delete() });
@@ -76,11 +81,17 @@ export class fighterArchetypes{
       within : 30, when : hit => hit.weapon, cost : hit => ({ item : this.psionicOf(hit.actor), amount : 1 }),
       formula : hit => `${this.psionicDie(hit.actor)} + @abilities.int.mod`, types : () => ["force"] });
     Hooks.on(`${module.id}.cardButtons`, (message, buttons, { ray } = {}) => this.cardButtons(message, buttons, ray ?? null));
+    Hooks.on(`${module.id}.saveCardButtons`, (message, buttons) => this.saveFieldButtons(message, buttons));
     Hooks.on(`${module.id}.cardButton`, (message, id, { ray } = {}) => this.cardClicked(message, String(id), ray ?? null));
     Hooks.on(`${module.id}.rerollButtons`, (message, buttons, { actor, roll }) => this.checkButtons(message, buttons, actor, roll));
     Hooks.on("dnd5e.postUseActivity", activity => this.afterUse(activity));
     rollModes.add("feint", config => this.feintMode(config));
     gm.handle("fighterMove", (data, user) => this.moveAsGM(data, user));
+    /* Commander's Strike : one of the Attack action's attacks, given to an ally (its Reaction attack) */
+    for(const id of [this.COMMANDERS, `maneuvers-${this.COMMANDERS}`]){
+      actionTracker.REPLACES_ATTACK.add(id);
+      subclasses.onUseStep(id, (activity, ctx, next) => this.commandersStrike(activity, ctx, next));
+    }
     Hooks.on(`${module.id}.damageType`, (activity, info) => this.presetType(activity, info));
   }
 
@@ -102,8 +113,13 @@ export class fighterArchetypes{
     return 8 + Math.max(Number(a.str?.mod) || 0, Number(a.dex?.mod) || 0) + (Number(actor?.system?.attributes?.prof) || 0);
   }
 
+  /* A maneuver by its name's identifier : Plutonium's 2024 ones are "maneuvers-riposte" */
   static has(actor, id){
-    return subclasses.has(actor, id);
+    return subclasses.has(actor, id) ?? subclasses.has(actor, `maneuvers-${id}`);
+  }
+
+  static maneuverId(item){
+    return String(idOf(item)).replace(/^maneuvers-/, "");
   }
 
   /* One maneuver per attack */
@@ -136,11 +152,33 @@ export class fighterArchetypes{
       flags : { [module.id] : { rule : { onlyAgainstOrigin : "disadvantage" } } } }, { save : "wis", dc, from : item, until : "turnEnd", of : hit.actor });
     else if(id === "distracting-strike") await subclasses.giveEffect(target, { name : module.i18n("subclasses.fighter.distracted"),
       flags : { [module.id] : { rule : { nextAttackAgainst : "advantage" } } } }, { from : item, until : "turnStart", of : hit.actor });
+    /* A willing ally moves with its Reaction, half its Speed, no Opportunity Attack from the target */
+    else if(id === "maneuvering-attack"){
+      const [ally] = await pickTargets(me, { count : 1, range : Infinity, disposition : "ally", includeSelf : false, confirm : "auto", useTargets : false }) ?? [];
+      if(ally) await reactionMoveRows(hit.actor, item, [ally], { half : true, noOA : [target], text : module.format("subclasses.fighter.maneuvering", { name : ally.name, target : target.name }) });
+    }
     else if(id === "disarming-attack"){
       const save = await rollSave(target, "str", dc, { from : item });
       if(save && !save.success) await ChatMessage.implementation.create({ speaker : ChatMessage.implementation.getSpeaker({ actor : hit.actor }),
         content : `<p>${esc(module.format("subclasses.fighter.disarmed", { name : target.name }))}</p>` });
     }
+  }
+
+  /* Commander's Strike : a willing ally, a die spent, then its card : the ally's Attack (Reaction) button, the die on
+     its damage (no dnd5e roll of its own) */
+  static async commandersStrike(activity, ctx, next){
+    const actor = activity.actor;
+    const me = tokenOf(activity.getUsageToken?.() ?? actor);
+    const dice = this.diceOf(actor);
+    if(!me || !dice) return next();
+    if(!(Number(dice.system?.uses?.value) > 0)) return ui.notifications.warn(module.format("subclasses.fighter.noDice", { name : actor.name })), null;
+    const [ally] = await pickTargets(me, { count : 1, range : Infinity, disposition : "ally", includeSelf : false, confirm : "auto", useTargets : false }) ?? [];
+    if(!ally || !await spendUses(dice, 1)) return null;
+    /* The die is rolled with the ally's damage (doubled on a critical hit) */
+    const die = this.dieOf(actor);
+    const message = await reactionAttackRows(actor, activity.item, [ally], { extraDamage : { formula : die, label : activity.item.name },
+      text : module.format("subclasses.fighter.commanders", { name : ally.name, n : die }) });
+    return message ? { message } : null;
   }
 
   /* Lunging / Feinting Attack's die, waiting for the next hit this turn (Feinting : on that creature) */
@@ -160,7 +198,7 @@ export class fighterArchetypes{
   /* After a maneuver's own use (its Bonus Action) */
   static async afterUse(activity){
     if(!this.enabled() || !activity?.actor?.isOwner) return;
-    const id = idOf(activity.item);
+    const id = this.maneuverId(activity.item);
     const actor = activity.getUsageToken?.()?.actor ?? activity.actor;
     try {
       if(id === "lunging-attack"){
@@ -321,21 +359,15 @@ export class fighterArchetypes{
     await actionTracker.spend(actor, { kind : "reaction", what : item.name }).catch(() => null);
   }
 
-  /* Riposte : a melee attack back at the attacker, the die as extra damage (its Reaction) */
+  /* Riposte : a melee attack back at the attacker, the die as extra damage (its Reaction : the reactionAttack lego) */
   static async riposte(message, ray, token, key){
     const actor = token.actor;
     const item = this.has(actor, "riposte");
     const attacker = tokenOf(message.getAssociatedToken?.() ?? message.getAssociatedActor?.());
-    const weapons = actor.items.filter(i => (i.type === "weapon") && (i.system.equipped || (idOf(i) === "unarmed-strike"))
-      && String(i.system.type?.value ?? "").endsWith("M"));
-    if(!item || !attacker || !weapons.length || this.#done.has(`r|${key}|${token.id}`)) return;
-    const uuid = (weapons.length === 1) ? weapons[0].uuid : await chooseOne(weapons.map(w => ({ value : w.uuid, label : w.name, img : w.img })), { title : item.name, icon : "fa-solid fa-reply" });
-    const weapon = uuid ? fromUuidSync(uuid, { strict : false }) : null;
-    if(!weapon || !await spendUses(this.diceOf(actor), 1)) return;
-    this.#done.add(`r|${key}|${token.id}`);
-    await actionTracker.spend(actor, { kind : "reaction", what : item.name }).catch(() => null);
-    const card = await cardBuilder.roll(weapon, { use : false, targets : [attacker] });
-    if(card?.message?.system?.extraDamage) await card.message.system.extraDamage(this.dieOf(actor), { key : "riposte", label : item.name, rollData : actor.getRollData() });
+    if(!item || !attacker || this.#done.has(`r|${key}|${token.id}`)) return;
+    await reactionAttack(actor, { targets : [attacker], melee : true, name : item.name,
+      before : async () => { if(!await spendUses(this.diceOf(actor), 1)) return false; this.#done.add(`r|${key}|${token.id}`); },
+      extraDamage : { formula : this.dieOf(actor), key : "riposte", label : item.name } });
   }
 
   /* Ambush, Commanding Presence, Tactical Assessment : the die on that check */
@@ -358,8 +390,10 @@ export class fighterArchetypes{
 
   /* ---------- Psi Warrior ---------- */
 
+  /* The Psionic Energy Dice : Plutonium's "Psionic Energy Die" item (4 at level 3), else Psionic Power's uses (Plutonium's
+     own Protective Field spends Psionic Power's single use : a short rest's one die, not the pool) */
   static psionicOf(actor){
-    return subclasses.has(actor, this.PSIONIC);
+    return subclasses.has(actor, "psionic-energy-die") ?? subclasses.has(actor, "psionic-energy-dice") ?? subclasses.has(actor, this.PSIONIC);
   }
 
   static psionicDie(actor){
@@ -368,6 +402,18 @@ export class fighterArchetypes{
   }
 
   /* This user's Psi Warriors that can shield that creature : within 30 ft, seeing it (or it), Reaction and a die left */
+  /* Protective Field on a save card : each creature its damage reaches (all its targets : half on a success still hurts) */
+  static saveFieldButtons(message, buttons){
+    if(!this.enabled() || (message.type !== TYPES.save) || !message.system?.dealsDamage) return;
+    const key = `${message.id}|null`;
+    const { TargetsField } = dnd5e.dataModels.chatMessage.fields;
+    for(const t of (message.system.targets ?? []).map(x => tokenOf(TargetsField.resolve(x)?.token)).filter(Boolean)){
+      if(this.#done.has(`f|${key}|${t.id}`)) continue;
+      for(const guard of this.fieldGuards(t)) buttons.push({ id : `field|${guard.document.uuid}|${t.document.uuid}`, icon : "fa-brain",
+        label : module.format("subclasses.fighter.field", { name : t.name }) });
+    }
+  }
+
   static fieldGuards(token){
     if(!this.enabled()) return [];
     return (canvas.tokens?.placeables ?? []).filter(g => g.actor?.isOwner && subclasses.has(g.actor, "protective-field")

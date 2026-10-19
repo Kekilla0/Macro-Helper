@@ -4,7 +4,7 @@ import { uses } from '../uses.js';
 import { logger } from '../log.js';
 import { cells, gridSteps, tokenOf, forcedMove, forcedMoveAsGM, pushAway, distanceBetween, movedThisTurn } from '../helpers/tokens.js';
 import { pickSpace, isEnemy } from '../helpers/targets.js';
-import { postTargetCard, registerTargetCards } from '../helpers/target-card.js';
+import { postTargetCard, registerTargetCards, targetActions } from '../helpers/target-card.js';
 import { rollOptions, rollOptionDamage, rollOptionD20, rollOptionDamageDice } from './roll-options.js';
 import { disease } from '../automation/disease.js';
 import { patch } from '../patch.js';
@@ -242,6 +242,97 @@ export function hasReaction(thing){
 export async function useReaction(thing, what = ""){
   const { actionTracker } = await import('../automation/action-tracker.js');
   return actionTracker.useReaction(thing?.actor ?? thing, what);
+}
+
+/**
+ * A creature's Reaction spent moving, on anyone's turn (Mantle of Inspiration, Maneuvering Attack) : its Reaction is
+ * used, then its owner moves the token, up to `feet` (its walking Speed), until the end of the current turn. With
+ * noOA : true it provokes no Opportunity Attacks; a list of tokens : none from those (the creature you hit). Moving
+ * on someone else's turn needs no GM approval for it. False when it has no Reaction left.
+ *   if(await token.reactionMove({ feet : 15, noOA : [target] })) ...
+ * @param {Token|TokenDocument|Actor} thing
+ * @param {object} [options]
+ * @param {number} [options.feet]               default its walking Speed (half : Math.floor(speed / 2))
+ * @param {boolean|Array} [options.noOA=true]   true, false, or the tokens (or uuids) that can't make one
+ * @param {string} [options.name]               what it's for (the effect's name, the turn log)
+ * @returns {Promise<boolean>}
+ */
+export async function reactionMove(thing, { feet = null, noOA = true, name = null } = {}){
+  const actor = thing?.actor ?? thing;
+  if(!actor?.isOwner) return false;
+  if(!hasReaction(actor) || !await useReaction(actor, name ?? "")){
+    ui.notifications.warn(module.format("cardBuilder.noReaction", { name : actor.name }));
+    return false;
+  }
+  const speed = Number(actor.system?.attributes?.movement?.walk) || 30;
+  const distance = Math.max(0, Number(feet ?? speed) || 0);
+  const from = (noOA === true) ? true : (noOA === false) ? [] : [noOA].flat().map(t => (t?.document ?? t)?.uuid ?? t).filter(s => typeof s === "string");
+  const label = module.format("cardBuilder.reactionMove", { name : name ?? module.i18n("cardBuilder.reaction"), feet : distance });
+  const current = game.combat?.started ? game.combat.combatant?.actor : null;
+  const { addTimedEffect } = await import('../helpers/actors.js');
+  await addTimedEffect(actor, { name : label, img : "icons/skills/movement/feet-winged-boots-brown.webp",
+    flags : { [module.id] : { reactionMove : { feet : distance, noOA : from, moved : 0 } } } }, { of : current ?? actor, until : "turnEnd", thisTurn : !!current });
+  ui.notifications.info(label);
+  return true;
+}
+
+/**
+ * A card offering creatures their Reaction : a row each, its button for its player (the GM when they're away).
+ * reactionMoveRows : Move (reactionMove : up to its Speed, or half with half : true; noOA true or tokens / uuids).
+ * reactionAttackRows : Attack (reactionAttack : a weapon of its choice, extraDamage { formula, label } on a hit).
+ */
+export function reactionMoveRows(actor, item, tokens, { half = false, noOA = true, text = "" } = {}){
+  const spared = (noOA === true) ? true : [noOA].flat().map(t => (t?.document ?? t)?.uuid ?? t).filter(s => typeof s === "string");
+  return postTargetCard({ actor, item, text, rows : tokens.map(t => ({ token : (t.document ?? t).uuid, self : true, action : "reactionMove",
+    icon : "fa-solid fa-person-running", label : module.i18n("cardBuilder.moveButton"), done : module.i18n("cardBuilder.moved"),
+    data : { half, noOA : spared, name : item?.name ?? "" } })) });
+}
+
+export function reactionAttackRows(actor, item, tokens, { extraDamage = null, text = "" } = {}){
+  return postTargetCard({ actor, item, text, rows : tokens.map(t => ({ token : (t.document ?? t).uuid, self : true, action : "reactionAttack",
+    icon : "fa-solid fa-hand-fist", label : module.i18n("cardBuilder.attackButton"), done : module.i18n("cardBuilder.attacked"),
+    data : { extraDamage, name : item?.name ?? "" } })) });
+}
+
+targetActions.set("reactionMove", (data, token) => {
+  const speed = Number(token?.actor?.system?.attributes?.movement?.walk) || 30;
+  return reactionMove(token, { feet : data.half ? Math.floor(speed / 2 / 5) * 5 : speed, noOA : data.noOA, name : data.name });
+});
+targetActions.set("reactionAttack", async (data, token) => !!(await reactionAttack(token, { extraDamage : data.extraDamage, name : data.name })));
+
+/* Its Reaction move now, if any : { feet, noOA (true or uuids), moved, effect } */
+export function reactionMoveOf(thing){
+  const actor = thing?.actor ?? thing;
+  const effect = actor?.effects?.find?.(e => !e.disabled && e.getFlag(module.id, "reactionMove"));
+  return effect ? { ...effect.getFlag(module.id, "reactionMove"), effect } : null;
+}
+
+/**
+ * A creature's Reaction spent on one weapon attack, on anyone's turn (Commander's Strike, Riposte) : it chooses the
+ * weapon (melee only with melee : true), its Reaction is used, and the attack is made with no use (item.roll({ use :
+ * false })) : at `targets`, else picked on the map. extraDamage : a formula added to its damage on a hit. Returns the
+ * card, or null (no weapon, no Reaction, cancelled).
+ *   await ally.reactionAttack({ extraDamage : { formula : "1d8", label : "Commander's Strike" } });
+ */
+export async function reactionAttack(thing, { targets = null, melee = false, extraDamage = null, name = null, before = null } = {}){
+  const actor = thing?.actor ?? thing;
+  if(!actor?.isOwner) return null;
+  const weapons = actor.items.filter(i => (i.type === "weapon") && (i.system.equipped || (i.system.identifier === "unarmed-strike") || /^unarmed strike$/i.test(i.name))
+    && (!melee || String(i.system.type?.value ?? "").endsWith("M")) && [...(i.system.activities ?? [])].some(a => a.type === "attack"));
+  if(!weapons.length){ ui.notifications.warn(module.format("cardBuilder.noWeapon", { name : actor.name })); return null; }
+  if(!hasReaction(actor)){ ui.notifications.warn(module.format("cardBuilder.noReaction", { name : actor.name })); return null; }
+  const { chooseOne } = await import('../helpers/creatures.js');
+  const uuid = (weapons.length === 1) ? weapons[0].uuid
+    : await chooseOne(weapons.map(w => ({ value : w.uuid, label : w.name, img : w.img })), { title : name ?? actor.name, icon : "fa-solid fa-hand-fist" });
+  const weapon = uuid ? fromUuidSync(uuid, { strict : false }) : null;
+  if(!weapon) return null;
+  /* Something to spend first (a Superiority Die) : false stops it */
+  if(before && (await before(weapon)) === false) return null;
+  if(!await useReaction(actor, name ?? weapon.name)) return null;
+  const card = await cardBuilder.roll(weapon, { use : false, ...(Array.isArray(targets) ? { targets : targets.map(t => t?.object ?? t) } : {}) });
+  if(extraDamage?.formula && card?.message?.system?.extraDamage) await card.message.system.extraDamage(extraDamage.formula,
+    { key : extraDamage.key ?? "reactionAttack", label : extraDamage.label ?? name ?? "", type : extraDamage.type, rollData : extraDamage.rollData ?? actor.getRollData() });
+  return card;
 }
 
 /**
@@ -710,7 +801,7 @@ export class cardBuilder{
   }
 
   /* Card macros' building blocks, on the documents whatever the Helpers → Methods switches say :
-     item.roll(), token.chargedAt(target, feet), token.teleport(feet, { item }), token.leap(feet, { item }), token.useMovement(feet), token.useReaction(what), item.setDamage(formula), creature.isSmaller(size), creature.grappling() (never over an existing method) */
+     item.roll(), token.chargedAt(target, feet), token.teleport(feet, { item }), token.leap(feet, { item }), token.useMovement(feet), token.useReaction(what), token.reactionMove(opts), token.reactionAttack(opts), item.setDamage(formula), creature.isSmaller(size), creature.grappling() (never over an existing method) */
   static addMethods(){
     const add = (cls, name, fn) => {
       const proto = cls?.prototype;
@@ -739,6 +830,8 @@ export class cardBuilder{
       add(cls, "movedThisTurn", function(){ return movedThisTurn(this); });
       add(cls, "useReaction", function(what){ return useReaction(this, what); });
       add(cls, "hasReaction", function(){ return hasReaction(this); });
+      add(cls, "reactionMove", function(options){ return reactionMove(this, options); });
+      add(cls, "reactionAttack", function(options){ return reactionAttack(this, options); });
       add(cls, "trample", function(feet, options){ return trample(this, feet, options); });
       add(cls, "pull", function(target, feet){ return pull(this, target, feet); });
       add(cls, "push", function(target, feet, options){ return pushAway(target, this, feet, options); });
@@ -758,12 +851,20 @@ export class cardBuilder{
     onDamage(rollOptionDamage);
     Hooks.on("dnd5e.postAttackRollConfiguration", (rolls, config) => rollOptionD20(rolls, config));
     Hooks.on("dnd5e.postDamageRollConfiguration", (rolls, config) => rollOptionDamageDice(rolls, config));
-    /* "Its turn starts" / "Its turn ends" (hook macros) : about the creature whose turn it is (actor, token, combat) */
-    Hooks.on("combatTurnChange", (combat, prior, current) => {
+    /* "Its turn ends" (hook macros) : about the creature whose turn it was (actor, token, combat). "Its turn starts" is
+       gm.js's (combat, combatant), once the order is settled : fired here too, it ran every start-of-turn rule twice */
+    /* A Reaction move (reactionMove) : its feet counted as it goes (the client that moved it), over once they're used */
+    Hooks.on("moveToken", (token, movement, options, user) => {
+      if((user?.id ?? user) !== game.user.id) return;
+      const reacting = reactionMoveOf(token.actor);
+      if(!reacting?.effect?.isOwner) return;
+      const moved = (Number(reacting.moved) || 0) + (Number(movement?.passed?.cost) || 0);
+      if(moved >= reacting.feet - 0.01) reacting.effect.delete().catch(() => {});
+      else reacting.effect.setFlag(module.id, "reactionMove.moved", moved).catch(() => {});
+    });
+    Hooks.on("combatTurnChange", (combat, prior) => {
       const ended = combat.combatants.get(prior?.combatantId);
-      const started = combat.combatants.get(current?.combatantId);
       if(ended?.actor) Hooks.callAll(`${module.id}.turnEnd`, ended.actor, ended.token, combat);
-      if(started?.actor) Hooks.callAll(`${module.id}.turnStart`, started.actor, started.token, combat);
     });
     gm.handle("cardRelease", (data, user) => this.releaseAsGM(data, user));
     gm.handle("cardShared", (data, user) => this.sharedAsGM(data, user));

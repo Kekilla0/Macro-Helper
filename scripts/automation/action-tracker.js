@@ -5,7 +5,7 @@ import { uses } from '../uses.js';
 import { gm } from '../gm.js';
 import { limits } from './limits.js';
 import { combatLog } from './combat-log.js';
-import { grapplesOn } from '../roll-item/card-builder.js';
+import { grapplesOn, reactionMoveOf } from '../roll-item/card-builder.js';
 import { idOf, esc } from '../helpers/utils.js';
 import { getTokensWithin, movedThisTurn } from '../helpers/tokens.js';
 import { masteries } from './masteries.js';
@@ -316,10 +316,14 @@ export class actionTracker{
 
   /* ---------- What a use costs ---------- */
 
+  /* Uses that take the place of one of the Attack action's attacks (Commander's Strike), by item identifier */
+  static REPLACES_ATTACK = new Set();
+
   static costOf(activity, config = {}){
     const own = config?.[module.id] ?? {};
     if(own.economy) return (own.economy === "free") ? null : own.economy;
     if(own.ritual || own.noCast) return null;
+    if(this.REPLACES_ATTACK.has(idOf(activity.item))) return "action";
     const type = activity.activation?.type || activity.item?.system?.activation?.type;
     return this.KINDS.includes(type) ? type : null;
   }
@@ -507,7 +511,7 @@ export class actionTracker{
     const attack = this.isAttack(activity);
     if(cost === "reaction") return { kind : "reaction" };
     if(!st.mine) return { kind : "reaction", offTurn : cost, attackOffTurn : attack, ask : !attack && !!activity.actor?.hasPlayerOwner && !game.user.isGM };
-    const swap = !attack && (cost === "action") && this.swapsIn(activity);
+    const swap = !attack && (cost === "action") && (this.swapsIn(activity) || this.REPLACES_ATTACK.has(idOf(activity.item)));
     if((attack || swap || this.isMultiattack(activity.item)) && (cost === "action")){
       if(st.rec.attack){
         const pool = foundry.utils.deepClone(st.rec.attack);
@@ -598,7 +602,7 @@ export class actionTracker{
     }
     if(attack === "new"){
       rec.attack = this.attackPool(actor, activity);
-      if(this.isAttack(activity) || this.swapsIn(activity)) this.takeAttack(rec.attack, activity.item);
+      if(this.isAttack(activity) || this.swapsIn(activity) || this.REPLACES_ATTACK.has(idOf(activity?.item))) this.takeAttack(rec.attack, activity.item);
       rec.light = this.isAttack(activity) && this.isLight(activity.item);
     }
     else if(attack === "more"){
@@ -812,6 +816,13 @@ export class actionTracker{
     const actor = token.actor;
     const st = this.state(actor);
     if(!st) return;
+    /* Its Reaction spent moving (Mantle of Inspiration) : up to its feet, no question */
+    const reacting = !st.mine ? reactionMoveOf(actor) : null;
+    if(reacting){
+      const total = (Number(reacting.moved) || 0) + (movement.passed?.cost ?? 0) + (movement.pending?.cost ?? 0);
+      if(total <= reacting.feet + 0.01) return;
+      return limits.allow(module.format("actionTracker.tooFar", { name : actor.name, moved : Math.round(total), speed : reacting.feet }), { who : actor.name, what : module.i18n("actionTracker.movement") }) ? undefined : false;
+    }
     /* A player moving its creature on someone else's turn : Rule Limits (the GM's moves are free : forced movement) */
     if(!st.mine && !game.user.isGM)
       return limits.allow(module.format("actionTracker.notItsTurn", { name : actor.name, turn : st.combat.combatant?.name ?? "" }), { who : actor.name, what : module.i18n("actionTracker.movement") }) ? undefined : false;

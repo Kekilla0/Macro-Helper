@@ -5,6 +5,7 @@ import { idOf, esc, chooseOption } from '../helpers/utils.js';
 import { cells, gridSteps, canSee } from '../helpers/tokens.js';
 import { pickTargets } from '../helpers/targets.js';
 import { actionTracker } from './action-tracker.js';
+import { reactionMoveOf } from '../roll-item/card-builder.js';
 import { hands } from './hands.js';
 import { uses } from '../uses.js';
 const log = logger.for(import.meta.url);
@@ -427,6 +428,10 @@ export class actionReady{
     const actor = token.actor;
     const disengaged = actor?.statuses?.has?.("disengaged") || actor?.effects?.some?.(e => !e.disabled && (e.getFlag(module.id, "disengaged") || e.getFlag(module.id, "disengage")));
     if(!actor || disengaged) return;
+    /* A Reaction move (Mantle of Inspiration : none provoked; Maneuvering Attack : none from the creature hit) */
+    const reacting = reactionMoveOf(actor);
+    if(reacting?.noOA === true) return;
+    const spared = new Set(Array.isArray(reacting?.noOA) ? reacting.noOA : []);
     /* Flyby (Animated Broom, owls) : flying out of an enemy's reach provokes nothing */
     const action = movement.passed?.waypoints?.at?.(-1)?.action ?? movement.pending?.waypoints?.at?.(-1)?.action ?? token.movementAction;
     if((action === "fly") && actor.items?.some?.(i => (idOf(i) === "flyby") || /^flyby$/i.test(i.name ?? ""))) return;
@@ -436,7 +441,7 @@ export class actionReady{
     Hooks.callAll(`${module.id}.preOpportunityAttack`, token, info);
     if(info.skip) return;
     const done = new Set(own.oaDone ?? []);
-    const threats = token.parent.tokens.filter(t => (t !== token) && t.actor && !t.hidden && !done.has(t.uuid) && (this.relation(t, token) === "enemy")
+    const threats = token.parent.tokens.filter(t => (t !== token) && t.actor && !t.hidden && !done.has(t.uuid) && !spared.has(t.uuid) && (this.relation(t, token) === "enemy")
       && actionTracker.combatOf(t.actor) && actionTracker.left(t.actor, "reaction") && !actionTracker.OUT_OF_ACTION.some(s => t.actor.statuses?.has?.(s))
       /* Can't make Opportunity Attacks (Open Hand Technique's Addle) */
       && !t.actor.appliedEffects?.some?.(e => e.getFlag(module.id, "rule")?.noOpportunity)

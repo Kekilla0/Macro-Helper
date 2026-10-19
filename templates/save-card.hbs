@@ -77,6 +77,9 @@
 {{!-- Sections rules add (macro-helper.cardSections) : Shove's Prone / Push for each target that failed --}}
 {{#each sections}}{{> (lookup . "partial") context }}{{/each}}
 
+{{!-- Buttons and notes rules add (macro-helper.saveCardButtons, cardNotes) --}}
+{{#with extras}}{{> "macro-helper.extras" }}{{/with}}
+
 {{!-- Apply damage, halves/negates for targets that saved --}}
 {{#if damage.showTray}}
 <damage-application class="dnd5e2"></damage-application>

@@ -1792,6 +1792,25 @@ export function registerMessages(){
       return this.damageRolls.filter(r => tagOf(r).ray === index);
     }
 
+    /* Its rolls hurt (not healing or temporary Hit Points) : Protective Field, Psychic Spells, Empowered Spell */
+    get dealsDamage(){
+      return this.damageRolls.some(r => !(r.options?.type in (CONFIG.DND5E.healingTypes ?? {})));
+    }
+
+    /* Every damage roll's type changed (Psychic Spells), or one instance's */
+    async setDamageType(type, ray = null){
+      const rolls = Number.isInteger(ray) ? this.rayDamage(ray) : this.damageRolls;
+      if(!rolls.length) return;
+      const all = this.parent.rolls.map(r => {
+        if(!rolls.includes(r)) return r;
+        const copy = r.constructor.fromData(r.toJSON());
+        copy.options.type = type;
+        if(copy.options.types) copy.options.types = [type];
+        return copy;
+      });
+      return this.parent.update({ rolls : all.map(r => JSON.stringify(r)) });
+    }
+
     /* A utility activity's roll formula, rolled onto the card */
     get formulaRolls(){
       return this.parent.rolls.filter(r => tagOf(r).part === "formula");
@@ -1873,6 +1892,7 @@ export function registerMessages(){
             showTray : canApply && damage.length > 0,
           };
         });
+        context.extras = this.buttonsContext();
         return context;
       }
 
@@ -1901,8 +1921,22 @@ export function registerMessages(){
       if(this.parent.isContentVisible) Hooks.callAll(`${module.id}.cardSections`, this.parent, context.sections, { ray : null });
       context.sections = context.sections.filter(s => s?.partial);
       context.moves = cardMoves.context(this.parent);
+      context.extras = this.buttonsContext();
 
       return context;
+    }
+
+    /* Buttons rules add to a save card (macro-helper.saveCardButtons : Protective Field, Psychic Spells, Empowered
+       Spell), and its notes (macro-helper.cardNotes, ray null : a damage cut) : the extras partial, no extra rolls */
+    buttonsContext(){
+      if(!this.parent.isContentVisible) return null;
+      const buttons = [];
+      Hooks.callAll(`${module.id}.saveCardButtons`, this.parent, buttons);
+      const valid = buttons.filter(b => b?.id && b?.label);
+      const notes = [];
+      Hooks.callAll(`${module.id}.cardNotes`, this.parent, notes, { ray : null });
+      if(!valid.length && !notes.length) return null;
+      return { extras : [], buttons : valid, notes, ray : "", hasRay : false };
     }
 
     /* Re-roll one instance's damage, tagged with its index */

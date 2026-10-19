@@ -6,7 +6,8 @@ import { isAlly } from '../../helpers/targets.js';
 import { spendUses } from '../../helpers/items.js';
 import { onHit } from '../../roll-item/hit-bonus.js';
 import { cutDamage, cutsOf } from '../../roll-item/damage-cuts.js';
-import { cardBuilder } from '../../roll-item/card-builder.js';
+import { cardBuilder, reactionMoveRows } from '../../roll-item/card-builder.js';
+import { uses } from '../../uses.js';
 import { TYPES } from '../../roll-item/message.js';
 import { itemFixes } from '../item-fixes.js';
 import { casting } from '../casting.js';
@@ -25,7 +26,10 @@ const log = logger.for(import.meta.url);
  *                                one Unarmed Strike (Bardic Damage's, else the Unarmed Strike), part of that action.
  *           Unarmored Defense    no armor, no shield : 10 + DEX + CHA (dnd5e's Bard formula; Plutonium's item has no
  *                                effect : one is added).
- *   Glamour Beguiling Magic      after casting an Enchantment or Illusion spell with a slot, its use left : a card
+ *   Glamour Mantle of Inspiration its creatures (the card's targets) : a card with a Move button each (its player, the
+ *                                reactionMove lego) : its Reaction spent, up to its Speed this turn, no Opportunity
+ *                                Attacks.
+ *           Beguiling Magic      after casting an Enchantment or Illusion spell with a slot, its use left : a card
  *                                offers its save (a creature within 60 ft) : Charmed or Frightened (the effect chosen),
  *                                the save again at the end of each of its turns (Spells : repeating effects).
  *   Lore    Cutting Words        a creature the Bard sees within 60 ft hits with an attack roll : Cutting Words on the
@@ -39,6 +43,7 @@ export class bardColleges{
   static AGILE = "agile-strikes";
   static BARDIC_DAMAGE = "bardic-damage";
   static BEGUILING = "beguiling-magic";
+  static MANTLE = "mantle-of-inspiration";
   static CUTTING = "cutting-words";
   static COMBAT = "combat-inspiration";
   static SCHOOLS = ["enc", "ill"];
@@ -58,6 +63,8 @@ export class bardColleges{
     spellEffects.CHOICES[this.BEGUILING] ??= { prompt : "subclasses.bard.beguilingChoice" };
     repeating.TABLE[this.BEGUILING] ??= { label : "end", roll : { type : "save", ability : "wis" } };
     Hooks.on("dnd5e.postUseActivity", (activity, usage) => this.afterSpell(activity, usage));
+    /* Mantle of Inspiration : its creatures may move with their Reaction */
+    Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.mantle(activity, results));
     /* Cutting Words */
     Hooks.on(`${module.id}.cardButtons`, (message, buttons, { ray } = {}) => { this.cuttingButtons(message, buttons, ray ?? null); this.defenseButtons(message, buttons, ray ?? null); });
     Hooks.on(`${module.id}.cardButton`, (message, id, { ray } = {}) => this.cardClicked(message, String(id), ray ?? null));
@@ -122,6 +129,18 @@ export class bardColleges{
     const save = [...(item.system.activities ?? [])].find(a => a.type === "save");
     if(!save) return;
     await subclasses.offer(actor, { item, activity : save.id, text : module.format("subclasses.bard.beguiling", { name : actor.name, spell : spell.name }) });
+  }
+
+  /* Mantle of Inspiration used : a Move button for each creature it chose (not the Bard) */
+  static async mantle(activity, results){
+    const actor = activity?.actor;
+    if(!this.enabled() || !actor?.isOwner || (idOf(activity?.item) !== this.MANTLE) || !results) return;
+    const card = await uses.cardOf(results);
+    const resolve = t => dnd5e.dataModels.chatMessage.fields.TargetsField.resolve(t)?.token;
+    let tokens = (card?.system?.targets ?? []).map(t => tokenOf(resolve(t))).filter(Boolean);
+    if(!tokens.length) tokens = [...game.user.targets];
+    tokens = tokens.filter(t => t.actor && (t.actor !== actor));
+    if(tokens.length) await reactionMoveRows(actor, activity.item, tokens, { noOA : true, text : module.i18n("subclasses.bard.mantleMove") });
   }
 
   /* ---------- Lore : Cutting Words ---------- */

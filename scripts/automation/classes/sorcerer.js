@@ -1,7 +1,7 @@
 import { module } from '../../module.js';
 import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
-import { idOf, chooseOption, esc, buttonRow, addButton, makeButton } from '../../helpers/utils.js';
+import { idOf, chooseOption, esc } from '../../helpers/utils.js';
 import { addTimedEffect, usedThisTurn, markUsedThisTurn } from '../../helpers/actors.js';
 import { limits } from '../limits.js';
 import { giveMode } from '../../roll-item/reasons.js';
@@ -87,7 +87,8 @@ export class sorcerer{
       else if(id === "empowered") this.useEmpowered(message);
       else if(id === "metamagicRow") this.toggleRow(message, button?.dataset?.target);
     });
-    Hooks.on("dnd5e.renderChatMessage", (message, html) => this.saveCardButtons(message, html));
+    /* Empowered Spell on a save card too */
+    Hooks.on(`${module.id}.saveCardButtons`, (message, buttons) => { const empowered = message.system?.dealsDamage && this.empoweredButton(message); if(empowered) buttons.push(empowered); });
     Hooks.on("preCreateActiveEffect", (effect, data, options, userId) => { if(userId === game.user.id) this.extendEffect(effect); });
     Hooks.on("dnd5e.preRollConcentrationV2", config => this.extendedConcentration(config));
     onDamage((attack, damage) => this.transmute(attack, damage));
@@ -484,15 +485,6 @@ export class sorcerer{
   }
 
   /* Save cards (no card buttons there) : Empowered's button in a row of its own */
-  static saveCardButtons(card, html){
-    if(card?.type !== `${module.id}.save`) return;
-    const button = this.empoweredButton(card);
-    if(!button) return;
-    const row = buttonRow(html, { key : `${module.id}-metamagic` });
-    if(row.childElementCount) return;
-    addButton(row, makeButton({ icon : button.icon, text : button.label, once : true, onClick : () => this.useEmpowered(card) }));
-  }
-
   /* ---------- Metamagic : replacing an option on gaining a level ---------- */
 
   /* Every 2024 Metamagic option the compendiums have, one per option : a copy of yours first (not dnd5e's own), else

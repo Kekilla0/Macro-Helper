@@ -9,7 +9,10 @@ import { esc } from './utils.js';
  * it done.
  *
  *   rows : [{ token : TokenDocument uuid, label : "Mark Orc", action : gm handler name, data : {...}, done : "Marked" }]
+ * A row with self : true runs its action on the client of whoever presses it (the creature's owner : a Reaction it
+ * takes itself, Commander's Strike's attack), from targetActions.add(name, fn(data, token)) : false keeps it open.
  */
+export const targetActions = new Map();
 export async function postTargetCard({ actor, item, text = "", rows = [] } = {}){
   /* Action Tracker : a Bonus Action spell (Hunter's Mark, Hex) bypasses the use pipeline : spent here */
   const activation = [...(item?.system?.activities ?? [])][0]?.activation?.type || item?.system?.activation?.type;
@@ -36,7 +39,7 @@ export async function postTargetCard({ actor, item, text = "", rows = [] } = {})
   return ChatMessage.implementation.create({
     speaker : ChatMessage.implementation.getSpeaker({ actor }),
     content,
-    flags : { [module.id] : { targetCard : { rows : rows.map(r => ({ token : r.token, label : r.label, action : r.action, data : r.data ?? {}, done : r.done ?? "" })) } } },
+    flags : { [module.id] : { targetCard : { rows : rows.map(r => ({ token : r.token, label : r.label, action : r.action, data : r.data ?? {}, done : r.done ?? "", self : !!r.self, icon : r.icon ?? null })) } } },
   });
 }
 
@@ -51,17 +54,20 @@ function renderRows(message, html){
     const li = document.createElement("li");
     li.className = "macro-helper-row";
     const done = message.getFlag(module.id, `targetCardDone.${index}`);
-    const may = game.user.isGM || !!token?.actor?.isOwner;
+    /* Its own action (a Reaction) : its player, or the GM when none of its players is here */
+    const playerHere = !!token?.actor && game.users.some(u => u.active && !u.isGM && token.actor.testUserPermission(u, "OWNER"));
+    const may = row.self ? (!!token?.actor?.isOwner && (!game.user.isGM || !playerHere)) : (game.user.isGM || !!token?.actor?.isOwner);
     li.innerHTML = `<img class="token" src="${esc(token?.texture?.src ?? token?.actor?.img ?? "icons/svg/mystery-man.svg")}" alt="" data-token="${esc(row.token ?? "")}">
       <span class="name">${esc(token?.name ?? "?")}</span>
       <span class="macro-helper-row-apply">${done
         ? `<span class="applied healing"><i class="fa-solid fa-check" inert></i> ${esc(row.done || row.label)}</span>`
-        : (may ? `<button type="button" class="apply" data-index="${index}"><i class="fa-solid fa-reply-all fa-flip-horizontal" inert></i> ${esc(row.label)}</button>` : "")}</span>`;
+        : (may ? `<button type="button" class="apply" data-index="${index}"><i class="${esc(row.icon ?? "fa-solid fa-reply-all fa-flip-horizontal")}" inert></i> ${esc(row.label)}</button>` : "")}</span>`;
     li.querySelector("button")?.addEventListener("click", async event => {
       event.preventDefault();
       event.currentTarget.disabled = true;
-      const ok = await gm.run(row.action, row.data);
-      if(ok === false) return;
+      const button = event.currentTarget;
+      const ok = row.self ? await (targetActions.get(row.action)?.(row.data, token) ?? false) : await gm.run(row.action, row.data);
+      if(ok === false){ button.disabled = false; return; }
       await gm.run("targetCardDone", { message : message.id, index });
     });
     list.append(li);
