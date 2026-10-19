@@ -106,19 +106,77 @@ export class rollItem{
 
     const target = targets?.[0] ?? game.user.targets.first() ?? null;
     const config = this.attackConfig({ attackMode, disadvantage }, target);
-    const roll = await this.rollAttack(activity, event, config, mode);
+    const why = this.disadvantageOf(config);
+    const roll = await this.attackStep(activity, event, { target, attackMode : config.attackMode, disadvantage : why, mode, tags });
     if(!roll) return;
-    if(tags) roll.options[module.id] = { ...(roll.options[module.id] ?? {}), tags };
-    const damage = await this.rollDamage(activity, roll);
-    /* Rolls rules add to the attack (Graze's damage for a miss) */
-    const added = await this.addedRolls(activity, roll, damage);
+    const { damage, added, extras, riderDamage, rider } = await this.hitStep(activity, roll, { target, extras : true, rider : true });
 
-    /* Extra damage from the same item (a monster's charge, a second damage activity) : rolled with the attack into
-       boxes of its own, each with its APPLY once the attack hits (crits like the attack) */
-    const extras = await this.extraDamage(activity, roll);
+    const message = await this.attackCard(activity, [roll, ...damage, ...added, ...extras, ...riderDamage], { scaling, rider, note, cardFlags,
+      disadvantage : !!why, disadvantageWhy : (typeof why === "string") ? why : "" });
+    log.debug("Rolled", activity.item.name, { roll, damage, rider, riderDamage });
+
+    return { attack : roll, damage, riderDamage, isCritical : roll.isCritical, isFumble : roll.isFumble, message };
+  }
+
+  /**
+   * The attack lego : one attack roll at one target, nothing else (no damage, no card). Every attack Roll Item makes
+   * goes through it : a single attack, each ray of a multi-attack, and the card's Reroll Attack.
+   * @param {Activity} activity
+   * @param {Event} [event]
+   * @param {object} [options]
+   * @param {Token|object|string|null} [options.target]  a token, a card's target descriptor ({ token, ac } : judged
+   *                                     against that AC) or a token uuid
+   * @param {string} [options.attackMode]                dnd5e attack mode ("thrown"...)
+   * @param {boolean|string} [options.disadvantage]      with disadvantage, a string says why (long range)
+   * @param {string} [options.ability]                   the ability it's made with (a reroll keeps the first's)
+   * @param {object} [options.mode]                      the card's chosen advantage / disadvantage (chooseMode)
+   * @param {object} [options.tags]                      rules' marks on the attack (Cleave's extra attack), kept on rerolls
+   * @param {number} [options.ray]                       its index on a multi-attack card
+   * @returns {Promise<D20Roll|null>}  null if it was stopped
+   */
+  static async attackStep(activity, event, { target = null, attackMode, disadvantage, ability, mode = {}, tags, ray } = {}){
+    const config = {};
+    const uuid = (typeof target === "string") ? target : (target?.document?.uuid ?? target?.token ?? target?.uuid ?? null);
+    if(Number.isFinite(target?.ac)) config.target = target.ac;
+    if(ability) config.ability = ability;
+    if(attackMode) config.attackMode = attackMode;
+    if(uuid) config[module.id] = { target : uuid };
+    if(disadvantage){
+      config.disadvantage = true;
+      config[module.id] = { ...(config[module.id] ?? {}), reasons : [{ mode : "disadvantage", reason : this.disadvantageReason(disadvantage) }] };
+    }
+    const roll = await this.rollAttack(activity, event, config, mode);
+    if(!roll) return null;
+    if(tags) roll.options[module.id] = { ...(roll.options[module.id] ?? {}), tags };
+    if(Number.isInteger(ray)) roll.options[module.id] = { ...(roll.options[module.id] ?? {}), ray };
+    return roll;
+  }
+
+  /**
+   * The hit lego : everything an attack brings with its result (its damage, rules' added rolls such as Graze's for a
+   * miss, the item's other damage, its on-hit save and that save's damage), all rolled now. The card shows each part
+   * only once the attack's result calls for it, and plays its dice then (playOutcomes).
+   * @param {Activity} activity
+   * @param {D20Roll} attack
+   * @param {object} [options]
+   * @param {Token|null} [options.target]  who it's aimed at (for the on-hit save's own creatures : macro-helper.riderTargets)
+   * @param {number} [options.ray]          its index on a multi-attack card
+   * @param {boolean} [options.extras]      the item's other damage activities too
+   * @param {boolean} [options.rider]       the item's on-hit save too
+   * @returns {Promise<{ damage : DamageRoll[], added : DamageRoll[], extras : DamageRoll[], riderDamage : DamageRoll[], rider : object|null }>}
+   */
+  static async hitStep(activity, attack, { target = null, ray, extras : withExtras = false, rider : withRider = false } = {}){
+    const damage = await this.rollDamage(activity, attack);
+    /* Rolls rules add to the attack (Graze's damage for a miss) */
+    const added = await this.addedRolls(activity, attack, damage, ray);
+    if(Number.isInteger(ray)) for(const roll of damage) roll.options[module.id] = { ...(roll.options[module.id] ?? {}), ray };
+
+    /* Extra damage from the same item (a monster's charge, a second damage activity) : boxes of its own, each with
+       its APPLY once the attack hits (crits like the attack) */
+    const extras = withExtras ? await this.extraDamage(activity, attack) : [];
 
     /* On-hit save from the same item (Giant Spider's poison) : its damage is rolled now too, never crits */
-    const save = this.findRider(activity);
+    const save = withRider ? this.findRider(activity) : null;
     const riderDamage = save ? await this.rollDamage(save, null) : [];
     for(const r of riderDamage) r.options[module.id] = { part : "save" };
     const rider = save ? {
@@ -133,13 +191,83 @@ export class rollItem{
       Hooks.callAll(`${module.id}.riderTargets`, save, target, around);
       if(around.length) rider.targets = around;
     }
+    return { damage, added, extras, riderDamage, rider };
+  }
 
-    const why = this.disadvantageOf(config);
-    const message = await this.attackCard(activity, [roll, ...damage, ...added, ...extras, ...riderDamage], { scaling, rider, note, cardFlags,
-      disadvantage : !!why, disadvantageWhy : (typeof why === "string") ? why : "" });
-    log.debug("Rolled", activity.item.name, { roll, damage, rider, riderDamage });
+  /**
+   * Which result a card's roll waits for : "hit" (its damage, extra damage, an on-hit save's damage), "miss" (Graze's),
+   * or null : shown either way (the attack itself; a save for creatures of its own, Ice Knife's).
+   * @param {Roll} roll
+   * @param {object} [card]  the card's rider ({ rider })
+   */
+  static outcomeOf(roll, { rider = null } = {}){
+    if(!(roll instanceof CONFIG.Dice.DamageRoll)) return null;
+    const tag = roll.options?.[module.id] ?? {};
+    if(tag.onMiss) return "miss";
+    if(tag.part === "save") return rider?.targets?.length ? null : "hit";
+    if((tag.part === "extra") && !tag.onHit && !tag.alternative) return null;
+    return "hit";
+  }
 
-    return { attack : roll, damage, riderDamage, isCritical : roll.isCritical, isFumble : roll.isFumble, message };
+  /* Where a card keeps whether a result's dice have played : "single.hit", "2.miss" */
+  static outcomeKey(roll, { rider = null, rays = [] } = {}){
+    const outcome = this.outcomeOf(roll, { rider });
+    if(!outcome) return null;
+    const ray = roll.options?.[module.id]?.ray;
+    return `${((rays?.length > 1) && Number.isInteger(ray)) ? ray : "single"}.${outcome}`;
+  }
+
+  /* One playOutcomes at a time per card */
+  static #playing = new Map();
+
+  /**
+   * Dice So Nice : the dice of what an attack card's results now call for and haven't played yet (a miss turned into a
+   * hit plays its damage), then shown on the card. Played once, by the roller (the GM when the roller is away).
+   * @param {ChatMessage} message
+   */
+  static playOutcomes(message){
+    const id = message?.id;
+    if(!id) return Promise.resolve();
+    const next = (this.#playing.get(id) ?? Promise.resolve()).then(() => this.#playOutcomes(game.messages.get(id))).catch(error => log.error("Outcome dice", error));
+    this.#playing.set(id, next);
+    next.finally(() => { if(this.#playing.get(id) === next) this.#playing.delete(id); });
+    return next;
+  }
+
+  static async #playOutcomes(message){
+    const card = message?.system;
+    const flags = message?.getFlag(module.id, "dice");
+    if(!card?.resultsOf || !flags || !message.isOwner) return;
+    const rolls = [], update = {};
+    for(const [key, outcomes] of Object.entries(flags)){
+      const ray = (key === "single") ? null : Number(key);
+      const results = card.resultsOf(ray);
+      for(const [outcome, played] of Object.entries(outcomes ?? {})){
+        if((played !== false) || !results[outcome]) continue;
+        rolls.push(...card.outcomeRolls(ray, outcome));
+        update[`flags.${module.id}.dice.${key}.${outcome}`] = true;
+      }
+    }
+    if(foundry.utils.isEmpty(update)) return;
+    await Promise.race([this.showDice(rolls, message), wait(8000)]);
+    await message.update(update);
+  }
+
+  /* Whose client plays a card's outcome dice : the roller's, else the GM's, else whoever changed it */
+  static playsOutcomes(message, userId){
+    const roller = message.author;
+    if(roller?.active) return roller.isSelf;
+    const gm = game.users.activeGM;
+    if(gm) return gm.isSelf;
+    return userId === game.user.id;
+  }
+
+  /* A card's results changed (a reroll, Bardic Inspiration, cover, the GM's Count as hit) : the dice they now call for */
+  static onCardUpdate(message, changes, options, userId){
+    if(message.type !== TYPES.attack) return;
+    if(!Object.values(message.getFlag(module.id, "dice") ?? {}).some(o => Object.values(o ?? {}).includes(false))) return;
+    if((this.revealOf(message) < 2) || !this.playsOutcomes(message, userId)) return;
+    this.playOutcomes(message);
   }
 
   static #addRolls = [];
@@ -261,6 +389,8 @@ export class rollItem{
   /* A miss is below the target's AC or a fumble, a crit always hits, no AC known counts as a hit */
   static isHit(roll){
     if(!roll) return false;
+    /* The GM counted it as a hit (Count as hit) */
+    if(roll.options?.[module.id]?.forcedHit) return true;
     const ac = roll.options.target;
     /* Total cover (the GM's cover chips) : it can't be hit, a natural 20 included */
     if(Number.isFinite(ac) && (ac >= this.TOTAL_COVER_AC)) return false;
@@ -273,7 +403,8 @@ export class rollItem{
   static TOTAL_COVER_AC = 999;
 
   /**
-   * One ray : attack against its target's AC plus its damage, rolled either way so the GM can still apply a "miss".
+   * One ray : attack against its target's AC (the attack lego) plus what comes with its result (the hit lego), rolled
+   * either way : the card shows the damage once it hits (a reroll, or the GM's Count as hit).
    * Rolls are tagged with the ray index.
    * @param {object} [options]
    * @param {string} [options.attackMode]     dnd5e attack mode for this attack ("thrown" uses up the weapon)
@@ -281,17 +412,9 @@ export class rollItem{
    * @returns {Promise<Roll[]|null>}  null if the attack was cancelled
    */
   static async rollRay(activity, event, index, target, { attackMode, disadvantage, mode } = {}){
-    const config = {};
-    if(Number.isFinite(target?.ac)) config.target = target.ac;
-    if(attackMode) config.attackMode = attackMode;
-    if(disadvantage) config.disadvantage = true;
-    if(target?.token) config[module.id] = { target : target.token };
-    if(disadvantage) config[module.id] = { ...(config[module.id] ?? {}), reasons : [{ mode : "disadvantage", reason : this.disadvantageReason(disadvantage) }] };
-    const attack = await this.rollAttack(activity, event, config, mode);
+    const attack = await this.attackStep(activity, event, { target, attackMode, disadvantage, mode, ray : index });
     if(!attack) return null;
-    const damage = await this.rollDamage(activity, attack);
-    const added = await this.addedRolls(activity, attack, damage, index);
-    for(const roll of [attack, ...damage]) roll.options[module.id] = { ...(roll.options[module.id] ?? {}), ray : index };
+    const { damage, added } = await this.hitStep(activity, attack, { ray : index });
     return [attack, ...damage, ...added];
   }
 
@@ -1151,6 +1274,9 @@ export class rollItem{
       foundry.audio.AudioHelper.play({ src : CONFIG.sounds.dice }, true);
       return;
     }
+    /* A roll without dice (Graze's flat damage) has nothing to show : no wait for it */
+    rolls = rolls.filter(r => r.dice?.length);
+    if(!rolls.length) return;
     const whisper = message.whisper.length ? message.whisper : null;
     await Promise.all(rolls.map(roll => game.dice3d.showForRoll(roll, game.user, true, whisper, message.blind, message.id, message.speaker)));
   }
@@ -1218,6 +1344,7 @@ export class rollItem{
     Hooks.on("combatTurnChange", (combat, prior, current) => rollItem.clearTemplates(combat, prior, current));
     Hooks.on("deleteCombat", combat => rollItem.clearCombatTemplates(combat));
     Hooks.on("createRegion", region => rollItem.onTemplateCreated(region));
+    Hooks.on("updateChatMessage", (message, changes, options, userId) => rollItem.onCardUpdate(message, changes, options, userId));
     Hooks.on("dnd5e.preRollDamageV2", config => rollItem.applyDamageTypes(config));
     Hooks.on("dnd5e.preSummonToken", (activity, profile, config) => rollItem.summonOnSide(activity, config));
 
@@ -1284,27 +1411,38 @@ export class rollItem{
     /* Damage after the attack : everything is already rolled, this only staggers what is shown, so a natural 20
        isn't given away by crit damage dice rolling alongside it. The card goes out with every roll but shows
        "Rolling..." (flags.reveal 0), the attack dice play and the attack shows (1), then the damage dice and the
-       damage (2). Dice So Nice's own animation of the card is skipped : the dice are played here, in order. */
+       damage (2). Dice So Nice's own animation of the card is skipped : the dice are played here, in order.
+       What waits on the attack's result (a hit's damage, a miss's Graze) is only played, and shown, once the result
+       calls for it (flags.dice : false until played) : a miss plays no damage dice, a reroll that hits plays them then. */
     const { DamageRoll } = CONFIG.Dice;
     const attacks = rolls.filter(r => !(r instanceof DamageRoll));
     const damage = rolls.filter(r => r instanceof DamageRoll);
     const staged = settings.value("rollItemStaged") && attacks.length && damage.length;
-    if(!staged) return await ChatMessage.implementation.create(messageData);
+    const waiting = (game.dice3d && attacks.length) ? damage.filter(r => this.outcomeKey(r, { rider, rays })) : [];
+    if(!staged && !waiting.length) return await ChatMessage.implementation.create(messageData);
 
-    messageData.flags = { ...(messageData.flags ?? {}), [module.id] : { ...(messageData.flags?.[module.id] ?? {}), reveal : 0 } };
+    const flags = { ...(messageData.flags?.[module.id] ?? {}) };
+    if(staged) flags.reveal = 0;
+    for(const roll of waiting) foundry.utils.setProperty(flags, `dice.${this.outcomeKey(roll, { rider, rays })}`, false);
+    messageData.flags = { ...(messageData.flags ?? {}), [module.id] : flags };
     if(game.dice3d) messageData.flags["dice-so-nice"] = { skip : true };
     const message = await ChatMessage.implementation.create(messageData);
     if(!message) return message;
 
     /* Dice that never report landing (Dice So Nice hiccup) don't leave the card on "Rolling..." */
     const landed = rolls => Promise.race([this.showDice(rolls, message), wait(8000)]);
+    const always = damage.filter(r => !waiting.includes(r));
     try {
-      await landed(attacks);
-      await message.setFlag(module.id, "reveal", 1);
-      await landed(damage);
+      if(staged){
+        await landed(attacks);
+        await message.setFlag(module.id, "reveal", 1);
+        if(always.length) await landed(always);
+      }
+      else await landed([...attacks, ...always]);
+      await this.playOutcomes(message);
     }
     finally {
-      await message.setFlag(module.id, "reveal", 2);
+      if(staged) await message.setFlag(module.id, "reveal", 2);
     }
     return message;
   }

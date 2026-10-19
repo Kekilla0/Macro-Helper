@@ -50,7 +50,7 @@
 </div>
 
 {{!-- Reroll buttons, same markup as dnd5e's card-buttons partial --}}
-{{#if (or buttons applyHits)}}
+{{#if (or buttons applyHits countHit)}}
 <section class="icon-row">
     <i class="fa-solid fa-fw fa-circle-play" aria-label="{{ localize "DND5E.CHATMESSAGE.Row.Actions" }}"></i>
     <ul class="unlist">
@@ -83,6 +83,15 @@
             <button type="button" class="icon" data-action="applyHits" data-tooltip
                     aria-label="{{ localize "rollItem.apply.hits" }}">
                 <i class="fa-solid fa-heart-crack" inert></i>
+            </button>
+        </li>
+        {{/if}}
+        {{!-- The GM's call : this miss counts as a hit --}}
+        {{#if countHit}}
+        <li>
+            <button type="button" class="icon" data-action="countHit" data-tooltip
+                    aria-label="{{ localize "rollItem.countHit" }}">
+                <i class="fa-solid fa-crosshairs" inert></i>
             </button>
         </li>
         {{/if}}
@@ -137,14 +146,24 @@
     <section class="icon-row ray-header">
         <i class="fa-fw fa-solid fa-hashtag" inert></i>
         <span class="roboto-upper">{{ localize "rollItem.ray" number=number }}</span>
-        {{#if canReroll}}
+        {{#if (or canReroll countHit)}}
         <ul class="unlist">
+            {{#if canReroll}}
             <li>
                 <button type="button" class="icon" data-action="rerollRay" data-ray="{{ index }}" data-tooltip
                         aria-label="{{ localize "rollItem.reroll.ray" }}">
                     <i class="fa-solid fa-rotate" inert></i>
                 </button>
             </li>
+            {{/if}}
+            {{#if countHit}}
+            <li>
+                <button type="button" class="icon" data-action="countHit" data-ray="{{ index }}" data-tooltip
+                        aria-label="{{ localize "rollItem.countHit" }}">
+                    <i class="fa-solid fa-crosshairs" inert></i>
+                </button>
+            </li>
+            {{/if}}
         </ul>
         {{/if}}
     </section>

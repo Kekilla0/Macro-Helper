@@ -156,7 +156,8 @@ export class masteries{
     const missed = targets.length > hits.length;
 
     const grazeRolls = card.addedRollsOf(ray, "graze");
-    const graze = (grazeRolls.length && (missed || !targets.length))
+    /* Graze's damage once the attack misses and its dice have played */
+    const graze = (grazeRolls.length && (missed || !targets.length) && (card.outcomeShown?.(ray, "miss") ?? true))
       ? { ...card.damageContextOf(grazeRolls), showTray : card.canApply, onMiss : !targets.length }
       : null;
 

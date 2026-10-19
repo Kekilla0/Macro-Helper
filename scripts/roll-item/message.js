@@ -579,6 +579,8 @@ export function registerMessages(){
   /* Does an attack roll hit this AC : crits always, fumbles never, no AC known counts as a hit */
   const hitsAC = (roll, ac) => {
     if(!roll) return false;
+    /* The GM counted it as a hit (Count as hit) */
+    if(roll.options?.[module.id]?.forcedHit) return true;
     if(Number.isFinite(ac) && (ac >= rollItem.TOTAL_COVER_AC)) return false;
     if(roll.isCritical) return true;
     if(roll.isFumble) return false;
@@ -629,8 +631,19 @@ export function registerMessages(){
    * @param {object} [changes.system]
    */
   const replaceRolls = async (message, { rolls, shown, system = {} }) => {
-    await rollItem.showDice(shown, message);
-    return message.update({ rolls : rolls.filter(Boolean).map(r => JSON.stringify(r)), system });
+    const { held, flags } = holdOutcomes(message, shown);
+    await rollItem.showDice(shown.filter(r => !held.includes(r)), message);
+    return message.update({ rolls : rolls.filter(Boolean).map(r => JSON.stringify(r)), system, ...flags });
+  };
+
+  /* An attack card's new rolls that wait on its result (a hit's damage, Graze's) : not played now, marked unplayed, so
+     the card plays them once its result calls for them (rollItem.playOutcomes) */
+  const holdOutcomes = (message, rolls) => {
+    if(!game.dice3d || (message.type !== TYPES.attack)) return { held : [], flags : {} };
+    const card = { rider : message.system.rider, rays : message.system.rays };
+    const held = rolls.filter(r => rollItem.outcomeKey(r, card));
+    const flags = Object.fromEntries(held.map(r => [`flags.${module.id}.dice.${rollItem.outcomeKey(r, card)}`, false]));
+    return { held, flags };
   };
 
   /**
@@ -838,6 +851,7 @@ export function registerMessages(){
       template : `${module.path}/templates/roll-card.hbs`,
       actions : {
         rerollAttack : RollItemMessageData.#rerollAttack,
+        countHit : RollItemMessageData.#countHit,
         rerollDamage : RollItemMessageData.#rerollDamage,
         rerollRay : RollItemMessageData.#rerollRay,
         applyHits : RollItemMessageData.#applyHits,
@@ -967,6 +981,43 @@ export function registerMessages(){
       return targets.length ? targets.some(t => hitsAC(attack, t.ac)) : rollItem.isHit(attack);
     }
 
+    /**
+     * Which of an attack's results are in play : hit (it hit something), miss (it missed something), both when it
+     * can't tell (no target, no AC to judge by). A ray goes by its own roll, as its row shows it.
+     * @param {number|null} ray
+     * @returns {{ hit : boolean, miss : boolean }}
+     */
+    resultsOf(ray){
+      const attack = this.attackOf(ray);
+      if(!attack) return { hit : false, miss : false };
+      if(Number.isInteger(ray)){
+        if(!this.rayTarget(ray) && !Number.isFinite(attack.options?.target)) return { hit : true, miss : true };
+        const hit = rollItem.isHit(attack);
+        return { hit, miss : !hit };
+      }
+      const targets = this.targets;
+      if(!targets.length) return { hit : true, miss : true };
+      const hits = targets.filter(t => hitsAC(attack, t.ac)).length;
+      return { hit : hits > 0, miss : hits < targets.length };
+    }
+
+    /* Is that result's part of the card to show (its damage on a hit, Graze's on a miss) : in play, its dice played */
+    outcomeShown(ray, outcome){
+      if(!this.resultsOf(ray)[outcome]) return false;
+      return this.parent.getFlag(module.id, `dice.${rayKey(this.isMulti ? ray : null)}.${outcome}`) !== false;
+    }
+
+    /* The rolls that wait on one result of an attack */
+    outcomeRolls(ray, outcome){
+      const rolls = Number.isInteger(ray) ? this.rayRolls(ray) : this.parent.rolls;
+      return rolls.filter(r => rollItem.outcomeOf(r, this) === outcome);
+    }
+
+    /* A part's rolls are shown : each waits on nothing, or on a result that's shown */
+    rollsShown(ray, rolls){
+      return rolls.every(r => { const outcome = rollItem.outcomeOf(r, this); return !outcome || this.outcomeShown(ray, outcome); });
+    }
+
     /* Extra damage on one attack (all of it, or one key's) */
     extraRolls(ray, key){
       const all = Number.isInteger(ray) ? this.rayDamage(ray, "extra")
@@ -1049,8 +1100,9 @@ export function registerMessages(){
         roll.options[module.id] = { ...(Number.isInteger(ray) ? { ray } : {}), part : "extra", key, label : label ?? key, alternative,
           ...(onHit ? { onHit : true } : {}), ...(formula ? { formula } : {}) };
       }
-      await rollItem.showDice(rolls, this.parent);
-      const update = { rolls : [...this.parent.rolls, ...rolls].map(r => JSON.stringify(r)) };
+      const { held, flags } = holdOutcomes(this.parent, rolls);
+      await rollItem.showDice(rolls.filter(r => !held.includes(r)), this.parent);
+      const update = { rolls : [...this.parent.rolls, ...rolls].map(r => JSON.stringify(r)), ...flags };
       /* Already shown : Dice So Nice mustn't animate the added rolls a second time */
       if(game.dice3d) update["flags.dice-so-nice.skip"] = true;
       await this.parent.update(update);
@@ -1186,6 +1238,8 @@ export function registerMessages(){
       }
       const extras = [...groups.values()]
         .filter(g => !choice || (choice === g.key) || !g.rolls.some(r => tagOf(r).alternative))
+        /* On-hit damage only once the attack hits */
+        .filter(g => this.rollsShown(ray, g.rolls))
         .map(g => ({ key : g.key, label : g.label, chosen : choice === g.key,
           damage : { ...damageContext(this.parent, g.rolls), showTray : this.canApply && (!g.rolls.some(r => tagOf(r).onHit) || this.isHitOn(ray)) } }));
 
@@ -1323,10 +1377,15 @@ export function registerMessages(){
           const damage = this.rayDamage(i);
           const target = visible ? maskTarget(this.rayTarget(i)) : null;
           const hit = rollItem.isHit(attack);
+          /* Its damage only once it hits and its dice have played (a hidden card gives nothing away : always "?") */
+          const hitShown = !visible || this.outcomeShown(i, "hit");
           return {
             index : i,
             number : i + 1,
             canReroll,
+            hitShown,
+            /* The GM's call : this miss counts as a hit */
+            countHit : game.user.isGM && visible && !!attack && !this.resultsOf(i).hit,
             attack : (hidden && attack) ? await attack.render({ template : ROLL_TEMPLATE, isPrivate : true }) : (rendered[attackIndex] ?? ""),
             /* Hidden cards must not give away hits through the miss styling */
             hit : visible ? rollItem.isHit(attack) : true,
@@ -1338,9 +1397,9 @@ export function registerMessages(){
               ...coverShown(target),
               applied : appliedOn(this.parent, target.token, ["hits", "tray"]),
             } : null,
-            damage : (damage.length || !visible) ? damageContext(this.parent, damage, { hidden }) : null,
-            /* Damage is rolled either way; APPLY only shows on a hit (a reroll that hits brings it back) */
-            showTray : canApply && (damage.length > 0) && hit,
+            damage : ((damage.length || !visible) && hitShown) ? damageContext(this.parent, damage, { hidden }) : null,
+            /* Damage is rolled either way and shows on a hit (a reroll that hits brings it, the GM can count a miss as one) */
+            showTray : canApply && (damage.length > 0) && hit && hitShown,
             sections : this.sectionsContext(i),
             extras : this.extrasContext(i),
             /* What rules let you do to its target (a mastery) : its row */
@@ -1355,6 +1414,8 @@ export function registerMessages(){
           if(choice && (choice !== "base")){ ray.damage = null; ray.showTray = false; }
         }
         context.applyHits = canApply && context.rays.some(r => (r.hit && r.showTray) || r.sections.some(s => s.applies));
+        /* The attack's effects : once one of its attacks hits */
+        if(!context.rays.some(r => r.hitShown)) context.effects = [];
         context.moves = cardMoves.context(this.parent);
         return this._hideUnrevealed(context);
       }
@@ -1364,7 +1425,8 @@ export function registerMessages(){
       context.rolls = (hidden && this.attackRoll)
         ? [await this.attackRoll.render({ template : ROLL_TEMPLATE, isPrivate : true })]
         : rendered.filter((_, i) => !(rolls[i] instanceof DamageRoll));
-      if(context.targets) context.targets = context.targets.map(t => ({ ...maskTarget(t), ...coverShown(t), applied : appliedOn(this.parent, t.token, ["hits", "tray"]) }));
+      if(context.targets) context.targets = context.targets.map(t => ({ ...maskTarget(t), ...(this.attackRoll ? { isMiss : !hitsAC(this.attackRoll, t.ac) } : {}),
+        ...coverShown(t), applied : appliedOn(this.parent, t.token, ["hits", "tray"]) }));
       /* What rules let you do to a creature with no save (a mastery's Topple) : a row each, like a save card's */
       if(this.parent.isContentVisible && !this.isMulti){
         const attack = this.attackRoll;
@@ -1373,8 +1435,14 @@ export function registerMessages(){
           .filter(row => row.ruleButtons.length);
       }
       const damage = this.damageRolls;
-      /* Damage is rolled either way; APPLY only shows on a hit (a reroll that hits brings it back) */
-      if(damage.length) context.damage = { ...damageContext(this.parent, damage, { hidden }), showTray : this.canApply && this.isHitOn(null) };
+      /* Damage is rolled either way and shows once the attack hits and its dice have played (a reroll that hits brings
+         it, the GM can count a miss as a hit); a hidden card gives nothing away : always "?" */
+      const visible = this.parent.isContentVisible;
+      const hitShown = !visible || this.outcomeShown(null, "hit");
+      if(damage.length && hitShown) context.damage = { ...damageContext(this.parent, damage, { hidden }), showTray : this.canApply && this.isHitOn(null) };
+      if(context.buttons && !hitShown) context.buttons.damage = false;
+      if(!hitShown) context.effects = [];
+      context.countHit = game.user.isGM && visible && !!this.attackRoll && !this.resultsOf(null).hit;
 
       context.sections = this.sectionsContext(null);
       context.extras = this.extrasContext(null);
@@ -1383,7 +1451,8 @@ export function registerMessages(){
 
       /* A card macro took the save off (card.remove("save") : Haymaker against a Large creature) */
       const noSave = (this.parent.getFlag(module.id, "cardParts")?.removed ?? []).some(r => (r === "save") || (r === "*"));
-      if(this.rider?.id && !noSave) context.rider = await this._prepareRiderContext(options);
+      /* The on-hit save once it hits (a save for creatures of its own, Ice Knife's, either way) */
+      if(this.rider?.id && !noSave && (hitShown || this.rider.targets?.length)) context.rider = await this._prepareRiderContext(options);
       if(context.buttons && context.rider) context.buttons.rider = context.rider.hasDamage;
       /* Every push and pull, at the bottom : one button per creature */
       context.moves = cardMoves.context(this.parent);
@@ -1408,9 +1477,10 @@ export function registerMessages(){
       context.moves = [];
       context.applyHits = false;
       context.buttons = null;
+      context.countHit = false;
       context.effects = [];
       context.rays = (context.rays ?? []).map(ray => ({
-        ...ray, damage : null, showTray : false, sections : [], extras : null, canReroll : false,
+        ...ray, damage : null, showTray : false, sections : [], extras : null, canReroll : false, countHit : false,
         ...(reveal < 1 ? { attack : "", hit : true, target : ray.target ? { ...ray.target, showResult : false } : null } : {}),
       }));
       if(reveal < 1){
@@ -1496,20 +1566,16 @@ export function registerMessages(){
         return replaceRolls(this.parent, { rolls : this.withRays(replaced), shown : [...replaced.values()].flat() });
       }
 
-      const attack = await rollItem.rollAttack(activity, event, {
+      /* The attack's tags stay (Cleave's extra attack), and rules' added rolls follow the new attack (Graze) */
+      const attack = await rollItem.attackStep(activity, event, {
+        target : (this.targets.length === 1) ? this.targets[0].token : null,
         ability : this.ability ?? undefined,
         attackMode : this.mode ?? undefined,
-        ...(this.disadvantage ? { disadvantage : true } : {}),
-        [module.id] : {
-          ...(this.targets.length === 1 ? { target : this.targets[0].token } : {}),
-          ...(this.disadvantage ? { reasons : [{ mode : "disadvantage", reason : rollItem.disadvantageReason(this.disadvantageWhy || true) }] } : {}),
-        },
-      }, mode);
+        disadvantage : this.disadvantage ? (this.disadvantageWhy || true) : false,
+        mode,
+        tags : this.attackRoll?.options?.[module.id]?.tags,
+      });
       if(!attack) return target.disabled = false;
-
-      /* The attack's tags stay (Cleave's extra attack), and rules' added rolls follow the new attack (Graze) */
-      const tags = this.attackRoll?.options?.[module.id]?.tags;
-      if(tags) attack.options[module.id] = { ...(attack.options[module.id] ?? {}), tags };
       const added = await rollItem.addedRolls(activity, attack, this.damageRolls);
 
       const { ability, ammunition, attackMode, mastery } = attack.options;
@@ -1518,6 +1584,22 @@ export function registerMessages(){
         shown : [attack],
         system : { ability, ammunition, mastery, mode : attackMode },
       });
+    }
+
+    /**
+     * The GM's call : a miss counts as a hit. The attack roll is marked, so everything that judges its hits follows
+     * (its damage, Apply Hits, on-hit parts and save); a new roll (a reroll) is judged again.
+     * @this {RollItemMessageData}
+     */
+    static async #countHit(event, target){
+      if(!game.user.isGM) return;
+      const ray = (target.dataset.ray === undefined) || (target.dataset.ray === "") ? null : Number(target.dataset.ray);
+      const old = this.attackOf(ray);
+      if(!old) return;
+      target.disabled = true;
+      const updated = old.constructor.fromData(old.toJSON());
+      updated.options[module.id] = { ...(updated.options[module.id] ?? {}), forcedHit : true };
+      await replaceRolls(this.parent, { rolls : this.parent.rolls.map(r => (r === old) ? updated : r), shown : [] });
     }
 
     /** @this {RollItemMessageData} */

@@ -179,6 +179,7 @@
   "rollItem.reroll.attack" : "Reroll Attack",
   "rollItem.reroll.damage" : "Reroll Damage",
   "rollItem.reroll.ray" : "Reroll this attack",
+  "rollItem.countHit" : "Count as hit",
   "rollItem.reroll.rider" : "Reroll save damage",
   "rollItem.reroll.healing" : "Reroll Healing",
   "rollItem.reroll.instance" : "Reroll this damage",
