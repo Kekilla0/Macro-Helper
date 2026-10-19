@@ -146,7 +146,7 @@ export class rangerConclaves{
     if(!subclasses.has(caster, this.LORE) || !target?.system?.traits) return;
     const list = key => {
       const trait = target.system.traits[key];
-      const values = [...(trait?.value ?? [])].map(t => game.i18n.localize(CONFIG.DND5E.damageTypes[t]?.label ?? CONFIG.DND5E.conditionTypes?.[t]?.label ?? t));
+      const values = [...(trait?.value ?? [])].map(t => game.i18n.localize(CONFIG.DND5E.damageTypes[t]?.label ?? CONFIG.DND5E.conditionTypes?.[t]?.name ?? CONFIG.DND5E.conditionTypes?.[t]?.label ?? t));
       if(trait?.custom) values.push(trait.custom);
       return values.length ? values.join(", ") : module.i18n("subclasses.ranger.none");
     };

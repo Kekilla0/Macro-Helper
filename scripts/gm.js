@@ -195,8 +195,9 @@ export class gm{
     const actorOf = state => combat.combatants.get(state?.combatantId)?.actor?.uuid ?? null;
     const ended = actorOf(prior), started = actorOf(current);
     const priorAt = this.#at(prior?.round, prior?.turn), currentAt = this.#at(current?.round, current?.turn);
-    /* A new round with Initiative Each Round (Homebrew) : who starts isn't known until everyone rerolls (expireStart) */
-    const waitForOrder = (current?.round > prior?.round) && settings.value("homebrewInitiative");
+    /* A new round with Initiative Each Round (Homebrew) : who starts isn't known until everyone rerolls (expireStart).
+       Not round 1 : the combat beginning keeps the order it has (homebrew rerolls from round 2) */
+    const waitForOrder = (current?.round > prior?.round) && ((prior?.round ?? 0) >= 1) && settings.value("homebrewInitiative");
     /* The combat beginning with initiative still to roll (automatic initiative) : the same */
     const toRoll = (current?.round === 1) && !((prior?.round ?? 0) >= 1) && (settings.value("initiativeMethod") === "auto")
       && combat.combatants.some(c => c.initiative === null);
