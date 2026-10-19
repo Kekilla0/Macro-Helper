@@ -696,7 +696,7 @@ export class rollItem{
     if((pick === "off") || !canvas.ready || !attacker || (attacker.document.parent !== canvas.scene)){
       if(!game.user.targets.size) return { targets : [] };
       const checked = await this.checkTargets(activity, [...game.user.targets]);
-      return checked?.length ? { targets : checked } : null;
+      return (checked?.length && this.announceTargets(activity, checked)) ? { targets : checked } : null;
     }
     const n = this.countFor(activity, count);
     const rangeMultiplier = Number(usage?.[module.id]?.rangeMultiplier) || 1;
@@ -721,9 +721,7 @@ export class rollItem{
     }
     if(!game.user.targets.size || usage?.[module.id]?.skipPick) return [...game.user.targets];
     const checked = await this.checkTargets(activity, [...game.user.targets]);
-    if(!checked?.length) return null;
-    canvas.tokens.setTargets(checked.map(t => t.id));
-    return checked;
+    return (checked?.length && this.announceTargets(activity, checked)) ? checked : null;
   }
 
   /**

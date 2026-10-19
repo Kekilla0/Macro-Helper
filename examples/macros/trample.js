@@ -3,7 +3,8 @@
  * creatures, without provoking Opportunity Attacks, and makes one attack against each creature it moved through.
  *
  * Setup : Item Macro on the attack, mode "Macro only".
- * Uses  : token.trample(feet, { size, disengage }) (pick a space, move through creatures; returns them),
+ * Uses  : token.trample(feet, { size, disengage }) (pick a space, move through creatures; returns the enemies among
+ *         them, { enemies : false } for everyone),
  *         token.useMovement(feet) (more movement this turn, like a Dash), item.roll({ targets })
  *
  * Other moves work the same way : token.teleport(30, { item }), token.leap(30, { item }), token.push(target, 10),

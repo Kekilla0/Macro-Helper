@@ -59,6 +59,8 @@ export class weapons{
     const item = activity?.item;
     if((limits.mode() === "off") || (activity?.type !== "attack") || (item?.type !== "weapon")) return next();
     if(settings.value("rollItem") && (settings.value("rollItemPick") !== "off")) return next();
+    /* Targets a rule or macro set itself (item.roll({ targets }) after a Trample) : not held to reach, like the spells' */
+    if(ctx?.config?.[module.id]?.useTargets) return next();
     const attacker = tokenOf(activity.actor);
     const targets = [...(game.user.targets ?? [])].filter(t => t !== attacker);
     if(!attacker || !targets.length) return next();
