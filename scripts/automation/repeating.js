@@ -4,6 +4,7 @@ import { logger } from '../log.js';
 import { gm } from '../gm.js';
 import { idOf, esc, buttonRow, addButton, makeButton } from '../helpers/utils.js';
 import { itemFixes } from './item-fixes.js';
+import { rollSave } from '../helpers/actors.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -189,7 +190,9 @@ export class repeating{
   static async roll(message, actor, effect, repeat){
     const { type, ability, skill, dc } = repeat.roll;
     const config = { ability, skill, target : dc ?? undefined };
-    const rolls = (type === "save") ? await actor.rollSavingThrow(config)
+    /* A save : the save lego, with the bonus of what it saves against */
+    const from = repeat.from?.item ? fromUuidSync(repeat.from.item, { strict : false }) : null;
+    const rolls = (type === "save") ? (await rollSave(actor, ability, dc, { from : (from?.documentName === "Item") ? from : null, dialog : true }))?.roll
       : skill ? await actor.rollSkill({ skill, ability, target : dc ?? undefined }) : await actor.rollAbilityCheck(config);
     const roll = Array.isArray(rolls) ? rolls[0] : rolls;
     if(!roll) return;

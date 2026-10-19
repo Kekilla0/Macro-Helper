@@ -6,6 +6,7 @@ import { settings } from '../settings.js';
 import { rollItem } from './roll-item.js';
 import { extraD20, rerolls, addDie } from './rerolls.js';
 import { originOf, addNote, plainText } from '../helpers/utils.js';
+import { rollSave } from '../helpers/actors.js';
 
 /* Dice So Nice still rolling a save's dice (on this client) : its result waits for them, then its card is drawn again;
    a card's own dice (healing, damage) are waited for before anything is applied from it */
@@ -524,25 +525,11 @@ export function registerMessages(){
     const { actor, token } = TargetsField.resolve(descriptor);
     if(!actor?.isOwner || !activity) return;
 
-    const config = { event, ability, target : dc };
-    const bonus = CONFIG.Dice.BasicRoll.replaceFormulaData(activity.save?.bonus ?? "", activity.getRollData(), { missing : 0 });
     /* Cover the GM set on the card : +2 / +5 to a DEX save */
     const cover = (ability === "dex") ? (COVER[coverOf(message, uuid)] || 0) : 0;
-    const bonusData = CONFIG.Dice.BasicRoll.constructParts({ activityBonus : bonus, cover : cover || "" });
-    if(bonusData.parts.length) config.rolls = [bonusData];
-
-    const secret = settings.value("rollItemDmScreen") && !actor.hasPlayerOwner;
-    const speaker = ChatMessage.implementation.getSpeaker({ actor, scene : canvas.scene, token : token?.document });
-    const messageConfig = { data : { speaker, system : { ...activity.messageSources, origin : message.id },
-      flags : { [module.id] : { row : { ability, cover } } } } };
-    if(secret) messageConfig.rollMode = "gm";
-
     button.disabled = true;
     try {
-      const [roll] = (await actor.rollSavingThrow(config, { configure : false }, messageConfig)) ?? [];
-      if(roll && secret && game.user.isGM && Number.isFinite(dc)){
-        await message.setFlag(module.id, `saves.${uuidKey(uuid)}`, { success : roll.total >= dc });
-      }
+      await rollSave(token ?? actor, ability, dc, { from : activity, cover, event, card : message, flags : { row : { ability, cover } } });
     } finally {
       button.disabled = false;
     }
@@ -1654,21 +1641,11 @@ export function registerMessages(){
         : (game.user.character ? [{ actor : game.user.character }] : []);
       if(!rollers.length) return ui.notifications.warn("DND5E.ActionWarningNoToken", { localize : true });
 
-      const bonus = CONFIG.Dice.BasicRoll.replaceFormulaData(save.save.bonus ?? "", save.getRollData(), { missing : 0 });
-      const bonusData = CONFIG.Dice.BasicRoll.constructParts({ activityBonus : bonus });
-
+      const ability = this.rider.ability || save.save.ability.first();
+      const dc = Number.isFinite(this.rider.dc) ? this.rider.dc : save.save.dc.value;
       target.disabled = true;
       try {
-        for(const { actor, token } of rollers){
-          const speaker = ChatMessage.implementation.getSpeaker({ actor, scene : canvas.scene, token : token?.document });
-          const rollData = {
-            event,
-            ability : this.rider.ability || save.save.ability.first(),
-            target : Number.isFinite(this.rider.dc) ? this.rider.dc : save.save.dc.value,
-          };
-          if(bonusData.parts.length) rollData.rolls = [bonusData];
-          await actor.rollSavingThrow(rollData, {}, { data : { speaker, system : { ...save.messageSources, origin : this.parent.id } } });
-        }
+        for(const { actor, token } of rollers) await rollSave(token ?? actor, ability, dc, { from : save, event, dialog : true, card : this.parent });
       } finally {
         target.disabled = false;
       }

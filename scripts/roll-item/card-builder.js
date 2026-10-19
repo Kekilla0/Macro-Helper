@@ -352,7 +352,7 @@ export async function giveCondition(thing, type, { save = null, dc = null, repea
   if(!actor || !type) return { applied : false, save : null };
   let rolled = null;
   if(save && Number.isFinite(Number(dc))){
-    rolled = await rollSave(thing, save, Number(dc));
+    rolled = await rollSave(thing, save, Number(dc), { from : options.from ?? null });
     if(!rolled) return { applied : false, save : null };
     rolled = { total : rolled.total, success : rolled.success };
     if(rolled.success) return { applied : false, save : rolled };
@@ -689,6 +689,7 @@ export class cardBuilder{
       add(cls, "grappling", function(){ return grappling(this); });
       add(cls, "grapple", function(target, options){ return grapple(this, target, options); });
       add(cls, "attachedTo", function(){ return attachedTo(this); });
+      add(cls, "save", function(ability, dc, options){ return rollSave(this, ability, dc, options); });
       add(cls, "applyCondition", function(type, options){ return (typeof type === "string") ? giveCondition(this, type, options) : applyConditionNow(this, type); });
       add(cls, "isType", function(type){ return isType(this, type); });
       add(cls, "isImmuneTo", function(item){ return isImmuneTo(this, item); });

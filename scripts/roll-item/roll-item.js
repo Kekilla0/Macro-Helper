@@ -175,16 +175,9 @@ export class rollItem{
        its APPLY once the attack hits (crits like the attack) */
     const extras = withExtras ? await this.extraDamage(activity, attack) : [];
 
-    /* On-hit save from the same item (Giant Spider's poison) : its damage is rolled now too, never crits */
+    /* On-hit save from the same item (Giant Spider's poison) : the save lego, its damage rolled now too */
     const save = withRider ? this.findRider(activity) : null;
-    const riderDamage = save ? await this.rollDamage(save, null) : [];
-    for(const r of riderDamage) r.options[module.id] = { part : "save" };
-    const rider = save ? {
-      id : save.id,
-      ability : save.save.ability.first() ?? "",
-      dc : Number.isFinite(save.save.dc.value) ? save.save.dc.value : null,
-      onSave : save.damage?.onSave ?? null,
-    } : null;
+    const { damage : riderDamage, save : rider } = save ? await this.saveStep(save, { tag : { part : "save" } }) : { damage : [], save : null };
     /* Rules can give the save its own creatures (Ice Knife : everyone within 5 ft of the target) : macro-helper.riderTargets */
     if(rider){
       const around = [];
@@ -192,6 +185,44 @@ export class rollItem{
       if(around.length) rider.targets = around;
     }
     return { damage, added, extras, riderDamage, rider };
+  }
+
+  /**
+   * The save lego : what a save activity brings, rolled now : its damage (never crits), spread over the targets like
+   * rays when it rolls several instances (Magic Missile's darts), and the save itself (its ability, DC, what a success
+   * does). A save card rolls it (usageCard, which rolls heals and damage-only activities the same way), and so does an
+   * attack's on-hit save (hitStep).
+   * @param {Activity} activity
+   * @param {object} [options]
+   * @param {number}  [options.count]    instances of its damage (1)
+   * @param {Token[]} [options.targets]  who the instances go to, in order (default : your targets)
+   * @param {object}  [options.tag]      marks for each damage roll (the on-hit save's { part : "save" })
+   * @returns {Promise<{ damage : DamageRoll[], rays : object[], save : { id, ability, dc, onSave }|null }>}
+   */
+  static async saveStep(activity, { count = 1, targets, tag } = {}){
+    const damage = [];
+    let rays = [];
+    if(count > 1){
+      const spread = this.assignTargets(count, targets);
+      for(const i of spread.keys()){
+        for(const roll of await this.rollDamage(activity, null)){
+          roll.options[module.id] = { ...tag, ray : i };
+          damage.push(roll);
+        }
+      }
+      rays = spread.map(t => ({ target : t?.token ?? "" }));
+    }
+    else for(const roll of await this.rollDamage(activity, null)){
+      if(tag) roll.options[module.id] = { ...tag };
+      damage.push(roll);
+    }
+    const save = activity?.save ? {
+      id : activity.id,
+      ability : activity.save.ability?.first() ?? "",
+      dc : Number.isFinite(activity.save.dc?.value) ? activity.save.dc.value : null,
+      onSave : activity.damage?.onSave ?? null,
+    } : null;
+    return { damage, rays, save };
   }
 
   /**
@@ -1490,17 +1521,9 @@ export class rollItem{
     if(picks) data.system.targets = TargetsField.getDescriptors([...new Set(picks)]);
     data.system.targets ??= TargetsField.getDescriptors();
 
-    const damage = [];
-    if(count > 1){
-      const targets = this.assignTargets(count, picks ?? undefined);
-      for(const i of targets.keys()){
-        const rolls = await this.rollDamage(activity, null);
-        for(const roll of rolls) roll.options[module.id] = { ray : i };
-        damage.push(...rolls);
-      }
-      data.system.rays = targets.map(t => ({ target : t?.token ?? "" }));
-    }
-    else damage.push(...await this.rollDamage(activity, null));
+    /* Its damage (or healing), the save lego : instances spread over the targets like rays */
+    const { damage, rays } = await this.saveStep(activity, { count, targets : picks ?? undefined });
+    if(count > 1) data.system.rays = rays;
 
     /* Utility : its roll formula (dnd5e's "Roll" button) */
     const formula = await this.rollFormula(activity);

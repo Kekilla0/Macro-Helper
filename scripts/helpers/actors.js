@@ -1,6 +1,7 @@
 import { module } from '../module.js';
 import { tokenOf, actorOf, isSpaceFree } from './tokens.js';
 import { gm } from '../gm.js';
+import { settings } from '../settings.js';
 
 /* ---------- Hit points ----------
  * On dnd5e's own actor.applyDamage : the same path as the chat card APPLY trays, so resistances, immunities,
@@ -148,21 +149,57 @@ export function preventDropToZero(thing, amount, updates, { hp = 1, massiveDamag
 
 /* ---------- Saves & effects ---------- */
 
+/* The save activity a save is made against : the activity itself, else the item's save (the one with that ability first) */
+function saveActivityOf(from, ability){
+  if(!from) return null;
+  if(from.save && from.item) return from;
+  const saves = [...(from.system?.activities ?? [])].filter(a => a.type === "save");
+  return saves.find(a => a.save?.ability?.has?.(ability)) ?? saves[0] ?? null;
+}
+
 /**
- * Roll a saving throw for a creature against a DC, without dnd5e's dialog.
+ * The save lego : a creature makes a saving throw, the same way for every rule (a card's row, an on-hit save, a repeat
+ * save at the end of its turn, Topple). Read as : target.actor.save("con", 13, { from : item }).
+ * The roll keeps the keys held (advantage / disadvantage), dnd5e's own bonuses and rules (Paralyzed fails STR / DEX).
  * @param {Actor|Token|TokenDocument} thing
  * @param {string} ability   "con", "dex"...
- * @param {number} dc
- * @returns {Promise<{ success : boolean, total : number, roll : Roll }|null>}  null if it wasn't rolled
+ * @param {number} [dc]      without one, dnd5e judges nothing : success is null
+ * @param {object} [options]
+ * @param {Item|Activity} [options.from]  what it saves against : its save activity's bonus is added, the save is linked to it
+ * @param {string}  [options.bonus]       more to add to the save (a formula)
+ * @param {number}  [options.cover]       cover's bonus to a DEX save (+2 half, +5 three-quarters)
+ * @param {Event}   [options.event]       the click, for its advantage / disadvantage keys
+ * @param {boolean} [options.dialog]      dnd5e's roll dialog first (default : none)
+ * @param {boolean} [options.secret]      a private GM roll (default : an NPC's, with the DM Screen setting on)
+ * @param {ChatMessage} [options.card]    the card it's for : the save links to it, and a secret save's success is noted on it
+ * @param {object}  [options.flags]       the save message's own flags (macro-helper's)
+ * @returns {Promise<{ success : boolean|null, total : number, roll : Roll }|null>}  null if it wasn't rolled
  */
-export async function rollSave(thing, ability, dc){
+export async function rollSave(thing, ability, dc = null, { from = null, bonus = null, cover = 0, event = null, dialog = false, secret, card = null, flags = null } = {}){
   const actor = actorOf(thing);
-  if(!actor?.rollSavingThrow || !actor.isOwner) return null;
+  if(!actor?.rollSavingThrow || !actor.isOwner || !ability) return null;
   const token = tokenOf(thing);
+  dc = ((dc === null) || (dc === "")) ? NaN : Number(dc);
+
+  const activity = saveActivityOf(from, ability);
+  const config = { ability, ...(event ? { event } : {}), ...(Number.isFinite(dc) ? { target : dc } : {}) };
+  const activityBonus = activity ? CONFIG.Dice.BasicRoll.replaceFormulaData(activity.save?.bonus ?? "", activity.getRollData(), { missing : 0 }) : "";
+  const covered = (ability === "dex") ? (Number(cover) || 0) : 0;
+  const parts = CONFIG.Dice.BasicRoll.constructParts({ activityBonus, bonus : bonus ?? "", cover : covered || "" });
+  if(parts.parts.length) config.rolls = [parts];
+
+  secret ??= settings.value("rollItemDmScreen") && !actor.hasPlayerOwner;
   const speaker = ChatMessage.implementation.getSpeaker({ actor, token : token?.document });
-  const [roll] = await actor.rollSavingThrow({ ability, target : dc }, { configure : false }, { data : { speaker } }) ?? [];
+  const data = { speaker, system : { ...(activity?.messageSources ?? {}), ...(card ? { origin : card.id } : {}) }, ...(flags ? { flags : { [module.id] : flags } } : {}) };
+  const messageConfig = { data, ...(secret ? { rollMode : "gm" } : {}) };
+
+  const [roll] = await actor.rollSavingThrow(config, dialog ? {} : { configure : false }, messageConfig) ?? [];
   if(!roll) return null;
-  return { success : roll.total >= dc, total : roll.total, roll };
+  const success = Number.isFinite(dc) ? (roll.total >= dc) : null;
+  /* A private save the players can't read : the GM notes its success on the card (its row shows pass / fail) */
+  const uuid = (thing?.document ?? ((thing?.documentName === "Token") ? thing : null) ?? token?.document)?.uuid;
+  if(card && secret && game.user.isGM && (success !== null) && uuid) await card.setFlag(module.id, `saves.${uuid.replaceAll(".", "-")}`, { success });
+  return { success, total : roll.total, roll };
 }
 
 /**
