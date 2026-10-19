@@ -1,10 +1,11 @@
 import { module } from '../../module.js';
 import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
-import { idOf, chooseOption, buttonRow, addButton, makeButton } from '../../helpers/utils.js';
+import { idOf, originItem, esc, ownerIds, chooseOption, buttonRow, addButton, makeButton } from '../../helpers/utils.js';
 import { usedThisTurn, markUsedThisTurn, setStatus } from '../../helpers/actors.js';
 import { pickTargets } from '../../helpers/targets.js';
-import { distanceBetween } from '../../helpers/tokens.js';
+import { distanceBetween, tokenOf, getTokensWithin, hasLineOfSight } from '../../helpers/tokens.js';
+import { conditions } from '../conditions.js';
 import { damageRoll } from '../../roll-item/extra-damage.js';
 import { gm } from '../../gm.js';
 import { uses } from '../../uses.js';
@@ -36,6 +37,10 @@ const log = logger.for(import.meta.url);
  *                     ranged weapon hit : a DEX save for everyone within 5 ft of the target, on the hit's card).
  *   Lay on Hands    : both activities reach a creature you touch (picked on the map). Remove Poison ends Poisoned on a
  *                     creature you own; on anyone else the GM gets an End Poisoned button on the card.
+ *   Divine Sense    : (level 3, Channel Divinity's uses are the item's data) using it tells the Paladin's owner, in a
+ *                     card only they and the GM see, the Celestials, Fiends and Undead within 60 ft not behind total
+ *                     cover : their creature type and how far, and pings each on their map only. Sense Again on the
+ *                     card while it lasts. It ends when the Paladin is Incapacitated.
  */
 export class paladin{
   static SMITES = ["divine-smite", "searing-smite", "thunderous-smite", "wrathful-smite", "shining-smite", "blinding-smite", "staggering-smite", "banishing-smite",
@@ -52,6 +57,8 @@ export class paladin{
   /* Smites whose save happens on the hit (the rest : ongoing saves, the spell batch) */
   static RIDERS = ["wrathful-smite", "thunderous-smite", "ensnaring-strike"];
   static UNHOLY = ["fiend", "undead"];
+  static DIVINE_SENSE = "divine-sense";
+  static SENSED = ["celestial", "fiend", "undead"];
 
   static enabled(){
     return (game.system.id === "dnd5e") && settings.value("classRules");
@@ -81,6 +88,10 @@ export class paladin{
       return next();
     });
     Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.onUse(activity, usage, results));
+    /* Divine Sense */
+    conditions.endOnIncapacitated(this.DIVINE_SENSE);
+    Hooks.on("dnd5e.postUseActivity", activity => { if(this.enabled() && (idOf(activity?.item) === this.DIVINE_SENSE)) this.divineSense(activity.getUsageToken?.()?.actor ?? activity.actor); });
+    Hooks.on("renderChatMessageHTML", (message, html) => this.senseButton(message, html));
     /* dnd5e's render (after it rebuilds its own usage card's content, which would drop the button) */
     Hooks.on("dnd5e.renderChatMessage", (message, html) => this.poisonButton(message, html));
     Hooks.on("dnd5e.restCompleted", (actor, result) => {
@@ -291,6 +302,8 @@ export class paladin{
       if(activity) await actor.beginConcentrating(activity).catch(error => log.error(error));
     }
     log.debug("Smite", actor.name, choice.spell.name, choice.level, damage?.formula);
+    /* For the rules that follow a smite (Inspiring Smite) : Hooks "macro-helper.smite" (actor, spell, message) */
+    Hooks.callAll(`${module.id}.smite`, actor, choice.spell, message);
     return true;
   }
 
@@ -474,5 +487,43 @@ export class paladin{
     if(row.childElementCount) return;
     addButton(row, makeButton({ icon : "fa-flask", text : module.format("classes.paladin.endPoisoned", { name : target.name }), once : true,
       onClick : () => setStatus(target.actor, "poisoned", false) }));
+  }
+
+  /* ---------- Divine Sense ---------- */
+
+  static senseEffect(actor){
+    return [...(actor?.appliedEffects ?? [])].find(e => idOf(originItem(e)) === this.DIVINE_SENSE) ?? null;
+  }
+
+  /* The creatures it senses : their type and distance, a ping each on this user's map */
+  static async divineSense(actor){
+    const token = tokenOf(actor);
+    if(!token || !actor?.isOwner) return;
+    const sensed = getTokensWithin(token, 60, { includeHidden : true, includeDead : true,
+      filter : t => this.SENSED.includes(t.actor?.system?.details?.type?.value) && hasLineOfSight(token, t) });
+    const lines = sensed.map(t => {
+      const type = CONFIG.DND5E.creatureTypes?.[t.actor.system.details.type.value]?.label ?? t.actor.system.details.type.value;
+      return `<li>${esc(game.i18n.localize(type))} : ${Math.round(distanceBetween(token, t))} ft</li>`;
+    });
+    for(const t of sensed){
+      canvas.controls?.handlePing?.(game.user, t.center, { scene : canvas.scene?.id, style : CONFIG.Canvas.pings.types.PULSE, zoom : canvas.stage.scale.x });
+    }
+    await ChatMessage.implementation.create({
+      speaker : ChatMessage.implementation.getSpeaker({ actor }),
+      whisper : [...new Set([...ownerIds(actor), ...game.users.filter(u => u.isGM).map(u => u.id)])],
+      content : `<p><i class="fa-solid fa-eye" inert></i> ${esc(module.format("classes.paladin.sense", { name : actor.name }))}</p>`
+        + (lines.length ? `<ul>${lines.join("")}</ul>` : `<p>${esc(module.i18n("classes.paladin.senseNone"))}</p>`),
+      flags : { [module.id] : { divineSense : actor.uuid } },
+    });
+  }
+
+  /* Sense Again (its owner, while it lasts) */
+  static senseButton(message, html){
+    const uuid = message.getFlag?.(module.id, "divineSense");
+    const actor = uuid ? fromUuidSync(uuid, { strict : false }) : null;
+    if(!actor?.isOwner || !this.senseEffect(actor) || (message.id !== game.messages.contents.findLast(m => m.getFlag(module.id, "divineSense") === uuid)?.id)) return;
+    const row = buttonRow(html, { key : `${module.id}-divine-sense` });
+    if(row.childElementCount) return;
+    addButton(row, makeButton({ icon : "fa-eye", text : module.i18n("classes.paladin.senseAgain"), once : true, onClick : () => this.divineSense(actor) }));
   }
 }

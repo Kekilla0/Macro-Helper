@@ -15,6 +15,7 @@ import { hands } from './hands.js';
 import { actionTracker } from './action-tracker.js';
 import { grappling } from '../roll-item/card-builder.js';
 import { onDamage, attackOf } from '../roll-item/damage.js';
+import { cutDamage, cutsOf } from '../roll-item/damage-cuts.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -53,16 +54,13 @@ export class fightingStyles{
     Hooks.on("dnd5e.preRollAttackV2", config => this.onPreRollAttack(config));
     rollModes.add("protection", config => this.protectedMode(config));
     onDamage((attack, damage) => this.onDamage(attack, damage));
-    Hooks.on("dnd5e.calculateDamage", (actor, damages, options) => this.intercepted(actor, damages, options));
     for(const hook of ["createItem", "updateItem", "deleteItem"]){
       Hooks.on(hook, (item, ...rest) => this.onGear(item, rest.at(-1)));
     }
     Hooks.on(`${module.id}.cardButtons`, (message, buttons, context) => this.cardButtons(message, buttons, context));
     Hooks.on(`${module.id}.cardButton`, (message, id, context) => this.cardClicked(message, id, context));
-    Hooks.on(`${module.id}.cardNotes`, (message, notes, { ray } = {}) => { if(!Number.isInteger(ray)) notes.push(...this.cardNotes(message)); });
     Hooks.on(`${module.id}.turnStart`, (combat, combatant) => this.onTurn(combat, combatant));
     Hooks.on("renderChatMessageHTML", (message, html) => this.wireGrappleCard(message, html));
-    gm.handle("intercept", (data, user) => this.interceptAsGM(data, user));
     gm.handle("protect", (data, user) => this.protectAsGM(data, user));
   }
 
@@ -234,9 +232,8 @@ export class fightingStyles{
     for(const t of message.system.targetsOf(ray) ?? []){
       const target = tokenOf(TargetsField.resolve(t).token);
       if(!target) continue;
-      const targetKey = target.document.uuid.replaceAll(".", "-");
       /* Interception : the attack hit it */
-      if(hit.has(target) && !message.getFlag(module.id, `intercept.${targetKey}`)){
+      if(hit.has(target) && !cutsOf(message, target).some(c => c.id === "interception")){
         for(const guard of this.guardsNear("interception", target, attackerToken)){
           if(this.offered(this.unmet("interception", guard, attackerToken))){
             buttons.push({ id : `intercept|${guard.document.uuid}|${target.document.uuid}`, icon : "fa-shield", label : module.i18n("fightingStyles.interceptShort"),
@@ -269,7 +266,7 @@ export class fightingStyles{
       const roll = await new Roll("1d10 + @prof", guard.actor.getRollData()).evaluate();
       const { rollItem } = await import('../roll-item/roll-item.js');
       await rollItem.showDice([roll], message);
-      await gm.run("intercept", { message : message.id, guard : guardUuid, target : targetUuid, amount : roll.total, formula : roll.formula, result : roll.result });
+      await cutDamage(message, fromUuidSync(targetUuid, { strict : false }), { id : "interception", amount : roll.total, by : guard.name, label : module.i18n("fightingStyles.interceptShort"), formula : roll.formula, result : roll.result });
       await actionTracker.spend(guard.actor, { kind : "reaction", what : module.i18n("fightingStyles.interceptShort") }).catch(() => null);
     }
     else {
@@ -277,38 +274,6 @@ export class fightingStyles{
       for(const note of notes ?? []) ui.notifications.info(note);
       await actionTracker.spend(guard.actor, { kind : "reaction", what : module.i18n("fightingStyles.protectShort") }).catch(() => null);
     }
-  }
-
-  /* GM : the card remembers how much less its damage does to that creature */
-  static async interceptAsGM({ message : id, guard : guardUuid, target : targetUuid, amount, formula = "", result = "" } = {}, user){
-    const message = game.messages.get(id);
-    const guard = fromUuidSync(guardUuid ?? "", { strict : false });
-    const target = fromUuidSync(targetUuid ?? "", { strict : false });
-    if(!message || !guard?.actor?.testUserPermission(user, "OWNER")) return false;
-    const key = String(targetUuid).replaceAll(".", "-");
-    if(message.getFlag(module.id, `intercept.${key}`)) return false;
-    await message.setFlag(module.id, `intercept.${key}`, { amount : Math.max(0, Number(amount) || 0), by : guard.name, target : target?.name ?? "", formula, result });
-    return true;
-  }
-
-  /* Notes for the card : how much less each intercepted creature takes from it */
-  static cardNotes(message){
-    return Object.values(message?.getFlag?.(module.id, "intercept") ?? {}).map(e => ({
-      icon : "fa-shield", tooltip : `${e.formula} = ${e.result}`,
-      text : module.format("fightingStyles.interceptNote", { guard : e.by, amount : e.amount, target : e.target }),
-    }));
-  }
-
-  /* Damage from an intercepted card to that creature : that much lower */
-  static intercepted(actor, damages, options = {}){
-    const message = options.origin ?? options.originatingMessage;
-    const all = message?.getFlag?.(module.id, "intercept");
-    if(!all || !(damages?.amount > 0)) return;
-    const token = actor.token ?? actor.getActiveTokens?.(false, true)?.[0];
-    const entry = token ? all[token.uuid.replaceAll(".", "-")] : null;
-    if(!entry) return;
-    damages.amount = Math.max(0, damages.amount - entry.amount);
-    log.debug("Interception", actor.name, -entry.amount);
   }
 
   /* GM : Disadvantage on the attack (a second d20, the lower kept), and the creature Protected */

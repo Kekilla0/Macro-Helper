@@ -36,14 +36,23 @@ const log = logger.for(import.meta.url);
  *                    out; the spells dnd5e keeps on the form (Circle of the Moon's) are fine. Rule Limits decides; on
  *                    Change it asks to leave the form (the Bonus Action), then casts. In combat a Bonus Action spell
  *                    can't follow that, so it's stopped.
+ *   Circle Forms   : (Circle of the Moon, Subclasses setting) the Circle Forms item is Wild Shape too (its CR, the same
+ *                    known forms); in a form, AC 13 + WIS when that's higher than the beast's, and temporary Hit
+ *                    Points equal to three times the Druid level.
  */
 export class druid{
   static WILD_SHAPE = "wild-shape";
   static WILD_COMPANION = "wild-companion";
+  static CIRCLE_FORMS = "circle-forms";
   static INCAPACITATED = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
 
   static enabled(){
     return (game.system.id === "dnd5e") && settings.value("classRules");
+  }
+
+  /* Circle of the Moon's Circle Forms : the Subclasses setting */
+  static moonOn(){
+    return this.enabled() && settings.value("subclassRules");
   }
 
   static register(){
@@ -90,7 +99,7 @@ export class druid{
       const chosen = druid.takeChosen(this);
       if(chosen) return chosen;
       /* Reached without our question (dnd5e's own path) : still our forms, never the compendium browser */
-      if(druid.enabled() && (idOf(this.item) === druid.WILD_SHAPE)) return druid.pickForm(druid.originalOf(this.actor), this.item);
+      if(druid.enabled() && ((idOf(this.item) === druid.WILD_SHAPE) || ((idOf(this.item) === druid.CIRCLE_FORMS) && druid.moonOn()))) return druid.pickForm(druid.originalOf(this.actor), this.item);
       return wrapped(...args);
     });
     gm.handle("wildShape", (data, user) => this.wildShapeAsGM(data, user));
@@ -113,7 +122,7 @@ export class druid{
    */
   static async beforeUse(activity, usage = {}){
     const id = idOf(activity?.item);
-    if((activity?.type === "transform") && (id === this.WILD_SHAPE) && this.enabled()) return this.beforeWildShape(activity, usage);
+    if((activity?.type === "transform") && ((id === this.WILD_SHAPE) || ((id === this.CIRCLE_FORMS) && this.moonOn())) && this.enabled()) return this.beforeWildShape(activity, usage);
     if(activity?.type === "summon") return familiars.beforeUse(activity, usage);
     return null;
   }
@@ -136,7 +145,8 @@ export class druid{
 
   /* The profile the Druid's level allows now (CR ¼ Beast, no fly speed at level 2), and the roll data for its CR */
   static profileOf(actor){
-    const activity = this.wildShapeActivity(this.wildShapeItem(actor));
+    const moon = this.moonOn() ? actor?.items?.find(i => idOf(i) === this.CIRCLE_FORMS) : null;
+    const activity = this.wildShapeActivity(moon) ?? this.wildShapeActivity(this.wildShapeItem(actor));
     const profile = activity?.availableProfiles?.[0] ?? null;
     return { profile, rollData : activity?.getRollData?.({ deterministic : true }) ?? {} };
   }
@@ -311,8 +321,16 @@ export class druid{
     /* Temp HP don't stack : dnd5e sets the form's, keep the Druid's own when they're higher */
     const hp = data.system?.attributes?.hp;
     const had = Number(actor.system?.attributes?.hp?.temp) || 0;
-    if(hp && (had > (Number(hp.temp) || 0))) hp.temp = had;
     const levels = Number(actor.classes?.druid?.system?.levels) || 0;
+    /* Circle Forms : three times the Druid level, AC 13 + WIS when higher */
+    if(this.moonOn() && actor.items.some(i => idOf(i) === this.CIRCLE_FORMS)){
+      if(hp) hp.temp = Math.max(Number(hp.temp) || 0, 3 * levels);
+      const ac = data.system?.attributes?.ac;
+      const wis = Number(actor.system?.abilities?.wis?.mod) || 0;
+      const own = Number(ac?.flat ?? ac?.value) || 0;
+      if(ac && ((13 + wis) > own)) Object.assign(ac, { calc : "flat", flat : 13 + wis });
+    }
+    if(hp && (had > (Number(hp.temp) || 0))) hp.temp = had;
     const hours = Math.max(1, Math.floor(levels / 2));
     const item = actor.items.find(i => idOf(i) === this.WILD_SHAPE);
     /* A new form from a form : the old form's Wild Shape effect comes along with its effects; the new use starts a new one.

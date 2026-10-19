@@ -37,7 +37,8 @@ export class creatureTraits{
     const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
     const plain = n => String(n ?? "").replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
     const wanted = plain(name);
-    return !!actor?.items?.some?.(i => (idOf(i) === slug) || (plain(i.name) === wanted));
+    /* A Battle Master's maneuver of the same name (Parry) isn't the creature trait */
+    return !!actor?.items?.some?.(i => (i.system?.type?.subtype !== "maneuver") && ((idOf(i) === slug) || (plain(i.name) === wanted)));
   }
 
   static register(){

@@ -39,6 +39,7 @@ export class uses{
       "illusion",      // Spell actions : Disguise Self, Silent Image, Sanctuary : straight to casting (the other activity is for others); the image's space
       "afterAttack",   // Spell actions : Ice Knife goes to its attack (its shard's save comes after)
       "sustained",     // Spell actions : Witch Bolt again at the same creature : its later turns' damage
+      "subclassItem",  // Subclasses : an item with nothing to roll does its rule (Tides of Chaos)
       "fastForward",   // Roll Item : one attack with its riders skips dnd5e's choice of activity
     ],
     activity : [
@@ -70,6 +71,7 @@ export class uses{
       "placedSummon",  // Spell actions : Mage Hand : its caster picks the space, the GM makes it
       "spellLight",    // Spell actions : Light on a token or a square, Produce Flame in hand
       "spareTheDying", // Spell actions : Spare the Dying picks a creature at 0 HP first
+      "subclassUse",   // Subclasses : a feature that picks or divides first (Preserve Life, Invoke Duplicity's space)
       "pactWeapon",    // Warlock : Forge Pact Weapon : bond a weapon or conjure one
       "pickTargets",   // Roll Item : pick targets on the map (Pick Targets)
       "spellRange",    // Spells : no pick, Rule Limits on : targets out of the spell's range follow Rule Limits

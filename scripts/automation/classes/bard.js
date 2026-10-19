@@ -134,7 +134,7 @@ export class bard{
     const attacker = message.getAssociatedActor?.();
     const inspiration = this.inspirationOf(attacker);
     if(!inspiration || !message.isOwner) return;
-    if(!await message.system.addBonus(ray, inspiration.die, module.i18n("classes.bard.inspired"))) return;
+    if(!await message.system.addBonus(ray, inspiration.die)) return;
     await message.setFlag(module.id, `bardic.${masteries.rayKey(ray)}`, true);
     if(inspiration.effect.isOwner) await inspiration.effect.delete();
   }

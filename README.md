@@ -19,7 +19,7 @@ https://github.com/Kekilla0/Macro-Helper/releases/latest/download/module.json
 **Configure Settings → Macro Helper** has one page per feature. Every page and option is described in [docs/settings.md](docs/settings.md).
 
 - **Roll Item:** one card per use, built on dnd5e's own. You pick targets on the map, the attack and damage roll together, and each target gets a row with its save, cover and **Apply**. A miss hides its damage until it becomes a hit. Saves, heals, multiple rays and on-hit saves get the same cards. **DM Screen** hides NPC numbers from players.
-- **System Automation:** the rules dnd5e leaves to the table. That covers conditions, vision and cover, weapon handling (Heavy, Versatile, two hands), masteries, Grapple and Shove, Dash, Dodge and Help, Opportunity Attacks, the **Action Tracker**, **Hands** (what each creature holds), class features at levels 1–2, species traits and feats. **Rule Limits** (*Off*, *Warn*, *Block*) decides what happens when something breaks the rules, and **Rule Fixes** offers to put it right.
+- **System Automation:** the rules dnd5e leaves to the table. That covers conditions, vision and cover, weapon handling (Heavy, Versatile, two hands), masteries, Grapple and Shove, Dash, Dodge and Help, Opportunity Attacks, the **Action Tracker**, **Hands** (what each creature holds), class features at levels 1–3, the 2024 subclasses' level 3 features, species traits and feats. **Rule Limits** (*Off*, *Warn*, *Block*) decides what happens when something breaks the rules, and **Rule Fixes** offers to put it right.
 - **Roll Requests:** the GM asks for checks, saves and Skill Challenges with the DC set before anyone rolls.
 - **Item Macro:** a macro on any item or activity, run when it's used or when a hook fires.
 - **Hook Macros:** a world macro run when something happens in the game.
@@ -51,6 +51,8 @@ The main pieces, as methods on tokens, actors and items. Most also exist as `Mac
 | `item.pickTargets({ count, within, numberAllowed })`, `token.getTokensWithin(feet)` | Pick creatures on the map, or find them near a token. |
 | `card.append(part)`, `card.remove("prone")` | Add a part to a card, or take one of the item's own effects off. |
 | `applyCondition`, `applyEffect`, `push`, `extraDamage`, `followUp` | Card parts. Each is shown on a target's row, `when` its result calls for it (`"hit"`, `"fail"`, or a check per target). |
+| `MacroHelper.onHit({ feature, when, formula, once, cost })` | A button after a qualifying hit that adds damage in its own box (Divine Fury, Hand of Harm, a Battle Master maneuver). |
+| `MacroHelper.cutDamage(card, token, { amount, label })` | A card's damage to one creature made lower when applied (Interception, Deflect Attacks, Protective Field). |
 | `token.actor.save("con", 13, { from : item })` | The save lego: one save, rolled the way every rule rolls it. |
 | `token.applyCondition("prone", { save, dc, duration, repeat })`, `token.grapple(target)` | A condition, or a grapple, straight on a creature with no card. |
 | `token.push(target, 10)`, `token.pull(target, 10)`, `token.teleport(30, { item })`, `token.leap(30, { item })`, `token.trample(feet)` | Movement. |

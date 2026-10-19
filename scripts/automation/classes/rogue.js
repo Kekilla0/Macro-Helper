@@ -2,8 +2,10 @@ import { module } from '../../module.js';
 import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
 import { idOf, esc, ownerIds, gmIds, buttonRow, addButton, makeButton } from '../../helpers/utils.js';
-import { usedThisTurn, markUsedThisTurn, setStatus } from '../../helpers/actors.js';
-import { tokenOf, distanceBetween, canSee } from '../../helpers/tokens.js';
+import { usedThisTurn, markUsedThisTurn, setStatus, addTimedEffect } from '../../helpers/actors.js';
+import { tokenOf, distanceBetween, canSee, movedThisTurn } from '../../helpers/tokens.js';
+import { rollModes } from '../roll-modes.js';
+import { giveMode } from '../../roll-item/reasons.js';
 import { uses } from '../../uses.js';
 import { limits } from '../limits.js';
 import { actions } from '../actions.js';
@@ -25,10 +27,13 @@ const log = logger.for(import.meta.url);
  *                    tokens see the Rogue, with Allow / Deny; allowed, its owner rolls DEX (Stealth) against DC 15 (a
  *                    reroll counts) and is Invisible on a success, until the GM ends it. Nothing is used (the activity,
  *                    its Bonus Action) until the GM allows it. On the Rogue's own token.
+ *   Steady Aim     : (level 3) only if it hasn't moved this turn (Rule Limits); then Steady Aim until the end of the
+ *                    turn : advantage on its next attack roll, Speed 0.
  */
 export class rogue{
   static SNEAK = "sneak-attack";
   static CUNNING = "cunning-action";
+  static STEADY = "steady-aim";
   static KEY = "sneakAttack";
   static OUT = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
 
@@ -56,6 +61,48 @@ export class rogue{
     /* Hide : the GM's Allow / Deny, then the owner's Stealth roll; a reroll to 15+ hides too */
     Hooks.on("renderChatMessageHTML", (message, html) => this.hideButtons(message, html));
     Hooks.on("updateChatMessage", (message, changes, options, userId) => this.onHideReroll(message, changes, userId));
+    /* Steady Aim */
+    Hooks.on("dnd5e.preUseActivity", activity => this.steadyCheck(activity));
+    Hooks.on(`${module.id}.selfEffects`, activity => !(this.enabled() && (idOf(activity?.item) === this.STEADY)));
+    Hooks.on("dnd5e.postUseActivity", activity => this.steadyAim(activity));
+    rollModes.add("steadyAim", config => this.steadyMode(config));
+    Hooks.on("dnd5e.rollAttackV2", (rolls, { subject } = {}) => this.steadySpent(subject?.actor));
+  }
+
+  /* ---------- Steady Aim ---------- */
+
+  static steadyOf(actor){
+    return actor?.effects?.find?.(e => e.getFlag(module.id, "steadyAim")) ?? null;
+  }
+
+  /* Not after moving this turn */
+  static steadyCheck(activity){
+    if(!this.enabled() || (idOf(activity?.item) !== this.STEADY) || !game.combat?.started) return;
+    const actor = activity.getUsageToken?.()?.actor ?? activity.actor;
+    const token = tokenOf(actor);
+    if(token && (movedThisTurn(token) > 0)
+      && !limits.allow(module.format("classes.rogue.steadyMoved", { name : actor.name }), { who : actor.name, what : activity.item.name })) return false;
+  }
+
+  /* Advantage on the next attack this turn, Speed 0 until the turn ends */
+  static async steadyAim(activity){
+    if(!this.enabled() || (idOf(activity?.item) !== this.STEADY) || !activity.actor?.isOwner) return;
+    const actor = activity.getUsageToken?.()?.actor ?? activity.actor;
+    if(this.steadyOf(actor)) return;
+    await addTimedEffect(actor, { name : activity.item.name, img : activity.item.img, origin : activity.item.uuid,
+      changes : ["walk", "fly", "climb", "swim", "burrow"].map(kind => ({ key : `system.attributes.movement.speeds.${kind}`, type : "override", mode : 5, value : "0" })),
+      flags : { [module.id] : { steadyAim : { used : false } } } }, { until : "turnEnd", thisTurn : true });
+  }
+
+  static steadyMode(config){
+    const effect = this.enabled() ? this.steadyOf(config.subject?.actor) : null;
+    if(effect && !effect.getFlag(module.id, "steadyAim")?.used && config.rolls?.[0]) giveMode(config.rolls[0], "advantage", effect.name);
+  }
+
+  /* Its advantage is used by the attack (the Speed 0 stays to the end of the turn) */
+  static async steadySpent(actor){
+    const effect = this.enabled() ? this.steadyOf(actor) : null;
+    if(effect?.isOwner && !effect.getFlag(module.id, "steadyAim")?.used) await effect.setFlag(module.id, "steadyAim", { used : true });
   }
 
   /* ---------- Sneak Attack ---------- */
@@ -113,7 +160,10 @@ export class rogue{
   static async sneak(message, ray){
     const actor = message.getAssociatedActor?.();
     if(!this.enabled() || !actor?.isOwner || message.system.extraRolls?.(ray, this.KEY)?.length || !this.qualifies(message, ray)) return false;
-    const formula = this.formulaOf(actor);
+    /* Rules that add to it (the Assassin's Rogue level in the first round) : Hooks "macro-helper.sneakAttack" (actor, message, parts) */
+    const parts = [this.formulaOf(actor)];
+    Hooks.callAll(`${module.id}.sneakAttack`, actor, message, parts);
+    const formula = parts.filter(Boolean).join(" + ");
     const type = [...(message.getAssociatedItem?.()?.system?.damage?.base?.types ?? [])][0] ?? "piercing";
     await message.system.extraDamage(formula, { key : this.KEY, type, ray, label : this.itemOf(actor)?.name ?? "Sneak Attack", rollData : {} });
     log.debug("Sneak Attack rolled", actor.name, formula);

@@ -438,6 +438,8 @@ export class actionReady{
     const done = new Set(own.oaDone ?? []);
     const threats = token.parent.tokens.filter(t => (t !== token) && t.actor && !t.hidden && !done.has(t.uuid) && (this.relation(t, token) === "enemy")
       && actionTracker.combatOf(t.actor) && actionTracker.left(t.actor, "reaction") && !actionTracker.OUT_OF_ACTION.some(s => t.actor.statuses?.has?.(s))
+      /* Can't make Opportunity Attacks (Open Hand Technique's Addle) */
+      && !t.actor.appliedEffects?.some?.(e => e.getFlag(module.id, "rule")?.noOpportunity)
       && (this.reachOf(t.actor) > 0) && (!t.object || !token.object || canSee(t.object, token.object)));
     if(!threats.length) return;
     const path = this.pathOf(token, movement);

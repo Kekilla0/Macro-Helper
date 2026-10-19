@@ -5,16 +5,19 @@ import { logger } from '../log.js';
 const log = logger.for(import.meta.url);
 
 /**
- * A die added to a roll already made (Bardic Inspiration) : the same roll, with "+ 1d6" rolled onto its end.
+ * A die added to a roll already made (Bardic Inspiration) : the same roll, with "+ 1d6" rolled onto its end; with
+ * subtract, "- 1d6" (Cutting Words). A number ("4") adds that, already rolled elsewhere.
  * @param {Roll} roll
  * @param {string} formula   "1d6"
+ * @param {object} [options]
+ * @param {boolean} [options.subtract=false]
  * @returns {Promise<{ updated : Roll, extra : Roll }>}
  */
-export async function addDie(roll, formula){
-  const extra = await new Roll(formula).evaluate();
+export async function addDie(roll, formula, { subtract = false } = {}){
+  const extra = await new Roll(String(formula)).evaluate();
   const updated = roll.constructor.fromData(roll.toJSON());
   const { RollTerm } = foundry.dice.terms;
-  updated.terms.push(RollTerm.fromData({ class : "OperatorTerm", operator : "+", evaluated : true }));
+  updated.terms.push(RollTerm.fromData({ class : "OperatorTerm", operator : subtract ? "-" : "+", evaluated : true }));
   for(const term of extra.terms) updated.terms.push(RollTerm.fromData(term.toJSON()));
   updated._formula = updated.constructor.getFormula(updated.terms);
   updated._total = updated._evaluateTotal();

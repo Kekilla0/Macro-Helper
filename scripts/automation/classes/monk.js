@@ -8,6 +8,12 @@ import { patch } from '../../patch.js';
 import { uses } from '../../uses.js';
 import { initiative } from '../initiative.js';
 import { itemFixes } from '../item-fixes.js';
+import { tokenOf } from '../../helpers/tokens.js';
+import { pickTargets } from '../../helpers/targets.js';
+import { cutDamage, cutsOf } from '../../roll-item/damage-cuts.js';
+import { cardBuilder } from '../../roll-item/card-builder.js';
+import { actionTracker } from '../action-tracker.js';
+import { TYPES } from '../../roll-item/message.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -28,6 +34,11 @@ const log = logger.for(import.meta.url);
  *   Unarmored Movement : its speed only while wearing no armor and holding no shield (its effect follows).
  *   Uncanny Metabolism : (Homebrew's Initiative Each Round : only the combat's first roll) a button on the Monk's initiative roll (its owner and the GM) while its use is left : uses
  *                        the item (Focus Points back, the healing roll).
+ *   Deflect Attacks    : (level 3) an attack roll hits the Monk with Bludgeoning, Piercing or Slashing damage : Deflect
+ *                        on the card (its owner, its Reaction left) rolls 1d10 + DEX + Monk level, and that card's
+ *                        damage to it is that much lower. Brought to 0 : Redirect (a Focus Point) picks a creature within
+ *                        5 ft (a melee attack) or 60 ft (a ranged one), and uses the item's Redirect save activity at it,
+ *                        with the attack's damage type.
  */
 export class monk{
   static FLURRY = "flurry-of-blows";
@@ -39,6 +50,8 @@ export class monk{
   static FOCUS = ["monks-focus", "focus-point"];
   static POOL = "monks-focus";
   static UNARMED = "unarmed-strike";
+  static DEFLECT = "deflect-attacks";
+  static DEFLECTED = ["bludgeoning", "piercing", "slashing"];
 
   static enabled(){
     return (game.system.id === "dnd5e") && settings.value("classRules");
@@ -74,6 +87,22 @@ export class monk{
         return this.flurry(activity.item, ctx.config, ctx.dialog, ctx.message);
       }
       return next();
+    });
+    /* A Flurry of Blows strike's card says so (Open Hand Technique) : flags["macro-helper"].flurry */
+    Hooks.on("preCreateChatMessage", (message, data, options, userId) => {
+      if((userId !== game.user.id) || !this.#flurrying.size || (message.type !== TYPES.attack)) return;
+      const actor = ChatMessage.implementation.getSpeakerActor(message.speaker);
+      if(actor && this.#flurrying.has(actor.uuid)) message.updateSource({ [`flags.${module.id}.flurry`] : true });
+    });
+    /* Deflect Attacks */
+    Hooks.on(`${module.id}.cardButtons`, (message, buttons, { ray } = {}) => this.deflectButtons(message, buttons, ray ?? null));
+    Hooks.on(`${module.id}.cardButton`, (message, id, { ray } = {}) => {
+      if(String(id).startsWith("deflect|")) this.deflect(message, ray ?? null, String(id).slice(8));
+      else if(String(id).startsWith("redirect|")) this.redirect(message, ray ?? null, String(id).slice(9));
+    });
+    Hooks.on(`${module.id}.damageType`, (activity, { types, preset }) => {
+      const kept = this.#redirectType;
+      if(kept && (kept.item === activity?.item?.id) && ((Date.now() - kept.at) < 15000) && types.includes(kept.type)) preset.type = kept.type;
     });
     /* At init (not setup : Foundry prepares the world's actors before setup, so their weapons would miss it until
        something prepared them again) */
@@ -189,6 +218,7 @@ export class monk{
     const strike = this.unarmedOf(actor);
     const count = 2 + Math.min(1, Math.floor((Number(actor.classes.monk.system?.levels) || 1) / 10));
     const results = [];
+    this.#flurrying.add(actor.uuid);
     try {
       for(let i = 0; i < count; i++){
         /* Action Tracker : the first strike is the Bonus Action, the others come with it */
@@ -198,6 +228,7 @@ export class monk{
       }
     }
     finally {
+      this.#flurrying.delete(actor.uuid);
       if(!results.length && focus) await focus.update({ "system.uses.spent" : Math.max(0, (Number(focus.system.uses?.spent) || 1) - 1) });
     }
     log.debug("Flurry of Blows", actor.name, results.length, "of", count);
@@ -377,5 +408,83 @@ export class monk{
     if(html.querySelector(`.${module.id}-initiative-feet`)) return;
     addButton(buttonRow(html, { key : `${module.id}-initiative-feet` }),
       initiative.footButton("fa-yin-yang", this.metabolismLabel(found.item, actor.name), () => this.useMetabolism(found.item, message.id), { disabled : found.used }));
+  }
+  /* ---------- Deflect Attacks ---------- */
+
+  static #redirectType = null;
+
+  /* The Monks whose Flurry of Blows is being made (their strikes' cards are marked) */
+  static #flurrying = new Set();
+
+  /* This attack's damage rolls (its own and its extra boxes), for one attack on the card */
+  static attackDamage(message, ray){
+    const card = message.system;
+    const base = (Number.isInteger(ray) ? card.rayDamage?.(ray) : card.damageRolls) ?? [];
+    const extra = Number.isInteger(ray) ? (card.rayDamage?.(ray, "extra") ?? []) : (card.extraRolls?.(null) ?? []);
+    return [...base, ...extra];
+  }
+
+  /* The Monk's tokens this attack hit, that can deflect it now */
+  static deflectors(message, ray){
+    if((message.type !== TYPES.attack) || !message.system?.isHitOn?.(ray)) return [];
+    const rolls = this.attackDamage(message, ray);
+    if(!rolls.some(r => this.DEFLECTED.includes(r.options?.type))) return [];
+    return (message.system.hitTargets?.(ray) ?? []).map(t => tokenOf(t)).filter(t => t?.actor?.isOwner
+      && t.actor.items.some(i => idOf(i) === this.DEFLECT) && !actionTracker.OUT_OF_ACTION.some(s => t.actor.statuses?.has?.(s)));
+  }
+
+  static deflectButtons(message, buttons, ray){
+    if(!this.enabled()) return;
+    for(const token of this.deflectors(message, ray)){
+      const item = token.actor.items.find(i => idOf(i) === this.DEFLECT);
+      if(!cutsOf(message, token).some(c => c.id === this.DEFLECT)){
+        if(actionTracker.left(token.actor, "reaction")) buttons.push({ id : `deflect|${token.document.uuid}`, icon : "fa-hand", label : item.name });
+        continue;
+      }
+      /* Brought to 0 : Redirect, once */
+      const done = token.actor.getFlag(module.id, "deflect");
+      const focus = this.focusOf(token.actor);
+      if((done?.message === message.id) && ((done.ray ?? null) === ray) && done.zero && !done.redirected && (!focus || (Number(focus.system.uses?.value) > 0))){
+        buttons.push({ id : `redirect|${token.document.uuid}`, icon : "fa-arrow-rotate-left", label : module.i18n("classes.monk.redirect") });
+      }
+    }
+  }
+
+  /* 1d10 + DEX + Monk level off this card's damage to the Monk */
+  static async deflect(message, ray, uuid){
+    const token = tokenOf(fromUuidSync(uuid, { strict : false }));
+    if(!this.enabled() || !token || !this.deflectors(message, ray).includes(token)) return;
+    const actor = token.actor;
+    const item = actor.items.find(i => idOf(i) === this.DEFLECT);
+    const roll = await new Roll("1d10 + @abilities.dex.mod + @classes.monk.levels", actor.getRollData()).evaluate();
+    const { rollItem } = await import('../../roll-item/roll-item.js');
+    await rollItem.showDice([roll], message);
+    if(!await cutDamage(message, token, { id : this.DEFLECT, amount : roll.total, by : token.name, label : item.name, formula : roll.formula, result : roll.result })) return;
+    await actionTracker.spend(actor, { kind : "reaction", what : item.name }).catch(() => null);
+    const rolls = this.attackDamage(message, ray);
+    const total = rolls.reduce((sum, r) => sum + (Number(r.total) || 0), 0);
+    const activity = message.getAssociatedActivity?.();
+    let action = "";
+    try { action = String(activity?.getActionType?.(message.system.attackOf?.(ray)?.options?.attackMode) ?? ""); } catch {}
+    const type = rolls.map(r => r.options?.type).find(t => this.DEFLECTED.includes(t)) ?? "bludgeoning";
+    await actor.setFlag(module.id, "deflect", { message : message.id, ray, zero : roll.total >= total, melee : !action.startsWith("r"), type, redirected : false });
+    log.debug("Deflect Attacks", actor.name, roll.total, "of", total);
+  }
+
+  /* The attack's force back at a creature : the item's Redirect save, at it, the attack's damage type */
+  static async redirect(message, ray, uuid){
+    const token = tokenOf(fromUuidSync(uuid, { strict : false }));
+    const actor = token?.actor;
+    const done = actor?.getFlag(module.id, "deflect");
+    if(!actor?.isOwner || !done?.zero || done.redirected || (done.message !== message.id)) return;
+    const item = actor.items.find(i => idOf(i) === this.DEFLECT);
+    const activity = [...(item?.system?.activities ?? [])].find(a => a.type === "save");
+    if(!activity) return ui.notifications.warn(module.format("classes.monk.noRedirect", { item : item?.name ?? "" }));
+    const [target] = await pickTargets(token, { count : 1, range : done.melee ? 5 : 60, disposition : "any", confirm : "auto", useTargets : false,
+      filter : t => (t !== token) }) ?? [];
+    if(!target) return;
+    this.#redirectType = { item : item.id, type : done.type, at : Date.now() };
+    const card = await cardBuilder.roll(item, { activity : activity.id, targets : [target], damageType : done.type });
+    if(card) await actor.setFlag(module.id, "deflect", { ...done, redirected : true });
   }
 }

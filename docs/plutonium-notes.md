@@ -91,3 +91,17 @@ whether the module covers it or you need to edit the item.
 | **Death Burst** (Gas Spore Fungus) | "Poisoned for hours" lost its dice (1d12), nothing kills at the end. | Hook macro (local, not SRD): `duration : { hours : "1d12" }, expire : { status : "dead" }`. |
 | **Engulf** (Gelatinous Cube) | A plain Restrained on a failure; nothing moves, no repeat acid, no escape. | Card macro: trample + engulf + push. |
 | **Tortle's Claw Attack** (Unarmed Strike) | Its custom damage "1d6-1" bakes in the STR modifier, and dnd5e adds @mod again (1d6 - 1 - 1). | Item data for the GM : make the custom formula `1d6`. The Tortle Claws rule (1d6 + modifier, Slashing) covers dnd5e's own Unarmed Strike. |
+| **Primal Knowledge** (Barbarian 3) | Its effect adds STR's lead over the skill's ability to Acrobatics, Intimidation, Perception, Stealth and Survival always, raging or not. | Switched off when added (and on load); raging, those checks roll with Strength when it's better. |
+| **Deflect Attacks** (Monk 3) | The reduction is a self-heal activity (1d10 + DEX + level), used by hand; Redirect is a save activity with three damage types. | Nothing: a Deflect Attacks button on the hit's card lowers that card's damage; Redirect uses the save activity at the creature you pick, in the attack's type. |
+| **Divine Sense** (Paladin 3) | Its effect is a description only (10 minutes). | Nothing: using it lists and pings the Celestials, Fiends and Undead within 60 ft for you. |
+| **Steady Aim** (Rogue 3) | A utility activity with no effect. | Nothing: the module adds the advantage and Speed 0. |
+| **Rage of the Wilds** (Barbarian 3, Wild Heart) | Rage of the Bear's effect leaves out Piercing and Slashing (Rage's own resistance covers them while raging). | Not used: the module puts its own Bear effect on with the Rage. |
+| **Unarmored Defense** (Bard 3, Dance) | No effect at all. | An effect is added when it lands (dnd5e's Bard formula, 10 + DEX + CHA). |
+| **Blessing of the Trickster** (Cleric 3, Trickery) | Its effect is a description only and lasts 1 round. | Given Advantage on Stealth checks and no duration when added; it ends on the Cleric's Long Rest or a new blessing. |
+| **Invoke Duplicity** (Cleric 3, Trickery) | A summon activity with no creature to summon. | Nothing: the module makes the illusion (a copy of your token). |
+| **Preserve Life** (Cleric 3, Life) | A 30 ft area heal of 5 × level to every creature in it. | Not used as is: the module divides the amount among the Bloodied creatures. |
+| **Star Map** (Druid 3, Stars) | Only a "Create Star Chart" activity: no free Guiding Bolt castings. | Cast Guiding Bolt as usual for now. |
+| **Combat Superiority / maneuvers** (Fighter 3, Battle Master) | Each maneuver is its own item, used by hand (a save, a damage roll), nothing tied to a hit. | Nothing: the hit maneuvers are buttons on the attack card; the rest as listed in settings.md. |
+| **Second-Story Work** (Rogue 3, Thief) | No climb speed. | An effect is added when it lands (Climb Speed = Speed). |
+| **Tides of Chaos** (Sorcerer 3, Wild Magic) | No activity or effect. | Nothing: using it gives Advantage on the next D20 Test; the module tracks its recharge. |
+| **Potent Cantrip** (Wizard 3, Evoker) | Text only. | Your cantrips' saves are set to half damage on a success when they're added (and when you gain it). |

@@ -64,7 +64,8 @@ export class repeating{
   /* ---------- The template on the item's effects ---------- */
 
   static templateFix(item){
-    if(!this.enabled() || (item?.type !== "spell") || (String(item.system?.source?.rules ?? "") === "2014")) return null;
+    /* Spells (2024), and class features listed in the table (Beguiling Magic, Nature's Wrath) */
+    if(!this.enabled() || !["spell", "feat"].includes(item?.type) || ((item.type === "spell") && (String(item.system?.source?.rules ?? "") === "2014"))) return null;
     const entry = this.TABLE[idOf(item)];
     if(!entry) return null;
     const updateEffects = (item.effects?.contents ?? [...(item.effects ?? [])]).filter(e => !e.getFlag?.(module.id, "repeat"))

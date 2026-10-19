@@ -160,3 +160,48 @@ export async function chooseSet(entries, { known = [], max, swaps = Infinity, ti
   });
   return Array.isArray(result) ? result : null;
 }
+
+/**
+ * Divide an amount among creatures (Preserve Life's healing, Inspiring Smite's temporary Hit Points) : a number box for
+ * each, a running total, at most `max(token)` each.
+ * @param {Token[]} tokens
+ * @param {number} total
+ * @param {object} [options]
+ * @param {(token : Token) => number} [options.max]   the most one creature can take (default : no limit)
+ * @param {string} [options.title]
+ * @param {string} [options.prompt]
+ * @param {string} [options.icon]
+ * @returns {Promise<Map<Token, number>|null>}  how much each gets (none left out : 0), null if closed
+ */
+export async function divideAmong(tokens, total, { max = () => Infinity, title, prompt = "", icon = "fa-solid fa-scale-balanced" } = {}){
+  if(!tokens.length) return null;
+  const caps = tokens.map(t => Math.max(0, Math.floor(Number(max(t))) || 0));
+  const capOf = i => Number.isFinite(caps[i]) ? caps[i] : total;
+  const rows = tokens.map((t, i) => `<div class="form-group"><label><img src="${esc(t.document?.texture?.src ?? t.actor?.img ?? "")}" width="24" height="24" style="vertical-align:middle;border:none"> ${esc(t.name)}</label>
+    <input type="number" name="n${i}" min="0" max="${capOf(i)}" step="1" value="0"><span class="hint">≤ ${capOf(i)}</span></div>`).join("");
+  const result = await foundry.applications.api.DialogV2.wait({
+    window : { title, icon },
+    content : `${prompt ? `<p>${esc(prompt)}</p>` : ""}<p class="${module.id}-divide-left">${esc(module.format("helpers.divide.left", { left : total, total }))}</p>${rows}`,
+    buttons : [{ action : "ok", label : game.i18n.localize("Confirm"), icon : "fa-solid fa-check", default : true,
+      callback : (event, button) => tokens.map((t, i) => Number(button.form.elements[`n${i}`]?.value) || 0) }],
+    render : (event, dialog) => {
+      const form = dialog.element.querySelector("form") ?? dialog.element;
+      const left = dialog.element.querySelector(`.${module.id}-divide-left`);
+      form.addEventListener("input", () => {
+        const used = tokens.reduce((sum, t, i) => sum + (Number(form.querySelector(`[name="n${i}"]`)?.value) || 0), 0);
+        if(left) left.textContent = module.format("helpers.divide.left", { left : total - used, total });
+      });
+    },
+    rejectClose : false,
+  });
+  if(!Array.isArray(result)) return null;
+  /* Each to its limit, in order, until the amount runs out */
+  const out = new Map();
+  let remaining = total;
+  tokens.forEach((t, i) => {
+    const amount = Math.max(0, Math.min(Math.floor(result[i]), capOf(i), remaining));
+    remaining -= amount;
+    out.set(t, amount);
+  });
+  return out;
+}

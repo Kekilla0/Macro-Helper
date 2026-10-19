@@ -124,7 +124,12 @@ export function getRange(thing, { long = false, thrown = false } = {}){
     const melee = item.system.attackType !== "ranged";
     /* Its reach : item.roll({ reach }), else the weapon's */
     const reach = rollOptionRange(activity, "reach") ?? item.system.range.reach ?? 5;
-    if(melee && !(thrown && range.value)) return toScene(reach);
+    /* Rules that lengthen it (Elemental Attunement : the Unarmed Strike's reach +10 ft) : Hooks "macro-helper.reach" (item, { feet }) */
+    if(melee && !(thrown && range.value)){
+      const more = { feet : 0 };
+      Hooks.callAll(`${module.id}.reach`, item, more);
+      return toScene(reach + (Number(more.feet) || 0));
+    }
     return toScene(long ? (range.long || range.value || 0) : (range.value || 0));
   }
 
@@ -135,7 +140,10 @@ export function getRange(thing, { long = false, thrown = false } = {}){
     case "spec" : return Infinity;
   }
   if(range.reach && !range.value) return toScene(range.reach);
-  return toScene(long ? (range.long || range.value || 0) : (range.value || 0));
+  /* Rules that lengthen a spell's or feature's range (Improved Illusions : +60 ft) : Hooks "macro-helper.range" (item, { feet }) */
+  const more = { feet : 0 };
+  Hooks.callAll(`${module.id}.range`, item, more);
+  return toScene((long ? (range.long || range.value || 0) : (range.value || 0)) + (Number(more.feet) || 0));
 }
 
 /* Colours of the map highlights */

@@ -9,6 +9,8 @@ import { originOf, idOf } from '../../helpers/utils.js';
 import { giveMode } from '../../roll-item/reasons.js';
 import { conditions } from '../conditions.js';
 import { onDamage } from '../../roll-item/damage.js';
+import { itemFixes } from '../item-fixes.js';
+import { patch } from '../../patch.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -29,11 +31,18 @@ const log = logger.for(import.meta.url);
  *   Reckless Attack: examples/items/reckless-attack.json. Using it (on your turn) makes you Reckless until the start of
  *                    your next turn : advantage on your attack rolls using Strength, and attack rolls against you have
  *                    advantage.
+ *   Primal Knowledge (level 3) : while raging, an Acrobatics, Intimidation, Perception, Stealth or Survival check uses
+ *                    Strength when that's better (dnd5e's roll, its dialog says so). Plutonium's always-on bonus (the
+ *                    difference, raging or not) is switched off.
+ * Hooks for the subclasses : "macro-helper.rageStart" (actor, activity) once a Rage begins, "macro-helper.rageEnd"
+ * (actor) once it ends.
  */
 export class barbarian{
   static RAGE = "rage";
   static RECKLESS = "reckless-attack";
   static DANGER_SENSE = "danger-sense";
+  static PRIMAL_KNOWLEDGE = "primal-knowledge";
+  static PRIMAL_SKILLS = ["acr", "itm", "prc", "ste", "sur"];
   static INCAPACITATED = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
 
   static enabled(){
@@ -58,6 +67,13 @@ export class barbarian{
     Hooks.on("updateItem", (item, changes) => this.onArmor(item, foundry.utils.getProperty(changes ?? {}, "system.equipped")));
     Hooks.on("createItem", item => this.onArmor(item, item.system?.equipped));
     Hooks.on("deleteCombat", combat => this.onCombatEnd(combat));
+    /* Primal Knowledge : Plutonium's bonus is on whether raging or not */
+    itemFixes.add({ name : "Primal Knowledge", where : "owned", plan : item => this.primalFix(item) });
+    const self = this;
+    patch.wrap("CONFIG.Actor.documentClass.prototype.rollSkill", function(wrapped, config = {}, ...rest){
+      try { config = self.primalKnowledge(this, config); } catch(error){ log.error(error); }
+      return wrapped(config, ...rest);
+    });
   }
 
 
@@ -149,10 +165,11 @@ export class barbarian{
         await actor.createEmbeddedDocuments("ActiveEffect", [data]);
       }
     }
-    else await this.keep(actor, "start");
+    else return await this.keep(actor, "start");
     /* No Concentration while raging */
     if(actor.concentration?.effects?.size) await actor.endConcentration?.();
     log.debug("Rage", actor.name);
+    Hooks.callAll(`${module.id}.rageStart`, actor, activity);
   }
 
   /* Rage kept going this turn (an attack, a forced save, the bonus action) */
@@ -257,6 +274,7 @@ export class barbarian{
       content : `<p><i class="fa-solid fa-face-angry" inert></i> ${module.format("classes.barbarian.ends", { name : foundry.utils.escapeHTML(actor.name), reason })}</p>`,
     });
     log.debug("Rage ends", actor.name, reason);
+    Hooks.callAll(`${module.id}.rageEnd`, actor);
   }
 
   /* Rage damage : only attacks using Strength. dnd5e adds it to every melee weapon attack (DEX finesse too) and to no
@@ -276,6 +294,27 @@ export class barbarian{
   /* Wearing heavy armor */
   static inHeavyArmor(actor){
     return !!actor?.items?.some?.(i => (i.type === "equipment") && i.system?.equipped && (i.system?.type?.value === "heavy"));
+  }
+
+  /* ---------- Primal Knowledge ---------- */
+
+  /* Plutonium's effect adds STR's lead over the skill's ability always : switched off (the rule only works raging) */
+  static primalFix(item){
+    if((idOf(item) !== this.PRIMAL_KNOWLEDGE) || !item.actor) return null;
+    const updateEffects = [...(item.effects ?? [])].filter(e => !e.disabled && [...(e.changes ?? e.system?.changes ?? [])]
+      .some(c => /^system\.skills\.\w+\.bonuses\.check$/.test(c.key) && /abilities\.str\.mod/.test(String(c.value)))).map(e => ({ _id : e.id, disabled : true }));
+    return updateEffects.length ? { updateEffects } : null;
+  }
+
+  /* Raging, one of its skills : rolled with Strength when that's the better ability */
+  static primalKnowledge(actor, config){
+    if(!this.enabled() || config?.ability || !this.PRIMAL_SKILLS.includes(config?.skill)) return config;
+    if(!findItem(actor, this.PRIMAL_KNOWLEDGE) || !this.isRaging(actor)) return config;
+    const own = actor.system?.skills?.[config.skill]?.ability;
+    const mod = key => Number(actor.system?.abilities?.[key]?.mod) || 0;
+    if(!own || (mod("str") <= mod(own))) return config;
+    log.debug("Primal Knowledge : STR", actor.name, config.skill);
+    return { ...config, ability : "str" };
   }
 
   /* ---------- Danger Sense ---------- */

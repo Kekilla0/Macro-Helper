@@ -7,6 +7,7 @@ import { spellEffects } from './spell-effects.js';
 import { tokenOf, distanceBetween, canSee } from '../helpers/tokens.js';
 import { clearLastDamage, isKilledOutright } from '../helpers/actors.js';
 import { giveMode, noteReason, conditionName, logReasons } from '../roll-item/reasons.js';
+import { idOf, originItem } from '../helpers/utils.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -31,6 +32,10 @@ const log = logger.for(import.meta.url);
  *
  * Toggling a condition off (token HUD, sheet) also removes the effects that carry only that condition (Shove's or
  * Thunderous Smite's "Prone"), not just dnd5e's own : otherwise the toggle adds a second one.
+ *
+ * Ends when Incapacitated : an effect flagged flags["macro-helper"].endsOnIncapacitated (Divine Sense, Starry Form,
+ * Wrath of the Sea, Elemental Attunement) ends when its creature has the Incapacitated condition (or one that brings
+ * it) : one on the creature is removed, an item's own is switched off (the active GM).
  */
 export class conditions{
   static register(){
@@ -64,6 +69,35 @@ export class conditions{
     Hooks.on("updateActor", (actor, changes) => this.onHPChange(actor, changes));
     /* A rest is well past any reaction to a hit : forget it */
     Hooks.on("dnd5e.restCompleted", actor => clearLastDamage(actor));
+    for(const hook of ["createActiveEffect", "updateActiveEffect"]) Hooks.on(hook, effect => this.incapacitatedEnds(effect));
+    Hooks.on("preCreateActiveEffect", effect => {
+      if(this.#endsOnIncapacitated.has(idOf(originItem(effect)))) effect.updateSource({ [`flags.${module.id}.endsOnIncapacitated`] : true });
+    });
+  }
+
+  static #endsOnIncapacitated = new Set();
+
+  /**
+   * The effects these items put on a creature (by identifier) end when it's Incapacitated.
+   * @param {...string} ids
+   */
+  static endOnIncapacitated(...ids){
+    for(const id of ids) this.#endsOnIncapacitated.add(id);
+  }
+
+  static INCAPACITATING = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
+
+  /* Incapacitated : the effects that end then are gone */
+  static async incapacitatedEnds(effect){
+    if(!game.users.activeGM?.isSelf) return;
+    const actor = (effect?.parent?.documentName === "Actor") ? effect.parent : effect?.parent?.actor;
+    if(!actor || !this.INCAPACITATING.some(s => actor.statuses?.has?.(s))) return;
+    for(const e of [...(actor.allApplicableEffects?.() ?? actor.effects)]){
+      if(e.disabled || !e.getFlag?.(module.id, "endsOnIncapacitated")) continue;
+      if(e.parent?.documentName === "Item") await e.update({ disabled : true });
+      else await e.delete();
+      log.debug("Ends : Incapacitated", actor.name, e.name);
+    }
   }
 
   /* An effect named like a condition, put on a creature (Shove's "Prone", Thunderous Smite's) : the condition itself

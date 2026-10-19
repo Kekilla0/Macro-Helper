@@ -1183,11 +1183,12 @@ export function registerMessages(){
       await replaceRolls(this.parent, { rolls, shown });
     }
 
-    /* A die added to one attack roll (Bardic Inspiration) : the card re-judges the hit */
-    async addBonus(ray, formula){
+    /* A die added to one attack roll (Bardic Inspiration), or taken off (subtract : Cutting Words) : the card re-judges
+       the hit */
+    async addBonus(ray, formula, { subtract = false } = {}){
       const old = this.attackOf(ray);
       if(!old) return false;
-      const { updated, extra } = await addDie(old, formula);
+      const { updated, extra } = await addDie(old, formula, { subtract });
       const rolls = this.parent.rolls.map(r => (r === old) ? updated : r);
       await replaceRolls(this.parent, { rolls, shown : [extra] });
       return true;

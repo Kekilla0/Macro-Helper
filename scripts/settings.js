@@ -97,6 +97,7 @@ export const GROUPS = {
     nested : true,
     settings : {
       classRules : { scope : "world", default : true, type : Boolean },
+      subclassRules : { scope : "world", default : true, type : Boolean },
       speciesRules : { scope : "world", default : true, type : Boolean },
       featRules : { scope : "world", default : true, type : Boolean },
       spellRules : { scope : "world", default : true, type : Boolean },
@@ -223,6 +224,7 @@ const VIRTUAL = {
   weaponRules : () => (AUTO() ? ((RAW("weaponRules") === "change") ? "block" : RAW("weaponRules")) : "off"),
   ruleFixes : () => (AUTO() ? (() => { try { return (RAW("weaponRules") === "change") ? "auto" : RAW("ruleFixes"); } catch { return "off"; } })() : "off"),
   classRules : rule("classRules"),
+  subclassRules : rule("subclassRules"),
   vision : () => (AUTO() ? RAW("vision") : "off"),
 };
 
