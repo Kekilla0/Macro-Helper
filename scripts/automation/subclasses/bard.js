@@ -59,6 +59,7 @@ export class bardColleges{
     Hooks.on("updateItem", (item, changes, options, userId) => this.onInspirationSpent(item, changes, userId));
     subclasses.onOffer("agileStrike", actor => this.agileStrike(actor));
     itemFixes.add({ name : "Dance Unarmored Defense", where : "owned", plan : item => this.unarmoredFix(item) });
+    itemFixes.add({ name : "Beguiling Magic", where : "owned", plan : item => this.beguilingFix(item) });
     /* Beguiling Magic : Charmed or Frightened (one of its effects, chosen), the save again at the end of its turns */
     spellEffects.CHOICES[this.BEGUILING] ??= { prompt : "subclasses.bard.beguilingChoice" };
     repeating.TABLE[this.BEGUILING] ??= { label : "end", roll : { type : "save", ability : "wis" } };
@@ -107,6 +108,22 @@ export class bardColleges{
   }
 
   /* The College of Dance's Unarmored Defense : dnd5e's Bard formula (Plutonium's item has no effect) */
+  /* Plutonium's save spends a Bardic Inspiration use : it's the feature's own use (only the recharge costs one) */
+  static beguilingFix(item){
+    if(!this.enabled() || (idOf(item) !== this.BEGUILING) || !item.actor) return null;
+    const other = t => (t.type === "itemUses") && t.target && (t.target !== item.id);
+    const update = {};
+    for(const activity of item.system.activities ?? []){
+      const targets = [...(activity.consumption?.targets ?? [])];
+      if((activity.type !== "save") || !targets.some(other)) continue;
+      update[`system.activities.${activity.id}.consumption.targets`] = targets.map(t => {
+        const data = foundry.utils.deepClone(t.toObject?.() ?? t);
+        return other(t) ? { ...data, target : "" } : data;
+      });
+    }
+    return Object.keys(update).length ? { update } : null;
+  }
+
   static unarmoredFix(item){
     const actor = item?.actor;
     if(!this.enabled() || (idOf(item) !== "unarmored-defense") || !actor?.classes?.bard) return null;

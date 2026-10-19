@@ -1043,7 +1043,7 @@ export class rollItem{
   }
 
   /**
-   * "Each creature of your choice" in an area (Word of Radiance) : the caster picks which of those inside, on the map
+   * "Each creature of your choice" in an area (Word of Radiance), or the data's affects count with choice : the caster picks which of those inside, on the map
    * (the area stays shown; any number, Enter to confirm). Anything else : everyone inside, as placed.
    * @param {Activity} activity
    * @param {Token[]|null} inside   targetArea's tokens
@@ -1052,9 +1052,13 @@ export class rollItem{
   static async chooseInArea(activity, inside){
     if(!inside?.length) return inside;
     const text = plainText(activity?.item?.system?.description?.value);
-    if(!/\b(?:creatures?|targets?|allies|enemies) of your choice\b/i.test(text)) return inside;
-    const picks = await pickTargets(activity.item, { count : inside.length, range : Infinity, disposition : "any", includeSelf : false, useTargets : false,
-      sight : false, confirm : "auto", filter : t => inside.includes(t), notice : module.format("rollItem.areaChoice", { n : inside.length }) });
+    /* The data's "N creatures of your choice" in it (Wrath of the Sea : one creature in its Emanation) */
+    const affects = activity?.target?.affects ?? {};
+    const limit = (affects.choice && (Number(affects.count) > 0)) ? Math.min(Number(affects.count), inside.length) : null;
+    if(!(limit && (limit < inside.length)) && !/\b(?:creatures?|targets?|allies|enemies) of your choice\b/i.test(text)) return inside;
+    const count = limit ?? inside.length;
+    const picks = await pickTargets(activity.item, { count, range : Infinity, disposition : "any", includeSelf : false, useTargets : false,
+      sight : false, confirm : "auto", filter : t => inside.includes(t), notice : limit ? module.format("rollItem.areaChoiceCount", { n : count }) : module.format("rollItem.areaChoice", { n : inside.length }) });
     this.announceTargets(activity, picks ?? [], { keepEmpty : true });
     log.debug("Area choice", activity.item?.name, (picks ?? []).map(t => t.name));
     return picks ?? [];
@@ -1337,7 +1341,7 @@ export class rollItem{
       if(preset.type && types.includes(preset.type)){ chosenTypes[index] = preset.type; continue; }
       /* An enchanted item (Shillelagh, True Strike) : the answer can be kept for that enchantment ("don't ask again");
          casting the spell again makes a new enchantment, which asks again */
-      const enchantment = item.effects?.find?.(e => (e.type === "enchantment") && !e.disabled) ?? null;
+      const enchantment = item.effects?.find?.(e => e.isAppliedEnchantment && !e.disabled) ?? null;
       /* An instantaneous spell's enchantment lasts one attack (True Strike) : the answer is kept on the item for that
          spell instead, until a long rest */
       const spell = enchantment ? (originItem(enchantment) ?? fromUuidSync(enchantment.origin ?? "", { strict : false })?.item ?? null) : null;
@@ -1379,9 +1383,9 @@ export class rollItem{
 
   /**
    * Play Dice So Nice for rolls that are not being added to a new message (DSN animates those itself),
-   * resolves once the dice have landed. Visibility follows the message's roll mode.
+   * resolves once the dice have landed. Visibility follows the message's roll mode (no message : everyone sees them).
    */
-  static async showDice(rolls, message){
+  static async showDice(rolls, message = null){
     if(!game.dice3d){
       foundry.audio.AudioHelper.play({ src : CONFIG.sounds.dice }, true);
       return;
@@ -1389,8 +1393,8 @@ export class rollItem{
     /* A roll without dice (Graze's flat damage) has nothing to show : no wait for it */
     rolls = rolls.filter(r => r.dice?.length);
     if(!rolls.length) return;
-    const whisper = message.whisper.length ? message.whisper : null;
-    await Promise.all(rolls.map(roll => game.dice3d.showForRoll(roll, game.user, true, whisper, message.blind, message.id, message.speaker)));
+    const whisper = message?.whisper?.length ? message.whisper : null;
+    await Promise.all(rolls.map(roll => game.dice3d.showForRoll(roll, game.user, true, whisper, !!message?.blind, message?.id ?? null, message?.speaker ?? null)));
   }
 
   static getActivity(item, id){

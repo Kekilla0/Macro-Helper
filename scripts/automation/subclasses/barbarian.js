@@ -1,6 +1,6 @@
 import { module } from '../../module.js';
 import { logger } from '../../log.js';
-import { idOf, chooseOption } from '../../helpers/utils.js';
+import { idOf, chooseOption, originItem } from '../../helpers/utils.js';
 import { tempHP } from '../../helpers/actors.js';
 import { tokenOf, distanceBetween } from '../../helpers/tokens.js';
 import { isAlly, isEnemy } from '../../helpers/targets.js';
@@ -103,6 +103,9 @@ export class barbarianPaths{
       if(choice === "eagle") await this.eagle(actor);
       return;
     }
+    /* Another animal's power (its activity, raging) : the one before ends */
+    const before = actor.effects.filter(e => e.getFlag(module.id, "rageBound") && (originItem(e) === item)).map(e => e.id);
+    if(before.length) await actor.deleteEmbeddedDocuments("ActiveEffect", before);
     await actor.setFlag(module.id, "wilds", choice);
     if(choice === "bear"){
       await actor.createEmbeddedDocuments("ActiveEffect", [{ name : module.i18n("subclasses.barbarian.bearEffect"), img : item.img, origin : item.uuid,

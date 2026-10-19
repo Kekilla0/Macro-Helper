@@ -7,7 +7,7 @@ import { gm } from '../../gm.js';
 import { uses } from '../../uses.js';
 import { rerolls, addDie } from '../../roll-item/rerolls.js';
 import { rollSave } from '../../helpers/actors.js';
-import { actorOf } from '../../helpers/tokens.js';
+import { actorOf, tokenOf } from '../../helpers/tokens.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -25,7 +25,8 @@ const log = logger.for(import.meta.url);
  *   subclasses.giveEffect(target, data, { save, dc, from, until, of })
  *                                              an effect on a creature (a maneuver's Goaded, Addle), after its save
  *                                              when one is given (a success : none); until "turnStart" / "turnEnd" of
- *                                              `of`'s next turn (default : the item's owner). The GM's client puts it on.
+ *                                              `of`'s next turn (default : the item's owner). The GM's client puts it on;
+ *                                              on someone else's creature, after the GM's button on a card (asked).
  *   subclasses.onUseStep(id, fn)               a use step (uses.js, "subclassUse") for one item identifier :
  *                                              fn(activity, ctx, next), before the targets are picked
  *   subclasses.changeRoll(message, change, by) a reaction's change to someone else's roll, made by the GM (a roll on a
@@ -51,6 +52,7 @@ export class subclasses{
     gm.handle("subclassRoll", (data, user) => this.changeRollAsGM(data, user));
     gm.handle("subclassEffectsEnd", (data, user) => this.endEffectsAsGM(data, user));
     gm.handle("subclassEffect", (data, user) => this.giveEffectAsGM(data, user));
+    gm.handle("subclassOfferDone", (data, user) => this.offerDoneAsGM(data, user));
     uses.onActivity("subclassUse", (activity, ctx, next) => {
       const fn = this.enabled() ? this.#useSteps.get(idOf(activity?.item)) : null;
       return fn ? fn(activity, ctx, next) : next();
@@ -61,7 +63,7 @@ export class subclasses{
 
   /**
    * An effect on a creature, after its save (see above).
-   * @returns {Promise<{ applied : boolean, save : object|null }>}
+   * @returns {Promise<{ applied : boolean, asked : boolean, save : object|null }>}
    */
   static async giveEffect(thing, data, { save = null, dc = null, from = null, until = null, of = null } = {}){
     const actor = actorOf(thing);
@@ -73,8 +75,17 @@ export class subclasses{
     }
     const effect = foundry.utils.mergeObject({ showIcon : CONST.ACTIVE_EFFECT_SHOW_ICON?.ALWAYS ?? 2, origin : from?.uuid ?? null, img : from?.img ?? null }, data, { inplace : false });
     if(until) foundry.utils.setProperty(effect, `flags.${module.id}.expires`, gm.timedStamp(actorOf(of) ?? from?.actor ?? actor, until));
-    const applied = !!await gm.run("subclassEffect", { actor : actor.uuid, data : effect, item : from?.uuid ?? null });
-    return { applied, save : rolled };
+    const payload = { actor : actor.uuid, data : effect, item : from?.uuid ?? null };
+    /* Someone else's creature : the GM's button puts it on */
+    if(!actor.isOwner){
+      const name = tokenOf(thing)?.name ?? actor.name;
+      await gm.ask("subclassEffect", payload, { actor : from?.actor ?? null,
+        text : module.format("subclasses.effectAsk", { item : from?.name ?? "", name, effect : effect.name }),
+        label : module.format("subclasses.effectButton", { name, effect : effect.name }) });
+      return { applied : false, asked : true, save : rolled };
+    }
+    const applied = !!await gm.run("subclassEffect", payload);
+    return { applied, asked : false, save : rolled };
   }
 
   static async giveEffectAsGM({ actor : uuid, data, item : itemUuid } = {}, user){
@@ -191,6 +202,16 @@ export class subclasses{
     });
   }
 
+  /* GM : an offer a player used (the GM's card : its owner can't mark it) */
+  static async offerDoneAsGM({ message : id } = {}, user){
+    const message = game.messages.get(id ?? "");
+    const offer = message?.getFlag(module.id, "offer");
+    const actor = fromUuidSync(offer?.actor ?? "", { strict : false });
+    if(!offer || !(user?.isGM || actor?.testUserPermission?.(user, "OWNER"))) return false;
+    await message.setFlag(module.id, "offer.done", true);
+    return true;
+  }
+
   static offerButtons(message, html){
     const offer = message.getFlag?.(module.id, "offer");
     if(!offer) return;
@@ -211,7 +232,9 @@ export class subclasses{
               ...(targets.length ? { targets } : { targets : undefined }) });
             used = !!card;
           }
-          if(used && message.isOwner) await message.setFlag(module.id, "offer.done", true);
+          if(!used) return;
+          if(message.isOwner) await message.setFlag(module.id, "offer.done", true);
+          else await gm.run("subclassOfferDone", { message : message.id });
         }
         catch(error){ log.error(error); ui.notifications.warn(error.message); }
       } }));

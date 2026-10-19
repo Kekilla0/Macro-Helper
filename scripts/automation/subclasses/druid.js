@@ -1,11 +1,13 @@
 import { module } from '../../module.js';
 import { logger } from '../../log.js';
 import { idOf, chooseOption, originItem } from '../../helpers/utils.js';
-import { tokenOf, addLight, removeLight } from '../../helpers/tokens.js';
-import { CardBuilder, push, isSmaller } from '../../roll-item/card-builder.js';
+import { tokenOf, addLight, removeLight, getTokensInArea } from '../../helpers/tokens.js';
+import { pickTargets } from '../../helpers/targets.js';
+import { CardBuilder, cardBuilder, push, isSmaller } from '../../roll-item/card-builder.js';
 import { uses } from '../../uses.js';
 import { conditions } from '../conditions.js';
 import { casting } from '../casting.js';
+import { itemFixes } from '../item-fixes.js';
 import { subclasses } from './common.js';
 const log = logger.for(import.meta.url);
 
@@ -41,7 +43,9 @@ export class druidCircles{
     Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.afterUse(activity, usage, results));
     Hooks.on(`${module.id}.turnStart`, (combat, combatant) => this.onTurn(combatant?.actor));
     Hooks.on(`${module.id}.selfEffects`, activity => !(this.enabled() && (idOf(activity?.item) === this.STARRY)));
-    Hooks.on("deleteActiveEffect", effect => this.starryEnds(effect));
+    Hooks.on("deleteActiveEffect", (effect, options) => this.starryEnds(effect, options));
+    subclasses.onOffer("landsAid", (actor, data) => this.landsAidHeal(actor, data));
+    itemFixes.add({ name : "Wrath of the Sea", where : "owned", plan : item => this.wrathFix(item) });
   }
 
   static async afterUse(activity, usage, results){
@@ -49,8 +53,11 @@ export class druidCircles{
     const id = idOf(activity.item);
     const actor = activity.getUsageToken?.()?.actor ?? activity.actor;
     try {
-      if((id === this.LANDS_AID) && (activity.type === "save")) await this.landsAid(actor, activity.item);
-      else if((id === this.WRATH) && (activity.type === "save")) await this.wrathPush(results);
+      if((id === this.LANDS_AID) && (activity.type === "save")) await this.landsAid(actor, activity.item, activity);
+      else if((id === this.WRATH) && (activity.type === "save")){
+        if(this.isManifest(activity)) await this.manifest(actor, activity.item);
+        await this.wrathPush(results);
+      }
       else if(id === this.STARRY) await this.starryForm(actor, activity.item);
       else if((activity.item?.type === "spell") && (activity.type === "heal") && casting.spendsSlot(activity, usage ?? {})) await this.chalice(actor);
     }
@@ -59,10 +66,25 @@ export class druidCircles{
 
   /* ---------- Land ---------- */
 
-  static async landsAid(actor, item){
+  /* The healing's one creature is in the save's area (not an area of its own) : who's in it now, picked on the click */
+  static async landsAid(actor, item, activity){
     const heal = [...(item.system.activities ?? [])].find(a => a.type === "heal");
-    if(heal) await subclasses.offer(actor, { item, activity : heal.id, label : heal.name || item.name,
+    if(!heal) return;
+    const areas = canvas.scene?.regions?.filter(r => r.getFlag("dnd5e", "activity") === activity?.uuid) ?? [];
+    const inside = [...new Set(areas.flatMap(r => getTokensInArea(r, { includeHidden : true })))].map(t => t.document.uuid);
+    await subclasses.offer(actor, { key : "landsAid", label : heal.name || item.name, data : { item : item.uuid, heal : heal.id, inside },
       text : module.format("subclasses.druid.landsAid", { name : actor.name }) });
+  }
+
+  static async landsAidHeal(actor, { item : uuid, heal, inside = [] } = {}){
+    const item = fromUuidSync(uuid ?? "", { strict : false });
+    const me = tokenOf(actor);
+    if(!item || !me) return false;
+    const allowed = inside.map(u => fromUuidSync(u, { strict : false })?.object).filter(Boolean);
+    const [target] = await pickTargets(me, { count : 1, range : 60, disposition : "any", includeSelf : true, confirm : "auto", useTargets : false,
+      ...(allowed.length ? { filter : t => allowed.includes(t) } : {}) }) ?? [];
+    if(!target) return false;
+    return !!await cardBuilder.roll(item, { activity : heal, targets : [target] });
   }
 
   /* ---------- Sea ---------- */
@@ -73,6 +95,30 @@ export class druidCircles{
     const message = (card?.documentName === "ChatMessage") ? card : (card?.message ?? null);
     if(!message?.isOwner) return;
     await new CardBuilder(message).append(push(15, { when : ["fail", t => isSmaller(t, "large")] }));
+  }
+
+  /* Plutonium puts the spray's effect (the Druid's own) on the save, for its targets : taken off; the Druid gets it */
+  static wrathFix(item){
+    if(!this.enabled() || (idOf(item) !== this.WRATH) || !item.actor) return null;
+    const update = {};
+    for(const activity of item.system.activities ?? []){
+      if((activity.type === "save") && (activity.effects?.length)) update[`system.activities.${activity.id}.effects`] = [];
+    }
+    return Object.keys(update).length ? { update } : null;
+  }
+
+  /* Manifest Ocean Spray : the first save (the Bonus Action save is the last) */
+  static isManifest(activity){
+    const saves = [...(activity.item?.system?.activities ?? [])].filter(a => a.type === "save");
+    return (saves.length > 1) && (saves[0] === activity);
+  }
+
+  /* The spray on the Druid : 10 minutes (it ends when Incapacitated : conditions.endOnIncapacitated) */
+  static async manifest(actor, item){
+    if(this.wrathOf(actor)) return;
+    const source = item.effects.find(e => !e.transfer);
+    await actor.createEmbeddedDocuments("ActiveEffect", [{ ...(source ? source.toObject() : { name : item.name, img : item.img }), _id : undefined,
+      transfer : false, disabled : false, origin : item.uuid, duration : { value : 10, units : "minutes" }, start : { time : game.time.worldTime } }]);
   }
 
   static wrathOf(actor){
@@ -89,12 +135,17 @@ export class druidCircles{
     const form = await chooseOption({ title : item.name, icon : "fa-solid fa-star", prompt : module.i18n("subclasses.druid.starryPrompt"),
       options : this.FORMS.map(value => ({ value, label : module.i18n(`subclasses.druid.${value}`) })) });
     if(!form) return;
+    /* Another constellation : the form goes, its light stays (one light, not one on top of another) */
     const old = this.starryOf(actor);
-    if(old) await old.delete();
+    if(old){
+      const bound = actor.effects.filter(e => e.getFlag(module.id, "starryBound")).map(e => e.id);
+      if(bound.length) await actor.deleteEmbeddedDocuments("ActiveEffect", bound);
+      await old.delete({ [module.id] : { starrySwap : true } });
+    }
     const [effect] = await actor.createEmbeddedDocuments("ActiveEffect", [{ name : `${item.name} (${module.i18n(`subclasses.druid.${form}Short`)})`,
-      img : item.img, origin : item.uuid, duration : { seconds : 600 }, start : { time : game.time.worldTime },
+      img : item.img, origin : item.uuid, duration : { value : 10, units : "minutes" }, start : { time : game.time.worldTime },
       flags : { [module.id] : { starry : { form }, endsOnIncapacitated : true } } }]);
-    await addLight(tokenOf(actor), this.LIGHT, { key : "starryForm" });
+    if(!old) await addLight(tokenOf(actor), this.LIGHT, { key : "starryForm" });
     if(form === "dragon") await this.dragon(actor, effect);
     if(form === "archer") await this.archer(actor);
     log.debug("Starry Form", actor.name, form);
@@ -119,7 +170,7 @@ export class druidCircles{
     const source = effects.find(e => (level >= 10) === /twinkling/i.test(e.name)) ?? effects[0];
     if(!source) return;
     const data = foundry.utils.mergeObject(source.toObject(), { disabled : false, transfer : false, origin : item.uuid,
-      duration : { seconds : 600 }, start : { time : game.time.worldTime }, flags : { [module.id] : { starryBound : starry?.id ?? true } } });
+      duration : { value : 10, units : "minutes", expiry : null }, start : { time : game.time.worldTime }, flags : { [module.id] : { starryBound : starry?.id ?? true } } });
     delete data._id;
     await actor.createEmbeddedDocuments("ActiveEffect", [data]);
   }
@@ -132,8 +183,8 @@ export class druidCircles{
   }
 
   /* The form over : its light and the Dragon's effect go */
-  static async starryEnds(effect){
-    if(!effect?.getFlag?.(module.id, "starry") || !game.users.activeGM?.isSelf) return;
+  static async starryEnds(effect, options = {}){
+    if(!effect?.getFlag?.(module.id, "starry") || options?.[module.id]?.starrySwap || !game.users.activeGM?.isSelf) return;
     const actor = effect.parent;
     const token = tokenOf(actor);
     if(token) await removeLight(token, { key : "starryForm" });

@@ -468,6 +468,8 @@ export class monk{
     try { action = String(activity?.getActionType?.(message.system.attackOf?.(ray)?.options?.attackMode) ?? ""); } catch {}
     const type = rolls.map(r => r.options?.type).find(t => this.DEFLECTED.includes(t)) ?? "bludgeoning";
     await actor.setFlag(module.id, "deflect", { message : message.id, ray, zero : roll.total >= total, melee : !action.startsWith("r"), type, redirected : false });
+    /* Redirect's button reads that flag : drawn again now */
+    ui.chat?.updateMessage(message);
     log.debug("Deflect Attacks", actor.name, roll.total, "of", total);
   }
 

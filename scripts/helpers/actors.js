@@ -161,6 +161,7 @@ function saveActivityOf(from, ability){
  * The save lego : a creature makes a saving throw, the same way for every rule (a card's row, an on-hit save, a repeat
  * save at the end of its turn, Topple). Read as : target.actor.save("con", 13, { from : item }).
  * The roll keeps the keys held (advantage / disadvantage), dnd5e's own bonuses and rules (Paralyzed fails STR / DEX).
+ * A creature the user doesn't own : the active GM's client rolls it (no dialog, no keys).
  * @param {Actor|Token|TokenDocument} thing
  * @param {string} ability   "con", "dex"...
  * @param {number} [dc]      without one, dnd5e judges nothing : success is null
@@ -177,7 +178,8 @@ function saveActivityOf(from, ability){
  */
 export async function rollSave(thing, ability, dc = null, { from = null, bonus = null, cover = 0, event = null, dialog = false, secret, card = null, flags = null } = {}){
   const actor = actorOf(thing);
-  if(!actor?.rollSavingThrow || !actor.isOwner || !ability) return null;
+  if(!actor?.rollSavingThrow || !ability) return null;
+  if(!actor.isOwner) return saveByGM(thing, ability, dc, { from, bonus, cover, secret, card, flags });
   const token = tokenOf(thing);
   dc = ((dc === null) || (dc === "")) ? NaN : Number(dc);
 
@@ -200,6 +202,24 @@ export async function rollSave(thing, ability, dc = null, { from = null, bonus =
   const uuid = (thing?.document ?? ((thing?.documentName === "Token") ? thing : null) ?? token?.document)?.uuid;
   if(card && secret && game.user.isGM && (success !== null) && uuid) await card.setFlag(module.id, `saves.${uuid.replaceAll(".", "-")}`, { success });
   return { success, total : roll.total, roll };
+}
+
+/* A creature the user doesn't own (a player's on-hit button against a monster) : the active GM's client rolls its save */
+async function saveByGM(thing, ability, dc, { from, bonus, cover, secret, card, flags }){
+  const doc = tokenOf(thing)?.document ?? actorOf(thing);
+  const result = await gm.run("rollSave", { uuid : doc?.uuid ?? null, ability, dc, from : from?.uuid ?? null, bonus, cover,
+    secret : secret ?? null, card : card?.id ?? null, flags });
+  if(!result) return null;
+  return { success : result.success, total : result.total, roll : result.roll ? Roll.fromData(result.roll) : null };
+}
+
+/* The GM's side of saveByGM */
+export async function rollSaveAsGM({ uuid, ability, dc = null, from = null, bonus = null, cover = 0, secret = null, card = null, flags = null } = {}){
+  const doc = fromUuidSync(uuid ?? "", { strict : false });
+  if(!doc) return null;
+  const rolled = await rollSave(doc, ability, dc, { from : from ? fromUuidSync(from, { strict : false }) : null, bonus, cover,
+    ...((secret === null) ? {} : { secret }), card : card ? game.messages.get(card) ?? null : null, flags });
+  return rolled ? { success : rolled.success, total : rolled.total, roll : rolled.roll.toJSON() } : null;
 }
 
 /**

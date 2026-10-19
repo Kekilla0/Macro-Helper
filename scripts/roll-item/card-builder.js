@@ -9,7 +9,7 @@ import { rollOptions, rollOptionDamage, rollOptionD20, rollOptionDamageDice } fr
 import { disease } from '../automation/disease.js';
 import { patch } from '../patch.js';
 import { setDamage } from '../helpers/items.js';
-import { rollSave } from '../helpers/actors.js';
+import { rollSave, rollSaveAsGM } from '../helpers/actors.js';
 import { damageRoll } from './extra-damage.js';
 import { onDamage } from './damage.js';
 import { noteReason } from './reasons.js';
@@ -418,14 +418,25 @@ export async function trample(thing, feet, { size = "medium", disengage = false,
 }
 
 /* A condition straight on a creature, no card (Flumph's Prone Deficiency) : applyCondition's options; from : the item,
-   by : the creature doing it (default : the item's owner) */
+   by : the creature doing it (default : the item's owner). Someone else's creature : a card with the GM's button (null) */
 export async function applyConditionNow(thing, spec = {}){
   const actor = thing?.actor ?? thing;
   const doc = thing?.document ?? ((thing?.documentName === "Token") ? thing : actor?.token ?? actor?.getActiveTokens?.(false, true)?.[0]?.document ?? null);
   if(!actor) return false;
   const part = applyCondition(spec);
   const by = spec.by ? (tokenOf(spec.by)?.document ?? spec.by.actor ?? spec.by) : null;
-  return gm.run("applyConditionNow", { actor : actor.uuid, token : doc?.uuid ?? null, part, origin : spec.from?.uuid ?? spec.from ?? null, by : by?.uuid ?? null });
+  const data = { actor : actor.uuid, token : doc?.uuid ?? null, part, origin : spec.from?.uuid ?? spec.from ?? null, by : by?.uuid ?? null };
+  /* Someone else's creature : the GM's button puts it on */
+  if(!actor.isOwner){
+    const status = CONFIG.statusEffects.find(s => s.id === spec.type);
+    const condition = status ? game.i18n.localize(status.name) : String(spec.type ?? "");
+    const name = (doc ?? actor).name;
+    await gm.ask("applyConditionAsk", data, { actor : by?.actor ?? (by?.documentName === "Actor" ? by : null) ?? spec.from?.actor ?? null,
+      text : module.format("cardBuilder.conditionAsk", { item : spec.from?.name ?? "", name, condition }),
+      label : module.format("cardBuilder.conditionButton", { name, condition }) });
+    return null;
+  }
+  return gm.run("applyConditionNow", data);
 }
 
 /**
@@ -436,8 +447,9 @@ export async function applyConditionNow(thing, spec = {}){
  *   repeat       "end" / "start" : it saves again (same ability and DC) at that point of each of its turns, ending it
  *   from, by     the item, and the creature doing it (default : the item's owner) : its name, its origin
  *   ...          applyCondition's other options (with, escape, label, insteadOfDamage...)
- * Already under it : the harsher one stays. Done by the GM's client; its owner or the GM may ask.
- * @returns {Promise<{ applied : boolean, save : { total : number, success : boolean }|null }>}
+ * Already under it : the harsher one stays. Done by the GM's client; for a creature the user doesn't own, the GM's
+ * button on a card puts it on (asked : true).
+ * @returns {Promise<{ applied : boolean, asked : boolean, save : { total : number, success : boolean }|null }>}
  */
 export async function giveCondition(thing, type, { save = null, dc = null, repeat = null, ...options } = {}){
   const actor = thing?.actor ?? thing;
@@ -450,8 +462,8 @@ export async function giveCondition(thing, type, { save = null, dc = null, repea
     if(rolled.success) return { applied : false, save : rolled };
   }
   const again = (repeat && save && Number.isFinite(Number(dc))) ? { ability : save, dc : Number(dc), repeat } : null;
-  const applied = !!(await applyConditionNow(thing, { ...options, type, ...(again ? { save : again } : {}) }));
-  return { applied, save : rolled };
+  const result = await applyConditionNow(thing, { ...options, type, ...(again ? { save : again } : {}) });
+  return { applied : !!result, asked : result === null, save : rolled };
 }
 
 /* Is that point difficult terrain for this creature (for now : another creature's space, as dnd5e judges it) */
@@ -892,8 +904,12 @@ export class cardBuilder{
       return doc.move({ x, y, action : "displace" }, { [module.id] : { oaSkip : true } }).then(() => true);
     });
     gm.handle("applyConditionNow", (data, user) => this.applyNowAsGM(data, user));
+    /* GM : the button of applyConditionNow's ask card (the GM said yes) */
+    gm.handle("applyConditionAsk", data => this.applyNowAsGM(data, game.user));
     /* GM : a push / pull a player's macro asked for (forcedMove on a creature they don't own) */
     gm.handle("forcedMove", data => forcedMoveAsGM(data));
+    /* GM : a save for a creature the asking user doesn't own (rollSave) */
+    gm.handle("rollSave", data => rollSaveAsGM(data));
     /* GM : a creature pulled out of the one engulfing it (by a creature its user owns, beside it) */
     gm.handle("cardPullOut", async ({ target : uuid, puller } = {}, user) => {
       const doc = fromUuidSync(uuid ?? "", { strict : false });

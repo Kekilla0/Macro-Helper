@@ -113,6 +113,8 @@ export class clericDomains{
     if(!shares) return;
     uses.mark(ctx, { skipPick : true, preserveLife : [...shares].filter(([, n]) => n > 0).map(([t, n]) => [t.document.uuid, n]) });
     ctx.config.create = { ...(ctx.config.create ?? {}), measuredTemplate : false };
+    /* The shares are the healing : no dnd5e healing roll after the use */
+    ctx.config.subsequentActions = false;
     return next();
   }
 
@@ -248,9 +250,12 @@ export class clericDomains{
   /* Plutonium's blessing : a description, 1 round. Advantage on Stealth checks, until the Long Rest */
   static blessingFix(item){
     if(!this.enabled() || (idOf(item) !== this.BLESSING)) return null;
-    const updateEffects = [...(item.effects ?? [])].filter(e => !e.transfer && !(e.changes ?? e.system?.changes ?? []).length)
-      .map(e => ({ _id : e.id, duration : { rounds : null, seconds : null, turns : null },
-        changes : [{ key : "system.skills.ste.roll.mode", type : "add", mode : 2, value : "1" }] }));
+    const changesOf = e => [...(e.changes ?? e.system?.changes ?? [])];
+    /* v14's duration : { value, units, expiry } (null : no end of its own) */
+    const timed = e => (e._source?.duration?.value ?? null) !== null;
+    const updateEffects = [...(item.effects ?? [])].filter(e => !e.transfer && (!changesOf(e).length || timed(e)))
+      .map(e => ({ _id : e.id, duration : { value : null, units : "seconds", expiry : null },
+        ...(changesOf(e).length ? {} : { changes : [{ key : "system.skills.ste.roll.mode", type : "add", mode : 2, value : "1" }] }) }));
     return updateEffects.length ? { updateEffects } : null;
   }
 

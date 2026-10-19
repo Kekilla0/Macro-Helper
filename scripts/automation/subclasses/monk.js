@@ -57,7 +57,9 @@ export class monkTraditions{
   static attunements(actor){
     const item = subclasses.has(actor, this.ATTUNEMENT);
     if(!item) return [];
-    return [...item.effects.filter(e => (e.type === "enchantment") && !e.disabled && !e.isSuppressed),
+    /* the item's own enchantment is only the profile its activity applies : the applied copies count */
+    const enchantments = new Set([...item.effects.filter(e => e.isAppliedEnchantment), ...(item.system?.appliedEnchantments ?? [])]);
+    return [...[...enchantments].filter(e => !e.disabled && !e.isSuppressed),
       ...(actor.appliedEffects ?? []).filter(e => originItem(e) === item)];
   }
 

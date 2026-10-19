@@ -59,8 +59,9 @@ export class rogueArchetypes{
 
   /* ---------- Soulknife ---------- */
 
+  /* The Psionic Energy Dice pool (Plutonium's own item; Psionic Power is the feature itself, one use) */
   static psionicOf(actor){
-    return subclasses.has(actor, this.PSIONIC);
+    return subclasses.has(actor, "psionic-energy-die") ?? subclasses.has(actor, "psionic-energy-dice") ?? subclasses.has(actor, this.PSIONIC);
   }
 
   static dieOf(actor){

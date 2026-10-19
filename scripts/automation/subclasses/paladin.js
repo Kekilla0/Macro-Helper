@@ -74,7 +74,8 @@ export class paladinOaths{
     if(!this.enabled() || (effect?.type !== "enchantment") || (idOf(originItem(effect)) !== this.SACRED)) return;
     const actor = originItem(effect)?.actor;
     if(!actor || !game.users.activeGM?.isSelf) return;
-    const left = actor.items.some(i => i.effects.some(e => (e !== effect) && (e.type === "enchantment") && (idOf(originItem(e)) === this.SACRED)));
+    /* the item's own enchantment is only the profile : the applied ones count */
+    const left = actor.items.some(i => i.effects.some(e => (e !== effect) && e.isAppliedEnchantment && (idOf(originItem(e)) === this.SACRED)));
     if(!left) await removeLight(tokenOf(actor), { key : "sacredWeapon" });
   }
 
@@ -93,13 +94,13 @@ export class paladinOaths{
     const channel = subclasses.has(actor, this.CHANNEL);
     if(!me || !item || !channel) return false;
     const tokens = await pickTargets(me, { count : 12, range : 30, disposition : "any", includeSelf : true, confirm : "enter", useTargets : false });
-    if(!tokens?.length) return false;
-    if(!await spendUses(channel, 1)) return false;
+    if(!tokens?.length || !(Number(channel.system?.uses?.value) > 0)) return false;
     const roll = await new Roll("2d8 + @classes.paladin.levels", actor.getRollData()).evaluate();
     const { rollItem } = await import('../../roll-item/roll-item.js');
     await rollItem.showDice([roll]);
     const shares = await divideAmong(tokens, roll.total, { title : item.name, prompt : module.format("subclasses.paladin.inspiringPrompt", { total : roll.total }) });
-    if(!shares) return false;
+    /* Cancelled : no use spent */
+    if(!shares || !await spendUses(channel, 1)) return false;
     const others = [];
     for(const [t, n] of shares){
       if(!(n > 0)) continue;
