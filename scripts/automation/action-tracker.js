@@ -323,6 +323,8 @@ export class actionTracker{
     const own = config?.[module.id] ?? {};
     if(own.economy) return (own.economy === "free") ? null : own.economy;
     if(own.ritual || own.noCast) return null;
+    /* A Cast activity (Steps of the Fey's free Misty Step) : the spell it casts spends it */
+    if(activity.type === "cast") return null;
     if(this.REPLACES_ATTACK.has(idOf(activity.item))) return "action";
     const type = activity.activation?.type || activity.item?.system?.activation?.type;
     return this.KINDS.includes(type) ? type : null;

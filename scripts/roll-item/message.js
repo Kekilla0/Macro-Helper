@@ -497,7 +497,9 @@ export function registerMessages(){
     const duration = activity.duration?.getEffectData?.() ?? null;
     const data = due.map(({ doc }) => {
       const d = foundry.utils.mergeObject(doc.toObject(), { origin : origin ?? doc.parent?.uuid, transfer : false, disabled : false,
-        start : { time : game.time.worldTime, ...(game.combat?.started ? { combat : game.combat.id, round : game.combat.round, turn : game.combat.turn ?? 0 } : {}) },
+        /* Core's start (its combatant too : "until the start of your next turn" counts the caster's turns, not the
+           target's) */
+        start : CONFIG.ActiveEffect.documentClass.getEffectStart?.() ?? { time : game.time.worldTime },
         flags : { [module.id] : { fromCard : message.id } } });
       if(duration && !(doc.duration?.seconds || doc.duration?.rounds || doc.duration?.turns || doc.duration?.value)) d.duration = duration;
       /* A plain condition (one condition, no changes : Plutonium's Prone, Poisoned with the item's picture) : the
