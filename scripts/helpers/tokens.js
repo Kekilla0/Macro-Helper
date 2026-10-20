@@ -534,6 +534,126 @@ export function hasLight(thing, key = "light"){
   return !!tokenDocOf(thing)?.getFlag(module.id, `lights.${key}`);
 }
 
+/* ---------- Pool bars (Arcane Ward, homebrew pools : points shown as a bar on the token) ---------- */
+
+/* Pools from code : key -> { color, read : actor => { value, max } | null } */
+const POOLS = new Map();
+
+/**
+ * A pool every creature can have, read by code (Arcane Ward). Shown as a bar on its tokens while it has points.
+ * @param {string} key
+ * @param {object} options
+ * @param {string|number} [options.color]   the bar's colour ("#3b82f6")
+ * @param {Function} options.read           actor => { value, max }, or null when it has no such pool
+ */
+export function registerPool(key, { color = "#3b82f6", read } = {}){
+  POOLS.set(key, { color, read });
+  redrawPoolBars();
+}
+
+/**
+ * Show a pool of points as a bar on the creature's tokens (its own PIXI bar : Foundry's two bars only read
+ * actor.system). The pool is an item's uses, or a number in the actor's flags. The bar hides while the pool is empty.
+ * Saved on the actor, so it stays after a reload. Needs permission to change the actor.
+ * @param {Token|TokenDocument|Actor} thing
+ * @param {string} key                      the pool's name ("ward", "grit"...)
+ * @param {object} options
+ * @param {string} [options.item]           an item's identifier, name or id : its uses are the pool
+ * @param {string} [options.flag]           or a flag on the actor, "scope.path" ("world.grit") : a number, or { value, max }
+ * @param {number} [options.max]            the most a numeric flag holds
+ * @param {string|number} [options.color]   the bar's colour (default blue)
+ * @returns {Promise<boolean>}
+ */
+export async function poolBar(thing, key, { item, flag, max, color = "#3b82f6" } = {}){
+  const actor = actorOf(thing);
+  if(!actor?.isOwner || !key || (!item && !flag)) return false;
+  await actor.setFlag(module.id, `poolBars.${key}`, { item : item ?? null, flag : flag ?? null, max : max ?? null, color });
+  return true;
+}
+
+/**
+ * Take a pool's bar off the creature (see poolBar).
+ * @param {Token|TokenDocument|Actor} thing
+ * @param {string} key
+ * @returns {Promise<boolean>}
+ */
+export async function removePoolBar(thing, key){
+  const actor = actorOf(thing);
+  if(!actor?.isOwner || !actor.getFlag(module.id, `poolBars.${key}`)) return false;
+  await actor.unsetFlag(module.id, `poolBars.${key}`);
+  return true;
+}
+
+/**
+ * The creature's pools with points in them, as drawn : [{ key, value, max, color }].
+ * @param {Token|TokenDocument|Actor} thing
+ * @returns {object[]}
+ */
+export function poolsOf(thing){
+  const actor = actorOf(thing);
+  if(!actor) return [];
+  const pools = [];
+  for(const [key, pool] of POOLS){
+    const read = (() => { try { return pool.read?.(actor); } catch(error){ console.error(`${module.title} |`, error); return null; } })();
+    if(read) pools.push({ key, color : pool.color, ...read });
+  }
+  for(const [key, pool] of Object.entries(actor.getFlag(module.id, "poolBars") ?? {})){
+    if(!pool) continue;
+    let read = null;
+    if(pool.item){
+      const item = actor.items.find(i => (i.system?.identifier === pool.item) || (i.id === pool.item))
+        ?? actor.items.find(i => i.name.toLowerCase() === String(pool.item).toLowerCase());
+      if(item?.system?.uses?.max) read = { value : Number(item.system.uses.value) || 0, max : Number(item.system.uses.max) || 0 };
+    }
+    else if(pool.flag){
+      const [scope, ...path] = String(pool.flag).split(".");
+      const found = foundry.utils.getProperty(actor.flags?.[scope] ?? {}, path.join("."));
+      read = (typeof found === "object") ? { value : Number(found?.value) || 0, max : Number(found?.max) || 0 } : { value : Number(found) || 0, max : Number(pool.max) || 0 };
+    }
+    if(read) pools.push({ key, color : pool.color, ...read });
+  }
+  return pools.filter(p => (p.value > 0) && (p.max > 0));
+}
+
+/* Draw the pools under Foundry's bottom bar, inside its bars (so they show when its bars do) */
+function drawPoolBars(token){
+  const bars = token?.bars;
+  if(!bars || bars.destroyed) return;
+  let layer = bars.children.find(c => c.name === `${module.id}-pools`);
+  const pools = token.actor ? poolsOf(token.actor) : [];
+  if(!pools.length){ if(layer) layer.visible = false; return; }
+  if(!layer){ layer = bars.addChild(new PIXI.Graphics()); layer.name = `${module.id}-pools`; }
+  const { width, height } = token.document.getSize();
+  const s = canvas.dimensions.uiScale ?? 1;
+  const bh = 8 * ((token.document.height >= 2) ? 1.5 : 1) * s;
+  let y = height - (bars.bar1?.visible ? 2 : 1) * bh;
+  layer.clear();
+  for(const pool of pools){
+    const pct = Math.clamp(pool.value, 0, pool.max) / pool.max;
+    layer.lineStyle(s, 0x000000, 1.0);
+    layer.beginFill(0x000000, 0.5).drawRoundedRect(0, y, width, bh, 3 * s);
+    layer.beginFill(Color.from(pool.color), 1.0).drawRoundedRect(0, y, pct * width, bh, 2 * s);
+    layer.endFill();
+    y -= bh;
+  }
+  layer.visible = true;
+}
+
+function redrawPoolBars(actor = null){
+  for(const token of canvas?.tokens?.placeables ?? []){
+    if(!actor || (token.actor === actor) || (token.actor?.id === actor.id)) drawPoolBars(token);
+  }
+}
+
+/* Hooks : drawn with Foundry's bars, again when an actor or its items change */
+export function registerPoolBars(){
+  Hooks.on("refreshToken", (token, flags) => { if(flags?.refreshBars || flags?.refreshSize) drawPoolBars(token); });
+  Hooks.on("drawToken", token => drawPoolBars(token));
+  Hooks.on("updateActor", actor => redrawPoolBars(actor));
+  Hooks.on("updateSetting", () => redrawPoolBars());
+  for(const hook of ["createItem", "updateItem", "deleteItem"]) Hooks.on(hook, item => { if(item.parent?.documentName === "Actor") redrawPoolBars(item.parent); });
+}
+
 /* A token's document : a TokenDocument as it is (on any scene), else the token on the canvas (tokenOf) */
 function tokenDocOf(thing){
   return (thing?.documentName === "Token") ? thing : (tokenOf(thing)?.document ?? null);

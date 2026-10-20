@@ -59,6 +59,7 @@ The main pieces, as methods on tokens, actors and items. Most also exist as `Mac
 | `token.push(target, 10)`, `token.pull(target, 10)`, `token.teleport(30, { item })`, `token.leap(30, { item })`, `token.trample(feet)` | Movement. |
 | `token.damage(value, type)`, `token.heal(value)`, `item.useAndApply()` | Hit points, through dnd5e's damage rules. |
 | `item.spendUses(n)`, `token.useReaction(name)`, `actor.usedThisTurn(key)` | Resources and the action economy. |
+| `token.poolBar("grit", { item, flag, color })` | A pool of points (an item's uses, or a flag) as a coloured bar on the token, hidden when empty (Arcane Ward). |
 | `token.reactionMove({ feet, noOA })`, `token.reactionAttack({ extraDamage })` | A creature's Reaction spent moving (without Opportunity Attacks) or on one weapon attack, on anyone's turn (Mantle of Inspiration, Commander's Strike, Riposte). |
 | `target.isType("undead")`, `target.isSmaller("large")`, `token.canSee(other)`, `token.distanceTo(other)`, `token.isEnemy(other)` | Facts about a creature, for `when` checks. |
 

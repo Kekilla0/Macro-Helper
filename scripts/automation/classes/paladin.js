@@ -102,6 +102,7 @@ export class paladin{
     /* Plutonium's Paladin's Smite keeps its use on its cast activity too : one use, the item's (as Favored Enemy has it),
        so its Divine Smite shows it in the spellbook */
     itemFixes.add({ name : "Paladin's Smite", where : "owned", plan : item => this.smiteFix(item) });
+    itemFixes.add({ name : "Divine Smite class", where : "owned", plan : item => this.divineSmiteFix(item) });
   }
 
   /* ---------- Smites ---------- */
@@ -443,6 +444,12 @@ export class paladin{
       update["system.uses.recovery"] = [{ period : "lr", type : "recoverAll" }];
     }
     return { update };
+  }
+
+  /* Paladin's Smite's Divine Smite comes with no class : the Paladin's (Prepared Spells lists it) */
+  static divineSmiteFix(item){
+    if((item.type !== "spell") || (idOf(item) !== this.DIVINE) || item.system.sourceItem || !item.parent?.classes?.paladin) return null;
+    return { update : { "system.sourceItem" : "class:paladin" } };
   }
 
   /* ---------- Lay on Hands ---------- */

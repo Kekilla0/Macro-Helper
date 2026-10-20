@@ -3,7 +3,7 @@ import { logger } from '../../log.js';
 import { gm } from '../../gm.js';
 import { idOf, esc, ownerIds } from '../../helpers/utils.js';
 import { usedThisTurn, markUsedThisTurn } from '../../helpers/actors.js';
-import { tokenOf, canSee } from '../../helpers/tokens.js';
+import { tokenOf, canSee, registerPool } from '../../helpers/tokens.js';
 import { TYPES } from '../../roll-item/message.js';
 import { itemFixes } from '../item-fixes.js';
 import { casting } from '../casting.js';
@@ -16,6 +16,8 @@ const log = logger.for(import.meta.url);
  *   Abjurer     Arcane Ward       its Hit Points are the item's uses. An Abjuration spell cast with a slot : the ward
  *                                 made (full) the first time after a Long Rest, else 2 × the slot's level back. Damage the
  *                                 Wizard takes (after its Resistances) goes to the ward first; what's left reaches it.
+ *                                 Until it's made (Create Ward used since the Long Rest) it has no Hit Points. A blue
+ *                                 bar on the token shows them (a pool bar).
  *                                 Its Expend Spell Slot activity is the item's data.
  *   Diviner     Portent           each Long Rest : two d20s rolled and kept (its owner is told). A D20 Test by it or a
  *                                 creature it sees (an attack card, a save, a check) : a Portent button per roll left
@@ -39,6 +41,7 @@ export class wizardSchools{
     Hooks.on("dnd5e.postUseActivity", (activity, usage) => this.afterSpell(activity, usage));
     Hooks.on("dnd5e.calculateDamage", (actor, damages, options) => this.ward(actor, damages, options));
     gm.handle("arcaneWard", data => this.wardAsGM(data));
+    registerPool(this.WARD, { color : "#3b82f6", read : actor => this.enabled() ? this.wardPool(actor) : null });
     /* Portent */
     Hooks.on("dnd5e.restCompleted", (actor, result) => { if(result?.longRest) this.foretell(actor); });
     Hooks.on(`${module.id}.cardButtons`, (message, buttons, { ray } = {}) => { this.portentButtons(message, buttons, ray ?? null); this.potentButton(message, buttons, ray ?? null); });
@@ -84,11 +87,20 @@ export class wizardSchools{
     log.debug("Arcane Ward", actor.name, `+${back}`);
   }
 
+  /* The ward's Hit Points : none until Create Ward has been used since the Long Rest */
+  static wardPool(actor){
+    const item = subclasses.has(actor, this.WARD);
+    if(!item?.system?.uses?.max) return null;
+    const create = [...(item.system.activities ?? [])].find(a => a.uses?.max);
+    const made = !create || ((Number(create.uses.spent) || 0) > 0);
+    return { value : made ? (Number(item.system.uses.value) || 0) : 0, max : Number(item.system.uses.max) || 0 };
+  }
+
   /* Damage really applied : the ward takes it first */
   static ward(actor, damages, options = {}){
     if(!this.enabled() || !options?.[module.id]?.applying || !(damages?.amount > 0)) return;
     const item = subclasses.has(actor, this.WARD);
-    const hp = Number(item?.system?.uses?.value) || 0;
+    const hp = this.wardPool(actor)?.value ?? 0;
     if(!item || (hp <= 0)) return;
     const taken = Math.min(hp, damages.amount);
     damages.amount -= taken;

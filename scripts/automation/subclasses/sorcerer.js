@@ -1,6 +1,6 @@
 import { module } from '../../module.js';
 import { logger } from '../../log.js';
-import { idOf, esc } from '../../helpers/utils.js';
+import { idOf, esc, buttonRow, addButton, makeButton } from '../../helpers/utils.js';
 import { usedThisTurn, markUsedThisTurn } from '../../helpers/actors.js';
 import { tokenOf, distanceBetween, canSee } from '../../helpers/tokens.js';
 import { spendUses } from '../../helpers/items.js';
@@ -24,7 +24,8 @@ const log = logger.for(import.meta.url);
  *   Wild Magic Tides of Chaos    using it : Advantage on its next D20 Test (an attack, a save or a check). Then it waits
  *                                for a Sorcerer spell cast with a slot (that cast rolls on the surge table, and it's back)
  *                                or a Long Rest.
- *              Wild Magic Surge  once a turn, a Sorcerer spell cast with a slot : 1d20 rolled; a 20 : the surge. The
+ *              Wild Magic Surge  once a turn, a Sorcerer spell cast with a slot : a button on its card rolls the 1d20 (the
+ *                                player's choice); a 20 : the surge. The
  *                                surge draws from a world Roll Table named "Wild Magic Surge" (the GM's own : the module
  *                                has no table), else its d100 is posted for the GM to read off the book's.
  */
@@ -53,7 +54,8 @@ export class sorcererOrigins{
     for(const hook of ["dnd5e.rollAttackV2", "dnd5e.rollSavingThrow", "dnd5e.rollAbilityCheck", "dnd5e.rollSkill", "dnd5e.rollToolCheck"]){
       Hooks.on(hook, (rolls, data = {}) => this.tidesSpent(data.subject?.actor ?? data.subject));
     }
-    Hooks.on("dnd5e.postUseActivity", (activity, usage) => this.afterSpell(activity, usage));
+    Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.afterSpell(activity, usage, results));
+    Hooks.on("dnd5e.renderChatMessage", (message, html) => this.surgeButton(message, html));
     Hooks.on("dnd5e.restCompleted", (actor, result) => { if(result?.longRest && actor?.isOwner && subclasses.has(actor, this.TIDES)?.getFlag(module.id, "tidesUsed")) subclasses.has(actor, this.TIDES).unsetFlag(module.id, "tidesUsed"); });
   }
 
@@ -127,8 +129,8 @@ export class sorcererOrigins{
     if(effect?.isOwner) await effect.delete();
   }
 
-  /* A Sorcerer spell from a slot : Tides of Chaos back (with a surge), or the once-a-turn d20 */
-  static async afterSpell(activity, usage){
+  /* A Sorcerer spell from a slot : Tides of Chaos back (with a surge), or the once-a-turn d20 button on its card */
+  static async afterSpell(activity, usage, results){
     const actor = activity?.actor;
     if(!this.enabled() || !actor?.isOwner || !sorcerer.isSorcererSpell(activity.item) || !casting.spendsSlot(activity, usage ?? {})) return;
     const tides = subclasses.has(actor, this.TIDES);
@@ -138,7 +140,26 @@ export class sorcererOrigins{
       return this.surge(actor);
     }
     if(!subclasses.has(actor, this.SURGE) || usedThisTurn(actor, "wildSurge")) return;
+    const card = await uses.cardOf(results);
+    const message = (card?.documentName === "ChatMessage") ? card : (card?.message ?? results?.message);
+    if(message?.isOwner) await message.setFlag(module.id, "wildSurge", actor.uuid);
+  }
+
+  /* Roll on Wild Magic Surge : its owner, until rolled or another spell this turn rolled */
+  static surgeButton(message, html){
+    const uuid = message.getFlag?.(module.id, "wildSurge");
+    const actor = uuid ? fromUuidSync(uuid, { strict : false }) : null;
+    if(!this.enabled() || !actor?.isOwner || !subclasses.has(actor, this.SURGE) || message.getFlag(module.id, "wildSurgeRolled")) return;
+    const row = buttonRow(html, { key : `${module.id}-wild-surge` });
+    if(row.childElementCount) return;
+    addButton(row, makeButton({ icon : "fa-dice-d20", text : module.i18n("subclasses.sorcerer.surgeRoll"), once : true,
+      onClick : () => this.surgeCheck(message, actor) }));
+  }
+
+  static async surgeCheck(message, actor){
+    if(usedThisTurn(actor, "wildSurge")) return ui.notifications.warn(module.format("subclasses.sorcerer.surgeUsed", { name : actor.name }));
     await markUsedThisTurn(actor, "wildSurge");
+    if(message.isOwner) await message.setFlag(module.id, "wildSurgeRolled", true);
     const roll = await new Roll("1d20").evaluate();
     await roll.toMessage({ speaker : ChatMessage.implementation.getSpeaker({ actor }), flavor : subclasses.has(actor, this.SURGE).name });
     if(roll.total === 20) await this.surge(actor);

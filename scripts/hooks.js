@@ -45,6 +45,7 @@ import { sorcererOrigins } from './automation/subclasses/sorcerer.js';
 import { warlockPatrons } from './automation/subclasses/warlock.js';
 import { wizardSchools } from './automation/subclasses/wizard.js';
 import { registerDamageCuts } from './roll-item/damage-cuts.js';
+import { registerPoolBars } from './helpers/tokens.js';
 import { preparedSpells } from './automation/prepared-spells.js';
 import { weaponMastery } from './automation/weapon-mastery.js';
 import { fightingStyles } from './automation/fighting-styles.js';
@@ -82,6 +83,7 @@ Hooks.once("init", ()=> {
   rollItem.register();
   cardBuilder.register();
   registerDamageCuts();
+  registerPoolBars();
   chatPictures.register();
   masteries.register();
   maneuvers.register();

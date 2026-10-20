@@ -1,7 +1,7 @@
 import { logger } from '../log.js';
 import { settings } from '../settings.js';
 import { rollItem } from '../roll-item/roll-item.js';
-import { distanceBetween, getRange, getTokensWithin, highlightRange, pushAway, pushDestination, addLight, removeLight, hasLight, canSee } from './tokens.js';
+import { distanceBetween, getRange, getTokensWithin, highlightRange, pushAway, pushDestination, addLight, removeLight, hasLight, canSee, poolBar, removePoolBar, poolsOf } from './tokens.js';
 import { isEnemy, isAlly, getThreats, isThreatened, getEnemiesWithinRange, pickTargets, getFlanker, isFlanking } from './targets.js';
 import { getSize, setStatus, setDefeated, splitToken, damage, heal, tempHP, dropsToZero, isKilledOutright, preventDropToZero, findItem,
   rollSave, addTimedEffect, recoverSpellSlots, usedThisTurn, markUsedThisTurn, getLastDamage, clearLastDamage, stabilize } from './actors.js';
@@ -47,6 +47,9 @@ const creature = {
   recoverSpellSlots : call(recoverSpellSlots),                      // ({ levels, maxLevel, item, chat }) -> { level : recovered } | null
   addTimedEffect : call(addTimedEffect),                            // (effectData, { of, until : "turnStart" | "turnEnd" }) -> ActiveEffect
   multiattack : call(multiattack),                                  // (plan [{ weapon, count }], { repeat, event, attack }) -> one pick + card per weapon
+  poolBar : call(poolBar),                                          // (key, { item, flag, max, color }) -> Promise<boolean>, a bar on its tokens
+  removePoolBar : call(removePoolBar),                              // (key) -> Promise<boolean>
+  poolsOf : call(poolsOf),                                          // () -> [{ key, value, max, color }] with points in them
 };
 
 const token = {
