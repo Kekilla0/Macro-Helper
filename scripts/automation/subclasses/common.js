@@ -155,7 +155,8 @@ export class subclasses{
     const d20 = updated.dice?.[0];
     if(!d20 || (d20.faces !== 20)) return null;
     if(value === null){
-      d20.modifiers = (d20.modifiers ?? []).filter(m => !/^k[hl]/i.test(m));
+      /* dnd5e 6 writes the mode as an adv / dis modifier, older rolls as kh / kl */
+      d20.modifiers = (d20.modifiers ?? []).filter(m => !/^(k[hl]|adv|dis)/i.test(m));
       d20.results.forEach((r, i) => { r.active = (i === 0); r.discarded = (i !== 0); });
       if(updated.options) updated.options.advantageMode = 0;
     }

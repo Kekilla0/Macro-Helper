@@ -45,14 +45,14 @@ export async function extraD20(roll, keep){
   let extra = null;
   if(mode === -want){
     /* The opposite : they cancel, a straight roll on the first d20 */
-    d20.modifiers = (d20.modifiers ?? []).filter(m => !/^k[hl]/i.test(m));
+    d20.modifiers = (d20.modifiers ?? []).filter(m => !/^(k[hl]|adv|dis)/i.test(m));
     d20.results.forEach((r, i) => { r.active = (i === 0); r.discarded = (i !== 0); });
     updated.options.advantageMode = 0;
   }
   else {
     extra = await new Roll("1d20").evaluate();
     d20.number = (d20.number ?? 1) + 1;
-    d20.modifiers = [...(d20.modifiers ?? []).filter(m => !/^k[hl]/i.test(m)), keep];
+    d20.modifiers = [...(d20.modifiers ?? []).filter(m => !/^(k[hl]|adv|dis)/i.test(m)), keep];
     d20.results.push({ result : extra.total, active : true });
     const active = d20.results.filter(r => r.active);
     const best = (keep === "kh") ? Math.max(...active.map(r => r.result)) : Math.min(...active.map(r => r.result));

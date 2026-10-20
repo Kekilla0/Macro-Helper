@@ -114,6 +114,8 @@ export class sorcererOrigins{
       return null;
     }
     await item.setFlag(module.id, "tidesUsed", true);
+    /* The sheet's use too (an activity's use spends it already) */
+    if(!used) await spendUses(item, 1, { warn : false });
     if(!this.tidesEffect(actor)) await actor.createEmbeddedDocuments("ActiveEffect", [{ name : item.name, img : item.img, origin : item.uuid,
       showIcon : CONST.ACTIVE_EFFECT_SHOW_ICON?.ALWAYS ?? 2, flags : { [module.id] : { tides : true } } }]);
     log.debug("Tides of Chaos", actor.name);
@@ -132,6 +134,7 @@ export class sorcererOrigins{
     const tides = subclasses.has(actor, this.TIDES);
     if(tides?.getFlag(module.id, "tidesUsed")){
       await tides.unsetFlag(module.id, "tidesUsed");
+      await spendUses(tides, -1, { warn : false });
       return this.surge(actor);
     }
     if(!subclasses.has(actor, this.SURGE) || usedThisTurn(actor, "wildSurge")) return;
