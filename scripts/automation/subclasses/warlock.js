@@ -9,6 +9,7 @@ import { cardBuilder } from '../../roll-item/card-builder.js';
 import { TYPES } from '../../roll-item/message.js';
 import { spellEffects } from '../spell-effects.js';
 import { subclasses } from './common.js';
+import { itemFixes } from '../item-fixes.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -19,6 +20,9 @@ const log = logger.for(import.meta.url);
  *                                    temporary Hit Points, you or a creature within 10 ft) or Taunting Step (a WIS save
  *                                    for the creatures within 5 ft of the space you left : Disadvantage on attack rolls
  *                                    against anyone but you until the start of your next turn; Spells : effect rules).
+ *                                    Item fixes : the free casts are the feature's uses only (its Cast activity spends
+ *                                    them); the patron's Misty Step (Plutonium's comes at will, with uses of its own)
+ *                                    is an always-prepared Pact Magic spell, cast with a slot.
  *   Fiend         Dark One's Blessing  an enemy it dropped to 0 HP, or one within 10 ft of it : CHA + Warlock level
  *                                    temporary Hit Points (at least 1).
  *   Great Old One Psychic Spells     a Warlock spell's attack or save card : Psychic on it turns its damage Psychic; Warlock
@@ -36,6 +40,13 @@ export class warlockPatrons{
   static register(){
     if(game.system.id !== "dnd5e") return;
     spellEffects.RULES[this.STEPS] ??= { onlyAgainstOrigin : "disadvantage" };
+    itemFixes.add({ name : "Steps of the Fey", where : "owned", plan : item => this.stepsFix(item) });
+    itemFixes.add({ name : "Archfey Misty Step", where : "owned", plan : item => this.mistyStepFix(item) });
+    /* Misty Step can come before the feature : looked at again once the feature is there */
+    Hooks.on("createItem", (item, options, userId) => {
+      if((userId !== game.user.id) || (idOf(item) !== this.STEPS)) return;
+      for(const spell of item.parent?.items?.filter?.(i => idOf(i) === "misty-step") ?? []) itemFixes.apply(spell).catch(error => log.error(error));
+    });
     Hooks.on("dnd5e.postUseActivity", activity => this.afterMistyStep(activity));
     subclasses.onOffer("stepsOfTheFey", (actor, data) => this.step(actor, data));
     /* The client that applied the damage : it knows the card (who did it) */
@@ -55,6 +66,40 @@ export class warlockPatrons{
   }
 
   /* ---------- Archfey ---------- */
+
+  /* The feature's Cast activity spends the feature's uses (its own uses folded in) : one pool of free casts */
+  static stepsFix(item){
+    if(!this.enabled() || (idOf(item) !== this.STEPS)) return null;
+    const update = {};
+    for(const activity of item.system.activities ?? []){
+      const targets = activity.consumption?.targets ?? [];
+      if((activity.type !== "cast") || (!activity.uses?.max && !targets.some(t => t.type === "activityUses"))) continue;
+      update[`system.activities.${activity.id}.uses`] = { max : "", spent : 0, recovery : [] };
+      update[`system.activities.${activity.id}.consumption.targets`] = [...targets.filter(t => !["activityUses", "itemUses"].includes(t.type)), { type : "itemUses", value : "1", target : "", scaling : {} }];
+    }
+    if(!Object.keys(update).length) return null;
+    if(!item.system.uses?.max){
+      update["system.uses.max"] = "max(1, @abilities.cha.mod)";
+      update["system.uses.recovery"] = [{ period : "lr", type : "recoverAll" }];
+    }
+    return { update };
+  }
+
+  /* The patron's Misty Step (not a species' or the Cast activity's copy) : always prepared, Pact Magic, no uses */
+  static mistyStepFix(item){
+    if(!this.enabled() || (item.type !== "spell") || (idOf(item) !== "misty-step") || (item._source?.system?.method !== "atwill")) return null;
+    const actor = item.parent;
+    if(!actor?.items?.some?.(i => idOf(i) === this.STEPS) || item.getFlag("dnd5e", "cachedFor")) return null;
+    const origin = String(item.getFlag("dnd5e", "advancementOrigin") ?? "").split(".")[0];
+    if(origin && (actor.items.get(origin)?.type === "race")) return null;
+    const update = { "system.method" : "pact", "system.prepared" : 2, "system.sourceItem" : "class:warlock",
+      "system.uses" : { max : "", spent : 0, recovery : [] } };
+    for(const [id, activity] of Object.entries(item._source.system.activities ?? {})){
+      const targets = activity.consumption?.targets ?? [];
+      if(targets.some(t => t.type === "itemUses")) update[`system.activities.${id}.consumption.targets`] = targets.filter(t => t.type !== "itemUses");
+    }
+    return { update };
+  }
 
   /* Misty Step cast : where it stood (the space it leaves), and the choice */
   static async afterMistyStep(activity){

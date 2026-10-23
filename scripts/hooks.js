@@ -16,6 +16,7 @@ import { actionBar } from './automation/action-bar.js';
 import { actionReady } from './automation/action-ready.js';
 import { combatLog } from './automation/combat-log.js';
 import { creatureTraits } from './automation/creature-traits.js';
+import { speciesLevels } from './automation/species-levels.js';
 import { disease } from './automation/disease.js';
 import { barbarian } from './automation/classes/barbarian.js';
 import { bard } from './automation/classes/bard.js';
@@ -142,6 +143,7 @@ Hooks.once("init", ()=> {
   ammunition.register();
   gm.register();
   feats.register();
+  speciesLevels.register();
   initiative.register();
 });
 

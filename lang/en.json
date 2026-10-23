@@ -773,6 +773,8 @@
   "species.emerge" : "Emerge from its shell",
   "species.emergeButton" : "Emerge (Bonus Action)",
   "species.emerged" : "emerged",
+  "species.levelGiven" : "{name} reaches character level {level} : {species} gives {items}.",
+  "species.levelMissing" : "{name} has reached the level for {items} ({species}), but no 2024 copy was found in the compendiums. Import it with Plutonium and add it to the character.",
   "cardBuilder.noItem" : "No attack called {name} on this creature.",
   "cardBuilder.freeAttackOnly" : "{name}: item.roll({ use : false }) is for attacks only.",
   "cardBuilder.noReaction" : "{name} has no Reaction left.",
