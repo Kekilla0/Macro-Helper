@@ -1,5 +1,6 @@
 import { module } from '../../module.js';
 import { logger } from '../../log.js';
+import { gm } from '../../gm.js';
 import { idOf, esc, buttonRow, addButton, makeButton } from '../../helpers/utils.js';
 import { usedThisTurn, markUsedThisTurn } from '../../helpers/actors.js';
 import { tokenOf, distanceBetween, canSee } from '../../helpers/tokens.js';
@@ -142,14 +143,22 @@ export class sorcererOrigins{
     if(!subclasses.has(actor, this.SURGE) || usedThisTurn(actor, "wildSurge")) return;
     const card = await uses.cardOf(results);
     const message = (card?.documentName === "ChatMessage") ? card : (card?.message ?? results?.message);
-    if(message?.isOwner) await message.setFlag(module.id, "wildSurge", actor.uuid);
+    const now = gm.stamp(actor, "cast");
+    if(message?.isOwner) await message.setFlag(module.id, "wildSurge", { actor : actor.uuid, turn : now ? `${now.combat}|${now.round}|${now.turn}` : null });
   }
 
-  /* Roll on Wild Magic Surge : its owner, until rolled or another spell this turn rolled */
+  /* The card's spell was cast this turn (out of combat : always) */
+  static surgeNow(message, actor){
+    const turn = message.getFlag(module.id, "wildSurge")?.turn;
+    const now = gm.stamp(actor, "cast");
+    return !turn || (!!now && (turn === `${now.combat}|${now.round}|${now.turn}`));
+  }
+
+  /* Roll on Wild Magic Surge : its owner, during the turn it was cast, until rolled */
   static surgeButton(message, html){
-    const uuid = message.getFlag?.(module.id, "wildSurge");
+    const uuid = message.getFlag?.(module.id, "wildSurge")?.actor;
     const actor = uuid ? fromUuidSync(uuid, { strict : false }) : null;
-    if(!this.enabled() || !actor?.isOwner || !subclasses.has(actor, this.SURGE) || message.getFlag(module.id, "wildSurgeRolled")) return;
+    if(!this.enabled() || !actor?.isOwner || !subclasses.has(actor, this.SURGE) || message.getFlag(module.id, "wildSurgeRolled") || !this.surgeNow(message, actor)) return;
     const row = buttonRow(html, { key : `${module.id}-wild-surge` });
     if(row.childElementCount) return;
     addButton(row, makeButton({ icon : "fa-dice-d20", text : module.i18n("subclasses.sorcerer.surgeRoll"), once : true,
@@ -157,6 +166,7 @@ export class sorcererOrigins{
   }
 
   static async surgeCheck(message, actor){
+    if(!this.surgeNow(message, actor)) return ui.notifications.warn(module.format("subclasses.sorcerer.surgeLate", { name : actor.name }));
     if(usedThisTurn(actor, "wildSurge")) return ui.notifications.warn(module.format("subclasses.sorcerer.surgeUsed", { name : actor.name }));
     await markUsedThisTurn(actor, "wildSurge");
     if(message.isOwner) await message.setFlag(module.id, "wildSurgeRolled", true);
