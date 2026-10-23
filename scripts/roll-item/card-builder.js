@@ -9,7 +9,7 @@ import { rollOptions, rollOptionDamage, rollOptionD20, rollOptionDamageDice } fr
 import { disease } from '../automation/disease.js';
 import { patch } from '../patch.js';
 import { setDamage } from '../helpers/items.js';
-import { rollSave, rollSaveAsGM } from '../helpers/actors.js';
+import { rollSave, rollSaveAsGM, setStatus } from '../helpers/actors.js';
 import { damageRoll } from './extra-damage.js';
 import { onDamage } from './damage.js';
 import { noteReason } from './reasons.js';
@@ -466,6 +466,30 @@ export async function giveCondition(thing, type, { save = null, dc = null, repea
   return { applied : !!result, asked : result === null, save : rolled };
 }
 
+/**
+ * The end-condition lego : a condition taken off a creature, the way every rule ends one (Lay on Hands' Remove Poison,
+ * Lesser Restoration). Read as : target.endCondition("poisoned", { from : item }). On a creature the user owns it ends
+ * at once; on anyone else's, the GM's button on a card ends it (asked : true). Nothing to end : neither.
+ * @param {Token|Actor} thing
+ * @param {string} type      the condition's id ("poisoned")
+ * @param {object} [options]
+ * @param {Item} [options.from]  the item doing it (its name on the card)
+ * @param {Token|Actor} [options.by]  who does it (the card's speaker; default : the item's owner)
+ * @returns {Promise<{ ended : boolean, asked : boolean }>}
+ */
+export async function endCondition(thing, type, { from = null, by = null } = {}){
+  const actor = thing?.actor ?? thing;
+  if(!actor?.statuses?.has?.(type)) return { ended : false, asked : false };
+  if(actor.isOwner) return { ended : await setStatus(actor, type, false), asked : false };
+  const status = CONFIG.statusEffects.find(s => s.id === type);
+  const condition = status ? game.i18n.localize(status.name) : String(type);
+  const name = (thing?.document ?? thing)?.name ?? actor.name;
+  await gm.ask("endConditionAsk", { actor : actor.uuid, type }, { actor : by?.actor ?? (by?.documentName === "Actor" ? by : null) ?? from?.actor ?? null,
+    text : module.format("cardBuilder.endConditionAsk", { item : from?.name ?? "", name, condition }),
+    label : module.format("cardBuilder.endConditionButton", { name, condition }) });
+  return { ended : false, asked : true };
+}
+
 /* Is that point difficult terrain for this creature (for now : another creature's space, as dnd5e judges it) */
 export function isDifficultTerrain(thing, point){
   const token = tokenOf(thing);
@@ -831,6 +855,7 @@ export class cardBuilder{
       add(cls, "attachedTo", function(){ return attachedTo(this); });
       add(cls, "save", function(ability, dc, options){ return rollSave(this, ability, dc, options); });
       add(cls, "applyCondition", function(type, options){ return (typeof type === "string") ? giveCondition(this, type, options) : applyConditionNow(this, type); });
+      add(cls, "endCondition", function(type, options){ return endCondition(this, type, options); });
       add(cls, "isType", function(type){ return isType(this, type); });
       add(cls, "isImmuneTo", function(item){ return isImmuneTo(this, item); });
     }
@@ -906,6 +931,7 @@ export class cardBuilder{
     gm.handle("applyConditionNow", (data, user) => this.applyNowAsGM(data, user));
     /* GM : the button of applyConditionNow's ask card (the GM said yes) */
     gm.handle("applyConditionAsk", data => this.applyNowAsGM(data, game.user));
+    gm.handle("endConditionAsk", ({ actor, type } = {}) => setStatus(fromUuidSync(actor ?? "", { strict : false }), type, false));
     /* GM : a push / pull a player's macro asked for (forcedMove on a creature they don't own) */
     gm.handle("forcedMove", data => forcedMoveAsGM(data));
     /* GM : a save for a creature the asking user doesn't own (rollSave) */

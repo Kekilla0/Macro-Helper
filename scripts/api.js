@@ -9,9 +9,13 @@ import * as creatures from './helpers/creatures.js';
 import { restChoices } from './automation/rest-choices.js';
 import { rollRequests } from './requests/requests.js';
 import { damageRoll, eachAttack } from './roll-item/extra-damage.js';
-import { onHit, hitOf } from './roll-item/hit-bonus.js';
+import { onHit, hitOf, useOnLatestHit } from './roll-item/hit-bonus.js';
+import { onFailedTest } from './roll-item/rerolls.js';
+import { markSpell, markOf } from './automation/marks.js';
+import { weaponUses } from './automation/weapon-uses.js';
+import { conditions } from './automation/conditions.js';
 import { cutDamage, cutsOf } from './roll-item/damage-cuts.js';
-import { applyCondition, engulf, immunity, isType, isImmuneTo, web, affectedBy, pull, applyConditionNow, giveCondition, grapple, escapeDC, isDifficultTerrain, applyDisease, suppressOA, passThrough, applyEffect, attach, attachedTo, trample, followUp, extraDamage, shareDamage, chargedAt, isSmaller, grappling, teleport, leap, useMovement, useReaction, hasReaction, reactionMove, reactionMoveOf, reactionAttack, reactionMoveRows, reactionAttackRows, damageTypes, becameBloodied, push, cardBuilder } from './roll-item/card-builder.js';
+import { applyCondition, engulf, immunity, isType, isImmuneTo, web, affectedBy, pull, applyConditionNow, giveCondition, endCondition, grapple, escapeDC, isDifficultTerrain, applyDisease, suppressOA, passThrough, applyEffect, attach, attachedTo, trample, followUp, extraDamage, shareDamage, chargedAt, isSmaller, grappling, teleport, leap, useMovement, useReaction, hasReaction, reactionMove, reactionMoveOf, reactionAttack, reactionMoveRows, reactionAttackRows, damageTypes, becameBloodied, push, cardBuilder } from './roll-item/card-builder.js';
 
 /* Public functions for macros : MacroHelper.x(...) or game.modules.get("macro-helper").api.x(...) */
 export class api{
@@ -20,19 +24,24 @@ export class api{
       rollItem : (...args)=> rollItem.roll(...args),
       /* Card builder : the normal use's card to append to, and its parts */
       roll : (item, options) => cardBuilder.roll(item, options),
-      applyCondition, engulf, immunity, isType, isImmuneTo, web, affectedBy, pull, applyConditionNow, giveCondition, grapple, escapeDC, isDifficultTerrain, applyDisease, suppressOA, passThrough, applyEffect, attach, attachedTo, trample, followUp, extraDamage, shareDamage, chargedAt, isSmaller, grappling, teleport, leap, useMovement, useReaction, hasReaction, reactionMove, reactionMoveOf, reactionAttack, reactionMoveRows, reactionAttackRows, damageTypes, becameBloodied, push,
+      applyCondition, engulf, immunity, isType, isImmuneTo, web, affectedBy, pull, applyConditionNow, giveCondition, endCondition, grapple, escapeDC, isDifficultTerrain, applyDisease, suppressOA, passThrough, applyEffect, attach, attachedTo, trample, followUp, extraDamage, shareDamage, chargedAt, isSmaller, grappling, teleport, leap, useMovement, useReaction, hasReaction, reactionMove, reactionMoveOf, reactionAttack, reactionMoveRows, reactionAttackRows, damageTypes, becameBloodied, push,
 
       /* Extra damage : one roll (typed, doubled on a crit), and each attack on a card with its targets */
       damageRoll, eachAttack,
       /* On-hit bonus buttons (Divine Fury, a maneuver), and a card's damage made lower for a creature (Deflect Attacks) */
-      onHit, hitOf, cutDamage, cutsOf,
+      onHit, hitOf, useOnLatestHit, cutDamage, cutsOf,
+      /* A die added to a failed D20 Test (Bardic Inspiration), a spell that marks a creature (Hunter's Mark, Hex), the
+         ability and die a weapon attacks with (Martial Arts), what an effect ends on (Rage) */
+      onFailedTest, markSpell, markOf,
+      weaponUses : (id, rule) => weaponUses.add(id, rule),
+      endsWhen : (match, rule) => conditions.endsWhen(match, rule),
 
       /* Helpers, see scripts/helpers */
       ...tokens,    // tokenOf, actorOf, cells, distanceBetween, getRange, getTokensWithin, highlightRange, forcedMove, pushDestination, pushAway, pullToward, addLight, removeLight, hasLight, registerPool, poolBar, removePoolBar, poolsOf
       ...targets,   // isEnemy, isAlly, getFlanker, isFlanking, isThreatened, getThreats, getEnemiesWithinRange, pickTargets, isValidGroup, selectTargets, setTargets
-      ...actors,    // damage, heal, tempHP, dropsToZero, isKilledOutright, preventDropToZero, findItem, rollSave, addTimedEffect, recoverSpellSlots, usedThisTurn, markUsedThisTurn, getLastDamage, clearLastDamage, setStatus, setDefeated, getSize, stepSize, splitToken
+      ...actors,    // damage, heal, tempHP, dropsToZero, isKilledOutright, preventDropToZero, findItem, rollSave, addTimedEffect, recoverSpellSlots, slotsLeft, usedThisTurn, markUsedThisTurn, getLastDamage, clearLastDamage, setStatus, setDefeated, getSize, stepSize, splitToken
       ...items,     // pickAndAttack, pickAttack, attackModeFor, isLongRange, isRangedItem, isRangedAttack, canThrow, getAmmunition,
-                  // getUses, hasUses, spendUses, useActivity, useAndApply, getAppliedConditions, multiattack, getHealing, updateItem, setBaseDamage, setDamage
+                  // getUses, hasUses, spendUses, useActivity, useAndApply, getAppliedConditions, multiattack, getHealing, updateItem, setBaseDamage, setDamage, isClassSpell
       ...utils,     // wait, waitFor, originOf, chooseOption
       ...creatures, // crOf, fitsProfile, chooseCreature, chooseCreatures, chooseOne, chooseSet, divideAmong
       /* The character's Rest Choices window (Wild Shape forms...), e.g. after a rest the GM ran for everyone */

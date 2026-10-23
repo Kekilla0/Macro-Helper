@@ -10,6 +10,7 @@ import { TYPES } from '../../roll-item/message.js';
 import { spellEffects } from '../spell-effects.js';
 import { subclasses } from './common.js';
 import { itemFixes } from '../item-fixes.js';
+import { isClassSpell } from '../../helpers/items.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -62,7 +63,7 @@ export class warlockPatrons{
   }
 
   static isWarlockSpell(item){
-    return (item?.type === "spell") && ((String(item.system?.sourceItem ?? "") === "class:warlock") || (item.system?.classIdentifier === "warlock") || (item.system?.method === "pact"));
+    return isClassSpell(item, "warlock") || ((item?.type === "spell") && (item.system?.method === "pact"));
   }
 
   /* ---------- Archfey ---------- */

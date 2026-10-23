@@ -91,6 +91,47 @@ export class casting{
     if(this.enabled() && actor?.isOwner) await markUsedThisTurn(actor, "spellSlot");
   }
 
+  /**
+   * One spell slot spent by a flow that casts without dnd5e's use (a mark, a smite) : its count down, and this turn's.
+   * @param {Actor} actor
+   * @param {string} key   "spell2", "pact" (slotsLeft)
+   */
+  static async spendSlot(actor, key){
+    const slot = actor?.system?.spells?.[key];
+    if(!slot) return;
+    await actor.update({ [`system.spells.${key}.value`] : Math.max(0, (Number(slot.value) || 0) - 1) });
+    await this.slotSpent(actor);
+  }
+
+  /**
+   * Concentration on a spell cast without dnd5e's use (another one ends first) : dnd5e's own, through the spell's
+   * activity that concentrates, or its effect made here for a spell without one.
+   * @param {Actor} actor
+   * @param {Item} spell
+   * @param {number} seconds   how long
+   * @returns {Promise<ActiveEffect|null>}
+   */
+  static async concentrate(actor, spell, seconds){
+    for(const effect of actor.concentration?.effects ?? []) await actor.endConcentration(effect);
+    const activity = spell.system.activities?.find?.(a => a.duration?.concentration);
+    if(activity){
+      try { return await actor.beginConcentrating(activity, { duration : { value : seconds, units : "seconds" }, start : { time : game.time.worldTime } }); }
+      catch(error){ log.debug("Concentration through the activity", error); }
+    }
+    const status = CONFIG.statusEffects.find(e => e.id === CONFIG.specialStatusEffects.CONCENTRATING);
+    const [effect] = await actor.createEmbeddedDocuments("ActiveEffect", [{
+      name : `${game.i18n.localize("EFFECT.DND5E.StatusConcentrating")}: ${spell.name}`, img : status?.img, origin : spell.uuid,
+      statuses : [status?.id ?? "concentrating"], duration : { value : seconds, units : "seconds" }, start : { time : game.time.worldTime },
+      flags : { dnd5e : { item : { type : spell.type, id : spell.id, uuid : spell.uuid } } },
+    }]);
+    return effect ?? null;
+  }
+
+  /* The caster's Concentration on this spell */
+  static concentrationOn(actor, spell){
+    return actor?.effects?.find?.(e => e.statuses?.has?.(CONFIG.specialStatusEffects.CONCENTRATING) && (e.getFlag("dnd5e", "item")?.uuid === spell?.uuid)) ?? null;
+  }
+
   /* ========== Long casts ========== */
 
   /* How long the casting takes, in seconds (0 : an action or less) */

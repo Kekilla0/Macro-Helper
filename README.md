@@ -56,9 +56,14 @@ The main pieces, as methods on tokens, actors and items. Most also exist as `Mac
 | `MacroHelper.cutDamage(card, token, { amount, label })` | A card's damage to one creature made lower when applied (Interception, Deflect Attacks, Protective Field). |
 | `token.actor.save("con", 13, { from : item })` | The save lego: one save, rolled the way every rule rolls it. |
 | `token.applyCondition("prone", { save, dc, duration, repeat })`, `token.grapple(target)` | A condition, or a grapple, straight on a creature with no card. |
+| `token.endCondition("poisoned", { from })` | A condition taken off a creature (Lay on Hands' Remove Poison). Someone else's creature: the GM's button. |
+| `MacroHelper.onFailedTest({ id, source, formula })` | A die a creature adds to its missed attack or failed save or check (Bardic Inspiration). |
+| `MacroHelper.markSpell({ id, spell, free, hours, damage })` | A spell that marks one creature and hurts it more on every attack, ending with Concentration (Hunter's Mark, Hex). |
+| `MacroHelper.weaponUses(id, { applies, abilities, die })` | The abilities and damage die a weapon attacks with while a rule applies (Martial Arts, Pact of the Blade). |
+| `MacroHelper.endsWhen(match, { incapacitated, damaged, heavyArmor, combatEnd })` | What a rule's effects end on (Rage, Turned). |
 | `token.push(target, 10)`, `token.pull(target, 10)`, `token.teleport(30, { item })`, `token.leap(30, { item })`, `token.trample(feet)` | Movement. |
 | `token.damage(value, type)`, `token.heal(value)`, `item.useAndApply()` | Hit points, through dnd5e's damage rules. |
-| `item.spendUses(n)`, `token.useReaction(name)`, `actor.usedThisTurn(key)` | Resources and the action economy. |
+| `item.spendUses(n)`, `token.useReaction(name)`, `actor.usedThisTurn(key)`, `actor.slotsLeft(level)` | Resources and the action economy. |
 | `token.poolBar("grit", { item, flag, color })` | A pool of points (an item's uses, or a flag) as a coloured bar on the token, hidden when empty (Arcane Ward). |
 | `token.reactionMove({ feet, noOA })`, `token.reactionAttack({ extraDamage })` | A creature's Reaction spent moving (without Opportunity Attacks) or on one weapon attack, on anyone's turn (Mantle of Inspiration, Commander's Strike, Riposte). |
 | `target.isType("undead")`, `target.isSmaller("large")`, `token.canSee(other)`, `token.distanceTo(other)`, `token.isEnemy(other)` | Facts about a creature, for `when` checks. |
@@ -69,6 +74,7 @@ The [examples](examples/README.md) show these working together: a weapon with a 
 
 - [docs/settings.md](docs/settings.md): every setting and rule, page by page.
 - [docs/api.md](docs/api.md): every helper, method, card part and hook.
+- [docs/feature-steps.md](docs/feature-steps.md): each class feature's steps and the lego it's built on, and the parts that aren't legos yet.
 - [examples](examples/README.md): example macros, GM tools and importable items.
 
 ## License

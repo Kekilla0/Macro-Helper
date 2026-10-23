@@ -18,14 +18,21 @@ const log = logger.for(import.meta.url);
  *     formula : hit => "1d6 + 1",                            the damage
  *     types : hit => ["necrotic", "radiant"],                its type (several : a button each); the weapon's if left out
  *     once : "turn",                                         "turn" (once a turn), "target" (each creature once a turn)
+ *     counted : "apply",                                     once counts when its damage is applied to a creature, not
+ *                                                            on the click (Sneak Attack : rolling isn't using it)
+ *     again : actor => false,                                its damage applied again in the turn : go ahead? (Rule Limits)
+ *     noHit : actor => "...",                                the warning when used from the sheet with no hit for it
  *     ownTurn : true,                                        only on the attacker's own turn
  *     cost : hit => ({ item, amount : 1 }),                  spent on the click (none left : no button); { activity } :
  *                                                            that activity's own uses (Dreadful Strike's)
  *     after : (hit, card) => {},                             once it's on the card (a save, a mark)
  *   })
  *
- * hit : { message, ray, actor, token, item, activity, roll, critical, target, targets, weapon, unarmed, spell, cantrip,
- *         melee, ranged, ability, damageType, feature }
+ * hit : { message, ray, actor, token, item, activity, roll, critical, advantage, disadvantage, target, targets, weapon,
+ *         finesse, unarmed, spell, cantrip, melee, ranged, ability, damageType, feature }
+ *
+ * useOnLatestHit(id, actor) : the rule used from the sheet : the latest of the actor's attack cards (among the last
+ * messages) with a hit it qualifies for.
  */
 const rules = [];
 let hooked = false;
@@ -42,6 +49,7 @@ export function onHit(rule){
   hooked = true;
   Hooks.on(`${module.id}.cardButtons`, (message, buttons, { ray } = {}) => cardButtons(message, buttons, ray ?? null));
   Hooks.on(`${module.id}.cardButton`, (message, id, { ray } = {}) => { if(String(id).startsWith("onHit|")) clicked(message, String(id), ray ?? null); });
+  Hooks.on("dnd5e.preApplyDamage", (actor, amount, updates, options) => applied(options));
 }
 
 /**
@@ -65,8 +73,8 @@ export function hitOf(message, ray = null){
   const classification = activity?.attack?.type?.classification;
   return {
     message, ray, actor, token : tokenOf(message.getAssociatedToken?.() ?? actor), item, activity, roll,
-    critical : !!roll?.isCritical, target : targets[0] ?? null, targets,
-    weapon : item.type === "weapon", unarmed : (idOf(item) === "unarmed-strike") || (classification === "unarmed"),
+    critical : !!roll?.isCritical, advantage : !!roll?.hasAdvantage, disadvantage : !!roll?.hasDisadvantage, target : targets[0] ?? null, targets,
+    weapon : item.type === "weapon", finesse : !!item.system?.properties?.has?.("fin"), unarmed : (idOf(item) === "unarmed-strike") || (classification === "unarmed"),
     spell : item.type === "spell", cantrip : (item.type === "spell") && (Number(item.system?.level) === 0),
     melee : action.startsWith("m"), ranged : action.startsWith("r"),
     ability : roll?.options?.ability ?? activity?.ability ?? null,
@@ -155,11 +163,47 @@ async function clicked(message, id, ray){
   if(why) return ui.notifications.warn(module.format("hitBonus.notNow", { name : labelOf(rule, hit) }));
   const cost = rule.cost?.(hit);
   if(cost && !await pay(cost)) return;
-  if(rule.once) await markUsedThisTurn(hit.actor, onceKey(rule, hit));
+  if(rule.once && (rule.counted !== "apply")) await markUsedThisTurn(hit.actor, onceKey(rule, hit));
   const formula = String(rule.formula(hit));
   await message.system.extraDamage(formula, { key : rule.id, type : type || null, ray, label : labelOf(rule, hit),
     rollData : hit.actor.getRollData?.() ?? {}, magical : !!rule.magical });
   log.debug("On-hit bonus", rule.id, hit.actor.name, formula, type);
   try { await rule.after?.(hit, message); }
   catch(error){ log.error(error); }
+}
+
+/* Its box applied to a creature : the turn's use, for a rule counted then (a second one that turn : rule.again) */
+function applied(options = {}){
+  const part = String(options?.[module.id]?.part ?? "");
+  if(!part.startsWith("tray-extra-")) return;
+  const rule = rules.find(r => (r.counted === "apply") && r.once && part.startsWith(`tray-extra-${r.id}`));
+  const attacker = rule && options.origin?.getAssociatedActor?.();
+  if(!attacker || (rule.enabled && !rule.enabled())) return;
+  const key = onceKey(rule, { target : null });
+  if(usedThisTurn(attacker, key) && (rule.again?.(attacker) === false)) return false;
+  markUsedThisTurn(attacker, key);
+}
+
+/**
+ * A rule used from the sheet : the latest of this actor's attack cards (the last 15 messages) with a hit it offers its
+ * button on, and its damage put there (its first type).
+ * @param {string} id      the rule's id
+ * @param {Actor} actor
+ * @returns {Promise<ChatMessage|null>}  the card, or null (no such hit : a warning)
+ */
+export async function useOnLatestHit(id, actor){
+  const rule = rules.find(r => r.id === id);
+  for(const message of rule ? game.messages.contents.slice(-15).reverse() : []){
+    if((message.type !== TYPES.attack) || (message.getAssociatedActor?.()?.id !== actor?.id)) continue;
+    const rays = message.system.isMulti ? message.system.rays.map((_, i) => i) : [null];
+    for(const ray of rays){
+      const hit = hitOf(message, ray);
+      if(!hit || message.system.extraRolls?.(ray, rule.id)?.length || problem(rule, hit)) continue;
+      await clicked(message, `onHit|${rule.id}|${typesOf(rule, hit)[0] ?? ""}`, ray);
+      return message;
+    }
+    break;
+  }
+  ui.notifications.warn(rule?.noHit?.(actor) ?? module.format("hitBonus.noHit", { name : actor?.name ?? "", item : rule ? labelOf(rule, { actor, feature : featureOf(rule, actor) }) : id }));
+  return null;
 }

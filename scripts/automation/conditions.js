@@ -33,9 +33,10 @@ const log = logger.for(import.meta.url);
  * Toggling a condition off (token HUD, sheet) also removes the effects that carry only that condition (Shove's or
  * Thunderous Smite's "Prone"), not just dnd5e's own : otherwise the toggle adds a second one.
  *
- * Ends when Incapacitated : an effect flagged flags["macro-helper"].endsOnIncapacitated (Divine Sense, Starry Form,
- * Wrath of the Sea, Elemental Attunement) ends when its creature has the Incapacitated condition (or one that brings
- * it) : one on the creature is removed, an item's own is switched off (the active GM).
+ * Ends when (endsWhen) : the effects a rule names end when their creature is Incapacitated (Divine Sense, Starry Form,
+ * Wrath of the Sea, Elemental Attunement, Rage), takes damage (Turned), equips Heavy armor or its combat ends (Rage), or
+ * when the creature they came from is Incapacitated (Turned) : one on the creature is removed, an item's own is switched
+ * off (the active GM), unless the rule ends them its own way.
  */
 export class conditions{
   static register(){
@@ -69,35 +70,138 @@ export class conditions{
     Hooks.on("updateActor", (actor, changes) => this.onHPChange(actor, changes));
     /* A rest is well past any reaction to a hit : forget it */
     Hooks.on("dnd5e.restCompleted", actor => clearLastDamage(actor));
-    for(const hook of ["createActiveEffect", "updateActiveEffect"]) Hooks.on(hook, effect => this.incapacitatedEnds(effect));
-    Hooks.on("preCreateActiveEffect", effect => {
-      if(this.#endsOnIncapacitated.has(idOf(originItem(effect)))) effect.updateSource({ [`flags.${module.id}.endsOnIncapacitated`] : true });
-    });
+    for(const hook of ["createActiveEffect", "updateActiveEffect"]) Hooks.on(hook, effect => this.onStatusEnds(effect));
+    /* Damage : where it was applied (its owner's client), not only the GM's */
+    Hooks.on("dnd5e.applyDamage", (actor, amount) => { if((amount > 0) && actor?.isOwner) this.endsOn(actor, "damaged", null, { here : true }); });
+    Hooks.on("updateItem", (item, changes) => { if(foundry.utils.getProperty(changes ?? {}, "system.equipped")) this.onArmorEnds(item); });
+    Hooks.on("createItem", item => { if(item.system?.equipped) this.onArmorEnds(item); });
+    Hooks.on("deleteCombat", combat => { for(const c of combat?.combatants ?? []) if(c.actor) this.endsOn(c.actor, "combatEnd"); });
   }
 
-  static #endsOnIncapacitated = new Set();
+  /* ---------- Ends when ---------- */
+
+  static #endsWhen = [];
 
   /**
-   * The effects these items put on a creature (by identifier) end when it's Incapacitated.
-   * @param {...string} ids
+   * The effect-lifetime lego : what a rule's effects end on, said once.
+   *   conditions.endsWhen("rage", { incapacitated : true, heavyArmor : true, combatEnd : true, end })
+   *   match          an item identifier (the effects that item puts on a creature, or its own switched-on effect), or
+   *                  effect => boolean
+   *   incapacitated  the creature with it has the Incapacitated condition (or one that brings it)
+   *   damaged        it takes damage
+   *   heavyArmor     it equips Heavy armor
+   *   combatEnd      a combat it's in ends
+   *   sourceDown     the creature it came from (its origin item's owner) is Incapacitated (Turned, when the Cleric drops)
+   *   end            (actor, effects, why) instead of the default : an item's own effect switched off, any other deleted
+   * why : "incapacitated", "damaged", "heavyArmor", "combatEnd" or "sourceDown". The active GM's client ends them.
+   * @param {string|Function} match
+   * @param {object} rule
    */
+  static endsWhen(match, rule = {}){
+    this.#endsWhen.push({ ...rule, match });
+  }
+
+  /* The effects these items put on a creature (by identifier) end when it's Incapacitated */
   static endOnIncapacitated(...ids){
-    for(const id of ids) this.#endsOnIncapacitated.add(id);
+    for(const id of ids) this.endsWhen(id, { incapacitated : true });
   }
 
   static INCAPACITATING = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
 
-  /* Incapacitated : the effects that end then are gone */
-  static async incapacitatedEnds(effect){
+  static isIncapacitated(actor){
+    return this.INCAPACITATING.some(s => actor?.statuses?.has?.(s));
+  }
+
+  /* The item an effect comes from : the item it's on, or its origin's */
+  static #itemOf(effect){
+    return (effect?.parent?.documentName === "Item") ? effect.parent : originItem(effect);
+  }
+
+  static #matches(rule, effect){
+    if(typeof rule.match === "function") return !!rule.match(effect);
+    return idOf(this.#itemOf(effect)) === rule.match;
+  }
+
+  /* An actor's live effects that end on this */
+  static #endingOn(actor, why){
+    const rules = this.#endsWhen.filter(r => r[why]);
+    const found = new Map();
+    for(const e of [...(actor?.allApplicableEffects?.() ?? actor?.effects ?? [])]){
+      if(e.disabled) continue;
+      const rule = rules.find(r => this.#matches(r, e));
+      if(rule) found.set(e, rule);
+      /* An effect made to end so (Starry Form's) */
+      else if((why === "incapacitated") && e.getFlag?.(module.id, "endsOnIncapacitated")) found.set(e, {});
+    }
+    return found;
+  }
+
+  static #ending = new Set();
+
+  /**
+   * End the effects on this creature that end on `why` (the active GM).
+   * @param {Actor} actor
+   * @param {string} why
+   * @param {Map} [found]  effect -> rule, when already known
+   * @param {object} [options]
+   * @param {boolean} [options.here]  on this client (its owner's), not the active GM's
+   */
+  static async endsOn(actor, why, found = null, { here = false } = {}){
+    if(!actor || (!here && !game.users.activeGM?.isSelf)) return;
+    found ??= this.#endingOn(actor, why);
+    if(!found.size) return;
+    /* One rule's effects together (its own end gets them all at once) */
+    const byRule = new Map();
+    for(const [effect, rule] of found){
+      if(this.#ending.has(effect.uuid)) continue;
+      if(!byRule.has(rule)) byRule.set(rule, []);
+      byRule.get(rule).push(effect);
+    }
+    for(const [rule, effects] of byRule){
+      for(const e of effects) this.#ending.add(e.uuid);
+      try {
+        if(rule.end) await rule.end(actor, effects, why);
+        else for(const e of effects){
+          if(e.parent?.documentName === "Item") await e.update({ disabled : true });
+          else await e.delete();
+        }
+        log.debug("Ends :", why, actor.name, effects.map(e => e.name));
+      }
+      catch(error){ log.debug("Already gone", error); }
+      finally { for(const e of effects) this.#ending.delete(e.uuid); }
+    }
+  }
+
+  static #busy = Promise.resolve();
+
+  /* A status landed : Incapacitated ends its own effects, and those that came from it (sourceDown). Several status
+     changes arrive together (Unconscious brings Incapacitated) : one at a time */
+  static onStatusEnds(effect){
+    const run = this.#busy.then(() => this.#statusEnds(effect));
+    this.#busy = run.catch(() => {});
+    return run;
+  }
+
+  static async #statusEnds(effect){
     if(!game.users.activeGM?.isSelf) return;
     const actor = (effect?.parent?.documentName === "Actor") ? effect.parent : effect?.parent?.actor;
-    if(!actor || !this.INCAPACITATING.some(s => actor.statuses?.has?.(s))) return;
-    for(const e of [...(actor.allApplicableEffects?.() ?? actor.effects)]){
-      if(e.disabled || !e.getFlag?.(module.id, "endsOnIncapacitated")) continue;
-      if(e.parent?.documentName === "Item") await e.update({ disabled : true });
-      else await e.delete();
-      log.debug("Ends : Incapacitated", actor.name, e.name);
+    if(!this.isIncapacitated(actor)) return;
+    await this.endsOn(actor, "incapacitated");
+    if(!this.#endsWhen.some(r => r.sourceDown)) return;
+    /* Effects on others that came from this creature */
+    const mine = item => item?.actor && ((item.actor.uuid === actor.uuid) || (item.actor.id === actor.id));
+    const others = [...game.actors, ...(canvas.tokens?.placeables ?? []).filter(t => t.actor && !t.document.actorLink).map(t => t.actor)];
+    for(const other of new Set(others)){
+      if(other === actor) continue;
+      const found = new Map([...this.#endingOn(other, "sourceDown")].filter(([e]) => mine(this.#itemOf(e))));
+      if(found.size) await this.endsOn(other, "sourceDown", found);
     }
+  }
+
+  /* Heavy armor put on */
+  static onArmorEnds(item){
+    if((item?.type !== "equipment") || (item.system?.type?.value !== "heavy") || !item.actor) return;
+    return this.endsOn(item.actor, "heavyArmor");
   }
 
   /* An effect named like a condition, put on a creature (Shove's "Prone", Thunderous Smite's) : the condition itself

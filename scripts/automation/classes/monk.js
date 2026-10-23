@@ -4,7 +4,7 @@ import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
 import { hasShieldEquipped } from '../../helpers/items.js';
 import { actions } from '../actions.js';
-import { patch } from '../../patch.js';
+import { weaponUses } from '../weapon-uses.js';
 import { uses } from '../../uses.js';
 import { initiative } from '../initiative.js';
 import { itemFixes } from '../item-fixes.js';
@@ -104,20 +104,8 @@ export class monk{
       const kept = this.#redirectType;
       if(kept && (kept.item === activity?.item?.id) && ((Date.now() - kept.at) < 15000) && types.includes(kept.type)) preset.type = kept.type;
     });
-    /* At init (not setup : Foundry prepares the world's actors before setup, so their weapons would miss it until
-       something prepared them again) */
-    {
-      /* Martial Arts : the weapon's die and ability, before dnd5e makes its labels and its activities' rolls */
-      patch.wrap("CONFIG.Item.dataModels.weapon.prototype.prepareFinalData", function(wrapped, ...args){
-        try { monk.martialArts(this); } catch(error){ log.error(error); }
-        return wrapped(...args);
-      });
-      /* Martial Arts : the better ability, not the one dnd5e remembers from the last attack (STR from before) */
-      patch.wrap("CONFIG.DND5E.activityTypes.attack.documentClass.prototype.rollAttack", function(wrapped, config = {}, ...rest){
-        if((config.ability === undefined) && monk.appliesTo(this.item)) config = { ...config, ability : this.ability };
-        return wrapped(config, ...rest);
-      });
-    }
+    /* Martial Arts : the weapon-uses lego (the better of STR and DEX, the Martial Arts die) */
+    weaponUses.add("martialArts", { applies : item => this.appliesTo(item), abilities : () => ["str", "dex"], die : item => this.facesOf(item.actor) });
   }
 
 
@@ -148,55 +136,6 @@ export class monk{
   static facesOf(actor){
     const die = actor?.system?.scale?.monk?.die;
     return Number(die?.faces) || Number(/d(\d+)/i.exec(die?.formula ?? "")?.[1]) || 6;
-  }
-
-  /* ---------- Martial Arts ---------- */
-
-  static #original = new WeakMap();
-  static #added = new WeakMap();
-
-  /**
-   * On a weapon's data as dnd5e prepares it : back to its own die and abilities, then Martial Arts when it applies.
-   * @param {object} system   the weapon's system data
-   */
-  static martialArts(system){
-    const item = system?.parent;
-    const base = system?.damage?.base;
-    if(!item || !base) return;
-    /* Prepared again without being rebuilt : start from the weapon's own */
-    const original = this.#original.get(system);
-    if(!original) this.#original.set(system, { number : base.number, denomination : base.denomination, formula : base.custom?.formula, bonus : base.bonus });
-    else {
-      base.number = original.number;
-      base.denomination = original.denomination;
-      if(base.custom) base.custom.formula = original.formula;
-      base.bonus = original.bonus;
-    }
-    const attacks = (system.activities?.contents ?? [...(system.activities ?? [])]).filter(a => (a.type === "attack") && a.attack?.abilities);
-    for(const activity of attacks) for(const ability of this.#added.get(activity) ?? []) activity.attack.abilities.delete(ability);
-
-    const actor = item.actor;
-    if(!this.appliesTo(item)) return;
-    const faces = this.facesOf(actor);
-    if(base.custom?.enabled){
-      const formula = String(base.custom.formula ?? "");
-      const own = /(\d*)d(\d+)/i.exec(formula);
-      if(!own) base.custom.formula = (/^\s*\d*\s*$/.test(formula)) ? `1d${faces}` : formula.replace(/^\s*\d+\b/, `1d${faces}`);
-      else if(Number(own[2]) < faces) base.custom.formula = formula.replace(own[0], `1d${faces}`);
-    }
-    else if((Number(base.denomination) || 0) < faces){
-      /* dnd5e's own Unarmed Strike has no die : its flat 1 is in the bonus ("1 + @mod"), and the die replaces it */
-      if(!(Number(base.denomination) > 0) && (typeof base.bonus === "string")) base.bonus = base.bonus.replace(/^\s*\d+(?![\dd.])\s*(\+\s*)?/i, "");
-      base.number = 1;
-      base.denomination = faces;
-    }
-    /* The better of STR and DEX (dnd5e takes the higher of an attack's abilities) */
-    for(const activity of attacks){
-      if(["none", "spellcasting"].includes(activity.attack.ability)) continue;
-      const add = ["str", "dex"].filter(a => !activity.attack.abilities.has(a));
-      for(const ability of add) activity.attack.abilities.add(ability);
-      this.#added.set(activity, add);
-    }
   }
 
   /* ---------- Flurry of Blows ---------- */

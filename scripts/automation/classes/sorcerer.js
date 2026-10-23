@@ -12,6 +12,7 @@ import { patch } from '../../patch.js';
 import { restChoices } from '../rest-choices.js';
 import { chooseOne } from '../../helpers/creatures.js';
 import { onDamage } from '../../roll-item/damage.js';
+import { isClassSpell } from '../../helpers/items.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -118,9 +119,7 @@ export class sorcerer{
 
   /* A spell cast as a Sorcerer spell (its class link) */
   static isSorcererSpell(item){
-    if(item?.type !== "spell") return false;
-    const source = String(item.system?.sourceItem ?? "");
-    return (source === "class:sorcerer") || (item.system?.classIdentifier === "sorcerer");
+    return isClassSpell(item, "sorcerer");
   }
 
   /* ---------- Innate Sorcery ---------- */

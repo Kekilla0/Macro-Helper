@@ -3,7 +3,7 @@ import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
 import { idOf, originItem, chooseOption, esc } from '../../helpers/utils.js';
 import { chooseOne } from '../../helpers/creatures.js';
-import { patch } from '../../patch.js';
+import { weaponUses } from '../weapon-uses.js';
 import { uses } from '../../uses.js';
 import { itemFixes } from '../item-fixes.js';
 import { compendiums } from '../compendiums.js';
@@ -50,17 +50,8 @@ export class pacts{
     if(game.system.id !== "dnd5e") return;
     /* ---------- Blade ---------- */
     itemFixes.add({ name : "Pact of the Blade", where : "owned", plan : item => this.bladeFix(item) });
-    /* At init (not setup : the world's actors are prepared before setup) */
-    {
-      patch.wrap("CONFIG.Item.dataModels.weapon.prototype.prepareFinalData", function(wrapped, ...args){
-        try { pacts.pactAbilities(this); } catch(error){ log.error(error); }
-        return wrapped(...args);
-      });
-      patch.wrap("CONFIG.DND5E.activityTypes.attack.documentClass.prototype.rollAttack", function(wrapped, config = {}, ...rest){
-        if((config.ability === undefined) && pacts.isPactWeapon(this.item)) config = { ...config, ability : this.ability };
-        return wrapped(config, ...rest);
-      });
-    }
+    /* Its attacks : CHA beside the weapon's own abilities (the weapon-uses lego) */
+    weaponUses.add("pactOfTheBlade", { applies : item => this.isPactWeapon(item), abilities : () => ["cha"] });
     Hooks.on(`${module.id}.damageType`, (activity, { types, preset }) => {
       if(this.isPactWeapon(activity?.item)) preset.type = types.find(t => !this.PACT_TYPES.includes(t)) ?? types[0];
     });
@@ -121,23 +112,6 @@ export class pacts{
 
   static isPactWeapon(item){
     return this.enabled() && (item?.type === "weapon") && (!!this.pactEffectOf(item) || !!item.getFlag?.(module.id, "pactWeapon"));
-  }
-
-  static #added = new WeakMap();
-
-  /* As dnd5e prepares the weapon : CHA beside its own abilities (dnd5e takes the highest) */
-  static pactAbilities(system){
-    const item = system?.parent;
-    const attacks = (system?.activities?.contents ?? [...(system?.activities ?? [])]).filter(a => (a.type === "attack") && a.attack?.abilities);
-    for(const activity of attacks) for(const ability of this.#added.get(activity) ?? []) activity.attack.abilities.delete(ability);
-    if(!item?.actor || !this.isPactWeapon(item)) return;
-    for(const activity of attacks){
-      if(["none", "spellcasting"].includes(activity.attack.ability)) continue;
-      /* Before dnd5e adds the weapon's own (STR, DEX for Finesse) in its final preparation */
-      const add = ["cha"].filter(a => !activity.attack.abilities.has(a));
-      for(const ability of add) activity.attack.abilities.add(ability);
-      this.#added.set(activity, add);
-    }
   }
 
   /* Necrotic, Psychic, Radiant (or back to its own type) : the attack card's buttons, for its owner */

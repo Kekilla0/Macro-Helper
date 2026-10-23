@@ -28,6 +28,7 @@ import { fighter } from './automation/classes/fighter.js';
 import { monk } from './automation/classes/monk.js';
 import { paladin } from './automation/classes/paladin.js';
 import { ranger } from './automation/classes/ranger.js';
+import { weaponUses } from './automation/weapon-uses.js';
 import { rogue } from './automation/classes/rogue.js';
 import { sorcerer } from './automation/classes/sorcerer.js';
 import { warlock } from './automation/classes/warlock.js';
@@ -80,6 +81,7 @@ Hooks.once("init", ()=> {
   uses.register();
   itemFixes.register();
   rollModes.register();
+  weaponUses.register();
   api.register();
   rollItem.register();
   cardBuilder.register();

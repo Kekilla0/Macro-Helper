@@ -218,3 +218,85 @@ export class rerolls{
     }
   }
 }
+
+/* ---------- The failed-test lego ---------- */
+
+const failRules = [];
+let failHooked = false;
+
+/**
+ * The failed-test lego : a die a creature adds to one of its D20 Tests that failed (Bardic Inspiration), said once. Its
+ * owner gets a button on the failed roll : a missed attack on a card, or a failed save or check (its message, and the
+ * card rows that link it; not initiative). The die is rolled onto that roll (the card re-judges it), once per roll.
+ *
+ *   onFailedTest({
+ *     id : "bardic",                          its key (the roll's flag)
+ *     tests : ["attack", "save", "check"],    which D20 Tests (default : all three)
+ *     source : actor => ({ die }) | null,     what the creature can add now (null : no button)
+ *     formula : source => "1d6",
+ *     label : source => "Use Bardic Inspiration (1d6)", icon : "fa-music",
+ *     after : (actor, source, message) => {}, once it's added (the die used up)
+ *   })
+ * A roll with no DC or AC known counts as failed (its owner judges).
+ */
+export function onFailedTest(rule){
+  if(!rule?.id || failRules.some(r => r.id === rule.id)) return;
+  failRules.push(rule);
+  if(failHooked) return;
+  failHooked = true;
+  Hooks.on(`${module.id}.rerollButtons`, (message, buttons, { actor, roll }) => failTestButtons(message, buttons, actor, roll));
+  Hooks.on(`${module.id}.cardButtons`, (message, buttons, { ray } = {}) => failAttackButtons(message, buttons, ray ?? null));
+  Hooks.on(`${module.id}.cardButton`, (message, id, { ray } = {}) => {
+    if(String(id).startsWith("failedTest|")) failAttackClicked(message, String(id).slice(11), ray ?? null);
+  });
+}
+
+/* A D20 Test that failed : below its DC / AC, or with none known */
+export function failedRoll(roll){
+  if(!roll) return false;
+  const target = roll.options?.target;
+  return !Number.isFinite(target) || (roll.total < target);
+}
+
+const testsOf = rule => rule.tests ?? ["attack", "save", "check"];
+const rayKey = ray => Number.isInteger(ray) ? String(ray) : "single";
+
+/* A save / check message : its owner's button, once */
+function failTestButtons(message, buttons, actor, roll){
+  if(!actor?.isOwner || message.getFlag?.("core", "initiativeRoll") || !failedRoll(roll)) return;
+  for(const rule of failRules){
+    if(!testsOf(rule).includes(message.type) || message.getFlag?.(module.id, rule.id)) continue;
+    const source = rule.source(actor);
+    if(!source) continue;
+    buttons.push({ id : rule.id, icon : rule.icon ?? "fa-dice", label : rule.label(source), run : async () => {
+      const now = rule.source(actor);
+      if(!now || !message.isOwner || message.getFlag?.(module.id, rule.id)) return;
+      const { updated, extra } = await addDie(message.rolls[0], rule.formula(now));
+      await rerolls.replace(message, updated, [extra]);
+      await message.setFlag(module.id, rule.id, true);
+      await rule.after?.(actor, now, message);
+    } });
+  }
+}
+
+/* A missed attack on a card : the attacker's owner's button, once per attack */
+function failAttackButtons(message, buttons, ray){
+  if(typeof message.system?.addBonus !== "function") return;
+  const attacker = message.getAssociatedActor?.();
+  if(!attacker?.isOwner || !message.system.attackOf?.(ray) || message.system.isHitOn?.(ray)) return;
+  for(const rule of failRules){
+    if(!testsOf(rule).includes("attack") || message.getFlag?.(module.id, `${rule.id}.${rayKey(ray)}`)) continue;
+    const source = rule.source(attacker);
+    if(source) buttons.push({ id : `failedTest|${rule.id}`, label : rule.label(source), icon : rule.icon ?? "fa-dice" });
+  }
+}
+
+async function failAttackClicked(message, id, ray){
+  const rule = failRules.find(r => r.id === id);
+  const attacker = message.getAssociatedActor?.();
+  const source = rule && attacker && rule.source(attacker);
+  if(!source || !message.isOwner || message.getFlag?.(module.id, `${rule.id}.${rayKey(ray)}`)) return;
+  if(!await message.system.addBonus(ray, rule.formula(source))) return;
+  await message.setFlag(module.id, `${rule.id}.${rayKey(ray)}`, true);
+  await rule.after?.(attacker, source, message);
+}

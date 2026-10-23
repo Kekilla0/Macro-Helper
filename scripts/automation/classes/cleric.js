@@ -6,6 +6,7 @@ import { tokenOf, getTokensWithin } from '../../helpers/tokens.js';
 import { uses } from '../../uses.js';
 import { rollItem } from '../../roll-item/roll-item.js';
 import { itemFixes } from '../item-fixes.js';
+import { conditions } from '../conditions.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -22,7 +23,12 @@ export class cleric{
   static TURN_UNDEAD = "turn-undead";
   /* dnd5e's own : Turn Undead is an activity on Channel Divinity (beside Divine Spark), not an item */
   static CHANNEL = "channel-divinity-cleric";
-  static INCAPACITATED = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
+
+  /* The Cleric's Channel Divinity : dnd5e's identifier, or Plutonium's plain "channel-divinity" on a Cleric */
+  static isChannel(item){
+    const id = idOf(item);
+    return (id === this.CHANNEL) || ((id === "channel-divinity") && !!item?.actor?.classes?.cleric);
+  }
 
   static enabled(){
     return (game.system.id === "dnd5e") && settings.value("classRules");
@@ -30,9 +36,8 @@ export class cleric{
 
   static register(){
     if(game.system.id !== "dnd5e") return;
-    Hooks.on("dnd5e.applyDamage", (actor, amount) => this.onDamaged(actor, amount));
-    Hooks.on("createActiveEffect", effect => this.onClericDown(effect));
-    Hooks.on("updateActiveEffect", effect => this.onClericDown(effect));
+    /* Turned ends when it takes damage, or the Cleric is Incapacitated */
+    conditions.endsWhen(effect => this.enabled() && this.isTurned(effect), { damaged : true, sourceDown : true });
     /* Turn Undead : its targets set before the use (no pick), and its circle round the Cleric for everyone to see */
     uses.onActivity("presetTargets", (activity, ctx, next) => {
       const preset = this.presetTargets(activity);
@@ -67,7 +72,7 @@ export class cleric{
   /* Turn Undead : an item of its own, or Channel Divinity's activity of that name */
   static isTurnUndead(activity){
     const id = idOf(activity?.item);
-    return (id === this.TURN_UNDEAD) || ((id === this.CHANNEL) && /turn undead/i.test(activity?.name ?? ""));
+    return (id === this.TURN_UNDEAD) || (this.isChannel(activity?.item) && /turn undead/i.test(activity?.name ?? ""));
   }
 
   static isUndead(actor){
@@ -117,38 +122,6 @@ export class cleric{
     /* The item, or one of its activities (dnd5e's effect tray) */
     const origin = originItem(effect);
     if(!origin) return false;
-    return (idOf(origin) === this.TURN_UNDEAD) || ((idOf(origin) === this.CHANNEL) && /turn/i.test(effect.name ?? ""));
-  }
-
-  /* Taking damage ends it */
-  static async onDamaged(actor, amount){
-    if(!this.enabled() || !(amount > 0) || !actor?.isOwner) return;
-    const turned = actor.effects.filter(e => this.isTurned(e));
-    if(!turned.length) return;
-    await actor.deleteEmbeddedDocuments("ActiveEffect", turned.map(e => e.id)).catch(error => log.debug("Already gone", error));
-    log.debug("Turned ends (damage)", actor.name);
-  }
-
-  static #busy = Promise.resolve();
-
-  /* The Cleric Incapacitated or dead : every creature it turned stops being Turned (the active GM). Several status
-     changes arrive together (Unconscious brings Incapacitated) : one at a time, and only what's still there */
-  static onClericDown(effect){
-    const run = this.#busy.then(() => this.#clericDown(effect));
-    this.#busy = run.catch(() => {});
-    return run;
-  }
-
-  static async #clericDown(effect){
-    if(!this.enabled() || !game.users.activeGM?.isSelf) return;
-    const actor = (effect?.parent?.documentName === "Actor") ? effect.parent : null;
-    if(!actor || !this.INCAPACITATED.some(s => actor.statuses?.has(s))) return;
-    const mine = item => item?.actor && ((item.actor.uuid === actor.uuid) || (item.actor.id === actor.id));
-    const sources = [...game.actors, ...(canvas.tokens?.placeables ?? []).filter(t => t.actor && !t.document.actorLink).map(t => t.actor)];
-    for(const other of new Set(sources)){
-      const turned = other.effects.filter(e => this.isTurned(e) && mine(fromUuidSync(e.origin, { strict : false })));
-      const ids = turned.map(e => e.id).filter(id => other.effects.has(id));
-      if(ids.length) await other.deleteEmbeddedDocuments("ActiveEffect", ids).catch(error => log.debug("Already gone", error));
-    }
+    return (idOf(origin) === this.TURN_UNDEAD) || (this.isChannel(origin) && /turn/i.test(effect.name ?? ""));
   }
 }

@@ -3,8 +3,7 @@ import { idOf, originItem } from '../../helpers/utils.js';
 import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
 import { tokenOf } from '../../helpers/tokens.js';
-import { masteries } from '../masteries.js';
-import { rerolls, addDie } from '../../roll-item/rerolls.js';
+import { onFailedTest } from '../../roll-item/rerolls.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -15,7 +14,8 @@ const log = logger.for(import.meta.url);
  *                        for a creature its player doesn't own).
  *                        When the Inspired creature fails a D20 Test (a missed attack, a failed save or check), its
  *                        owner gets a button : the die is rolled and added to that roll (the card re-judges it), and
- *                        the mark goes. Saves and checks from the sheet and on card rows, attack cards.
+ *                        the mark goes. Saves and checks from the sheet and on card rows, attack cards (the
+ *                        failed-test lego, onFailedTest).
  */
 export class bard{
   static BARDIC = "bardic-inspiration";
@@ -27,9 +27,14 @@ export class bard{
   static register(){
     if(game.system.id !== "dnd5e") return;
     Hooks.on(`${module.id}.targets`, (activity, tokens) => this.onTargets(activity, tokens));
-    Hooks.on(`${module.id}.cardButtons`, (message, buttons, context) => this.cardButtons(message, buttons, context));
-    Hooks.on(`${module.id}.cardButton`, (message, id, context) => this.cardClicked(message, id, context));
-    Hooks.on(`${module.id}.rerollButtons`, (message, buttons, { actor, roll }) => this.testButtons(message, buttons, actor, roll));
+    /* Using it : the failed-test lego (a missed attack, a failed save or check), the mark gone */
+    onFailedTest({
+      id : "bardic", icon : "fa-music",
+      source : actor => this.inspirationOf(actor),
+      formula : inspiration => inspiration.die,
+      label : inspiration => module.format("classes.bard.use", { die : inspiration.die }),
+      after : async (actor, inspiration) => { if(inspiration.effect.isOwner) await inspiration.effect.delete(); },
+    });
     /* Inspire's formula is the die the creature keeps : Roll Item mustn't roll it on the card */
     Hooks.on(`${module.id}.preRollItem`, activity => !this.keepsDie(activity));
   }
@@ -37,23 +42,6 @@ export class bard{
 
   static isBardic(activity){
     return this.enabled() && (idOf(activity?.item) === this.BARDIC);
-  }
-
-  /* Bardic Inspiration on a save / check message : the creature's owner, on a failed test (not initiative), once */
-  static testButtons(message, buttons, actor, roll){
-    if(!actor?.isOwner || message.getFlag?.("core", "initiativeRoll") || message.getFlag?.(module.id, "bardic") || !this.failed(roll)) return;
-    const inspiration = this.inspirationOf(actor);
-    if(inspiration) buttons.push({ id : "bardic", icon : "fa-music", label : module.format("classes.bard.use", { die : inspiration.die }), run : () => this.inspireTest(message, actor) });
-  }
-
-  /* Its die added to the roll, the mark gone */
-  static async inspireTest(message, actor){
-    const inspiration = this.inspirationOf(actor);
-    if(!inspiration || !message.isOwner) return;
-    const { updated, extra } = await addDie(message.rolls[0], inspiration.die);
-    await rerolls.replace(message, updated, [extra]);
-    await message.setFlag(module.id, "bardic", true);
-    if(inspiration.effect.isOwner) await inspiration.effect.delete();
   }
 
   /* Inspire's formula is the die the creature keeps : Roll Item mustn't roll it on the card */
@@ -89,13 +77,6 @@ export class bard{
     return null;
   }
 
-  /* A D20 Test that failed : below its DC / AC, or with none known (its owner judges) */
-  static failed(roll){
-    if(!roll) return false;
-    const target = roll.options?.target;
-    return !Number.isFinite(target) || (roll.total < target);
-  }
-
   /* ---------- Giving it ---------- */
 
   /* "Another creature", holding no die yet : the Bard and the already Inspired are dropped from the targets */
@@ -110,32 +91,5 @@ export class bard{
         tokens.splice(i, 1);
       }
     }
-  }
-
-
-
-
-
-  /* ---------- Using it : attack cards ---------- */
-
-  static cardButtons(message, buttons, { ray } = {}){
-    if(!this.enabled() || (typeof message.system?.addBonus !== "function")) return;
-    const attacker = message.getAssociatedActor?.();
-    if(!attacker?.isOwner || message.getFlag?.(module.id, `bardic.${masteries.rayKey(ray)}`)) return;
-    const inspiration = this.inspirationOf(attacker);
-    if(!inspiration) return;
-    const attack = message.system.attackOf?.(ray);
-    if(!attack || message.system.isHitOn?.(ray)) return;
-    buttons.push({ id : "bardic", label : module.format("classes.bard.use", { die : inspiration.die }), icon : "fa-music" });
-  }
-
-  static async cardClicked(message, id, { ray } = {}){
-    if(!this.enabled() || (id !== "bardic")) return;
-    const attacker = message.getAssociatedActor?.();
-    const inspiration = this.inspirationOf(attacker);
-    if(!inspiration || !message.isOwner) return;
-    if(!await message.system.addBonus(ray, inspiration.die)) return;
-    await message.setFlag(module.id, `bardic.${masteries.rayKey(ray)}`, true);
-    if(inspiration.effect.isOwner) await inspiration.effect.delete();
   }
 }

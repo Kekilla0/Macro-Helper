@@ -2,7 +2,7 @@ import { module } from '../../module.js';
 import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
 import { idOf, originItem, esc, ownerIds, chooseOption, buttonRow, addButton, makeButton } from '../../helpers/utils.js';
-import { usedThisTurn, markUsedThisTurn, setStatus } from '../../helpers/actors.js';
+import { slotsLeft, usedThisTurn, markUsedThisTurn } from '../../helpers/actors.js';
 import { pickTargets } from '../../helpers/targets.js';
 import { distanceBetween, tokenOf, getTokensWithin, hasLineOfSight } from '../../helpers/tokens.js';
 import { conditions } from '../conditions.js';
@@ -13,6 +13,7 @@ import { itemFixes } from '../item-fixes.js';
 import { limits } from '../limits.js';
 import { actions } from '../actions.js';
 import { masteries } from '../masteries.js';
+import { endCondition } from '../../roll-item/card-builder.js';
 import { TYPES } from '../../roll-item/message.js';
 import { casting } from '../casting.js';
 import { spellActions } from '../spell-actions.js';
@@ -35,8 +36,8 @@ const log = logger.for(import.meta.url);
  *                     The Ranger's spells that follow a weapon hit work the same way (the button says Strike when only
  *                     they apply) : Ensnaring Strike (any weapon hit : its STR save on the card), Hail of Thorns (a
  *                     ranged weapon hit : a DEX save for everyone within 5 ft of the target, on the hit's card).
- *   Lay on Hands    : both activities reach a creature you touch (picked on the map). Remove Poison ends Poisoned on a
- *                     creature you own; on anyone else the GM gets an End Poisoned button on the card.
+ *   Lay on Hands    : both activities reach a creature you touch (picked on the map). Remove Poison ends Poisoned (the
+ *                     end-condition lego) : at once on a creature you own; on anyone else, the GM's button on a card.
  *   Divine Sense    : (level 3, Channel Divinity's uses are the item's data) using it tells the Paladin's owner, in a
  *                     card only they and the GM see, the Celestials, Fiends and Undead within 60 ft not behind total
  *                     cover : their creature type and how far, and pings each on their map only. Sense Again on the
@@ -92,8 +93,6 @@ export class paladin{
     conditions.endOnIncapacitated(this.DIVINE_SENSE);
     Hooks.on("dnd5e.postUseActivity", activity => { if(this.enabled() && (idOf(activity?.item) === this.DIVINE_SENSE)) this.divineSense(activity.getUsageToken?.()?.actor ?? activity.actor); });
     Hooks.on("renderChatMessageHTML", (message, html) => this.senseButton(message, html));
-    /* dnd5e's render (after it rebuilds its own usage card's content, which would drop the button) */
-    Hooks.on("dnd5e.renderChatMessage", (message, html) => this.poisonButton(message, html));
     Hooks.on("dnd5e.restCompleted", (actor, result) => {
       if(result?.longRest && actor?.isOwner && actor.getFlag(module.id, "paladinsSmiteUsed")) actor.unsetFlag(module.id, "paladinsSmiteUsed");
     });
@@ -139,15 +138,7 @@ export class paladin{
 
   /* The spell slots left at a level or higher : { key : "spell2", level, value } (Pact Magic too) */
   static slotsFrom(actor, level){
-    const spells = actor?.system?.spells ?? {};
-    const out = [];
-    for(let l = Math.max(1, level); l <= 9; l++){
-      const slot = spells[`spell${l}`];
-      if((Number(slot?.value) > 0) && (Number(slot?.max) > 0)) out.push({ key : `spell${l}`, level : l, value : Number(slot.value) });
-    }
-    const pact = spells.pact;
-    if((Number(pact?.value) > 0) && (Number(pact?.level) >= level)) out.push({ key : "pact", level : Number(pact.level), value : Number(pact.value), pact : true });
-    return out;
+    return slotsLeft(actor, level);
   }
 
   /* A weapon hit on the card : "melee" or "ranged" (a thrown weapon : ranged), null when it isn't one */
@@ -345,11 +336,7 @@ export class paladin{
       if(free) return free.item.update({ "system.uses.spent" : (Number(free.item.system.uses.spent) || 0) + 1 });
       return;
     }
-    const slot = actor.system.spells?.[choice.slot.key];
-    if(slot){
-      await actor.update({ [`system.spells.${choice.slot.key}.value`] : Math.max(0, Number(slot.value) - 1) });
-      await casting.slotSpent(actor);
-    }
+    await casting.spendSlot(actor, choice.slot.key);
   }
 
   /* Wrathful and Thunderous : their save on the card, for the creatures hit (one save per card : an item's own rider stays) */
@@ -469,31 +456,13 @@ export class paladin{
     return Object.keys(update).length ? { update } : null;
   }
 
-  /* Remove Poison : ended at once on a creature you own; anyone else's is the GM's button on the card */
+  /* Remove Poison : the end-condition lego (at once on a creature you own; anyone else's : the GM's button on a card) */
   static async onUse(activity, usage, results){
     if(!this.enabled() || !this.isRemovePoison(activity) || !activity.actor?.isOwner) return;
     const target = fromUuidSync(usage?.[module.id]?.poisonTarget ?? "", { strict : false });
     if(!target?.actor) return;
-    /* A player's own creature : at once; anyone else's, or the GM's use : the GM's button on the card */
-    if(target.actor.isOwner && !game.user.isGM){
-      await setStatus(target.actor, "poisoned", false);
-      await actions.autoApplied(results);
-      return;
-    }
-    const card = await uses.cardOf(results);
-    const message = (card?.documentName === "ChatMessage") ? card : (card?.message ?? results?.message);
-    if(message?.isOwner) await message.setFlag(module.id, "removePoison", target.uuid);
-  }
-
-  static poisonButton(message, html){
-    const uuid = message.getFlag?.(module.id, "removePoison");
-    if(!uuid || !game.user.isGM) return;
-    const target = fromUuidSync(uuid, { strict : false });
-    if(!target?.actor?.statuses?.has?.("poisoned")) return;
-    const row = buttonRow(html, { key : `${module.id}-remove-poison` });
-    if(row.childElementCount) return;
-    addButton(row, makeButton({ icon : "fa-flask", text : module.format("classes.paladin.endPoisoned", { name : target.name }), once : true,
-      onClick : () => setStatus(target.actor, "poisoned", false) }));
+    const { ended } = await endCondition(target, "poisoned", { from : activity.item, by : activity.actor });
+    if(ended) await actions.autoApplied(results);
   }
 
   /* ---------- Divine Sense ---------- */

@@ -1,15 +1,15 @@
 import { module } from '../../module.js';
 import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
+import { onHit, useOnLatestHit } from '../../roll-item/hit-bonus.js';
 import { idOf, esc, ownerIds, gmIds, buttonRow, addButton, makeButton } from '../../helpers/utils.js';
-import { usedThisTurn, markUsedThisTurn, setStatus, addTimedEffect } from '../../helpers/actors.js';
+import { setStatus, addTimedEffect } from '../../helpers/actors.js';
 import { tokenOf, distanceBetween, canSee, movedThisTurn } from '../../helpers/tokens.js';
 import { rollModes } from '../roll-modes.js';
 import { giveMode } from '../../roll-item/reasons.js';
 import { uses } from '../../uses.js';
 import { limits } from '../limits.js';
 import { actions } from '../actions.js';
-import { TYPES } from '../../roll-item/message.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -21,7 +21,7 @@ const log = logger.for(import.meta.url);
  *                    the card rolls the class's die (the weapon's damage type, doubled on a crit) into a box of its own.
  *                    Rolling isn't using it : once a turn counts when that damage is applied to a creature; applying
  *                    another that turn follows Rule Limits, and the button stops showing. From the sheet : the latest
- *                    qualifying hit.
+ *                    qualifying hit. Built on the on-hit lego (onHit, counted : "apply").
  *   Cunning Action : Dash and Disengage are the Default Actions' marks. Hide (2024 : Heavily Obscured or behind three-
  *                    quarters / total cover, out of enemies' sight) asks the GM first : a card naming the enemies whose
  *                    tokens see the Rogue, with Allow / Deny; allowed, its owner rolls DEX (Stealth) against DC 15 (a
@@ -43,14 +43,21 @@ export class rogue{
 
   static register(){
     if(game.system.id !== "dnd5e") return;
-    Hooks.on(`${module.id}.cardButtons`, (message, buttons, context) => this.cardButtons(message, buttons, context));
-    Hooks.on(`${module.id}.cardButton`, (message, id, context) => { if(id === "sneak") this.sneak(message, context?.ray ?? null); });
-    /* Applied to a creature : that's the turn's Sneak Attack */
-    Hooks.on("dnd5e.preApplyDamage", (actor, amount, updates, options) => this.onApply(options));
+    /* Sneak Attack : the on-hit lego, once a turn counted when its damage is applied */
+    onHit({
+      id : this.KEY, feature : this.SNEAK, icon : "fa-user-ninja", enabled : () => this.enabled(),
+      when : hit => this.qualifies(hit),
+      formula : hit => this.formulaOf(hit.actor, hit.message),
+      types : hit => [[...(hit.item.system?.damage?.base?.types ?? [])][0] ?? "piercing"],
+      once : "turn", counted : "apply",
+      again : actor => limits.allow(module.format("classes.rogue.sneakUsed", { name : actor.name }), { who : actor.name, what : this.itemOf(actor)?.name ?? "Sneak Attack" }),
+      label : hit => hit.feature?.name ?? "Sneak Attack",
+      noHit : actor => module.format("classes.rogue.noHit", { name : actor?.name ?? "" }),
+    });
     /* Sneak Attack used from the sheet : the latest qualifying hit */
     uses.onItem("sneak", (item, ctx, next) => {
       if(!this.enabled() || (idOf(item) !== this.SNEAK) || !item.actor) return next();
-      return this.sneakFromSheet(item.actor);
+      return useOnLatestHit(this.KEY, item.actor);
     });
     Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.onCunning(activity, usage, results));
     /* Hide : nothing is used until the GM allows it (a denied Hide costs nothing) */
@@ -111,13 +118,14 @@ export class rogue{
     return actor?.items?.find?.(i => idOf(i) === this.SNEAK) ?? null;
   }
 
-  /* The class's die : its Sneak Attack scale, else by Rogue level (1d6 at 1-2, +1d6 every odd level) */
-  static formulaOf(actor){
+  /* The class's die : its Sneak Attack scale, else by Rogue level (1d6 at 1-2, +1d6 every odd level); and what other
+     rules add to it (the Assassin's Rogue level in the first round) : Hooks "macro-helper.sneakAttack" (actor, message, parts) */
+  static formulaOf(actor, message = null){
     const scale = actor?.system?.scale?.rogue?.["sneak-attack"];
-    if(scale?.formula) return scale.formula;
-    if(scale?.faces) return `${scale.number ?? 1}d${scale.faces}`;
     const level = Number(actor?.classes?.rogue?.system?.levels) || 1;
-    return `${Math.ceil(level / 2)}d6`;
+    const parts = [scale?.formula || (scale?.faces ? `${scale.number ?? 1}d${scale.faces}` : `${Math.ceil(level / 2)}d6`)];
+    if(message) Hooks.callAll(`${module.id}.sneakAttack`, actor, message, parts);
+    return parts.filter(Boolean).join(" + ");
   }
 
   /* An ally of the attacker (not it, not Incapacitated) within 5 ft of the target */
@@ -127,73 +135,10 @@ export class rogue{
       && !this.OUT.some(s => t.actor.statuses?.has?.(s)) && (distanceBetween(t, target) <= 5));
   }
 
-  /**
-   * Does this hit on the card allow Sneak Attack : a Finesse or ranged weapon, advantage or an ally by the target,
-   * no disadvantage.
-   * @returns {Token|null}  the creature hit, when it does
-   */
-  static qualifies(message, ray){
-    const card = message?.system;
-    if((message?.type !== TYPES.attack) || !card?.isHitOn?.(ray)) return null;
-    const activity = message.getAssociatedActivity?.();
-    const item = activity?.item;
-    if((activity?.type !== "attack") || (item?.type !== "weapon")) return null;
-    const attack = card.attackOf(ray);
-    const ranged = String(activity.getActionType?.(attack?.options?.attackMode) ?? "").startsWith("r");
-    if(!item.system.properties?.has?.("fin") && !ranged) return null;
-    if(attack?.hasDisadvantage) return null;
-    const target = card.hitTargets?.(ray)?.[0] ?? null;
-    const attacker = tokenOf(message.getAssociatedActor?.());
-    if(!attack?.hasAdvantage && !(target && attacker && this.allyNear(attacker, target))) return null;
-    return target ?? attacker;
-  }
-
-  static cardButtons(message, buttons, { ray } = {}){
-    if(!this.enabled() || !message.isOwner) return;
-    const actor = message.getAssociatedActor?.();
-    if(!actor?.isOwner || !this.itemOf(actor) || usedThisTurn(actor, "sneak")) return;
-    if(message.system.extraRolls?.(ray, this.KEY)?.length || !this.qualifies(message, ray)) return;
-    buttons.push({ id : "sneak", label : this.itemOf(actor).name, icon : "fa-user-ninja" });
-  }
-
-  /* The die onto the card (nothing used yet : that's when it's applied) */
-  static async sneak(message, ray){
-    const actor = message.getAssociatedActor?.();
-    if(!this.enabled() || !actor?.isOwner || message.system.extraRolls?.(ray, this.KEY)?.length || !this.qualifies(message, ray)) return false;
-    /* Rules that add to it (the Assassin's Rogue level in the first round) : Hooks "macro-helper.sneakAttack" (actor, message, parts) */
-    const parts = [this.formulaOf(actor)];
-    Hooks.callAll(`${module.id}.sneakAttack`, actor, message, parts);
-    const formula = parts.filter(Boolean).join(" + ");
-    const type = [...(message.getAssociatedItem?.()?.system?.damage?.base?.types ?? [])][0] ?? "piercing";
-    await message.system.extraDamage(formula, { key : this.KEY, type, ray, label : this.itemOf(actor)?.name ?? "Sneak Attack", rollData : {} });
-    log.debug("Sneak Attack rolled", actor.name, formula);
-    return true;
-  }
-
-  /* Its box applied to a creature : the turn's Sneak Attack (a second one that turn : Rule Limits) */
-  static onApply(options = {}){
-    if(!this.enabled() || !String(options?.[module.id]?.part ?? "").startsWith(`tray-extra-${this.KEY}`)) return;
-    const attacker = options.origin?.getAssociatedActor?.();
-    if(!attacker) return;
-    if(usedThisTurn(attacker, "sneak")
-      && !limits.allow(module.format("classes.rogue.sneakUsed", { name : attacker.name }), { who : attacker.name, what : this.itemOf(attacker)?.name ?? "Sneak Attack" })) return false;
-    markUsedThisTurn(attacker, "sneak");
-  }
-
-  /* From the sheet : the latest of this actor's attack cards with a qualifying hit and no Sneak Attack yet */
-  static async sneakFromSheet(actor){
-    for(const message of game.messages.contents.slice(-15).reverse()){
-      if((message.type !== TYPES.attack) || (message.getAssociatedActor?.()?.id !== actor.id)) continue;
-      const rays = message.system.isMulti ? message.system.rays.map((_, i) => i) : [null];
-      const ray = rays.find(r => !message.system.extraRolls?.(r, this.KEY)?.length && this.qualifies(message, r));
-      if(ray !== undefined){
-        await this.sneak(message, ray);
-        return message;
-      }
-      break;
-    }
-    ui.notifications.warn(module.format("classes.rogue.noHit", { name : actor.name }));
-    return null;
+  /* Does this hit allow Sneak Attack : a Finesse or ranged weapon attack, advantage or an ally by the target, no disadvantage */
+  static qualifies(hit){
+    if((hit.activity?.type !== "attack") || !hit.weapon || (!hit.finesse && !hit.ranged) || hit.disadvantage) return false;
+    return hit.advantage || !!(hit.target && hit.token && this.allyNear(hit.token, hit.target));
   }
 
   /* ---------- Cunning Action ---------- */

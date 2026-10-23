@@ -23,6 +23,18 @@ import { rollModes } from '../automation/roll-modes.js';
  */
 
 /**
+ * Is this a spell of that class : its class link (dnd5e's "class:sorcerer", or Plutonium's class identifier). A species'
+ * or a feat's spell isn't any class's.
+ * @param {Item} item
+ * @param {string} cls   the class identifier ("sorcerer")
+ * @returns {boolean}
+ */
+export function isClassSpell(item, cls){
+  if(item?.type !== "spell") return false;
+  return (String(item.system?.sourceItem ?? "") === `class:${cls}`) || (item.system?.classIdentifier === cls);
+}
+
+/**
  * Is a shield equipped ?
  * @param {Actor|Token|Item} thing   the creature (or one of its items)
  * @returns {boolean}

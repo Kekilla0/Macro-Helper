@@ -44,6 +44,7 @@ export class barbarian{
   static PRIMAL_KNOWLEDGE = "primal-knowledge";
   static PRIMAL_SKILLS = ["acr", "itm", "prc", "ste", "sur"];
   static INCAPACITATED = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
+  static ENDS = { incapacitated : "classes.barbarian.incapacitated", heavyArmor : "classes.barbarian.heavyArmor", combatEnd : "classes.barbarian.combatEnded" };
 
   static enabled(){
     return (game.system.id === "dnd5e") && settings.value("classRules");
@@ -62,11 +63,9 @@ export class barbarian{
     Hooks.on(`${module.id}.saveHint`, (message, actor, ability, { ignore }) => this.dangerSenseHint(actor, ability, ignore));
     Hooks.on("createChatMessage", message => this.onCard(message));
     Hooks.on("combatTurnChange", (combat, prior, current) => this.onTurnEnd(combat, prior, current));
-    Hooks.on("createActiveEffect", effect => this.onStatus(effect));
-    Hooks.on("updateActiveEffect", effect => this.onStatus(effect));
-    Hooks.on("updateItem", (item, changes) => this.onArmor(item, foundry.utils.getProperty(changes ?? {}, "system.equipped")));
-    Hooks.on("createItem", item => this.onArmor(item, item.system?.equipped));
-    Hooks.on("deleteCombat", combat => this.onCombatEnd(combat));
+    /* Ends early : Incapacitated, Heavy armor on, the combat over */
+    conditions.endsWhen(effect => this.enabled() && this.isRageEffect(effect), { incapacitated : true, heavyArmor : true, combatEnd : true,
+      end : (actor, effects, why) => this.endRage(actor, module.i18n(this.ENDS[why])) });
     /* Primal Knowledge : Plutonium's bonus is on whether raging or not */
     itemFixes.add({ name : "Primal Knowledge", where : "owned", plan : item => this.primalFix(item) });
     const self = this;
@@ -227,31 +226,6 @@ export class barbarian{
       return;
     }
     if(kept.round < prior.round) await this.endRage(actor, module.i18n("classes.barbarian.notKept"));
-  }
-
-  /* The combat is over : its Barbarians' Rages end */
-  static async onCombatEnd(combat){
-    if(!this.enabled() || !game.users.activeGM?.isSelf) return;
-    for(const combatant of combat?.combatants ?? []){
-      const actor = combatant.actor;
-      if(actor && this.rageEffects(actor).length) await this.endRage(actor, module.i18n("classes.barbarian.combatEnded"));
-    }
-  }
-
-  /* Incapacitated : the Rage ends */
-  static async onStatus(effect){
-    if(!this.enabled() || !game.users.activeGM?.isSelf) return;
-    const actor = (effect?.parent?.documentName === "Actor") ? effect.parent : effect?.parent?.actor;
-    if(!actor || !this.INCAPACITATED.some(s => actor.statuses?.has(s)) || !this.rageEffects(actor).length) return;
-    await this.endRage(actor, module.i18n("classes.barbarian.incapacitated"));
-  }
-
-  /* Heavy armor on : the Rage ends */
-  static async onArmor(item, equipped){
-    if(!this.enabled() || !game.users.activeGM?.isSelf || !equipped) return;
-    if((item?.type !== "equipment") || (item.system?.type?.value !== "heavy")) return;
-    const actor = item.actor;
-    if(this.rageEffects(actor).length) await this.endRage(actor, module.i18n("classes.barbarian.heavyArmor"));
   }
 
   static async endRage(actor, reason){

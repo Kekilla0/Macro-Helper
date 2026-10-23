@@ -1,21 +1,15 @@
 import { module } from '../../module.js';
 import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
-import { gm } from '../../gm.js';
-import { idOf, chooseOption, whisperOwners, originItem } from '../../helpers/utils.js';
-import { eachAttack } from '../../roll-item/extra-damage.js';
-import { pickTargets } from '../../helpers/targets.js';
-import { tokenOf } from '../../helpers/tokens.js';
-import { uses } from '../../uses.js';
-import { ranger } from './ranger.js';
+import { idOf, chooseOption, originItem } from '../../helpers/utils.js';
+import { markSpell } from '../marks.js';
 import { TYPES } from '../../roll-item/message.js';
 import { pacts } from './warlock-pacts.js';
 import { restChoices } from '../rest-choices.js';
 import { chooseOne } from '../../helpers/creatures.js';
 import { limits } from '../limits.js';
 import { patch } from '../../patch.js';
-import { casting } from '../casting.js';
-import { postTargetCard, registerTargetCards } from '../../helpers/target-card.js';
+import { isClassSpell } from '../../helpers/items.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -23,7 +17,7 @@ const log = logger.for(import.meta.url);
  * Rest) are the items' own data; changing a prepared spell on a level is Prepared Spells. Works from item identifiers,
  * whoever made them (none of Hex's own activities are used). The pacts (Blade, Chain, Tome) are warlock-pacts.js.
  *
- *   Hex             : Hunter's Mark's handling (ranger.js), plus the curse's ability : using the spell asks for a slot,
+ *   Hex             : the mark lego (marks.js, like Hunter's Mark), plus the curse's ability : using the spell asks for a slot,
  *                     the ability whose checks get disadvantage, and the creature (90 ft). The Warlock concentrates at
  *                     once; the GM's button curses the creature (an effect : disadvantage on that ability's checks; its
  *                     data : flags["macro-helper"].hex = { caster, spell, ability }). Every attack at it rolls 1d6
@@ -61,15 +55,22 @@ export class warlock{
     if(game.system.id !== "dnd5e") return;
     /* Pact of the Blade, Chain, Tome : warlock-pacts.js */
     pacts.register();
-    uses.onItem("hex", (item, ctx, next) => {
-      if(!this.enabled() || (item?.type !== "spell") || (idOf(item) !== this.HEX) || !item.actor) return next();
-      return this.useHex(item.actor, item);
+    /* Hex : the mark lego, with the curse's ability */
+    markSpell({
+      id : "hex", spell : this.HEX, name : "Hex", enabled : () => this.enabled(), range : this.RANGE, icon : "fa-skull",
+      hours : level => this.hoursFor(level),
+      ask : async (actor, spell) => {
+        const ability = await chooseOption({ title : spell.name, icon : "fa-solid fa-skull", prompt : module.i18n("classes.warlock.hexAbility"),
+          options : this.ABILITIES.map(a => ({ value : a, label : CONFIG.DND5E.abilities[a]?.label ?? a })) });
+        return ability ? { ability } : null;
+      },
+      words : data => ({ ability : CONFIG.DND5E.abilities[data.ability]?.label ?? data.ability ?? "" }),
+      effect : (data, spell, caster) => ({ img : spell?.img ?? "icons/svg/skull.svg",
+        name : module.format("classes.warlock.hexName", { spell : spell?.name ?? "Hex", name : caster.name, ability : CONFIG.DND5E.abilities[data.ability]?.label ?? data.ability }),
+        changes : [{ key : `system.abilities.${data.ability}.check.roll.mode`, type : "add", mode : 2, value : "-1" }] }),
+      damage : () => ({ formula : "1d6", type : "necrotic", label : "Hex" }),
+      text : { marked : "classes.warlock.hexed", moved : "classes.warlock.hexMoved", mark : "classes.warlock.hexShort", moveHere : "marks.moveHere", done : "classes.warlock.hexedShort" },
     });
-    gm.handle("hex", (data, user) => this.applyHex(data, user));
-    registerTargetCards();
-    Hooks.on("createChatMessage", (message, options, userId) => { if(userId === game.user.id) this.onAttackCard(message); });
-    Hooks.on("deleteActiveEffect", effect => this.onConcentrationEnd(effect));
-    Hooks.on("updateActor", (actor, changes) => this.onDown(actor, changes));
     /* Devil's Sight : its detection mode, and on the tokens of creatures that have it */
     /* At init : tokens are prepared with the world, before setup */
     {
@@ -96,120 +97,9 @@ export class warlock{
 
   /* ---------- Hex ---------- */
 
-  /* The Hex this caster has out now : { effect, token } */
-  static hexOf(caster){
-    for(const token of canvas.tokens?.placeables ?? []){
-      const effect = token.actor?.effects?.find?.(e => e.getFlag(module.id, "hex")?.caster === caster.uuid);
-      if(effect) return { effect, token };
-    }
-    return null;
-  }
-
-  static async useHex(actor, spell){
-    const current = this.hexOf(actor);
-    const down = current && ((Number(current.token.actor.system?.attributes?.hp?.value) || 0) <= 0);
-    if(current && down && ranger.concentrationOf(actor, spell)) return this.placeHex(actor, spell, { move : current, ability : current.effect.getFlag(module.id, "hex").ability });
-    /* A slot (Hex has no free castings : Hunter's Mark's payments without Favored Enemy) */
-    const payments = ranger.payments(actor).filter(p => !p.free);
-    if(!payments.length){
-      ui.notifications.warn(module.format("classes.ranger.noPay", { name : actor.name, spell : spell.name }));
-      return null;
-    }
-    const value = await chooseOption({ title : spell.name, icon : "fa-solid fa-skull", prompt : module.i18n("classes.ranger.payPrompt"), options : payments });
-    const pay = payments.find(p => p.value === value);
-    if(!pay) return null;
-    /* Its components, and one slot a turn (Casting) */
-    if(!casting.allowsCast(spell, { slot : true })) return null;
-    const ability = await chooseOption({ title : spell.name, icon : "fa-solid fa-skull", prompt : module.i18n("classes.warlock.hexAbility"),
-      options : this.ABILITIES.map(a => ({ value : a, label : CONFIG.DND5E.abilities[a]?.label ?? a })) });
-    if(!ability) return null;
-    return this.placeHex(actor, spell, { pay, ability });
-  }
-
-  static async placeHex(actor, spell, { pay = null, move = null, ability } = {}){
-    const [target] = await pickTargets(tokenOf(actor) ?? spell, { count : 1, range : this.RANGE, disposition : "enemy", useTargets : false, confirm : "auto",
-      filter : t => !move || (t.id !== move.token.id) });
-    if(!target) return null;
-    if(pay){
-      await actor.update({ [`system.spells.${pay.key}.value`] : Math.max(0, Number(actor.system.spells[pay.key].value) - 1) });
-      await casting.slotSpent(actor);
-      await ranger.concentrate(actor, spell, pay.level ?? 1, { hours : this.hoursFor(pay.level ?? 1) });
-    }
-    const label = CONFIG.DND5E.abilities[ability]?.label ?? ability;
-    /* The curse is on another creature : the spell's card, a row for it with Hex (the GM, or its owner) */
-    await postTargetCard({ actor, item : spell, text : module.format(move ? "classes.warlock.hexMoved" : "classes.warlock.hexed", { name : actor.name, target : target.name, ability : label }),
-      rows : [{ token : target.document.uuid, action : "hex",
-        data : { caster : actor.uuid, spell : spell.uuid, target : target.document.uuid, from : move?.effect.uuid ?? null, ability, hours : this.hoursFor(pay?.level ?? 1) },
-        label : module.i18n(move ? "classes.ranger.moveShort" : "classes.warlock.hexShort"), done : module.i18n("classes.warlock.hexedShort") }] });
-    log.debug("Hex", actor.name, target.name, ability, move ? "moved" : pay?.value);
-    return true;
-  }
-
   /* 2024 Hex : 1 hour; a level 2 slot 4 hours; 3-4 8 hours; 5+ 24 hours */
   static hoursFor(level){
     return (level >= 5) ? 24 : (level >= 3) ? 8 : (level >= 2) ? 4 : 1;
-  }
-
-  /* GM : the curse on the creature (moved : off the old one first) */
-  static async applyHex({ caster : casterUuid, spell : spellUuid, target : targetUuid, from = null, ability = "str", hours = 1 } = {}, user){
-    const caster = fromUuidSync(casterUuid ?? "", { strict : false });
-    const target = fromUuidSync(targetUuid ?? "", { strict : false });
-    const spell = fromUuidSync(spellUuid ?? "", { strict : false });
-    /* The caster's owner or the cursed creature's (its row's Hex), or the GM */
-    if(!game.user.isGM || !caster || !target?.actor || (user && !caster.testUserPermission(user, "OWNER") && !target.actor.testUserPermission(user, "OWNER"))) return false;
-    if(!ranger.concentrationOf(caster, spell)){
-      ui.notifications.warn(module.format("classes.ranger.noConcentration", { name : caster.name, spell : spell?.name ?? "" }));
-      return false;
-    }
-    if(from){
-      const old = fromUuidSync(from, { strict : false });
-      if(old?.getFlag?.(module.id, "hex")?.caster === caster.uuid) await old.delete();
-    }
-    else {
-      /* A new casting : any curse of this caster's elsewhere goes */
-      for(const t of canvas.tokens?.placeables ?? []){
-        for(const e of t.actor?.effects?.filter?.(x => x.getFlag(module.id, "hex")?.caster === caster.uuid) ?? []) await e.delete();
-      }
-    }
-    await target.actor.createEmbeddedDocuments("ActiveEffect", [{
-      name : module.format("classes.warlock.hexName", { spell : spell?.name ?? "Hex", name : caster.name, ability : CONFIG.DND5E.abilities[ability]?.label ?? ability }),
-      img : spell?.img ?? "icons/svg/skull.svg", origin : spellUuid, duration : { value : hours * 3600, units : "seconds" }, start : { time : game.time.worldTime },
-      showIcon : CONST.ACTIVE_EFFECT_SHOW_ICON?.ALWAYS ?? 2,
-      changes : [{ key : `system.abilities.${ability}.check.roll.mode`, type : "add", mode : 2, value : "-1" }],
-      flags : { [module.id] : { hex : { caster : caster.uuid, spell : spellUuid, ability } } },
-    }]);
-    return true;
-  }
-
-  static hexedBy(token, attacker){
-    return token?.actor?.effects?.find?.(e => e.getFlag(module.id, "hex")?.caster === attacker?.uuid) ?? null;
-  }
-
-  /* A new attack card : 1d6 Necrotic on every attack at the Warlock's hexed creature (its Apply on a hit) */
-  static async onAttackCard(message){
-    if(!this.enabled() || (message.type !== TYPES.attack)) return;
-    const attacker = message.getAssociatedActor?.();
-    if(!attacker || !this.hexOf(attacker)) return;
-    await eachAttack(message, async (card, ray, tokens) => {
-      if(!tokens.some(t => this.hexedBy(t, attacker))) return;
-      await card.system.extraDamage("1d6", { key : "hex", type : "necrotic", magical : true, ray, label : "Hex" });
-    });
-  }
-
-  static async onConcentrationEnd(effect){
-    if(!game.users.activeGM?.isSelf || !effect?.statuses?.has?.(CONFIG.specialStatusEffects.CONCENTRATING)) return;
-    const item = fromUuidSync(effect.getFlag("dnd5e", "item")?.uuid ?? "", { strict : false });
-    if((idOf(item) !== this.HEX) || (effect.parent?.documentName !== "Actor")) return;
-    const hex = this.hexOf(effect.parent);
-    if(hex) await hex.effect.delete();
-  }
-
-  static async onDown(actor, changes){
-    if(!game.users.activeGM?.isSelf || !foundry.utils.hasProperty(changes ?? {}, "system.attributes.hp.value")) return;
-    if((Number(actor.system?.attributes?.hp?.value) || 0) > 0) return;
-    const hex = actor.effects?.find?.(e => e.getFlag(module.id, "hex"));
-    const caster = hex && fromUuidSync(hex.getFlag(module.id, "hex").caster, { strict : false });
-    if(caster) await whisperOwners(caster, module.format("classes.ranger.down", { target : actor.name, spell : "Hex" }));
   }
 
   /* ---------- Devil's Sight ---------- */
@@ -271,7 +161,7 @@ export class warlock{
     const ident = idOf(invocation);
     return actor.items.filter(i => {
       if((i.type !== "spell") || (Number(i.system.level) !== 0) || this.carries(i, ident)) return false;
-      const warlock = (String(i.system.sourceItem ?? "") === "class:warlock") || (i.system.classIdentifier === "warlock");
+      const warlock = isClassSpell(i, "warlock");
       if(!warlock) return false;
       const acts = [...(i.system.activities ?? [])];
       const damage = acts.some(a => a.damage?.parts?.length);

@@ -1,15 +1,8 @@
 import { module } from '../../module.js';
 import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
-import { gm } from '../../gm.js';
-import { casting } from '../casting.js';
-import { idOf, chooseOption, whisperOwners } from '../../helpers/utils.js';
-import { eachAttack } from '../../roll-item/extra-damage.js';
-import { pickTargets } from '../../helpers/targets.js';
-import { tokenOf } from '../../helpers/tokens.js';
-import { uses } from '../../uses.js';
-import { TYPES } from '../../roll-item/message.js';
-import { postTargetCard, registerTargetCards } from '../../helpers/target-card.js';
+import { idOf } from '../../helpers/utils.js';
+import { markSpell, spellOf } from '../marks.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -17,7 +10,7 @@ const log = logger.for(import.meta.url);
  * automation/fighting-styles.js (swapped in Rest Choices). Works from item identifiers, whatever made the items (Plutonium,
  * dnd5e's SRD, by hand) : none of Hunter's Mark's own activities are used.
  *
- *   Hunter's Mark  : using the spell (or Favored Enemy) asks how to pay (a Favored Enemy use, free; or a slot), then the
+ *   Hunter's Mark  : the mark lego (marks.js). Using the spell (or Favored Enemy) asks how to pay (a Favored Enemy use, free; or a slot), then the
  *                    creature to mark (90 ft). The caster pays and concentrates at once; the chat card asks the GM
  *                    to mark the creature (a button : an effect on it). The mark ends with that Concentration. Every hit on the marked
  *                    creature with an attack roll adds 1d6 Force to the attack card (its own box, doubled on a crit).
@@ -37,19 +30,16 @@ export class ranger{
 
   static register(){
     if(game.system.id !== "dnd5e") return;
-    uses.onItem("huntersMark", (item, ctx, next) => {
-      if(!this.enabled() || ![this.MARK, this.FAVORED].includes(idOf(item)) || !item.actor) return next();
-      if((idOf(item) === this.MARK) && (item.type !== "spell")) return next();
-      return this.use(item.actor);
+    /* Hunter's Mark : the mark lego, Favored Enemy's free castings first */
+    markSpell({
+      id : "huntersMark", spell : this.MARK, name : "Hunter's Mark", items : [this.FAVORED], enabled : () => this.enabled(), range : this.RANGE, icon : "fa-crosshairs",
+      free : { left : actor => this.favoredLeft(actor), spend : actor => this.spendFavored(actor), label : left => module.format("classes.ranger.payFree", { left }) },
+      hours : level => this.hoursFor(level),
+      effect : (data, spell, caster) => ({ img : spell?.img ?? "icons/svg/target.svg",
+        name : module.format("classes.ranger.markName", { spell : spell?.name ?? "Hunter's Mark", name : caster.name }) }),
+      damage : attacker => ({ formula : "1d6", type : "force", label : spellOf(this.markRule, attacker)?.name ?? "Hunter's Mark" }),
+      text : { marked : "classes.ranger.marked", moved : "classes.ranger.moved", mark : "classes.ranger.markShort", moveHere : "marks.moveHere", done : "classes.ranger.markedShort" },
     });
-    gm.handle("huntersMark", (data, user) => this.applyMark(data, user));
-    registerTargetCards();
-    /* The damage : on the attack card, when it's made (the attacker's client) */
-    Hooks.on("createChatMessage", (message, options, userId) => { if(userId === game.user.id) this.onAttackCard(message); });
-    /* Concentration on the spell ends : so does the mark (the GM) */
-    Hooks.on("deleteActiveEffect", effect => this.onConcentrationEnd(effect));
-    /* The marked creature down : its caster is told */
-    Hooks.on("updateActor", (actor, changes) => this.onDown(actor, changes));
     Hooks.on("dnd5e.restCompleted", (actor, result) => this.onRest(actor, result));
   }
 
@@ -85,177 +75,10 @@ export class ranger{
 
   /* ---------- Hunter's Mark ---------- */
 
-  static spellOf(actor){
-    return actor?.items?.find?.(i => (i.type === "spell") && (idOf(i) === this.MARK)) ?? null;
-  }
-
-  /* The mark this caster has out now : { effect, token } */
-  static markOf(caster){
-    for(const token of canvas.tokens?.placeables ?? []){
-      const effect = token.actor?.effects?.find?.(e => e.getFlag(module.id, "huntersMark")?.caster === caster.uuid);
-      if(effect) return { effect, token };
-    }
-    return null;
-  }
-
-  /* Is the caster concentrating on Hunter's Mark */
-  static concentrationOf(caster, spell){
-    return caster.effects.find(e => e.statuses?.has?.(CONFIG.specialStatusEffects.CONCENTRATING) && (e.getFlag("dnd5e", "item")?.uuid === spell?.uuid)) ?? null;
-  }
-
-  /* The ways to cast it now : a Favored Enemy use, then each slot level left */
-  static payments(actor){
-    const out = [];
-    if(this.favoredLeft(actor) > 0) out.push({ value : "free", label : module.format("classes.ranger.payFree", { left : this.favoredLeft(actor) }), free : true });
-    const spells = actor.system?.spells ?? {};
-    for(let l = 1; l <= 9; l++){
-      const slot = spells[`spell${l}`];
-      if((Number(slot?.value) > 0) && (Number(slot?.max) > 0)) out.push({ value : `spell${l}`, label : module.format("classes.ranger.paySlot", { level : l, left : slot.value }), key : `spell${l}`, level : l });
-    }
-    if((Number(spells.pact?.value) > 0) && (Number(spells.pact?.level) >= 1)) out.push({ value : "pact", key : "pact", level : Number(spells.pact.level), label : module.format("classes.ranger.payPact", { level : spells.pact.level, left : spells.pact.value }) });
-    return out;
-  }
-
-  /**
-   * Using Hunter's Mark (or Favored Enemy) : move a mark whose creature is down, else cast it.
-   * @param {Actor} actor
-   */
-  static async use(actor){
-    const spell = this.spellOf(actor);
-    if(!spell){
-      ui.notifications.warn(module.format("classes.ranger.noSpell", { name : actor.name }));
-      return null;
-    }
-    const current = this.markOf(actor);
-    const down = current && ((Number(current.token.actor.system?.attributes?.hp?.value) || 0) <= 0);
-    if(current && down && this.concentrationOf(actor, spell)) return this.place(actor, spell, { move : current });
-
-    const payments = this.payments(actor);
-    if(!payments.length){
-      ui.notifications.warn(module.format("classes.ranger.noPay", { name : actor.name, spell : spell.name }));
-      return null;
-    }
-    const value = await chooseOption({ title : spell.name, icon : "fa-solid fa-crosshairs", prompt : module.i18n("classes.ranger.payPrompt"), options : payments });
-    const pay = payments.find(p => p.value === value);
-    if(!pay) return null;
-    /* Its components, and one slot a turn (Casting) */
-    if(!casting.allowsCast(spell, { slot : !pay.free })) return null;
-    return this.place(actor, spell, { pay });
-  }
-
-  /* Pick the creature, pay, concentrate, and have the GM mark it */
-  static async place(actor, spell, { pay = null, move = null } = {}){
-    const caster = tokenOf(actor);
-    const [target] = await pickTargets(caster ?? spell, { count : 1, range : this.RANGE, disposition : "enemy", useTargets : false, confirm : "auto",
-      filter : t => !move || (t.id !== move.token.id) });
-    if(!target) return null;
-    if(pay){
-      if(pay.free) await this.spendFavored(actor);
-      else {
-        await actor.update({ [`system.spells.${pay.key}.value`] : Math.max(0, Number(actor.system.spells[pay.key].value) - 1) });
-        await casting.slotSpent(actor);
-      }
-      await this.concentrate(actor, spell, pay.level ?? 1);
-    }
-    /* The mark itself is on another creature : the spell's card, a row for it with Mark (the GM, or its owner) */
-    await postTargetCard({ actor, item : spell, text : module.format(move ? "classes.ranger.moved" : "classes.ranger.marked", { name : actor.name, target : target.name, spell : spell.name }),
-      rows : [{ token : target.document.uuid, action : "huntersMark",
-        data : { caster : actor.uuid, spell : spell.uuid, target : target.document.uuid, from : move?.effect.uuid ?? null, hours : this.hoursFor(pay?.level ?? 1) },
-        label : module.i18n(move ? "classes.ranger.moveShort" : "classes.ranger.markShort"), done : module.i18n("classes.ranger.markedShort") }] });
-    log.debug("Hunter's Mark", actor.name, target.name, move ? "moved" : pay?.value);
-    return true;
-  }
+  static markRule = { id : "huntersMark", spell : "hunters-mark" };
 
   /* 2024 : 1 hour; a level 3-4 slot 8 hours; 5+ 24 hours */
   static hoursFor(level){
     return (level >= 5) ? 24 : (level >= 3) ? 8 : 1;
-  }
-
-  /* Concentration on the spell (another one ends first) : dnd5e's own, or its effect made here for a spell without
-     activities. hours : the spell's own duration (Hex's differs), else Hunter's Mark's */
-  static async concentrate(actor, spell, level, { hours = null } = {}){
-    for(const effect of actor.concentration?.effects ?? []) await actor.endConcentration(effect);
-    const activity = spell.system.activities?.find?.(a => a.duration?.concentration);
-    const seconds = (hours ?? this.hoursFor(level)) * 3600;
-    if(activity){
-      try { return await actor.beginConcentrating(activity, { duration : { value : seconds, units : "seconds" }, start : { time : game.time.worldTime } }); }
-      catch(error){ log.debug("Concentration through the activity", error); }
-    }
-    const status = CONFIG.statusEffects.find(e => e.id === CONFIG.specialStatusEffects.CONCENTRATING);
-    const [effect] = await actor.createEmbeddedDocuments("ActiveEffect", [{
-      name : `${game.i18n.localize("EFFECT.DND5E.StatusConcentrating")}: ${spell.name}`, img : status?.img, origin : spell.uuid,
-      statuses : [status?.id ?? "concentrating"], duration : { value : seconds, units : "seconds" }, start : { time : game.time.worldTime },
-      flags : { dnd5e : { item : { type : spell.type, id : spell.id, uuid : spell.uuid } } },
-    }]);
-    return effect;
-  }
-
-  /* GM : the mark on the creature (moved : off the old one first) */
-  static async applyMark({ caster : casterUuid, spell : spellUuid, target : targetUuid, from = null, hours = 1 } = {}, user){
-    const caster = fromUuidSync(casterUuid ?? "", { strict : false });
-    const target = fromUuidSync(targetUuid ?? "", { strict : false });
-    const spell = fromUuidSync(spellUuid ?? "", { strict : false });
-    /* The caster's owner or the marked creature's (its row's Mark), or the GM */
-    if(!game.user.isGM || !caster || !target?.actor || (user && !caster.testUserPermission(user, "OWNER") && !target.actor.testUserPermission(user, "OWNER"))) return false;
-    /* Concentration gone before the GM got to it : nothing to mark */
-    if(!this.concentrationOf(caster, spell)){
-      ui.notifications.warn(module.format("classes.ranger.noConcentration", { name : caster.name, spell : spell?.name ?? "" }));
-      return false;
-    }
-    if(from){
-      const old = fromUuidSync(from, { strict : false });
-      if(old?.getFlag?.(module.id, "huntersMark")?.caster === caster.uuid) await old.delete();
-    }
-    else {
-      /* A new casting : any mark of this caster's elsewhere goes */
-      for(const t of canvas.tokens?.placeables ?? []){
-        for(const e of t.actor?.effects?.filter?.(x => x.getFlag(module.id, "huntersMark")?.caster === caster.uuid) ?? []) await e.delete();
-      }
-    }
-    await target.actor.createEmbeddedDocuments("ActiveEffect", [{
-      name : module.format("classes.ranger.markName", { spell : spell?.name ?? "Hunter's Mark", name : caster.name }), img : spell?.img ?? "icons/svg/target.svg",
-      origin : spellUuid, duration : { value : hours * 3600, units : "seconds" }, start : { time : game.time.worldTime },
-      showIcon : CONST.ACTIVE_EFFECT_SHOW_ICON?.ALWAYS ?? 2,
-      flags : { [module.id] : { huntersMark : { caster : caster.uuid, spell : spellUuid } } },
-    }]);
-    return true;
-  }
-
-  /* The mark this attacker has on a token */
-  static markedBy(token, attacker){
-    return token?.actor?.effects?.find?.(e => e.getFlag(module.id, "huntersMark")?.caster === attacker?.uuid) ?? null;
-  }
-
-  /* A new attack card : 1d6 Force on each hit on the attacker's marked creature */
-  static async onAttackCard(message){
-    if(!this.enabled() || (message.type !== TYPES.attack)) return;
-    const attacker = message.getAssociatedActor?.();
-    if(!attacker || !this.markOf(attacker)) return;
-    /* Every attack at it, hit or miss (no die would tell a miss); its Apply only on a hit */
-    await eachAttack(message, async (card, ray, tokens) => {
-      if(!tokens.some(t => this.markedBy(t, attacker))) return;
-      await card.system.extraDamage("1d6", { key : "huntersMark", type : "force", magical : true, ray, label : this.spellOf(attacker)?.name ?? "Hunter's Mark" });
-    });
-  }
-
-  /* Concentration on Hunter's Mark ended : the caster's mark goes (active GM) */
-  static async onConcentrationEnd(effect){
-    if(!game.users.activeGM?.isSelf || !effect?.statuses?.has?.(CONFIG.specialStatusEffects.CONCENTRATING)) return;
-    const item = fromUuidSync(effect.getFlag("dnd5e", "item")?.uuid ?? "", { strict : false });
-    const caster = effect.parent;
-    if((idOf(item) !== this.MARK) || (caster?.documentName !== "Actor")) return;
-    const mark = this.markOf(caster);
-    if(mark) await mark.effect.delete();
-  }
-
-  /* The marked creature at 0 HP : its caster's owners are told the mark can move (active GM) */
-  static async onDown(actor, changes){
-    if(!game.users.activeGM?.isSelf || !foundry.utils.hasProperty(changes ?? {}, "system.attributes.hp.value")) return;
-    if((Number(actor.system?.attributes?.hp?.value) || 0) > 0) return;
-    const mark = actor.effects?.find?.(e => e.getFlag(module.id, "huntersMark"));
-    const caster = mark && fromUuidSync(mark.getFlag(module.id, "huntersMark").caster, { strict : false });
-    if(!caster) return;
-    const spell = this.spellOf(caster);
-    await whisperOwners(caster, module.format("classes.ranger.down", { target : actor.name, spell : spell?.name ?? "Hunter's Mark" }));
   }
 }

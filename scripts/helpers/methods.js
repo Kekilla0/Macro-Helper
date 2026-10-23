@@ -4,9 +4,9 @@ import { rollItem } from '../roll-item/roll-item.js';
 import { distanceBetween, getRange, getTokensWithin, highlightRange, pushAway, pushDestination, addLight, removeLight, hasLight, canSee, poolBar, removePoolBar, poolsOf } from './tokens.js';
 import { isEnemy, isAlly, getThreats, isThreatened, getEnemiesWithinRange, pickTargets, getFlanker, isFlanking } from './targets.js';
 import { getSize, setStatus, setDefeated, splitToken, damage, heal, tempHP, dropsToZero, isKilledOutright, preventDropToZero, findItem,
-  rollSave, addTimedEffect, recoverSpellSlots, usedThisTurn, markUsedThisTurn, getLastDamage, clearLastDamage, stabilize } from './actors.js';
+  rollSave, addTimedEffect, recoverSpellSlots, slotsLeft, usedThisTurn, markUsedThisTurn, getLastDamage, clearLastDamage, stabilize } from './actors.js';
 import { setBaseDamage, setDamage, updateItem, attackModeFor, isLongRange, isRangedItem, isRangedAttack, canThrow, getAmmunition, pickAndAttack,
-  getUses, hasUses, spendUses, useActivity, useAndApply, multiattack, getHealing, pickAttack, isOtherHandFree, hasShieldEquipped } from './items.js';
+  getUses, hasUses, spendUses, useActivity, useAndApply, multiattack, getHealing, pickAttack, isOtherHandFree, hasShieldEquipped, isClassSpell } from './items.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -45,6 +45,7 @@ const creature = {
   isFlanking : call(isFlanking),                                    // (target) -> boolean
   rollSave : call(rollSave),                                        // (ability, dc, { from, bonus, cover, event, dialog, secret, card }) -> { success, total, roll } | null, same as save()
   recoverSpellSlots : call(recoverSpellSlots),                      // ({ levels, maxLevel, item, chat }) -> { level : recovered } | null
+  slotsLeft : call(slotsLeft),                                      // (minLevel = 1) -> [{ key, level, value, pact }] spell slots left
   addTimedEffect : call(addTimedEffect),                            // (effectData, { of, until : "turnStart" | "turnEnd" }) -> ActiveEffect
   multiattack : call(multiattack),                                  // (plan [{ weapon, count }], { repeat, event, attack }) -> one pick + card per weapon
   poolBar : call(poolBar),                                          // (key, { item, flag, max, color }) -> Promise<boolean>, a bar on its tokens
@@ -94,6 +95,7 @@ export const METHODS = {
     hasUses : call(hasUses),                                        // (amount) -> boolean
     spendUses : call(spendUses),                                    // (amount, { warn }) -> fresh item | null
     useActivity : call(useActivity),                                // ({ activity, configure, event }) -> dnd5e usage results | null
+    isClassSpell : call(isClassSpell),                              // (cls) -> boolean, a spell of that class ("sorcerer")
     rollItem : function(options){ return rollItem.roll(this, options); },
   },
 };

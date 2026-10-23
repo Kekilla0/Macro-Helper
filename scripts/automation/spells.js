@@ -11,6 +11,7 @@ import { itemFixes } from './item-fixes.js';
 import { patch } from '../patch.js';
 import { chooseOption, plainText } from '../helpers/utils.js';
 import { TYPES } from '../roll-item/message.js';
+import { isClassSpell } from '../helpers/items.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -390,7 +391,7 @@ export class spells{
     const method = item.system?.method ?? "";
     if(["ritual", "innate", "atwill"].includes(method)) return null;
     if(Number(item.system?.prepared) >= 1) return "choice";
-    const wizard = (String(item.system?.sourceItem ?? "") === "class:wizard") || (item.system?.classIdentifier === "wizard");
+    const wizard = isClassSpell(item, "wizard");
     return (wizard && item.actor?.items?.some?.(i => idOf(i) === "ritual-adept")) ? "only" : null;
   }
 

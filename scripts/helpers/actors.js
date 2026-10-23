@@ -316,6 +316,25 @@ export async function markUsedThisTurn(thing, key){
 /* ---------- Spell slots ---------- */
 
 /**
+ * The spell slots a creature has left at a level or higher, lowest first, Pact Magic's last (a spell, a smite or a mark
+ * paid with a slot).
+ * @param {Actor|Token} thing
+ * @param {number} [minLevel=1]
+ * @returns {{ key : string, level : number, value : number, pact? : boolean }[]}  key : "spell2", "pact"
+ */
+export function slotsLeft(thing, minLevel = 1){
+  const spells = (thing?.actor ?? thing)?.system?.spells ?? {};
+  const out = [];
+  for(let l = Math.max(1, Number(minLevel) || 1); l <= 9; l++){
+    const slot = spells[`spell${l}`];
+    if((Number(slot?.value) > 0) && (Number(slot?.max) > 0)) out.push({ key : `spell${l}`, level : l, value : Number(slot.value) });
+  }
+  const pact = spells.pact;
+  if((Number(pact?.value) > 0) && (Number(pact?.level) >= minLevel)) out.push({ key : "pact", level : Number(pact.level), value : Number(pact.value), pact : true });
+  return out;
+}
+
+/**
  * Choose expended spell slots to get back, up to a combined level (Arcane Recovery, Natural Recovery).
  * A dialog lists the spent slots up to `maxLevel` with the running total; the slots are restored on confirm.
  * With `item`, it needs a use left, and one is spent once something is recovered.
