@@ -466,10 +466,20 @@ export async function giveCondition(thing, type, { save = null, dc = null, repea
   return { applied : !!result, asked : result === null, save : rolled };
 }
 
+/* Is this creature the user's own to change without the GM : the one doing it (on itself), or the player's own
+   character. Anything else (another creature the player happens to own, any creature for the GM) : the GM's button */
+function isOwnCreature(actor, doer){
+  if(!actor?.isOwner) return false;
+  const same = (a, b) => !!a && !!b && ((a === b) || (a.uuid === b.uuid));
+  if(same(actor, doer)) return true;
+  return !game.user.isGM && same(actor, game.user.character);
+}
+
 /**
  * The end-condition lego : a condition taken off a creature, the way every rule ends one (Lay on Hands' Remove Poison,
- * Lesser Restoration). Read as : target.endCondition("poisoned", { from : item }). On a creature the user owns it ends
- * at once; on anyone else's, the GM's button on a card ends it (asked : true). Nothing to end : neither.
+ * Lesser Restoration). Read as : target.endCondition("poisoned", { from : item }). On the creature doing it, or the
+ * player's own character, it ends at once; on any other creature (the GM's use too), the GM's button on a card ends it
+ * (asked : true). Nothing to end : neither.
  * @param {Token|Actor} thing
  * @param {string} type      the condition's id ("poisoned")
  * @param {object} [options]
@@ -480,7 +490,7 @@ export async function giveCondition(thing, type, { save = null, dc = null, repea
 export async function endCondition(thing, type, { from = null, by = null } = {}){
   const actor = thing?.actor ?? thing;
   if(!actor?.statuses?.has?.(type)) return { ended : false, asked : false };
-  if(actor.isOwner) return { ended : await setStatus(actor, type, false), asked : false };
+  if(isOwnCreature(actor, by?.actor ?? by ?? from?.actor)) return { ended : await setStatus(actor, type, false), asked : false };
   const status = CONFIG.statusEffects.find(s => s.id === type);
   const condition = status ? game.i18n.localize(status.name) : String(type);
   const name = (thing?.document ?? thing)?.name ?? actor.name;

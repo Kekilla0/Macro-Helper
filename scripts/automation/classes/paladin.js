@@ -37,7 +37,8 @@ const log = logger.for(import.meta.url);
  *                     they apply) : Ensnaring Strike (any weapon hit : its STR save on the card), Hail of Thorns (a
  *                     ranged weapon hit : a DEX save for everyone within 5 ft of the target, on the hit's card).
  *   Lay on Hands    : both activities reach a creature you touch (picked on the map). Remove Poison ends Poisoned (the
- *                     end-condition lego) : at once on a creature you own; on anyone else, the GM's button on a card.
+ *                     end-condition lego) : at once on the Paladin or its player's own character; on anyone else
+ *                     (the GM's use too), the GM's button on a card.
  *   Divine Sense    : (level 3, Channel Divinity's uses are the item's data) using it tells the Paladin's owner, in a
  *                     card only they and the GM see, the Celestials, Fiends and Undead within 60 ft not behind total
  *                     cover : their creature type and how far, and pings each on their map only. Sense Again on the
@@ -456,7 +457,7 @@ export class paladin{
     return Object.keys(update).length ? { update } : null;
   }
 
-  /* Remove Poison : the end-condition lego (at once on a creature you own; anyone else's : the GM's button on a card) */
+  /* Remove Poison : the end-condition lego (at once on itself or the player's character; anyone else : the GM's button) */
   static async onUse(activity, usage, results){
     if(!this.enabled() || !this.isRemovePoison(activity) || !activity.actor?.isOwner) return;
     const target = fromUuidSync(usage?.[module.id]?.poisonTarget ?? "", { strict : false });
