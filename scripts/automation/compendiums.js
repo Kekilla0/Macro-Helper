@@ -1,4 +1,5 @@
 import { module } from '../module.js';
+import { chooseOne } from '../helpers/creatures.js';
 import { withUnlocked } from '../helpers/utils.js';
 import { logger } from '../log.js';
 import { itemFixes } from './item-fixes.js';
@@ -150,4 +151,34 @@ export class compendiums{
     await withUnlocked(pack, () => Item.implementation.createDocuments(data.map(d => { const c = { ...d }; delete c._id; return c; }), { pack : pack.collection }));
     log.info("Actions compendium filled", missing);
   }
+}
+
+/**
+ * Choose one entry from the compendiums, as a grid of pictures, and get it (a Fighting Style to swap in, a Pact weapon,
+ * a homebrew "choose a creature to become"). From one compendium (`pack` : Macro Helper's by name, or any by its id),
+ * else every Item compendium (compendiums.search : one per identifier, 2024 only).
+ * @param {(entry : object) => boolean} [filter]   on index entries
+ * @param {object} [options]
+ * @param {string} [options.pack]
+ * @param {string[]} [options.fields]   more index fields for the filter
+ * @param {string} [options.title], [options.prompt], [options.icon], [options.notice]
+ * @param {number} [options.columns]
+ * @param {(entry) => string} [options.detail]   a line under each name
+ * @param {string} [options.empty]       the warning when there's nothing to choose
+ * @returns {Promise<Document|null>}  the chosen document (from its compendium), null : none to choose, or closed
+ */
+export async function pickFromCompendium(filter = () => true, { pack = null, fields = [], title = "", prompt = "", icon = "fa-solid fa-book", columns = 3, notice = null, detail = null, empty = null } = {}){
+  let entries;
+  if(pack){
+    const found = compendiums.pack(pack) ?? game.packs.get(pack);
+    const index = found ? await found.getIndex({ fields : [...(compendiums.INDEX_FIELDS[found.documentName] ?? []), ...fields] }) : [];
+    entries = [...index].filter(filter).sort((a, b) => a.name.localeCompare(b.name));
+  }
+  else entries = await compendiums.search(filter, { fields, notice });
+  if(!entries.length){
+    if(empty) ui.notifications.warn(empty);
+    return null;
+  }
+  const chosen = await chooseOne(entries.map(e => ({ value : e.uuid, label : e.name, img : e.img, detail : detail?.(e) ?? "" })), { title, prompt, icon, columns });
+  return chosen ? await fromUuid(chosen) : null;
 }

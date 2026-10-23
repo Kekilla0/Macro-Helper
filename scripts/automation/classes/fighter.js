@@ -4,8 +4,7 @@ import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
 import { addTimedEffect } from '../../helpers/actors.js';
 import { spendUses } from '../../helpers/items.js';
-import { chooseOne } from '../../helpers/creatures.js';
-import { compendiums } from '../compendiums.js';
+import { compendiums, pickFromCompendium } from '../compendiums.js';
 import { limits } from '../limits.js';
 import { restChoices } from '../rest-choices.js';
 import { rerolls, addDie } from '../../roll-item/rerolls.js';
@@ -148,13 +147,10 @@ export class fighter{
     const owned = new Set(actor.items.map(i => this.styleId(i)).filter(Boolean));
     const all = (await compendiums.entries(compendiums.FIGHTING_STYLES)).filter(i => this.styleId(i));
     if(!all.length) return ui.notifications.warn(module.i18n("classes.fighter.noStyles"));
-    const styles = all.filter(i => !owned.has(this.styleId(i)));
-    if(!styles.length) return ui.notifications.warn(module.format("classes.fighter.allStyles", { name : actor.name }));
-    const chosen = await chooseOne(styles.map(i => ({ value : i.uuid, label : i.name, img : i.img })), {
+    if(all.every(i => owned.has(this.styleId(i)))) return ui.notifications.warn(module.format("classes.fighter.allStyles", { name : actor.name }));
+    const source = await pickFromCompendium(i => this.styleId(i) && !owned.has(this.styleId(i)), { pack : compendiums.FIGHTING_STYLES,
       title : module.format("classes.fighter.styleTitle", { name : actor.name }), icon : "fa-solid fa-shield-halved", columns : 3,
-      prompt : module.format("classes.fighter.stylePrompt", { name : current?.name ?? "—" }),
-    });
-    const source = chosen ? await fromUuid(chosen) : null;
+      prompt : module.format("classes.fighter.stylePrompt", { name : current?.name ?? "—" }) });
     if(!source) return;
     const data = source.toObject();
     delete data._id;

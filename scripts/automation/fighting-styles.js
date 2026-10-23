@@ -3,19 +3,19 @@ import { idOf, esc, whisperOwners } from '../helpers/utils.js';
 import { rollModes } from './roll-modes.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
-import { gm } from '../gm.js';
-import { tokenOf, distanceBetween, canSee } from '../helpers/tokens.js';
-import { hasShieldEquipped } from '../helpers/items.js';
+import { gm, onTurnStart } from '../gm.js';
+import { distanceBetween } from '../helpers/tokens.js';
+import { hasShieldEquipped, isUnarmored } from '../helpers/items.js';
+import { bonusOnlyWhen } from './bonus-only-when.js';
 import { addTimedEffect } from '../helpers/actors.js';
 import { giveMode } from '../roll-item/reasons.js';
 import { masteries } from './masteries.js';
 import { conditions } from './conditions.js';
-import { limits } from './limits.js';
 import { hands } from './hands.js';
-import { actionTracker } from './action-tracker.js';
 import { grappling } from '../roll-item/card-builder.js';
 import { onDamage, attackOf } from '../roll-item/damage.js';
 import { cutDamage, cutsOf } from '../roll-item/damage-cuts.js';
+import { onAttacked } from '../roll-item/attacked.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -24,11 +24,11 @@ const log = logger.for(import.meta.url);
  * Interception and Protection with an activity, Unarmed Fighting with attacks of its own; the rest with nothing.
  *
  *   Archery         : Plutonium's +2 to ranged weapon attacks; a thrown melee weapon (dnd5e counts it as a ranged
- *                     weapon attack) gets it taken off again : it isn't a Ranged weapon.
+ *                     weapon attack) gets it taken off again : it isn't a Ranged weapon (bonusOnlyWhen).
  *   Defense         : Plutonium's +1 AC only while armor (light, medium, heavy) is worn : its effect is switched off
- *                     and on as armor is equipped.
+ *                     and on as armor is equipped (bonusOnlyWhen).
  *   Dueling         : +2 damage with a melee weapon held in one hand and no other weapon (a shield is fine). With
- *                     Plutonium's always-on effect, the +2 is taken off attacks that don't qualify.
+ *                     Plutonium's always-on effect, the +2 is taken off attacks that don't qualify (bonusOnlyWhen).
  *   Great Weapon    : a melee weapon held in two hands (Two-Handed, or Versatile used two-handed) : 1s and 2s on the
  *                     attack's damage dice count as 3.
  *   Thrown Weapon   : +2 damage on a ranged attack with a Thrown weapon.
@@ -51,15 +51,27 @@ export class fightingStyles{
 
   static register(){
     if(game.system.id !== "dnd5e") return;
-    Hooks.on("dnd5e.preRollAttackV2", config => this.onPreRollAttack(config));
+    const enabled = () => this.enabled();
+    /* Archery : +2 with Ranged weapons (not a thrown melee weapon, which dnd5e counts as a ranged weapon attack) */
+    bonusOnlyWhen(["archery", "fighting-style-archery"], "system.bonuses.rwak.attack", attack => attack.weapon && !attack.meleeWeapon, { value : "2", enabled });
+    /* Dueling : +2 with a melee weapon in one hand and no other weapon */
+    bonusOnlyWhen(["dueling", "fighting-style-dueling"], "system.bonuses.mwak.damage", attack => this.duels(attack), { value : "2", enabled });
+    /* Defense : +1 AC only while wearing armor */
+    bonusOnlyWhen(["defense", "fighting-style-defense"], "system.attributes.ac.bonus", actor => !isUnarmored(actor, { shield : false }), { enabled });
     rollModes.add("protection", config => this.protectedMode(config));
     onDamage((attack, damage) => this.onDamage(attack, damage));
-    for(const hook of ["createItem", "updateItem", "deleteItem"]){
-      Hooks.on(hook, (item, ...rest) => this.onGear(item, rest.at(-1)));
-    }
-    Hooks.on(`${module.id}.cardButtons`, (message, buttons, context) => this.cardButtons(message, buttons, context));
-    Hooks.on(`${module.id}.cardButton`, (message, id, context) => this.cardClicked(message, id, context));
-    Hooks.on(`${module.id}.turnStart`, (combat, combatant) => this.onTurn(combat, combatant));
+    /* Interception : a creature within 5 ft of yours is hit; Protection : attacked (not when the attack already had
+       Disadvantage : they don't stack). The guard's Reaction. */
+    onAttacked({ id : "interception", enabled, feature : actor => this.styleOf(actor, "interception"), when : "hit", within : 5, icon : "fa-shield",
+      label : () => module.i18n("fightingStyles.interceptShort"), tooltip : c => module.format("fightingStyles.intercept", { guard : c.guard.name, target : c.target.name }),
+      unmet : guard => this.unmet("interception", guard), done : c => cutsOf(c.message, c.target).some(cut => cut.id === "interception"),
+      run : c => this.intercept(c) });
+    onAttacked({ id : "protection", enabled, feature : actor => this.styleOf(actor, "protection"), within : 5, icon : "fa-shield-halved",
+      label : () => module.i18n("fightingStyles.protectShort"), tooltip : c => module.format("fightingStyles.protect", { guard : c.guard.name, target : c.target.name }),
+      unmet : guard => this.unmet("protection", guard), done : c => !!c.message.getFlag(module.id, `protect.${masteries.rayKey(c.ray)}`) || !!c.roll?.hasDisadvantage,
+      run : c => this.protect(c) });
+    /* Unarmed Fighting : at the start of its turn, 1d4 to each creature it grapples */
+    onTurnStart({ id : "unarmedFighting", enabled, feature : actor => this.styleOf(actor, "unarmed-fighting"), run : (actor, token, combat, combatant) => this.onTurn(combat, combatant) });
     Hooks.on("renderChatMessageHTML", (message, html) => this.wireGrappleCard(message, html));
     gm.handle("protect", (data, user) => this.protectAsGM(data, user));
   }
@@ -69,11 +81,6 @@ export class fightingStyles{
   static styleOf(actor, style){
     if(!this.enabled()) return null;
     return actor?.items?.find?.(i => [style, `fighting-style-${style}`].includes(idOf(i))) ?? null;
-  }
-
-  /* Its transfer effect is on (Plutonium's Archery / Defense / Dueling) */
-  static effectOn(item){
-    return !!item?.effects?.some?.(e => e.transfer && !e.disabled);
   }
 
   /* ---------- What the attack is : attackOf (the damage lego) ---------- */
@@ -88,26 +95,12 @@ export class fightingStyles{
       && (i.system.type?.value !== "natural") && (idOf(i) !== "unarmed-strike"));
   }
 
-  static addPart(roll, part){
-    roll.parts = [...(roll.parts ?? []), part];
+  /* Dueling's attack : a melee weapon in one hand (not thrown, not two-handed), no other weapon */
+  static duels(attack){
+    return attack.weapon && attack.meleeWeapon && !attack.thrown && !attack.twoHanded && !attack.unarmed && !this.otherWeapons(attack.actor, attack.item).length;
   }
 
-  /* ---------- Attacks : Archery, Protection ---------- */
-
-  static onPreRollAttack(config){
-    if(!this.enabled()) return;
-    const roll = config.rolls?.[0];
-    const attack = attackOf(config);
-    if(roll && attack.isAttack && attack.weapon){
-      /* Archery : +2 with Ranged weapons. Plutonium's own effect gives it to any ranged weapon attack, a thrown melee
-         weapon too (taken off again); the compendium's feat has no effect, it's added here when it applies */
-      const archery = this.styleOf(attack.actor, "archery");
-      if(archery){
-        if(this.effectOn(archery) && attack.meleeWeapon && attack.thrown) this.addPart(roll, "-2");
-        else if(!this.effectOn(archery) && !attack.meleeWeapon) this.addPart(roll, "2");
-      }
-    }
-  }
+  /* ---------- Attacks : Protection ---------- */
 
   /* Protected : Disadvantage while its protector is within 5 ft with a shield */
   static protectedMode(config){
@@ -138,15 +131,6 @@ export class fightingStyles{
     if(!this.enabled() || !attack.isAttack || !attack.weapon) return;
     const { actor, item } = attack;
 
-    /* Dueling */
-    const dueling = this.styleOf(actor, "dueling");
-    if(dueling){
-      const qualifies = attack.meleeWeapon && !attack.thrown && !attack.twoHanded && !attack.unarmed && !this.otherWeapons(actor, item).length;
-      const given = this.effectOn(dueling);
-      if(given && !qualifies) damage.add("-2");
-      else if(!given && qualifies) damage.add("2");
-    }
-
     /* Great Weapon Fighting : 1s and 2s on the damage dice count as 3 */
     if(this.styleOf(actor, "great-weapon-fighting") && attack.meleeWeapon && !attack.thrown && attack.twoHanded){
       damage.minDie(3);
@@ -172,44 +156,11 @@ export class fightingStyles{
     if(damage.setBase(formula)) log.debug("Unarmed Fighting", attack.actor.name, formula);
   }
 
-  /* ---------- Defense ---------- */
-
-  static wearsArmor(actor){
-    return !!actor?.items?.some(i => (i.type === "equipment") && ["light", "medium", "heavy"].includes(i.system.type?.value) && i.system.equipped);
-  }
-
-  /* Armor or the feat changed (by this user) : Defense's effect follows */
-  static async onGear(item, userId){
-    if(!this.enabled() || (userId && (userId !== game.user.id))) return;
-    const actor = item?.parent;
-    if((actor?.documentName !== "Actor") || !actor.isOwner) return;
-    const relevant = (item.type === "equipment") || ["defense", "fighting-style-defense"].includes(idOf(item));
-    if(!relevant) return;
-    const defense = this.styleOf(actor, "defense");
-    if(!defense) return;
-    const disabled = !this.wearsArmor(actor);
-    const updates = defense.effects.filter(e => e.transfer && (e.disabled !== disabled)).map(e => ({ _id : e.id, disabled }));
-    if(updates.length) await defense.updateEmbeddedDocuments("ActiveEffect", updates);
-  }
-
   /* ---------- Interception, Protection : buttons on the attack card ---------- */
 
-  /* The user's tokens with this style, near a creature : within 5 ft, not it, not the attacker */
-  static guardsNear(style, target, attackerToken){
-    const side = t => t?.document?.disposition;
-    return (canvas.tokens?.placeables ?? []).filter(t => t.actor?.isOwner && (t !== target) && (t !== attackerToken)
-      /* Shielding its own side from the other : not a creature an ally attacks */
-      && (side(target) === side(t)) && (!attackerToken || (side(attackerToken) !== side(t)))
-      && this.styleOf(t.actor, style) && (distanceBetween(t, target) <= 5));
-  }
-
-  /* Its requirements : seeing the attacker, and the shield (or for Interception a weapon) in hand. "" when met */
-  static unmet(style, guard, attackerToken){
-    /* A Reaction : not while Incapacitated or at 0 HP, nor once it's used (Action Tracker) */
-    if(actionTracker.OUT_OF_ACTION.some(s => guard.actor?.statuses?.has?.(s)) || (Number(guard.actor?.system?.attributes?.hp?.value) <= 0))
-      return module.format("fightingStyles.cantReact", { name : guard.name });
-    if(!actionTracker.left(guard.actor, "reaction")) return module.format("actionTracker.spent", { name : guard.name, kind : actionTracker.label("reaction") });
-    if(attackerToken && !canSee(guard, attackerToken)) return module.format("fightingStyles.cantSee", { name : guard.name });
+  /* The shield (or for Interception a weapon) in hand. "" when it's there (seeing the attacker and the Reaction : the
+     onAttacked lego) */
+  static unmet(style, guard){
     const shield = hasShieldEquipped(guard.actor);
     const inHand = hands.manages(guard.actor) ? hands.heldItems(guard.actor) : guard.actor.items.filter(i => i.system?.equipped);
     const weapon = inHand.some(i => (i.type === "weapon") && ["simpleM", "simpleR", "martialM", "martialR"].includes(i.system.type?.value));
@@ -218,62 +169,19 @@ export class fightingStyles{
     return "";
   }
 
-  /* Rule Limits : Off and Warn show the button, Block / Change don't */
-  static offered(problem){
-    return !problem || ["off", "warn"].includes(limits.mode());
+  /* Interception : 1d10 + Proficiency off that creature's damage from this card. Rolled here, its dice shown, kept on
+     the card (no chat message of its own) */
+  static async intercept({ message, guard, target }){
+    const roll = await new Roll("1d10 + @prof", guard.actor.getRollData()).evaluate();
+    const { rollItem } = await import('../roll-item/roll-item.js');
+    await rollItem.showDice([roll], message);
+    await cutDamage(message, target, { id : "interception", amount : roll.total, by : guard.name, label : module.i18n("fightingStyles.interceptShort"), formula : roll.formula, result : roll.result });
   }
 
-  static cardButtons(message, buttons, { ray } = {}){
-    if(!this.enabled() || !message.system?.attackOf?.(ray)) return;
-    const attackerToken = tokenOf(message.getAssociatedToken?.() ?? message.getAssociatedActor?.());
-    const { TargetsField } = dnd5e.dataModels.chatMessage.fields;
-    const key = masteries.rayKey(ray);
-    const hit = new Set((message.system.hitTargets?.(ray) ?? []).map(t => tokenOf(t)));
-    for(const t of message.system.targetsOf(ray) ?? []){
-      const target = tokenOf(TargetsField.resolve(t).token);
-      if(!target) continue;
-      /* Interception : the attack hit it */
-      if(hit.has(target) && !cutsOf(message, target).some(c => c.id === "interception")){
-        for(const guard of this.guardsNear("interception", target, attackerToken)){
-          if(this.offered(this.unmet("interception", guard, attackerToken))){
-            buttons.push({ id : `intercept|${guard.document.uuid}|${target.document.uuid}`, icon : "fa-shield", label : module.i18n("fightingStyles.interceptShort"),
-              tooltip : module.format("fightingStyles.intercept", { guard : guard.name, target : target.name }) });
-          }
-        }
-      }
-      /* Protection : it was attacked (not when the attack already had disadvantage : they don't stack) */
-      if(!message.getFlag(module.id, `protect.${key}`) && !message.system.attackOf?.(ray)?.hasDisadvantage){
-        for(const guard of this.guardsNear("protection", target, attackerToken)){
-          if(this.offered(this.unmet("protection", guard, attackerToken))){
-            buttons.push({ id : `protect|${guard.document.uuid}|${target.document.uuid}`, icon : "fa-shield-halved", label : module.i18n("fightingStyles.protectShort"),
-              tooltip : module.format("fightingStyles.protect", { guard : guard.name, target : target.name }) });
-          }
-        }
-      }
-    }
-  }
-
-  static async cardClicked(message, id, { ray } = {}){
-    const [kind, guardUuid, targetUuid] = String(id).split("|");
-    if(!this.enabled() || !["intercept", "protect"].includes(kind)) return;
-    const guard = fromUuidSync(guardUuid, { strict : false })?.object;
-    if(!guard?.actor?.isOwner) return;
-    const attackerToken = tokenOf(message.getAssociatedToken?.() ?? message.getAssociatedActor?.());
-    const problem = this.unmet(kind === "intercept" ? "interception" : "protection", guard, attackerToken);
-    if(problem && !limits.allow(problem, { who : guard.name, what : kind === "intercept" ? module.i18n("fightingStyles.interceptShort") : module.i18n("fightingStyles.protectShort") })) return;
-    if(kind === "intercept"){
-      /* Rolled here, its dice shown, and kept on this card (no chat message of its own) */
-      const roll = await new Roll("1d10 + @prof", guard.actor.getRollData()).evaluate();
-      const { rollItem } = await import('../roll-item/roll-item.js');
-      await rollItem.showDice([roll], message);
-      await cutDamage(message, fromUuidSync(targetUuid, { strict : false }), { id : "interception", amount : roll.total, by : guard.name, label : module.i18n("fightingStyles.interceptShort"), formula : roll.formula, result : roll.result });
-      await actionTracker.spend(guard.actor, { kind : "reaction", what : module.i18n("fightingStyles.interceptShort") }).catch(() => null);
-    }
-    else {
-      const notes = await gm.run("protect", { message : message.id, ray, guard : guardUuid, target : targetUuid });
-      for(const note of notes ?? []) ui.notifications.info(note);
-      await actionTracker.spend(guard.actor, { kind : "reaction", what : module.i18n("fightingStyles.protectShort") }).catch(() => null);
-    }
+  /* Protection : the GM gives the attack Disadvantage and marks the creature Protected */
+  static async protect({ message, ray, guard, target }){
+    const notes = await gm.run("protect", { message : message.id, ray, guard : guard.document.uuid, target : target.document.uuid });
+    for(const note of notes ?? []) ui.notifications.info(note);
   }
 
   /* GM : Disadvantage on the attack (a second d20, the lower kept), and the creature Protected */
@@ -303,7 +211,6 @@ export class fightingStyles{
 
   /* Its turn starts : a card for its owner, a button per grappled creature (active GM posts it) */
   static async onTurn(combat, combatant){
-    if(!this.enabled() || !game.users.activeGM?.isSelf) return;
     const actor = combatant?.actor;
     const feat = this.styleOf(actor, "unarmed-fighting");
     if(!feat) return;

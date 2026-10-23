@@ -246,3 +246,35 @@ export class gm{
     for(const effect of this.#effects(e => e.combat === combat.id)) await effect.delete();
   }
 }
+
+/**
+ * The turn-start lego : something a creature does, or that happens to it, at the start of each of its turns in combat
+ * (Unarmed Fighting's grapple damage; a monster's Regeneration, "at the start of each of its turns, it can..."). Runs
+ * once per turn on the active GM's client, when the turn order is settled (gm.turnStarted).
+ *   onTurnStart({ id, feature, enabled, run : async (actor, token, combat, combatant) => {} })
+ * feature : the item (identifier) the creature needs, or (actor) => item; the same id again replaces the rule.
+ */
+const turnRules = [];
+let turnHooked = false;
+
+export function onTurnStart(rule){
+  if(!rule?.id) return;
+  const old = turnRules.findIndex(r => r.id === rule.id);
+  if(old >= 0) turnRules[old] = rule;
+  else turnRules.push(rule);
+  if(turnHooked) return;
+  turnHooked = true;
+  Hooks.on(`${module.id}.turnStart`, async (combat, combatant) => {
+    const actor = combatant?.actor;
+    if(!actor || !game.users.activeGM?.isSelf) return;
+    for(const rule of turnRules){
+      try {
+        if(rule.enabled && !rule.enabled()) continue;
+        const feature = (typeof rule.feature === "function") ? rule.feature(actor)
+          : (rule.feature ? actor.items.find(i => (i.identifier ?? i.system?.identifier) === rule.feature) : true);
+        if(!feature) continue;
+        await rule.run(actor, combatant.token?.object ?? null, combat, combatant);
+      } catch(error){ log.error("Turn start", rule.id, error); }
+    }
+  });
+}

@@ -4,11 +4,12 @@ import { settings } from '../../settings.js';
 import { limits } from '../limits.js';
 import { logger } from '../../log.js';
 import { tokenOf } from '../../helpers/tokens.js';
-import { findItem, addTimedEffect } from '../../helpers/actors.js';
+import { findItem, addTimedEffect, itemEffectOn, itemEffectOff } from '../../helpers/actors.js';
 import { originOf, idOf } from '../../helpers/utils.js';
 import { giveMode } from '../../roll-item/reasons.js';
 import { conditions } from '../conditions.js';
-import { onDamage } from '../../roll-item/damage.js';
+import { bonusOnlyWhen } from '../bonus-only-when.js';
+import { cantUseWhile, freeUseWhile, isFreeUse, userOf } from '../use-rules.js';
 import { itemFixes } from '../item-fixes.js';
 import { patch } from '../../patch.js';
 const log = logger.for(import.meta.url);
@@ -54,11 +55,19 @@ export class barbarian{
     if(game.system.id !== "dnd5e") return;
     /* Rage's and Reckless Attack's effects are put on here, not by Roll Item */
     Hooks.on(`${module.id}.selfEffects`, activity => !(this.enabled() && [this.RAGE, this.RECKLESS].includes(idOf(activity?.item))));
-    Hooks.on("dnd5e.preUseActivity", (activity, usage) => this.onPreUse(activity, usage));
+    /* Using Rage again while raging extends it, no use spent; no spells while raging; no Rage in Heavy armor */
+    freeUseWhile("rageExtend", { enabled : () => this.enabled(), uses : item => idOf(item) === this.RAGE, while : actor => this.isRaging(actor) });
+    cantUseWhile("rageSpells", { enabled : () => this.enabled(), uses : item => item.type === "spell", while : actor => this.isRaging(actor),
+      reason : actor => module.format("classes.barbarian.noSpells", { name : actor.name }) });
+    cantUseWhile("rageArmor", { enabled : () => this.enabled(), uses : item => idOf(item) === this.RAGE, while : actor => this.inHeavyArmor(actor),
+      reason : actor => module.format("classes.barbarian.noRageArmor", { name : actor.name }) });
     Hooks.on("dnd5e.postUseActivity", (activity, usage) => this.onUse(activity, usage));
     rollModes.add("reckless", config => this.onPreRollAttack(config));
     Hooks.on("dnd5e.rollAttackV2", (rolls, { subject } = {}) => this.onAttack(subject, rolls?.[0]));
-    onDamage((attack, damage) => this.rageDamage(attack, damage));
+    /* Rage's damage bonus is for attacks made with Strength (a thrown weapon too, 2024), never another ability : dnd5e
+       adds it to every melee weapon attack */
+    bonusOnlyWhen(effect => this.isRageEffect(effect), ["system.bonuses.mwak.damage", "system.rolls.damage.mwak.bonus"],
+      attack => attack.weapon && (attack.ability === "str"), { enabled : () => this.enabled(), id : "rageDamage" });
     Hooks.on("dnd5e.preRollSavingThrowV2", config => this.dangerSense(config));
     Hooks.on(`${module.id}.saveHint`, (message, actor, ability, { ignore }) => this.dangerSenseHint(actor, ability, ignore));
     Hooks.on("createChatMessage", message => this.onCard(message));
@@ -109,24 +118,7 @@ export class barbarian{
 
   /* The token's own actor (an unlinked token's), for anything it does */
   static actorFor(activity){
-    return activity.getUsageToken?.()?.actor ?? tokenOf(activity.actor)?.actor ?? activity.actor;
-  }
-
-  /* Before a use : extending a Rage spends nothing; spells can't be cast while raging */
-  static onPreUse(activity, usage){
-    if(!this.enabled()) return;
-    const actor = this.actorFor(activity);
-    if((activity.item?.type === "spell") && this.isRaging(actor)){
-      if(!limits.allow(module.format("classes.barbarian.noSpells", { name : actor.name }), { who : actor.name, what : activity.item.name })) return false;
-    }
-    if((idOf(activity.item) === this.RAGE) && this.isRaging(actor)){
-      usage.consume = false;
-      usage[module.id] = { ...(usage[module.id] ?? {}), rageExtend : true };
-    }
-    /* "if you aren't wearing Heavy armor" */
-    else if((idOf(activity.item) === this.RAGE) && this.inHeavyArmor(actor)){
-      if(!limits.allow(module.format("classes.barbarian.noRageArmor", { name : actor.name }), { who : actor.name, what : activity.item.name })) return false;
-    }
+    return userOf(activity);
   }
 
   static async onUse(activity, usage){
@@ -134,7 +126,7 @@ export class barbarian{
     const id = idOf(activity.item);
     try {
       if(id === this.RAGE){
-        if(usage?.[module.id]?.rageExtend) return await this.keep(this.actorFor(activity), "bonus");
+        if(isFreeUse(usage, "rageExtend")) return await this.keep(this.actorFor(activity), "bonus");
         return await this.startRage(activity);
       }
       if(id === this.RECKLESS) return await this.reckless(activity);
@@ -150,19 +142,9 @@ export class barbarian{
     const item = activity.item;
     const kept = this.now();
     if(!this.rageEffects(actor).length){
-      const id = activity.effects?.[0]?._id;
-      const effect = (id && item.effects.get(id)) ?? item.effects.find(e => e.transfer) ?? item.effects.contents?.[0];
+      /* The item's effect on, its 10 minutes from now */
+      const effect = await itemEffectOn(item, { on : actor, activity, data : { flags : { [module.id] : { rage : { kept } } } } });
       if(!effect) return ui.notifications.warn(module.format("classes.barbarian.noEffect", { item : item.name }));
-      /* Its 10 minutes count from now (v14 : start.time / round / turn) */
-      const start = { time : game.time.worldTime };
-      if(game.combat?.started) Object.assign(start, { combat : game.combat.id, round : game.combat.round, turn : game.combat.turn ?? 0 });
-      if(effect.transfer && (item.parent === actor)) await effect.update({ disabled : false, start, [`flags.${module.id}.rage`] : { kept } });
-      else {
-        const data = foundry.utils.mergeObject(effect.toObject(), { disabled : false, transfer : false, origin : item.uuid,
-          start, flags : { [module.id] : { rage : { kept } } } });
-        delete data._id;
-        await actor.createEmbeddedDocuments("ActiveEffect", [data]);
-      }
     }
     else return await this.keep(actor, "start");
     /* No Concentration while raging */
@@ -239,30 +221,13 @@ export class barbarian{
   static #ending = new Set();
 
   static async #endRage(actor, effects, reason){
-    for(const effect of effects){
-      if(effect.parent?.documentName === "Item") await effect.update({ disabled : true, [`flags.${module.id}.rage`] : globalThis._del ?? new foundry.data.operators.ForcedDeletion() });
-      else await effect.delete();
-    }
+    await itemEffectOff(actor, e => effects.includes(e), { data : { [`flags.${module.id}.rage`] : new foundry.data.operators.ForcedDeletion() } });
     await ChatMessage.implementation.create({
       speaker : ChatMessage.implementation.getSpeaker({ actor }),
       content : `<p><i class="fa-solid fa-face-angry" inert></i> ${module.format("classes.barbarian.ends", { name : foundry.utils.escapeHTML(actor.name), reason })}</p>`,
     });
     log.debug("Rage ends", actor.name, reason);
     Hooks.callAll(`${module.id}.rageEnd`, actor);
-  }
-
-  /* Rage damage : only attacks using Strength. dnd5e adds it to every melee weapon attack (DEX finesse too) and to no
-     ranged one (STR thrown) : take it off / put it on in the damage formula */
-  /* Rage's damage bonus is for attacks made with Strength (a thrown weapon too, 2024), never another ability : dnd5e
-     adds it to every melee weapon attack, so it's taken off a Dexterity one and added to a Strength-thrown one */
-  static rageDamage(attack, damage){
-    if(!attack.isAttack || !attack.weapon || !this.isRaging(attack.actor)) return;
-    const change = this.rageEffects(attack.actor).flatMap(e => [...(e.system?.changes ?? e.changes ?? [])])
-      .find(c => ["system.bonuses.mwak.damage", "system.rolls.damage.mwak.bonus"].includes(c.key));
-    const bonus = String(change?.value ?? "").replace(/^\s*\+\s*/, "").trim();
-    if(!bonus) return;
-    if(attack.melee && (attack.ability !== "str")) damage.remove(bonus);
-    else if(attack.ranged && (attack.ability === "str")) damage.add(bonus);
   }
 
   /* Wearing heavy armor */

@@ -6,11 +6,11 @@ import { chooseOne } from '../../helpers/creatures.js';
 import { weaponUses } from '../weapon-uses.js';
 import { uses } from '../../uses.js';
 import { itemFixes } from '../item-fixes.js';
-import { compendiums } from '../compendiums.js';
+import { compendiums, pickFromCompendium } from '../compendiums.js';
+import { conjureItem, linkItems } from '../../helpers/items.js';
+import { damageTypeChoice } from '../../roll-item/damage-type-choice.js';
 import { restChoices } from '../rest-choices.js';
 import { limits } from '../limits.js';
-import { hands } from '../hands.js';
-import { TYPES } from '../../roll-item/message.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -52,20 +52,15 @@ export class pacts{
     itemFixes.add({ name : "Pact of the Blade", where : "owned", plan : item => this.bladeFix(item) });
     /* Its attacks : CHA beside the weapon's own abilities (the weapon-uses lego) */
     weaponUses.add("pactOfTheBlade", { applies : item => this.isPactWeapon(item), abilities : () => ["cha"] });
-    Hooks.on(`${module.id}.damageType`, (activity, { types, preset }) => {
-      if(this.isPactWeapon(activity?.item)) preset.type = types.find(t => !this.PACT_TYPES.includes(t)) ?? types[0];
-    });
-    Hooks.on(`${module.id}.cardButtons`, (message, buttons, { ray } = {}) => this.typeButtons(message, buttons, ray));
-    Hooks.on(`${module.id}.cardButton`, (message, id, { ray } = {}) => {
-      if(String(id).startsWith("pactType|")) message.system.setDamageType?.(id.split("|")[1], Number.isInteger(ray) ? ray : null);
-    });
+    /* Its damage : its normal type, or Necrotic, Psychic or Radiant (the damage type lego) */
+    damageTypeChoice("pactWeapon", { applies : item => this.isPactWeapon(item),
+      types : item => [this.ownType(item), ...this.PACT_TYPES], normal : (item, types) => types?.find?.(t => !this.PACT_TYPES.includes(t)) ?? types?.[0] });
     Hooks.on("createActiveEffect", (effect, options, userId) => { if(userId === game.user.id) this.onPactFormed(effect); });
     uses.onActivity("pactWeapon", (activity, ctx, next) => this.forgeStep(activity, ctx, next));
     /* ---------- Chain ---------- */
     itemFixes.add({ name : "Pact of the Chain", where : "owned", plan : item => this.chainFix(item) });
     /* ---------- Tome ---------- */
     Hooks.on("createItem", (item, options, userId) => { if(userId === game.user.id) this.onItemAdded(item); });
-    Hooks.on("deleteItem", (item, options, userId) => { if(userId === game.user.id) this.onItemRemoved(item); });
     restChoices.add({
       id : "bookOfShadows", label : "restChoices.bookOfShadows", rest : "level", classes : ["warlock"],
       applies : actor => this.enabled() && !!this.tomeOf(actor),
@@ -114,18 +109,9 @@ export class pacts{
     return this.enabled() && (item?.type === "weapon") && (!!this.pactEffectOf(item) || !!item.getFlag?.(module.id, "pactWeapon"));
   }
 
-  /* Necrotic, Psychic, Radiant (or back to its own type) : the attack card's buttons, for its owner */
-  static typeButtons(message, buttons, ray){
-    if(!this.enabled() || (message.type !== TYPES.attack) || !message.isOwner) return;
-    const item = message.getAssociatedItem?.();
-    if(!this.isPactWeapon(item)) return;
-    const rolls = Number.isInteger(ray) ? (message.system.rayDamage?.(ray) ?? []) : (message.system.damageRolls ?? []);
-    const current = rolls[0]?.options?.type;
-    if(!current) return;
-    const own = [...(item.system.damage?.base?.types ?? [])].find(t => !this.PACT_TYPES.includes(t));
-    for(const type of [own, ...this.PACT_TYPES].filter(t => t && (t !== current))){
-      buttons.push({ id : `pactType|${type}`, icon : "fa-wand-magic", label : module.format("classes.warlock.pactType", { type : game.i18n.localize(CONFIG.DND5E.damageTypes[type]?.label ?? type) }) });
-    }
+  /* The weapon's own damage type (not one of the pact's) */
+  static ownType(item){
+    return [...(item?.system?.damage?.base?.types ?? [])].find(t => !this.PACT_TYPES.includes(t)) ?? null;
   }
 
   /* A pact weapon formed : the last one ends (its enchantment off a bonded weapon; a conjured one gone) */
@@ -157,18 +143,15 @@ export class pacts{
     const magical = e => { const p = e.system?.properties; return !!e.system?.rarity || (Array.isArray(p) ? p.includes("mgc") : !!p?.mgc); };
     /* The standard weapons (dnd5e's list of base weapons), not a creature's or a spell's attack items */
     const standard = new Set(Object.keys(CONFIG.DND5E.weaponIds ?? {}));
-    const weapons = await compendiums.search(e => (e.type === "weapon") && ["simpleM", "martialM"].includes(e.system?.type?.value) && !magical(e)
+    const source = await pickFromCompendium(e => (e.type === "weapon") && ["simpleM", "martialM"].includes(e.system?.type?.value) && !magical(e)
       && (!standard.size || standard.has(e.system?.identifier) || standard.has(e.system?.type?.baseItem)),
-      { fields : ["system.type", "system.rarity", "system.properties"], notice : module.i18n("classes.warlock.looking") });
-    if(!weapons.length) return ui.notifications.warn(module.i18n("classes.warlock.noWeapons"));
-    const chosen = await chooseOne(weapons.map(w => ({ value : w.uuid, label : w.name, img : w.img, detail : game.i18n.localize(CONFIG.DND5E.weaponTypes?.[w.system?.type?.value] ?? "") })),
-      { title : activity.item.name, icon : "fa-solid fa-khanda", columns : 4, prompt : module.i18n("classes.warlock.conjurePrompt") });
-    const source = chosen ? await fromUuid(chosen) : null;
+      { fields : ["system.type", "system.rarity", "system.properties"], notice : module.i18n("classes.warlock.looking"), empty : module.i18n("classes.warlock.noWeapons"),
+        detail : w => game.i18n.localize(CONFIG.DND5E.weaponTypes?.[w.system?.type?.value] ?? ""),
+        title : activity.item.name, icon : "fa-solid fa-khanda", columns : 4, prompt : module.i18n("classes.warlock.conjurePrompt") });
     if(!source) return;
-    const data = source.toObject();
-    delete data._id;
-    foundry.utils.mergeObject(data, { "system.equipped" : true, "system.quantity" : 1, [`flags.${module.id}.pactWeapon`] : { conjured : true } });
-    const [weapon] = await actor.createEmbeddedDocuments("Item", [data]);
+    /* In your hands (the conjure lego); one at a time is onPactFormed's (a bonded weapon's pact ends too) */
+    const weapon = await conjureItem(actor, source, { data : { flags : { [module.id] : { pactWeapon : { conjured : true } } } } });
+    if(!weapon) return;
     /* The invocation's enchantment on it (as dnd5e's card would put it) */
     const profile = activity.effects?.[0]?._id;
     const enchantment = profile ? activity.item.effects.get(profile) : activity.item.effects.find(e => e.type === "enchantment");
@@ -177,8 +160,6 @@ export class pacts{
       delete effect._id;
       await weapon.createEmbeddedDocuments("ActiveEffect", [effect]);
     }
-    /* In your hand (Hands : a free one, else the main hand) */
-    if(hands.manages(actor)) await hands.put(actor, actor.items.get(weapon.id) ?? weapon, hands.freeHand(actor, weapon) ?? "main");
     await ChatMessage.implementation.create({ speaker : ChatMessage.implementation.getSpeaker({ actor }),
       content : `<p>${esc(module.format("classes.warlock.conjured", { name : actor.name, weapon : source.name }))}</p>` });
     log.debug("Pact weapon conjured", actor.name, weapon.name);
@@ -246,21 +227,7 @@ export class pacts{
     const level = Number(item.system.level);
     if(!book || !(((level === 0) && (room.cantrips > 0)) || ((level === 1) && (room.rituals > 0) && this.isRitual(item)))) return;
     await item.setFlag(module.id, "inBook", book.id);
-  }
-
-  static async onItemRemoved(item){
-    const actor = item?.parent;
-    if(!this.enabled() || (actor?.documentName !== "Actor")) return;
-    /* The book gone : its spells go */
-    if(item.getFlag(module.id, "bookOfShadows") === true){
-      const spells = actor.items.filter(i => i.getFlag(module.id, "inBook") === item.id).map(i => i.id);
-      if(spells.length) await actor.deleteEmbeddedDocuments("Item", spells);
-    }
-    /* The invocation gone : the book goes */
-    else if(idOf(item) === this.TOME){
-      const book = this.bookOf(actor);
-      if(book) await book.delete();
-    }
+    await linkItems(book, [item]);
   }
 
   static async makeBook(actor){
@@ -270,6 +237,9 @@ export class pacts{
       system : { description : { value : `<p>${esc(module.i18n("classes.warlock.bookText"))}</p>` }, quantity : 1 },
       flags : { [module.id] : { bookOfShadows : true } },
     }]);
+    /* It goes with the invocation, and its spells with it (linkItems) */
+    const tome = this.tomeOf(actor);
+    if(tome && book) await linkItems(tome, [book]);
     return book;
   }
 
@@ -295,6 +265,7 @@ export class pacts{
     delete data._id;
     foundry.utils.mergeObject(data, { "system.method" : "pact", "system.prepared" : 2, "system.sourceItem" : "class:warlock", [`flags.${module.id}.inBook`] : book.id });
     const [spell] = await actor.createEmbeddedDocuments("Item", [data]);
+    if(spell) await linkItems(book, [spell]);
     return spell;
   }
 

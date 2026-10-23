@@ -7,6 +7,19 @@ import * as items from './helpers/items.js';
 import * as utils from './helpers/utils.js';
 import * as creatures from './helpers/creatures.js';
 import { restChoices } from './automation/rest-choices.js';
+import { rollModes } from './automation/roll-modes.js';
+import { onDamage } from './roll-item/damage.js';
+import { onMiss } from './roll-item/miss-damage.js';
+import { addRow, removeRow } from './roll-item/card-rows.js';
+import { onAttacked } from './roll-item/attacked.js';
+import { cardSave } from './roll-item/card-save.js';
+import { damageTypeChoice } from './roll-item/damage-type-choice.js';
+import { bonusOnlyWhen } from './automation/bonus-only-when.js';
+import { cantUseWhile, freeUseWhile, isFreeUse } from './automation/use-rules.js';
+import { castingOptions, payCasting } from './automation/casting.js';
+import { summon, summonKind } from './automation/summons.js';
+import { pickFromCompendium } from './automation/compendiums.js';
+import { onTurnStart } from './gm.js';
 import { rollRequests } from './requests/requests.js';
 import { damageRoll, eachAttack } from './roll-item/extra-damage.js';
 import { onHit, hitOf, useOnLatestHit } from './roll-item/hit-bonus.js';
@@ -35,13 +48,26 @@ export class api{
       onFailedTest, markSpell, markOf,
       weaponUses : (id, rule) => weaponUses.add(id, rule),
       endsWhen : (match, rule) => conditions.endsWhen(match, rule),
+      /* A choice in the Rest Choices window, advantage / disadvantage on attacks, a change to a roll's own damage */
+      addRestChoice : choice => restChoices.add(choice),
+      addRollMode : (name, fn) => rollModes.add(name, fn),
+      onDamage : (fn, options) => onDamage(fn, options),
+      /* Damage on a miss (Graze), a GM button on a creature's card row (Topple), a guard's button when a creature
+         near it is attacked (Interception), something at the start of each turn */
+      onMiss, addRow, removeRow, onAttacked, onTurnStart,
+      /* A bonus only where a check holds (Rage, Dueling, Defense), what can't be used / is free while something holds */
+      bonusOnlyWhen, cantUseWhile, freeUseWhile, isFreeUse,
+      /* A spell cast outside dnd5e's use : how to pay; a save put on an attack card; a choice of damage types */
+      castingOptions, payCasting, cardSave, damageTypeChoice,
+      /* A summon activity's creature on the map; one entry chosen from the compendiums */
+      summon, summonKind, pickFromCompendium,
 
       /* Helpers, see scripts/helpers */
       ...tokens,    // tokenOf, actorOf, cells, distanceBetween, getRange, getTokensWithin, highlightRange, forcedMove, pushDestination, pushAway, pullToward, addLight, removeLight, hasLight, registerPool, poolBar, removePoolBar, poolsOf
-      ...targets,   // isEnemy, isAlly, getFlanker, isFlanking, isThreatened, getThreats, getEnemiesWithinRange, pickTargets, isValidGroup, selectTargets, setTargets
-      ...actors,    // damage, heal, tempHP, dropsToZero, isKilledOutright, preventDropToZero, findItem, rollSave, addTimedEffect, recoverSpellSlots, slotsLeft, usedThisTurn, markUsedThisTurn, getLastDamage, clearLastDamage, setStatus, setDefeated, getSize, stepSize, splitToken
+      ...targets,   // isEnemy, isAlly, alliesNear, excludeTargets, getFlanker, isFlanking, isThreatened, getThreats, getEnemiesWithinRange, pickTargets, isValidGroup, selectTargets, setTargets
+      ...actors,    // damage, heal, tempHP, dropsToZero, isKilledOutright, preventDropToZero, findItem, rollSave, addTimedEffect, recoverSpellSlots, slotsLeft, usedThisTurn, markUsedThisTurn, countedUses, effectsFrom, itemEffectOn, itemEffectOff, getLastDamage, clearLastDamage, setStatus, setDefeated, getSize, stepSize, splitToken
       ...items,     // pickAndAttack, pickAttack, attackModeFor, isLongRange, isRangedItem, isRangedAttack, canThrow, getAmmunition,
-                  // getUses, hasUses, spendUses, useActivity, useAndApply, getAppliedConditions, multiattack, getHealing, updateItem, setBaseDamage, setDamage, isClassSpell
+                  // getUses, hasUses, spendUses, useActivity, useAndApply, getAppliedConditions, multiattack, getHealing, updateItem, setBaseDamage, setDamage, isClassSpell, isUnarmored, conjureItem, linkItems, linkedItems
       ...utils,     // wait, waitFor, originOf, chooseOption
       ...creatures, // crOf, fitsProfile, chooseCreature, chooseCreatures, chooseOne, chooseSet, divideAmong
       /* The character's Rest Choices window (Wild Shape forms...), e.g. after a rest the GM ran for everyone */

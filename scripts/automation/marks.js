@@ -2,11 +2,10 @@ import { module } from '../module.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
 import { uses } from '../uses.js';
-import { casting } from './casting.js';
-import { idOf, chooseOption, whisperOwners } from '../helpers/utils.js';
+import { casting, payCasting } from './casting.js';
+import { idOf, whisperOwners } from '../helpers/utils.js';
 import { tokenOf } from '../helpers/tokens.js';
 import { pickTargets } from '../helpers/targets.js';
-import { slotsLeft } from '../helpers/actors.js';
 import { postTargetCard, registerTargetCards } from '../helpers/target-card.js';
 import { eachAttack } from '../roll-item/extra-damage.js';
 import { TYPES } from '../roll-item/message.js';
@@ -93,16 +92,9 @@ export function markedBy(id, token, attacker){
   return token?.actor?.effects?.find?.(e => e.getFlag(module.id, id)?.caster === attacker?.uuid) ?? null;
 }
 
-/* The ways to cast it now : its free castings, then each slot level left */
-function payments(rule, actor){
-  const out = [];
-  const free = rule.free ? (Number(rule.free.left(actor)) || 0) : 0;
-  if(free > 0) out.push({ value : "free", label : rule.free.label(free), free : true });
-  for(const slot of slotsLeft(actor, 1)){
-    out.push({ value : slot.key, key : slot.key, level : slot.level,
-      label : module.format(slot.pact ? "marks.payPact" : "marks.paySlot", { level : slot.level, left : slot.value }) });
-  }
-  return out;
+/* The ways to cast it now : its free castings, then each slot level left (the payCasting lego) */
+function freeOf(rule){
+  return rule.free ? { left : rule.free.left, spend : rule.free.spend, label : left => rule.free.label(left) } : null;
 }
 
 /* Cast it : move a mark whose creature is down, else pay and mark */
@@ -117,16 +109,9 @@ async function cast(rule, actor){
   if(current && down && casting.concentrationOn(actor, spell)){
     return place(rule, actor, spell, { move : current, data : { ...(current.effect.getFlag(module.id, rule.id) ?? {}) } });
   }
-  const options = payments(rule, actor);
-  if(!options.length){
-    ui.notifications.warn(module.format("marks.noPay", { name : actor.name, spell : spell.name }));
-    return null;
-  }
-  const value = await chooseOption({ title : spell.name, icon : `fa-solid ${rule.icon ?? "fa-crosshairs"}`, prompt : module.i18n("marks.payPrompt"), options });
-  const pay = options.find(p => p.value === value);
+  /* How to pay (its components, and one slot a turn : Casting), paid once the creature is picked */
+  const pay = await payCasting(actor, spell, { free : freeOf(rule), minLevel : 1, spend : false, icon : `fa-solid ${rule.icon ?? "fa-crosshairs"}` });
   if(!pay) return null;
-  /* Its components, and one slot a turn (Casting) */
-  if(!casting.allowsCast(spell, { slot : !pay.free })) return null;
   const extra = rule.ask ? await rule.ask(actor, spell) : {};
   if(!extra) return null;
   return place(rule, actor, spell, { pay, data : extra });
@@ -139,8 +124,7 @@ async function place(rule, actor, spell, { pay = null, move = null, data = {} } 
   if(!target) return null;
   const level = pay?.level ?? 1;
   if(pay){
-    if(pay.free) await rule.free.spend(actor);
-    else await casting.spendSlot(actor, pay.key);
+    await pay.pay();
     await casting.concentrate(actor, spell, (rule.hours?.(level) ?? 1) * 3600);
   }
   const words = { name : actor.name, target : target.name, spell : spell.name, ...(rule.words?.(data) ?? {}) };

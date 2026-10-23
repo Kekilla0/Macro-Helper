@@ -782,9 +782,19 @@ export function registerMessages(){
     /* Extra damage added as an alternative (Savage Attacker's second roll) : applying the first roll or the
        alternative keeps that one, the other goes away */
     async _onApplyDamage(event){
-      await super._onApplyDamage(event);
       const message = this.#message;
       const part = this.dataset.part || "base";
+      /* The hit's own damage : what a hit does before it lands (Sap, Slow, Vex), as the row's Apply does */
+      if(message && (part === "base")){
+        for(const option of this.targetList?.querySelectorAll?.("option") ?? []){
+          const actor = fromUuidSync(option.value, { strict : false })?.actor;
+          if(!actor?.isOwner) continue;
+          const waits = [];
+          Hooks.callAll(`${module.id}.beforeApplyDamage`, message, actor, waits);
+          await Promise.allSettled(waits);
+        }
+      }
+      await super._onApplyDamage(event);
       if(!message?.isOwner || !["base", "extra"].includes(part) || !message.system?.alternativesOf) return;
       const ray = ("ray" in this.dataset) ? Number(this.dataset.ray) : null;
       if(!message.system.alternativesOf(ray).length) return;

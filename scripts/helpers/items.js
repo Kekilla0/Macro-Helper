@@ -47,6 +47,20 @@ export function hasShieldEquipped(thing){
 }
 
 /**
+ * Is a creature unarmored : no armor worn (Light, Medium or Heavy), and, unless `shield` is false, no shield either
+ * (Martial Arts, Unarmored Movement; a monk's or a beast's "while not wearing armor").
+ * @param {Actor|Token|Item} thing
+ * @param {object} [options]
+ * @param {boolean} [options.shield=true]  a shield counts too
+ * @returns {boolean}
+ */
+export function isUnarmored(thing, { shield = true } = {}){
+  const actor = actorOf(thing);
+  const armor = actor?.items?.some?.(i => (i.type === "equipment") && ["light", "medium", "heavy"].includes(i.system.type?.value) && i.system.equipped);
+  return !armor && !(shield && hasShieldEquipped(actor));
+}
+
+/**
  * Is the hand not holding this weapon free : no shield and no other weapon equipped (natural weapons don't count) ?
  * Read from what's equipped, so a Versatile weapon is used two-handed when nothing else is in hand.
  * @param {Item} item   the weapon in hand
@@ -678,4 +692,62 @@ export function predictModeWhy(activity, target, { attackMode, disadvantage = fa
   const disWhy = why("disadvantage");
   if(disadvantage && disadvantageWhy) disWhy.push(disadvantageWhy);
   return { mode : (adv && !dis) ? "advantage" : (dis && !adv) ? "disadvantage" : "normal5e", advantage : adv ? why("advantage") : [], disadvantage : dis ? disWhy : [] };
+}
+
+/* ---------- Conjured and linked items ---------- */
+
+/**
+ * An item conjured onto a creature : a copy of `source` (a document or its uuid : a compendium's weapon), equipped, in
+ * a free hand (Hands; else the main hand). With `key`, one at a time : an earlier one conjured with that key goes
+ * (Pact of the Blade's weapon; Shadow Blade, a homebrew "summon a spectral shield").
+ * @param {Actor|Token} thing
+ * @param {Item|string} source
+ * @param {object} [options]
+ * @param {string} [options.key]
+ * @param {object} [options.data]      merged into the copy (flags...)
+ * @param {boolean} [options.hand=true]
+ * @returns {Promise<Item|null>}
+ */
+export async function conjureItem(thing, source, { key = null, data = {}, hand = true } = {}){
+  const actor = actorOf(thing);
+  const doc = (typeof source === "string") ? await fromUuid(source) : source;
+  if(!actor?.isOwner || !doc) return null;
+  if(key){
+    const old = actor.items.filter(i => i.getFlag(module.id, "conjured") === key).map(i => i.id);
+    if(old.length) await actor.deleteEmbeddedDocuments("Item", old);
+  }
+  const copy = doc.toObject();
+  delete copy._id;
+  foundry.utils.mergeObject(copy, { system : { equipped : true, quantity : 1 }, flags : { [module.id] : { conjured : key ?? true } } });
+  foundry.utils.mergeObject(copy, data);
+  const [item] = await actor.createEmbeddedDocuments("Item", [copy]);
+  if(item && hand && hands.manages(actor)) await hands.put(actor, actor.items.get(item.id) ?? item, hands.freeHand(actor, item) ?? "main");
+  return item ?? null;
+}
+
+const LINK = "linkedTo";
+
+/* The links work from the start (not only once something links in this session) */
+Hooks.on("deleteItem", async (item, options, userId) => {
+  const actor = item?.parent;
+  if((userId !== game.user.id) || (actor?.documentName !== "Actor")) return;
+  const linked = linkedItems(item).map(i => i.id);
+  if(linked.length) await actor.deleteEmbeddedDocuments("Item", linked).catch(() => null);
+});
+
+/**
+ * Items that come and go with another one : deleting `parent` deletes them too (the Book of Shadows' spells, the book
+ * with its invocation; a homebrew staff's spells).
+ * @param {Item} parent
+ * @param {Item[]} items
+ */
+export async function linkItems(parent, items){
+  for(const item of [items].flat().filter(Boolean)){
+    if(item.getFlag(module.id, LINK) !== parent.id) await item.setFlag(module.id, LINK, parent.id);
+  }
+}
+
+/* The items linked to this one (linkItems) */
+export function linkedItems(parent){
+  return parent?.parent?.items?.filter?.(i => i.getFlag(module.id, LINK) === parent.id) ?? [];
 }

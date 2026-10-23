@@ -2,7 +2,7 @@ import { module } from '../../module.js';
 import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
 import { idOf, originItem, esc, ownerIds, chooseOption, buttonRow, addButton, makeButton } from '../../helpers/utils.js';
-import { slotsLeft, usedThisTurn, markUsedThisTurn } from '../../helpers/actors.js';
+import { slotsLeft, usedThisTurn, markUsedThisTurn, countedUses } from '../../helpers/actors.js';
 import { pickTargets } from '../../helpers/targets.js';
 import { distanceBetween, tokenOf, getTokensWithin, hasLineOfSight } from '../../helpers/tokens.js';
 import { conditions } from '../conditions.js';
@@ -15,7 +15,8 @@ import { actions } from '../actions.js';
 import { masteries } from '../masteries.js';
 import { endCondition } from '../../roll-item/card-builder.js';
 import { TYPES } from '../../roll-item/message.js';
-import { casting } from '../casting.js';
+import { cardSave } from '../../roll-item/card-save.js';
+import { casting, castingOptions } from '../casting.js';
 import { spellActions } from '../spell-actions.js';
 import { actionTracker } from '../action-tracker.js';
 const log = logger.for(import.meta.url);
@@ -94,9 +95,8 @@ export class paladin{
     conditions.endOnIncapacitated(this.DIVINE_SENSE);
     Hooks.on("dnd5e.postUseActivity", activity => { if(this.enabled() && (idOf(activity?.item) === this.DIVINE_SENSE)) this.divineSense(activity.getUsageToken?.()?.actor ?? activity.actor); });
     Hooks.on("renderChatMessageHTML", (message, html) => this.senseButton(message, html));
-    Hooks.on("dnd5e.restCompleted", (actor, result) => {
-      if(result?.longRest && actor?.isOwner && actor.getFlag(module.id, "paladinsSmiteUsed")) actor.unsetFlag(module.id, "paladinsSmiteUsed");
-    });
+    /* Paladin's Smite with no uses anywhere : once a Long Rest, counted on the actor */
+    this.smiteCount = countedUses("paladinsSmite", { max : () => 1 });
     /* Plutonium's Lay on Hands has no range : a creature you touch */
     itemFixes.add({ name : "Lay on Hands", where : "owned", plan : item => this.layOnHandsFix(item) });
     /* Plutonium's Paladin's Smite keeps its use on its cast activity too : one use, the item's (as Favored Enemy has it),
@@ -134,7 +134,7 @@ export class paladin{
     const granted = actor.items.find(i => (i.type === "spell") && (idOf(i) === this.DIVINE) && (Number(i.system.uses?.max) > 0));
     if(granted) return (Number(granted.system.uses.value) > 0) ? { item : granted, activity : null } : null;
     /* No uses anywhere : once a Long Rest, counted on the actor */
-    return actor.getFlag(module.id, "paladinsSmiteUsed") ? null : { item, activity : null, counted : true };
+    return this.smiteCount.left(actor) ? { item, activity : null, counted : true } : null;
   }
 
   /* The spell slots left at a level or higher : { key : "spell2", level, value } (Pact Magic too) */
@@ -165,14 +165,12 @@ export class paladin{
     for(const spell of this.smiteSpells(actor)){
       if(only && (idOf(spell) !== only)) continue;
       if(kind && !this.fits(spell, kind)) continue;
-      const level = Number(spell.system.level) || 1;
-      if((idOf(spell) === this.DIVINE) && this.freeSmite(actor)){
-        out.push({ value : `${spell.id}|free`, label : module.format("classes.paladin.smiteFree", { spell : spell.name }), spell, level : 1, free : true });
-      }
-      if(freeOnly) continue;
-      for(const slot of this.slotsFrom(actor, level)){
-        out.push({ value : `${spell.id}|${slot.key}`, spell, level : slot.level, slot,
-          label : module.format(slot.pact ? "classes.paladin.smitePact" : "classes.paladin.smiteSlot", { spell : spell.name, level : slot.level, left : slot.value }) });
+      /* The payCasting lego's ways : Paladin's Smite's free Divine Smite, then each slot */
+      const free = (idOf(spell) === this.DIVINE) ? { left : a => (this.freeSmite(a) ? 1 : 0), spend : a => this.payFree(a),
+        label : () => module.format("classes.paladin.smiteFree", { spell : spell.name }) } : null;
+      const labels = { slot : slot => module.format(slot.pact ? "classes.paladin.smitePact" : "classes.paladin.smiteSlot", { spell : spell.name, level : slot.level, left : slot.value }) };
+      for(const option of castingOptions(actor, spell, { free, labels })){
+        if(!freeOnly || option.free) out.push(option);
       }
     }
     return out;
@@ -328,52 +326,28 @@ export class paladin{
     return this.writeCard(data);
   }
 
-  /* The free use or the slot */
+  /* The free use or the slot (castingOptions' own pay) */
   static async pay(actor, choice){
-    if(choice.free){
-      const free = this.freeSmite(actor);
-      if(free?.counted) return actor.setFlag(module.id, "paladinsSmiteUsed", true);
-      if(free?.activity) return free.item.update({ [`system.activities.${free.activity.id}.uses.spent`] : (Number(free.activity.uses.spent) || 0) + 1 });
-      if(free) return free.item.update({ "system.uses.spent" : (Number(free.item.system.uses.spent) || 0) + 1 });
-      return;
-    }
-    await casting.spendSlot(actor, choice.slot.key);
+    return choice.pay();
   }
 
-  /* Wrathful and Thunderous : their save on the card, for the creatures hit (one save per card : an item's own rider stays) */
+  /* Paladin's Smite's free Divine Smite spent : the item's use, its activity's, or counted on the actor */
+  static async payFree(actor){
+    const free = this.freeSmite(actor);
+    if(free?.counted) return this.smiteCount.spend(actor);
+    if(free?.activity) return free.item.update({ [`system.activities.${free.activity.id}.uses.spent`] : (Number(free.activity.uses.spent) || 0) + 1 });
+    if(free) return free.item.update({ "system.uses.spent" : (Number(free.item.system.uses.spent) || 0) + 1 });
+  }
+
+  /* Wrathful and Thunderous : their save on the card, for the creatures hit (the cardSave lego; one save per card : an
+     item's own rider stays) */
   static async rider(message, spell){
-    if(!this.RIDERS.includes(idOf(spell)) || message.system.rider?.id) return;
-    const save = spell.system.activities?.find?.(a => a.type === "save");
-    if(!save) return;
-    await message.update({ "system.rider" : { id : save.id, item : spell.uuid, ability : save.save?.ability?.first?.() ?? "",
-      dc : Number.isFinite(save.save?.dc?.value) ? save.save.dc.value : null, onSave : null } });
+    if(this.RIDERS.includes(idOf(spell))) await cardSave(message, spell);
   }
 
-  /* A save for the target and everyone within some feet of it, on the hit's card : the spell's save as the card's own,
-     with its creatures, its damage rolled at the slot's level onto the card, the burst shown on the map */
+  /* Hail of Thorns : the target and everyone within some feet of it save, its damage at the slot's level, the burst shown */
   static async aroundRider(message, spell, level, target, feet){
-    const save = spell.system.activities?.find?.(a => a.type === "save");
-    const token = target?.object ?? target;
-    if(!save || !token?.document) return;
-    const scene = token.document.parent;
-    const targets = scene.tokens.filter(t => t.actor && t.object && ((t === token.document) || (distanceBetween(t.object, token) <= feet))).map(t => t.uuid);
-    const rolls = [];
-    for(const part of save.damage?.parts ?? []){
-      const formula = part.scaledFormula?.(Math.max(0, (Number(level) || 1) - (Number(spell.system.level) || 1)), { rollData : save.getRollData?.() ?? {} }) ?? part.formula;
-      if(!formula) continue;
-      const type = part.types?.first?.() ?? [...(part.types ?? [])][0] ?? "";
-      const roll = await new CONFIG.Dice.DamageRoll(formula, save.getRollData?.() ?? {}, { type, types : [type], properties : ["mgc"] }).evaluate();
-      roll.options[module.id] = { part : "save" };
-      rolls.push(roll);
-    }
-    await message.update({
-      "system.rider" : { id : save.id, item : spell.uuid, ability : save.save?.ability?.first?.() ?? "",
-        dc : Number.isFinite(save.save?.dc?.value) ? save.save.dc.value : null, onSave : save.damage?.onSave ?? null, targets },
-      ...(rolls.length ? { rolls : [...message.rolls, ...rolls].map(r => JSON.stringify(r)) } : {}),
-    });
-    const radius = (feet / scene.grid.distance) * scene.grid.size + (Math.max(token.w, token.h) / 2);
-    gm.run("areaRegion", { scene : scene.id, name : spell.name, color : game.user.color?.css ?? "#ffd700",
-      x : token.center.x, y : token.center.y, radius, activity : save.uuid, origin : (message.getAssociatedToken?.() ?? token.document).uuid }).catch(error => log.debug(error));
+    await cardSave(message, spell, { around : { target, feet }, level });
   }
 
   /* Thunderous Smite : a creature that failed its save is pushed 10 ft away (the GM's button; Prone is the save's effect) */

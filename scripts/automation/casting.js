@@ -3,8 +3,8 @@ import { logger } from '../log.js';
 import { uses } from '../uses.js';
 import { spells } from './spells.js';
 import { limits } from './limits.js';
-import { esc, buttonRow, addButton, makeButton } from '../helpers/utils.js';
-import { usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
+import { esc, buttonRow, addButton, makeButton, chooseOption } from '../helpers/utils.js';
+import { usedThisTurn, markUsedThisTurn, slotsLeft } from '../helpers/actors.js';
 import { components } from './components.js';
 import { gm } from '../gm.js';
 const log = logger.for(import.meta.url);
@@ -294,4 +294,59 @@ export class casting{
       && (e.duration.secondsRemaining <= seconds) && !e.getFlag(module.id, "casting"));
     if(done.length) await actor.deleteEmbeddedDocuments("ActiveEffect", done.map(e => e.id)).catch(error => log.debug(error));
   }
+}
+
+/* ---------- Paying for a casting outside dnd5e's use : the payCasting lego ---------- */
+
+/**
+ * The ways a creature can pay to cast a spell now : its free castings first, then each spell slot level left from the
+ * spell's level up (Pact Magic's too). Each way can pay for itself : `await option.pay()`.
+ * @param {Actor} actor
+ * @param {Item} spell
+ * @param {object} [options]
+ * @param {object} [options.free]      free castings : { left(actor) -> number, spend(actor), label(left, spell) }
+ * @param {number} [options.minLevel]  the lowest slot (default : the spell's level)
+ * @param {object} [options.labels]    { slot(slot, spell) } instead of "Level 2 slot (1 left)"
+ * @returns {object[]}  [{ value, label, spell, level, free, slot, pay() }]
+ */
+export function castingOptions(actor, spell, { free = null, minLevel = null, labels = {} } = {}){
+  const out = [];
+  const level = minLevel ?? Math.max(1, Number(spell?.system?.level) || 1);
+  const left = free ? (Number(free.left(actor)) || 0) : 0;
+  if(left > 0) out.push({ value : `${spell?.id ?? ""}|free`, label : free.label?.(left, spell) ?? module.format("casting.payFree", { left }), spell,
+    level, free : true, pay : () => free.spend(actor) });
+  for(const slot of slotsLeft(actor, level)){
+    out.push({ value : `${spell?.id ?? ""}|${slot.key}`, spell, level : slot.level, slot, free : false,
+      label : labels.slot?.(slot, spell) ?? module.format(slot.pact ? "marks.payPact" : "marks.paySlot", { level : slot.level, left : slot.value }),
+      pay : () => casting.spendSlot(actor, slot.key) });
+  }
+  return out;
+}
+
+/**
+ * Cast a spell outside dnd5e's use (a mark, a smite, a homebrew "cast it as part of the attack") : choose how to pay
+ * (castingOptions), check it may be cast (its components, one slot a turn : Casting), and pay.
+ *   const cast = await MacroHelper.payCasting(actor, spell, { free });             paid; cast.level, cast.free
+ *   const cast = await MacroHelper.payCasting(actor, spell, { spend : false });    chosen and checked; await cast.pay() later
+ * @param {Actor} actor
+ * @param {Item} spell
+ * @param {object} [options]   castingOptions' (free, minLevel, labels), and :
+ * @param {object} [options.choice]     one of castingOptions' already chosen (no question)
+ * @param {boolean} [options.spend=true]
+ * @param {string} [options.title], [options.prompt], [options.icon]
+ * @returns {Promise<object|null>}  the way chosen, null : none, or cancelled, or not allowed
+ */
+export async function payCasting(actor, spell, { choice = null, spend = true, title = null, prompt = null, icon = "fa-solid fa-wand-sparkles", ...rest } = {}){
+  if(!choice){
+    const options = castingOptions(actor, spell, rest);
+    if(!options.length){
+      ui.notifications.warn(module.format("marks.noPay", { name : actor?.name ?? "", spell : spell?.name ?? "" }));
+      return null;
+    }
+    const value = await chooseOption({ title : title ?? spell.name, icon, prompt : prompt ?? module.i18n("marks.payPrompt"), options });
+    choice = options.find(o => o.value === value) ?? null;
+  }
+  if(!choice || !casting.allowsCast(choice.spell ?? spell, { slot : !choice.free })) return null;
+  if(spend) await choice.pay();
+  return choice;
 }

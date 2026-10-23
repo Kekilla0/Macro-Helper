@@ -2,7 +2,7 @@ import { module } from '../../module.js';
 import { idOf, originItem } from '../../helpers/utils.js';
 import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
-import { tokenOf } from '../../helpers/tokens.js';
+import { excludeTargets } from '../../helpers/targets.js';
 import { onFailedTest } from '../../roll-item/rerolls.js';
 const log = logger.for(import.meta.url);
 
@@ -26,7 +26,9 @@ export class bard{
 
   static register(){
     if(game.system.id !== "dnd5e") return;
-    Hooks.on(`${module.id}.targets`, (activity, tokens) => this.onTargets(activity, tokens));
+    /* "Another creature", holding no die yet : the Bard and the already Inspired are dropped from the targets */
+    excludeTargets("bardic", { applies : activity => this.isBardic(activity), self : true,
+      exclude : t => this.inspirationOf(t.actor) ? module.format("classes.bard.already", { name : t.name }) : false });
     /* Using it : the failed-test lego (a missed attack, a failed save or check), the mark gone */
     onFailedTest({
       id : "bardic", icon : "fa-music",
@@ -75,21 +77,5 @@ export class bard{
       }
     }
     return null;
-  }
-
-  /* ---------- Giving it ---------- */
-
-  /* "Another creature", holding no die yet : the Bard and the already Inspired are dropped from the targets */
-  static onTargets(activity, tokens){
-    if(!this.isBardic(activity)) return;
-    const me = tokenOf(activity.actor);
-    for(let i = tokens.length - 1; i >= 0; i--){
-      const t = tokens[i];
-      if(t === me){ tokens.splice(i, 1); continue; }
-      if(this.inspirationOf(t.actor)){
-        ui.notifications.info(module.format("classes.bard.already", { name : t.name }));
-        tokens.splice(i, 1);
-      }
-    }
   }
 }

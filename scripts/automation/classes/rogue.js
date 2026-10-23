@@ -5,6 +5,7 @@ import { onHit, useOnLatestHit } from '../../roll-item/hit-bonus.js';
 import { idOf, esc, ownerIds, gmIds, buttonRow, addButton, makeButton } from '../../helpers/utils.js';
 import { setStatus, addTimedEffect } from '../../helpers/actors.js';
 import { tokenOf, distanceBetween, canSee, movedThisTurn } from '../../helpers/tokens.js';
+import { alliesNear } from '../../helpers/targets.js';
 import { rollModes } from '../roll-modes.js';
 import { giveMode } from '../../roll-item/reasons.js';
 import { uses } from '../../uses.js';
@@ -130,9 +131,7 @@ export class rogue{
 
   /* An ally of the attacker (not it, not Incapacitated) within 5 ft of the target */
   static allyNear(attacker, target){
-    const side = attacker?.document?.disposition;
-    return (canvas.tokens?.placeables ?? []).some(t => (t !== attacker) && (t !== target) && t.actor && (t.document.disposition === side)
-      && !this.OUT.some(s => t.actor.statuses?.has?.(s)) && (distanceBetween(t, target) <= 5));
+    return alliesNear(target, attacker, { feet : 5 }).length > 0;
   }
 
   /* Does this hit allow Sneak Attack : a Finesse or ranged weapon attack, advantage or an ally by the target, no disadvantage */

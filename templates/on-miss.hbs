@@ -1,0 +1,11 @@
+{{!-- An on-miss rule's damage for one attack (miss-damage.js) : { part, label, icon, ray, hasRay, damage : damage context } --}}
+<div class="macro-helper-mastery" data-on-miss="{{ part }}">
+    <section class="icon-row ray-header">
+        <i class="fa-fw fa-solid {{ icon }}" inert></i>
+        <span class="roboto-upper">{{ label }}{{#if damage.onMiss}} · {{ localize "rollItem.mastery.onMiss" }}{{/if}}</span>
+    </section>
+    {{#with damage}}{{> "macro-helper.damage-rows" }}{{/with}}
+    {{#if damage.showTray}}
+    <macro-helper-damage class="dnd5e2" data-part="{{ part }}" {{#if hasRay}}data-ray="{{ ray }}"{{/if}}></macro-helper-damage>
+    {{/if}}
+</div>

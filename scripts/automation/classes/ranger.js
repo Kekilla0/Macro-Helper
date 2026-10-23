@@ -2,6 +2,7 @@ import { module } from '../../module.js';
 import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
 import { idOf } from '../../helpers/utils.js';
+import { countedUses } from '../../helpers/actors.js';
 import { markSpell, spellOf } from '../marks.js';
 const log = logger.for(import.meta.url);
 
@@ -40,7 +41,7 @@ export class ranger{
       damage : attacker => ({ formula : "1d6", type : "force", label : spellOf(this.markRule, attacker)?.name ?? "Hunter's Mark" }),
       text : { marked : "classes.ranger.marked", moved : "classes.ranger.moved", mark : "classes.ranger.markShort", moveHere : "marks.moveHere", done : "classes.ranger.markedShort" },
     });
-    Hooks.on("dnd5e.restCompleted", (actor, result) => this.onRest(actor, result));
+    this.favored = countedUses("favoredEnemy", { max : actor => this.favoredMax(actor), item : actor => this.favoredItem(actor) });
   }
 
   /* ---------- Favored Enemy ---------- */
@@ -56,21 +57,13 @@ export class ranger{
   }
 
   /* Free castings left */
+  /* Free castings left (the countedUses lego : the item's own uses, else counted on the actor) */
   static favoredLeft(actor){
-    const item = this.favoredItem(actor);
-    if(!item) return 0;
-    if(item.system.uses?.max) return Number(item.system.uses.value) || 0;
-    return Math.max(0, this.favoredMax(actor) - (Number(actor.getFlag(module.id, "favoredEnemyUsed")) || 0));
+    return this.favoredItem(actor) ? this.favored.left(actor) : 0;
   }
 
-  static async spendFavored(actor){
-    const item = this.favoredItem(actor);
-    if(item?.system.uses?.max) return item.update({ "system.uses.spent" : (Number(item.system.uses.spent) || 0) + 1 });
-    return actor.setFlag(module.id, "favoredEnemyUsed", (Number(actor.getFlag(module.id, "favoredEnemyUsed")) || 0) + 1);
-  }
-
-  static async onRest(actor, result){
-    if(result?.longRest && actor?.isOwner && actor.getFlag(module.id, "favoredEnemyUsed")) await actor.unsetFlag(module.id, "favoredEnemyUsed");
+  static spendFavored(actor){
+    return this.favored.spend(actor);
   }
 
   /* ---------- Hunter's Mark ---------- */

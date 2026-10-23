@@ -2,6 +2,7 @@ import { module } from '../module.js';
 import { tokenOf, actorOf, isSpaceFree } from './tokens.js';
 import { gm } from '../gm.js';
 import { settings } from '../settings.js';
+import { idOf } from './utils.js';
 
 /* ---------- Hit points ----------
  * On dnd5e's own actor.applyDamage : the same path as the chat card APPLY trays, so resistances, immunities,
@@ -222,6 +223,84 @@ export async function rollSaveAsGM({ uuid, ability, dc = null, from = null, bonu
   return rolled ? { success : rolled.success, total : rolled.total, roll : rolled.roll.toJSON() } : null;
 }
 
+/* ---------- An item's own effect ---------- */
+
+/* The item an effect is from : the item it's on, else its origin */
+function sourceItemOf(effect){
+  const item = (effect?.parent?.documentName === "Item") ? effect.parent : (effect?.origin ? fromUuidSync(effect.origin, { strict : false }) : null);
+  return (item?.documentName === "Item") ? item : null;
+}
+
+/**
+ * The effects working on a creature now that came from an item : on the creature (with the item as origin) or switched
+ * on on the item itself. Not disabled, suppressed or expired.
+ * @param {Actor|Token|TokenDocument} thing
+ * @param {string|string[]|Function} match   the item's identifier (or several), or a check (effect) => boolean
+ * @returns {ActiveEffect[]}
+ */
+export function effectsFrom(thing, match){
+  const actor = actorOf(thing);
+  const ids = (typeof match === "function") ? null : [match].flat();
+  return [...(actor?.appliedEffects ?? [])].filter(effect => {
+    if(effect.disabled || effect.isSuppressed || effect.duration?.expired) return false;
+    return ids ? ids.includes(idOf(sourceItemOf(effect))) : !!match(effect);
+  });
+}
+
+/**
+ * An item's own effect turned on for its creature (Rage, Innate Sorcery; a monster's "it becomes enraged"), its
+ * duration counting from now. Its item on the creature itself : the item's transferred effect is switched on. Else (an
+ * unlinked token's copy, an effect that isn't transferred, `copy`) : a copy goes on the creature, the item its origin.
+ * Already on : left as it is (returned).
+ * @param {Item} item
+ * @param {object} [options]
+ * @param {Actor|Token} [options.on]     the creature (default : the item's; give the token's for an unlinked token)
+ * @param {string} [options.effect]      which of the item's effects (its id; default : the activity's first, else the
+ *                                       transferred one, else the first)
+ * @param {Activity} [options.activity]
+ * @param {object} [options.fallback]    the effect's data when the item has none
+ * @param {object} [options.data]        merged into it (duration, flags, showIcon...)
+ * @param {boolean} [options.copy=false] always a copy on the creature
+ * @returns {Promise<ActiveEffect|null>}
+ */
+export async function itemEffectOn(item, { on = null, effect : id = null, activity = null, fallback = null, data = {}, copy = false } = {}){
+  const actor = actorOf(on ?? item?.actor);
+  if(!item || !actor?.isOwner) return null;
+  const working = effectsFrom(actor, e => sourceItemOf(e) && ((sourceItemOf(e) === item) || (idOf(sourceItemOf(e)) === idOf(item))));
+  if(working.length) return working[0];
+  const chosen = id ?? activity?.effects?.[0]?._id;
+  const source = (chosen && item.effects.get(chosen)) ?? item.effects.find(e => e.transfer) ?? item.effects.contents?.[0] ?? null;
+  if(!source && !fallback) return null;
+  const start = { time : game.time.worldTime };
+  if(game.combat?.started) Object.assign(start, { combat : game.combat.id, round : game.combat.round, turn : game.combat.turn ?? 0 });
+  if(source?.transfer && !copy && (item.parent === actor)){
+    await source.update(foundry.utils.mergeObject({ disabled : false, start }, data, { inplace : false }));
+    return source;
+  }
+  const base = source?.toObject?.() ?? { name : item.name, img : item.img, ...fallback };
+  delete base._id;
+  const [made] = await actor.createEmbeddedDocuments("ActiveEffect", [foundry.utils.mergeObject(base,
+    foundry.utils.mergeObject({ disabled : false, transfer : false, origin : item.uuid, start }, data, { inplace : false }), { inplace : false })]);
+  return made ?? null;
+}
+
+/**
+ * The effects itemEffectOn turned on, off again : an item's own switched off, a copy removed.
+ * @param {Actor|Token|TokenDocument} thing
+ * @param {string|string[]|Function} match   as effectsFrom
+ * @param {object} [options]
+ * @param {object} [options.data]   also changed on an item's own effect as it's switched off (a flag taken off)
+ * @returns {Promise<number>}  how many ended
+ */
+export async function itemEffectOff(thing, match, { data = {} } = {}){
+  const effects = effectsFrom(thing, match).filter(e => e.isOwner);
+  for(const effect of effects){
+    if(effect.parent?.documentName === "Item") await effect.update({ disabled : true, ...data });
+    else await effect.delete();
+  }
+  return effects.length;
+}
+
 /**
  * Put an effect on a creature that lasts until the start or end of someone's next turn (a weapon mastery, a spell's
  * "until the start of your next turn"). The active GM removes it then. Made out of combat : it waits for that turn in a
@@ -311,6 +390,61 @@ export async function markUsedThisTurn(thing, key){
   const actor = actorOf(thing);
   const now = gm.stamp(actor, "turnEnd");
   if(now && actor?.isOwner) await actor.setFlag(module.id, `turn.${key}`, { combat : now.combat, round : now.round, turn : now.turn });
+}
+
+/* ---------- Counted uses ---------- */
+
+const counters = new Map();
+let countersHooked = false;
+
+/**
+ * Uses counted on the creature, for a feature whose item has none of its own (Favored Enemy's free Hunter's Mark,
+ * Paladin's Smite's free Divine Smite, a homebrew "twice a Long Rest" with no uses set). When `item(actor)` has limited
+ * uses, those are the ones counted instead. The count comes back on the rest (`"long"` : a Long Rest, `"short"` : any).
+ *
+ *   const free = MacroHelper.countedUses("favoredEnemy", { max : actor => 2, item : actor => actor.items.getName("Favored Enemy") });
+ *   if(free.left(actor)) await free.spend(actor);
+ *
+ * @param {string} id
+ * @param {object} [options]
+ * @param {(actor : Actor) => number} [options.max]    how many (default 1)
+ * @param {(actor : Actor) => Item|null} [options.item] the item whose own uses count, when it has them
+ * @param {"long"|"short"|null} [options.recover="long"]
+ * @returns {{ left : Function, spend : Function, reset : Function }}  left(thing) -> number, spend(thing, n = 1), reset(thing)
+ */
+export function countedUses(id, { max = () => 1, item = null, recover = "long" } = {}){
+  const key = `counted.${id}`;
+  const own = actor => { const i = item?.(actor); return Number(i?.system?.uses?.max) ? i : null; };
+  const counter = {
+    left(thing){
+      const actor = actorOf(thing);
+      if(!actor) return 0;
+      const i = own(actor);
+      if(i) return Number(i.system.uses.value) || 0;
+      return Math.max(0, (Number(max(actor)) || 0) - (Number(actor.getFlag(module.id, key)) || 0));
+    },
+    async spend(thing, n = 1){
+      const actor = actorOf(thing);
+      if(!actor?.isOwner) return;
+      const i = own(actor);
+      if(i) return i.update({ "system.uses.spent" : (Number(i.system.uses.spent) || 0) + n });
+      return actor.setFlag(module.id, key, Math.max(0, (Number(actor.getFlag(module.id, key)) || 0) + n));
+    },
+    async reset(thing){
+      const actor = actorOf(thing);
+      if(actor?.isOwner && (actor.getFlag(module.id, key) !== undefined)) await actor.unsetFlag(module.id, key);
+    },
+  };
+  counters.set(id, { counter, recover });
+  if(!countersHooked){
+    countersHooked = true;
+    Hooks.on("dnd5e.restCompleted", async (actor, result) => {
+      for(const { counter, recover } of counters.values()){
+        if((recover === "short") || ((recover === "long") && result?.longRest)) await counter.reset(actor);
+      }
+    });
+  }
+  return counter;
 }
 
 /* ---------- Spell slots ---------- */

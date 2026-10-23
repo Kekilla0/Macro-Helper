@@ -2,7 +2,7 @@ import { module } from '../../module.js';
 import { idOf, buttonRow, addButton, wait, waitFor } from '../../helpers/utils.js';
 import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
-import { hasShieldEquipped } from '../../helpers/items.js';
+import { isUnarmored } from '../../helpers/items.js';
 import { actions } from '../actions.js';
 import { weaponUses } from '../weapon-uses.js';
 import { uses } from '../../uses.js';
@@ -115,8 +115,7 @@ export class monk{
 
   /* No armor worn, no shield held (Martial Arts, Unarmored Movement) */
   static unarmored(actor){
-    const armor = actor?.items?.some?.(i => (i.type === "equipment") && ["light", "medium", "heavy"].includes(i.system.type?.value) && i.system.equipped);
-    return !armor && !hasShieldEquipped(actor);
+    return isUnarmored(actor);
   }
 
   /* Unarmed Strike, or a Monk weapon : Simple melee, or Martial melee with Light */

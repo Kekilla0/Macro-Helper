@@ -2,13 +2,13 @@ import { module } from '../../module.js';
 import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
 import { idOf, chooseOption, esc } from '../../helpers/utils.js';
-import { addTimedEffect, usedThisTurn, markUsedThisTurn } from '../../helpers/actors.js';
+import { addTimedEffect, usedThisTurn, markUsedThisTurn, itemEffectOn, effectsFrom } from '../../helpers/actors.js';
+import { bonusOnlyWhen } from '../bonus-only-when.js';
 import { limits } from '../limits.js';
 import { giveMode } from '../../roll-item/reasons.js';
 import { rollModes } from '../roll-modes.js';
 import { uses } from '../../uses.js';
 import { actions } from '../actions.js';
-import { patch } from '../../patch.js';
 import { restChoices } from '../rest-choices.js';
 import { chooseOne } from '../../helpers/creatures.js';
 import { onDamage } from '../../roll-item/damage.js';
@@ -94,11 +94,7 @@ export class sorcerer{
     Hooks.on("dnd5e.preRollConcentrationV2", config => this.extendedConcentration(config));
     onDamage((attack, damage) => this.transmute(attack, damage));
     /* Innate Sorcery's DC : Sorcerer spells only (dnd5e's bonus is to every spell) */
-    patch.wrap("CONFIG.DND5E.activityTypes.save.documentClass.prototype.prepareFinalData", function(wrapped, ...args){
-      const result = wrapped(...args);
-      try { sorcerer.innateDC(this); } catch(error){ log.debug("Innate Sorcery DC", error); }
-      return result;
-    });
+    bonusOnlyWhen(this.INNATE, "system.bonuses.spell.dc", activity => this.isSorcererSpell(activity.item), { enabled : () => this.enabled() });
     restChoices.add({
       id : "metamagic", label : "restChoices.metamagic", rest : "level", classes : ["sorcerer"],
       applies : actor => this.enabled() && (this.optionsOf(actor).length > 0),
@@ -126,8 +122,7 @@ export class sorcerer{
 
   static innateOn(actor){
     /* Not disabled, not past its minute (Foundry marks it expired) */
-    return !!actor?.effects?.some?.(e => !e.disabled && !e.duration?.expired && !e.isSuppressed
-      && (e.getFlag(module.id, "innateSorcery") || (idOf(fromUuidSync(e.origin ?? "", { strict : false })) === this.INNATE)));
+    return effectsFrom(actor, e => e.getFlag(module.id, "innateSorcery") || (idOf(fromUuidSync(e.origin ?? "", { strict : false })) === this.INNATE)).length > 0;
   }
 
   /* Used : its effect on the Sorcerer (the item's, else +1 spell save DC), for a minute */
@@ -136,39 +131,12 @@ export class sorcerer{
     if(!this.enabled() || (idOf(activity?.item) !== this.INNATE) || !actor?.isOwner) return;
     const own = activity.getUsageToken?.()?.actor ?? actor;
     if(this.innateOn(own)) return;
-    const source = activity.item.effects?.contents?.[0] ?? [...(activity.item.effects ?? [])][0];
-    const data = source?.toObject?.() ?? { name : activity.item.name, img : activity.item.img,
-      changes : [{ key : "system.bonuses.spell.dc", type : "add", mode : 2, value : "1" }] };
-    delete data._id;
-    await own.createEmbeddedDocuments("ActiveEffect", [foundry.utils.mergeObject(data, {
-      origin : activity.item.uuid, transfer : false, disabled : false, showIcon : CONST.ACTIVE_EFFECT_SHOW_ICON?.ALWAYS ?? 2,
-      duration : { value : 60, units : "seconds" }, start : { time : game.time.worldTime },
-      flags : { [module.id] : { innateSorcery : true } },
-    }, { inplace : false })]);
+    await itemEffectOn(activity.item, { on : own, copy : true,
+      fallback : { changes : [{ key : "system.bonuses.spell.dc", type : "add", mode : 2, value : "1" }] },
+      data : { showIcon : CONST.ACTIVE_EFFECT_SHOW_ICON?.ALWAYS ?? 2, duration : { value : 60, units : "seconds" },
+        flags : { [module.id] : { innateSorcery : true } } } });
     await actions.autoApplied(results);
     log.debug("Innate Sorcery", own.name);
-  }
-
-  /* The spell DC bonus Innate Sorcery's effect gives (its changes to system.bonuses.spell.dc) */
-  static innateBonus(actor){
-    let bonus = 0;
-    for(const e of actor?.effects ?? []){
-      if(e.disabled || e.duration?.expired || e.isSuppressed) continue;
-      if(!(e.getFlag?.(module.id, "innateSorcery") || (idOf(fromUuidSync(e.origin ?? "", { strict : false })) === this.INNATE))) continue;
-      for(const change of [...(e.system?.changes ?? e.changes ?? [])]){
-        if(change.key === "system.bonuses.spell.dc") bonus += Number(change.value) || 0;
-      }
-    }
-    return bonus;
-  }
-
-  /* A save activity's DC as dnd5e prepares it : a spell that isn't a Sorcerer spell loses Innate Sorcery's bonus */
-  static innateDC(activity){
-    if(!this.enabled() || (activity?.item?.type !== "spell") || this.isSorcererSpell(activity.item)) return;
-    const bonus = this.innateBonus(activity.actor);
-    if(!bonus || !Number.isFinite(activity.save?.dc?.value)) return;
-    activity.save.dc.value -= bonus;
-    if(activity.labels?.save) activity.labels.save = game.i18n.format("DND5E.SaveDC", { dc : activity.save.dc.value, ability : CONFIG.DND5E.abilities[activity.ability]?.label ?? "" });
   }
 
   /* Its advantage : the Sorcerer's spell attacks with a Sorcerer spell */

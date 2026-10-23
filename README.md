@@ -61,6 +61,14 @@ The main pieces, as methods on tokens, actors and items. Most also exist as `Mac
 | `MacroHelper.markSpell({ id, spell, free, hours, damage })` | A spell that marks one creature and hurts it more on every attack, ending with Concentration (Hunter's Mark, Hex). |
 | `MacroHelper.weaponUses(id, { applies, abilities, die })` | The abilities and damage die a weapon attacks with while a rule applies (Martial Arts, Pact of the Blade). |
 | `MacroHelper.endsWhen(match, { incapacitated, damaged, heavyArmor, combatEnd })` | What a rule's effects end on (Rage, Turned). |
+| `MacroHelper.onMiss({ formula })`, `MacroHelper.addRow({ run, withDamage })` | Damage on a miss (Graze), and a GM button on a hit creature's card row (Topple, Sap). |
+| `MacroHelper.onAttacked({ when, within, run })`, `MacroHelper.onTurnStart({ run })` | A creature's Reaction button when one near it is attacked or hit (Interception, Protection), and something at the start of its turns. |
+| `MacroHelper.bonusOnlyWhen(match, key, test)` | An effect's bonus only where a check holds (Rage's Strength attacks, Dueling, Defense in armor). |
+| `MacroHelper.cantUseWhile(id, rule)`, `MacroHelper.freeUseWhile(id, rule)` | What can't be used, or is free, while something holds (no spells while raging; Rage extended). |
+| `MacroHelper.itemEffectOn(item)`, `MacroHelper.itemEffectOff(actor, match)` | An item's own effect turned on and off for its creature (Rage, Innate Sorcery). |
+| `MacroHelper.payCasting(actor, spell, { free })`, `MacroHelper.cardSave(card, spell)` | A spell cast outside its use, paid with a free casting or a slot, and its save put on an attack card (smites, marks). |
+| `MacroHelper.countedUses(id, { max })`, `MacroHelper.damageTypeChoice(id, rule)`, `MacroHelper.excludeTargets(id, rule)` | Uses counted on the creature, a choice of damage types on the card, creatures an item can't target. |
+| `MacroHelper.conjureItem(actor, source)`, `MacroHelper.linkItems(parent, items)`, `MacroHelper.pickFromCompendium(filter)`, `MacroHelper.summon(activity, creature)` | An item conjured into the hands, items that go with another, a compendium pick, a summoned creature. |
 | `token.push(target, 10)`, `token.pull(target, 10)`, `token.teleport(30, { item })`, `token.leap(30, { item })`, `token.trample(feet)` | Movement. |
 | `token.damage(value, type)`, `token.heal(value)`, `item.useAndApply()` | Hit points, through dnd5e's damage rules. |
 | `item.spendUses(n)`, `token.useReaction(name)`, `actor.usedThisTurn(key)`, `actor.slotsLeft(level)` | Resources and the action economy. |

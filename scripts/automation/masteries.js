@@ -8,8 +8,9 @@ import { distanceBetween } from '../helpers/tokens.js';
 import { getSize, addTimedEffect, usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
 import { giveCondition, cardBuilder } from '../roll-item/card-builder.js';
 import { pickAttack, isRangedAttack } from '../helpers/items.js';
-import { rollItem } from '../roll-item/roll-item.js';
 import { onDamage } from '../roll-item/damage.js';
+import { onMiss } from '../roll-item/miss-damage.js';
+import { addRow } from '../roll-item/card-rows.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -29,10 +30,10 @@ const log = logger.for(import.meta.url);
  *   Nick          : the Light property's extra attack is part of the Attack action instead of a Bonus Action, once a
  *                   turn (masteries.nick : the Action Tracker asks), nothing to roll.
  *
- * Topple, Push, Sap, Slow and Vex change the target : outcomes, so only the GM sees and clicks those : a button on each
- * hit target's row (its token on the left, the mastery on the right, Topple's save result beside it), greyed out once
- * used on that target. Sap, Slow and Vex aren't optional : applying the hit's damage to that target applies them first
- * (before the damage lands), and greys the button too. Cleave is another attack : its roller's, a card button.
+ * Built from the legos : Graze is onMiss; Topple, Sap, Slow and Vex are addRow (the GM's button on each hit target's
+ * row, Topple's save result beside it, greyed once used on that target; Sap, Slow and Vex aren't optional, so applying
+ * the hit's damage to that target applies them first); Push is a card move (the GM's); Cleave is another attack : its
+ * roller's, a card button.
  */
 export class masteries{
   static ACTIONS = ["topple", "push", "sap", "slow", "vex", "cleave"];
@@ -63,21 +64,18 @@ export class masteries{
     Hooks.on(`${module.id}.cardButton`, (message, id, { ray, event, button } = {}) => { if(id === "mastery") this.clicked(message, ray ?? null, event, button); });
     /* Every other push (Repelling Blast, a card macro's push part) : the same Homebrew collision as Push, else "blocked" */
     Hooks.on(`${module.id}.pushed`, (target, moved, feet, item, { name } = {}) => this.afterPush(target, moved, feet, item, name));
-    Hooks.on(`${module.id}.beforeApplyDamage`, (message, actor, waits) => waits.push(this.beforeDamage(message, actor)));
-    /* The outcome masteries : on each hit target's row */
-    Hooks.on(`${module.id}.rowButtons`, (message, uuid, buttons, context = {}) => this.rowButtons(message, uuid, buttons, context));
     Hooks.on(`${module.id}.cardMoves`, (message, uuid, moves, context = {}) => this.pushMove(message, uuid, moves, context));
-    Hooks.on(`${module.id}.rowButton`, (message, uuid, id, { button } = {}) => {
-      if(!String(id).startsWith("mastery|")) return;
-      const key = String(id).slice(8);
-      this.clickedRow(message, (key === "single") ? null : Number(key), uuid, button);
-    });
-    /* Graze : its damage rolled with every attack, shown when the attack misses */
-    rollItem.addRolls(async (activity, attack, damage) => {
-      const rolls = await this.grazeRolls(activity, attack, damage);
-      for(const roll of rolls) roll.options[module.id] = { part : "graze", onMiss : true };
-      return rolls;
-    });
+    /* Graze : the ability modifier as damage on a miss */
+    onMiss({ id : "graze", enabled : () => this.enabled(), when : miss => miss.mastery === "graze", formula : miss => (miss.mod > 0) ? String(miss.mod) : null,
+      label : () => this.label("graze"), icon : this.ICONS.graze });
+    /* The outcome masteries : the GM's button on each hit target's row */
+    const row = (key, extra = {}) => addRow({ id : `mastery-${key}`, enabled : () => this.enabled(), when : r => r.mastery === key,
+      label : r => this.buttonLabel(key, r.actor, r.roll), icon : this.ICONS[key], run : r => this.apply(key, r), ...extra });
+    row("topple", { label : r => module.format("rollItem.mastery.row.topple", { dc : this.toppleDC(r.actor, r.ability) }),
+      tooltip : r => this.buttonLabel("topple", r.actor, r.roll), img : () => CONFIG.statusEffects.find(s => s.id === "prone")?.img ?? null });
+    row("sap", { withDamage : true });
+    row("slow", { withDamage : true });
+    row("vex", { withDamage : true, mayRun : r => r.actor?.isOwner });
   }
 
   /* ---------- Card ---------- */
@@ -91,26 +89,6 @@ export class masteries{
 
   static uuidKey(uuid){
     return String(uuid).replaceAll(".", "-");
-  }
-
-  /* A hit target's row : the outcome mastery's button (the GM's), its save result once rolled */
-  static rowButtons(message, uuid, buttons, { result, ray = null } = {}){
-    if(!this.enabled() || !game.user.isGM || !result?.hit) return;
-    const key = message?.system?.masteryOf?.(ray);
-    if(!this.ACTIONS.includes(key) || ["cleave", "push"].includes(key)) return;
-    if(!message.system.hitTargets(ray).some(t => (t.document ?? t).uuid === uuid)) return;
-    const done = message.getFlag(module.id, `mastery.${this.rayKey(ray)}`)?.[this.uuidKey(uuid)];
-    const prone = (key === "topple") ? CONFIG.statusEffects.find(s => s.id === "prone") : null;
-    buttons.push({
-      id : `mastery|${this.rayKey(ray)}`,
-      label : (key === "topple") ? module.format("rollItem.mastery.row.topple", { dc : this.toppleDC(message.getAssociatedActor(), message.system.attackOf(ray)?.options?.ability) })
-        : this.buttonLabel(key, message.getAssociatedActor(), message.system.attackOf(ray)),
-      tooltip : this.buttonLabel(key, message.getAssociatedActor(), message.system.attackOf(ray)),
-      img : prone?.img ?? null,
-      icon : this.ICONS[key] ?? "fa-star",
-      disabled : this.used(message, ray, uuid),
-      result : (typeof done === "object") ? done : null,
-    });
   }
 
   /* Push : a hit target's move at the bottom of the card (the GM's), Large or smaller unless Rule Limits allows it */
@@ -130,20 +108,8 @@ export class masteries{
       after : () => message.setFlag(module.id, `mastery.${this.rayKey(ray)}`, { ...(message.getFlag(module.id, `mastery.${this.rayKey(ray)}`) ?? {}), [this.uuidKey(uuid)] : true }) });
   }
 
-  static async clickedRow(message, ray, uuid, button){
-    if(button) button.disabled = true;
-    try {
-      const notes = await this.apply(message, ray, uuid);
-      for(const note of notes ?? []) ui.notifications.info(note);
-    }
-    catch(error){
-      console.error("Macro Helper | mastery", error);
-      ui.notifications.warn(error.message);
-    }
-  }
-
   /**
-   * The mastery section of a Roll Item attack card for one attack : Graze's damage on a miss, or the button for a hit.
+   * The mastery section of a Roll Item attack card for one attack : Cleave's button for a hit (Graze is onMiss's).
    * @param {ChatMessage} message
    * @param {number|null} ray
    * @returns {object|null}  { partial, context, applies }
@@ -153,31 +119,22 @@ export class masteries{
     const key = card?.masteryOf?.(ray);
     if(!key || !this.enabled()) return null;
     const attack = card.attackOf(ray);
-    const { targets, hits } = card.targetHits(ray);
-    const missed = targets.length > hits.length;
+    const { hits } = card.targetHits(ray);
 
-    const grazeRolls = card.addedRollsOf(ray, "graze");
-    /* Graze's damage once the attack misses and its dice have played */
-    const graze = (grazeRolls.length && (missed || !targets.length) && (card.outcomeShown?.(ray, "miss") ?? true))
-      ? { ...card.damageContextOf(grazeRolls), showTray : card.canApply, onMiss : !targets.length }
-      : null;
-
-    /* Cleave is another attack : its roller's. The rest change the target (Prone, moved, an effect) : outcomes the
-       GM decides on, so only the GM sees those buttons. Cleave's own extra attack can't Cleave again. */
+    /* Cleave is another attack : its roller's (its own extra attack can't Cleave again). The rest are row buttons. */
     const isCleave = !!attack?.options?.[module.id]?.tags?.noMod;
-    /* The others are buttons on each hit target's row (rowButtons) */
     const canUse = (key === "cleave") && message.isOwner && !isCleave;
     const action = (canUse && hits.length) ? {
       label : this.buttonLabel(key, message.getAssociatedActor(), attack),
       used : this.used(message, ray),
     } : null;
-    if(!graze && !action) return null;
+    if(!action) return null;
 
     return {
       partial : `${module.id}.mastery`,
-      applies : !!graze,
+      applies : false,
       context : {
-        key, graze, action,
+        key, action,
         label : this.label(key),
         icon : this.ICONS[key] ?? "fa-star",
         ray : Number.isInteger(ray) ? ray : "",
@@ -217,123 +174,49 @@ export class masteries{
     return module.i18n(`rollItem.mastery.button.${key}`);
   }
 
-  /**
-   * Graze's damage for one attack : a flat roll of the attack's ability modifier, typed like the weapon's damage.
-   * Rolled whatever the attack does, the card only shows it on a miss.
-   * @param {Activity} activity
-   * @param {D20Roll} attack
-   * @param {DamageRoll[]} [damage]   the attack's damage, for its type
-   * @returns {Promise<DamageRoll[]>}  untagged, empty without Graze or with a modifier of 0 or less
-   */
-  static async grazeRolls(activity, attack, damage = []){
-    if(!this.enabled() || (attack?.options?.mastery !== "graze")) return [];
-    const ability = attack.options.ability ?? activity.ability;
-    const mod = activity.actor?.system.abilities?.[ability]?.mod ?? 0;
-    if(mod <= 0) return [];
-
-    const base = damage.find(r => r.options?.type);
-    const type = base?.options.type ?? activity.item?.system.damage?.base?.types?.first?.();
-    const roll = new CONFIG.Dice.DamageRoll(String(mod), {}, { type, properties : [...(base?.options.properties ?? [])] });
-    await roll.evaluate();
-    return [roll];
-  }
-
   /* ---------- Using a mastery from the card ---------- */
 
-  /**
-   * The card's mastery button. Cleave is made by its roller (you pick and roll); the rest are the GM's to apply.
-   * @param {ChatMessage} message
-   * @param {number|null} ray   which attack on a multi-attack card, null for a single attack
-   */
+  /* The card's mastery button : Cleave (the rest are row buttons) */
   static async use(message, ray, event){
-    const key = message.system.masteryOf(ray);
-    if(key === "cleave") return this.cleave(message, ray, event);
-    if(!game.user.isGM) return;
-    const notes = await this.apply(message, ray);
-    for(const note of notes ?? []) ui.notifications.info(note);
-  }
-
-  /* Sap, Slow and Vex : no choice in them, so applying a hit's damage applies them first (the button greys, as if used) */
-  static AUTO = ["sap", "slow", "vex"];
-
-  static async beforeDamage(message, actor){
-    const system = message?.system;
-    if(!this.enabled() || !system?.masteryOf || !actor) return;
-    const rays = system.rays?.length ? system.rays.map((_, i) => i) : [null];
-    for(const ray of rays){
-      const key = system.masteryOf(ray);
-      if(!this.AUTO.includes(key)) continue;
-      const attacker = message.getAssociatedActor();
-      if(!(game.user.isGM || (actor.isOwner && ((key !== "vex") || attacker?.isOwner)))) continue;
-      for(const token of system.hitTargets(ray).filter(t => t.actor?.uuid === actor.uuid)){
-        const uuid = (token.document ?? token).uuid;
-        if(this.used(message, ray, uuid)) continue;
-        try { await this.apply(message, ray, uuid); }
-        catch(error){ log.error(error); }
-      }
-    }
+    if(message.system.masteryOf(ray) === "cleave") return this.cleave(message, ray, event);
   }
 
   /**
-   * Apply an outcome mastery (GM) : only to targets the card says were hit, once per target.
-   * @param {string|null} [only]   one target's token uuid, else every hit target it hasn't been used on
-   * @returns {Promise<string[]>}  notes to show (too big to push, blocked...)
+   * An outcome mastery on one hit creature (its row's button, or with the hit's damage) : Topple, Sap, Slow, Vex.
+   * @param {string} key
+   * @param {object} row   the row lego's facts : actor (the attacker), target, item, ability, message
+   * @returns {Promise<object|void>}  Topple's save
    */
-  static async apply(message, ray = null, only = null){
-    const system = message?.system;
-    if(!system?.masteryOf) throw new Error("Not a Roll Item attack card.");
-
-    const key = system.masteryOf(ray);
-    if(!this.ACTIONS.includes(key) || (key === "cleave")) throw new Error(`No mastery to use : ${key}`);
-    if(this.used(message, ray)) return [module.i18n("rollItem.mastery.used")];
-
-    const hit = system.hitTargets(ray);
-    if(!hit.length) return [module.i18n("rollItem.mastery.noHit")];
-    const targets = hit.filter(t => !only || ((t.document ?? t).uuid === only)).filter(t => !this.used(message, ray, (t.document ?? t).uuid));
-    if(!targets.length) return [module.i18n(only && hit.some(t => (t.document ?? t).uuid === only) ? "rollItem.mastery.used" : "rollItem.mastery.noHit")];
-    const done = { ...(message.getFlag(module.id, `mastery.${this.rayKey(ray)}`) ?? {}) };
-
-    const attacker = message.getAssociatedActor();
-    const attack = system.attackOf(ray);
-    const item = message.getAssociatedItem?.() ?? null;
-    const notes = [];
-
-    for(const target of targets){
-      const actor = target.actor;
-      if(!actor) continue;
-      const doneKey = this.uuidKey((target.document ?? target).uuid);
-      done[doneKey] = true;
-      switch(key){
-        case "topple" : {
-          const { save } = await giveCondition(target, "prone", { save : "con", dc : this.toppleDC(attacker, attack?.options?.ability),
-            from : item, by : message.getAssociatedToken?.() ?? attacker });
-          if(save) done[doneKey] = save;
-          break;
-        }
-        case "sap" :
-          await this.#replace(actor, "sap", attacker);
-          await addTimedEffect(actor, this.#effect("sap", item, attacker), { of : attacker, until : "turnStart" });
-          break;
-        case "slow" : {
-          /* Doesn't stack : a new Slow replaces the old one, whoever's it was */
-          await this.#replace(actor, "slow");
-          const changes = this.#slowChanges(actor);
-          if(!changes.length) break;
-          await addTimedEffect(actor, this.#effect("slow", item, attacker, { system : { changes } }), { of : attacker, until : "turnStart" });
-          break;
-        }
-        case "vex" :
-          await addTimedEffect(attacker, this.#effect("vex", item, attacker, {
-            name : `${this.label("vex")}: ${target.name}`,
-            flags : { [module.id] : { target : target.document.uuid, targetActor : actor.uuid } },
-          }), { of : attacker, until : "turnEnd" });
-          break;
+  static async apply(key, row){
+    const attacker = row.actor;
+    const target = row.target;
+    const actor = target?.actor;
+    const item = row.item ?? null;
+    if(!actor) return;
+    switch(key){
+      case "topple" : {
+        const { save } = await giveCondition(target, "prone", { save : "con", dc : this.toppleDC(attacker, row.ability),
+          from : item, by : row.message.getAssociatedToken?.() ?? attacker });
+        return save ?? undefined;
       }
+      case "sap" :
+        await this.#replace(actor, "sap", attacker);
+        await addTimedEffect(actor, this.#effect("sap", item, attacker), { of : attacker, until : "turnStart" });
+        return;
+      case "slow" : {
+        /* Doesn't stack : a new Slow replaces the old one, whoever's it was */
+        await this.#replace(actor, "slow");
+        const changes = this.#slowChanges(actor);
+        if(changes.length) await addTimedEffect(actor, this.#effect("slow", item, attacker, { system : { changes } }), { of : attacker, until : "turnStart" });
+        return;
+      }
+      case "vex" :
+        await addTimedEffect(attacker, this.#effect("vex", item, attacker, {
+          name : `${this.label("vex")}: ${target.name}`,
+          flags : { [module.id] : { target : target.document.uuid, targetActor : actor.uuid } },
+        }), { of : attacker, until : "turnEnd" });
+        return;
     }
-
-    await message.setFlag(module.id, `mastery.${this.rayKey(ray)}`, done);
-    log.debug("Mastery", key, "from", message.id, "on", targets.map(t => t.name));
-    return notes;
   }
 
   static async afterPush(target, moved, feet, item = null, name = null){

@@ -15,6 +15,68 @@ export function isAlly(a, b){
 const INCAPACITATED = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
 
 /**
+ * The allies of a creature within `feet` of a target, nearest first (Sneak Attack's "an ally within 5 ft of it", Pack
+ * Tactics). Neither the creature nor the target counts, nor an ally that's Incapacitated, dead or at 0 HP.
+ * @param {Token|TokenDocument|Actor} target
+ * @param {Token|TokenDocument|Actor} of       whose allies
+ * @param {object} [options]
+ * @param {number} [options.feet=5]
+ * @param {boolean} [options.includeIncapacitated=false]
+ * @param {Function} [options.filter]          extra (token) => boolean
+ * @returns {Token[]}
+ */
+export function alliesNear(target, of, { feet = 5, includeIncapacitated = false, filter } = {}){
+  const t = tokenOf(target), a = tokenOf(of);
+  if(!t || !a) return [];
+  return getTokensWithin(t, feet, { filter : ally => (ally !== a) && isAlly(ally, a)
+    && (includeIncapacitated || !INCAPACITATED.some(s => ally.actor.statuses?.has?.(s)))
+    && (!filter || filter(ally)) });
+}
+
+/* ---------- Targets an item can't have ---------- */
+
+const exclusions = [];
+let exclusionsHooked = false;
+
+/**
+ * Creatures an item can't be used on, dropped from its targets as they're picked or found in an area, with a notice
+ * saying why (Bardic Inspiration : "another creature", not one already Inspired; a monster's "each creature other than
+ * itself", "Undead only").
+ *
+ *   MacroHelper.excludeTargets("bardic", { applies : activity => idOf(activity.item) === "bardic-inspiration", self : true,
+ *     exclude : (token, activity) => hasInspiration(token.actor) ? `${token.name} is already Inspired.` : false });
+ *
+ * @param {string} id   the same id again replaces the rule (a macro)
+ * @param {object} rule
+ * @param {(activity : Activity) => boolean} rule.applies   the uses it's for
+ * @param {boolean} [rule.self=false]                       the user's own token is dropped (no notice)
+ * @param {(token : Token, activity : Activity) => string|boolean} [rule.exclude]   true or a notice : dropped
+ */
+export function excludeTargets(id, rule){
+  const old = exclusions.findIndex(r => r.id === id);
+  if(old >= 0) exclusions[old] = { id, ...rule };
+  else exclusions.push({ id, ...rule });
+  if(exclusionsHooked) return;
+  exclusionsHooked = true;
+  Hooks.on(`${module.id}.targets`, (activity, tokens) => {
+    for(const rule of exclusions){
+      try {
+        if((rule.enabled && !rule.enabled()) || !rule.applies(activity)) continue;
+        const me = tokenOf(activity.getUsageToken?.() ?? activity.actor);
+        for(let i = tokens.length - 1; i >= 0; i--){
+          const t = tokens[i];
+          if(rule.self && (t === me)){ tokens.splice(i, 1); continue; }
+          const why = rule.exclude?.(t, activity);
+          if(!why) continue;
+          if(typeof why === "string") ui.notifications.info(why);
+          tokens.splice(i, 1);
+        }
+      } catch(error){ console.error("Macro Helper | excludeTargets", rule.id, error); }
+    }
+  });
+}
+
+/**
  * Enemies (opposite disposition) within `range` feet of a token, nearest first : who is threatening it.
  * By default incapacitated (unconscious, paralyzed...), dead / 0 HP and GM-hidden enemies don't count.
  * @param {Token|TokenDocument|Actor} thing

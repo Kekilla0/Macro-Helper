@@ -21,9 +21,13 @@ let hooked = false;
  * Add a rule.
  * @param {(attack : object, damage : DamageParts) => void} fn  attack : what the roll is for (attackOf), damage : the
  *        roll's parts to change. Runs before the dice : no awaiting.
+ * @param {object} [options]
+ * @param {string} [options.id]  a macro's rule : added again with the same id, it replaces the old one
  */
-export function onDamage(fn){
-  rules.push(fn);
+export function onDamage(fn, { id = null } = {}){
+  const old = id ? rules.findIndex(r => r.id === id) : -1;
+  if(old >= 0) rules[old].fn = fn;
+  else rules.push({ id, fn });
   if(hooked) return;
   hooked = true;
   Hooks.on("dnd5e.preRollDamageV2", config => runRules(config));
@@ -33,7 +37,7 @@ function runRules(config){
   if(!config?.rolls?.length) return;
   const attack = attackOf(config);
   const damage = new DamageParts(config, attack);
-  for(const fn of rules){
+  for(const { fn } of rules){
     try { fn(attack, damage); }
     catch(error){ log.error("Damage rule", error); }
   }
