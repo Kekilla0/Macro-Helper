@@ -22,7 +22,8 @@ const log = logger.for(import.meta.url);
  *     action type : taken out of a roll that fails the test, added to one of another type that passes it (Rage's
  *     Strength thrown weapon).
  *   system.bonuses.spell.dc : test(activity), a save activity's DC lowered again when it fails.
- *   anything else (an AC bonus) : test(actor), the item's own effect switched off while it fails (checked as items change).
+ *   anything else (an AC bonus, a save's roll mode, a speed) : test(actor), the item's own effect switched off while it
+ *     fails (checked again as items, effects and conditions, or what's held, change).
  * options :
  *   value     the bonus when no effect gives it (the compendium's feat with no effect) : added where the test passes
  *   enabled() the rule's setting (default : on)
@@ -78,6 +79,14 @@ function hook(){
   for(const hook of ["createItem", "updateItem", "deleteItem"]){
     Hooks.on(hook, (item, ...rest) => toggle(item?.parent, rest.at(-1)));
   }
+  /* A condition or an effect came or went (Incapacitated), on the creature or one of its items */
+  for(const hook of ["createActiveEffect", "updateActiveEffect", "deleteActiveEffect"]){
+    Hooks.on(hook, (effect, ...rest) => toggle(effect?.parent?.actor ?? effect?.parent, rest.at(-1)));
+  }
+  /* What's in the hands changed (a shield) */
+  Hooks.on("updateActor", (actor, changes, options, userId) => {
+    if(foundry.utils.hasProperty(changes ?? {}, `flags.${module.id}.hands`)) toggle(actor, userId);
+  });
 }
 
 /* The bonus those effects give with this key, as written ("2", "@scale.barbarian.rage-damage"); "" for none */

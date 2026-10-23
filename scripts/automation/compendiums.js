@@ -11,8 +11,8 @@ const log = logger.for(import.meta.url);
  *   Wild Shapes     (Actor) : the Beasts a Druid can learn as forms (Plutonium's, dragged in).
  *   Familiars       (Actor) : the creatures Find Familiar / Wild Companion can summon.
  *   Fighting Styles (Item)  : the Fighting Style feats, for the level-up swap.
- *   Actions         (Item)  : Dash, Disengage, Dodge, Help, Unarmed Strike, Reckless Attack (filled from examples/items
- *                             the first time the GM loads the world, while it's empty).
+ *   Actions         (Item)  : Dash, Disengage, Dodge, Help, Hide, Unarmed Strike, Reckless Attack (filled from
+ *                             examples/items when the GM loads the world : the ones it doesn't have yet).
  *
  * Dropped in, they're corrected to what the module expects (Plutonium's data, fixed) :
  *   Familiars : items with an attack removed (a familiar can't attack).
@@ -25,7 +25,7 @@ export class compendiums{
   static FAMILIARS = "familiars";
   static FIGHTING_STYLES = "fighting-styles";
   static ACTIONS = "actions";
-  static SEEDS = ["dash", "disengage", "dodge", "help", "unarmed-strike", "reckless-attack"];
+  static SEEDS = ["dash", "disengage", "dodge", "help", "hide", "unarmed-strike", "reckless-attack"];
 
   static INDEX_FIELDS = {
     Actor : ["system.details.cr", "system.details.type", "system.attributes.movement", "system.traits.size", "prototypeToken.texture.src", "prototypeToken.width", "prototypeToken.height"],

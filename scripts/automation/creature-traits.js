@@ -129,3 +129,48 @@ export class creatureTraits{
     return true;
   }
 }
+
+/* ---------- The sense lego ---------- */
+
+const senses = new Map();
+let sensesPatched = false;
+
+/**
+ * A detection mode on the tokens of every creature that has a feature (Devil's Sight; a devil's own; a homebrew
+ * "sees invisible creatures within 30 ft"). The mode itself is Foundry's or one registered in
+ * CONFIG.Canvas.detectionModes (Devil's Sight : "devilsSight"); Vision Rules count it like any sense.
+ *
+ *   addSense("devilsSight", { feature : "devils-sight", mode : "devilsSight", range : 120 });
+ *   addSense("trueSight", { feature : actor => actor.name === "Lich", mode : "seeAll", range : 120 });
+ *
+ * feature   the item (identifier) the creature has, or (actor) => boolean
+ * mode      the detection mode's id
+ * range     feet
+ * enabled() the rule's setting
+ * The same id again replaces it (a macro).
+ */
+export function addSense(id, { feature, mode, range = 60, enabled = null } = {}){
+  if(!id || !feature || !mode) return;
+  senses.set(id, { feature, mode, range, enabled });
+  if(!sensesPatched){
+    sensesPatched = true;
+    patch.wrap("CONFIG.Token.documentClass.prototype._prepareDetectionModes", function(wrapped, ...args){
+      try {
+        for(const sense of senses.values()){
+          if(sense.enabled && !sense.enabled()) continue;
+          const actor = this.actor;
+          const has = (typeof sense.feature === "function") ? sense.feature(actor) : actor?.items?.some?.(i => idOf(i) === sense.feature);
+          if(has) this.detectionModes[sense.mode] ??= { enabled : true, range : sense.range };
+        }
+      }
+      catch(error){ log.debug("Sense", error); }
+      return wrapped(...args);
+    });
+  }
+  /* Added after the world loaded (a macro) : the tokens on the map see with it now */
+  if(game.ready && canvas.ready){
+    for(const token of canvas.tokens.placeables) token.document.reset?.();
+    canvas.perception?.update?.({ initializeVision : true, refreshVision : true });
+  }
+}
+

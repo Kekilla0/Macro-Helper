@@ -48,6 +48,7 @@ import { warlockPatrons } from './automation/subclasses/warlock.js';
 import { wizardSchools } from './automation/subclasses/wizard.js';
 import { registerDamageCuts } from './roll-item/damage-cuts.js';
 import { registerSummons } from './automation/summons.js';
+import { registerTransform } from './automation/transform.js';
 import { registerPoolBars } from './helpers/tokens.js';
 import { preparedSpells } from './automation/prepared-spells.js';
 import { weaponMastery } from './automation/weapon-mastery.js';
@@ -88,6 +89,7 @@ Hooks.once("init", ()=> {
   cardBuilder.register();
   registerDamageCuts();
   registerSummons();
+  registerTransform();
   registerPoolBars();
   chatPictures.register();
   masteries.register();

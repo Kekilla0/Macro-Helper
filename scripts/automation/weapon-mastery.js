@@ -19,6 +19,8 @@ const log = logger.for(import.meta.url);
  *               A change made on the sheet that the rules don't allow follows Rule Limits.
  */
 export class weaponMastery{
+  /* Its changes left (Rest Choices' count) */
+  static SWAPS = "swaps.weaponMastery";
   /* Class identifier : which weapons, and the count by class level (the class's own "mastery" scale wins) */
   static CLASSES = {
     fighter : { pool : "any", table : { 1 : 3, 4 : 4, 10 : 5, 16 : 6 } },
@@ -36,11 +38,10 @@ export class weaponMastery{
     if(game.system.id !== "dnd5e") return;
     Hooks.on("preUpdateActor", (actor, changes, options) => this.onSheetChange(actor, changes, options));
     restChoices.add({
-      id : "weaponMastery", label : "restChoices.weaponMastery", rest : "long",
+      id : "weaponMastery", label : "restChoices.weaponMastery", rest : "long", count : 1,
       applies : actor => this.enabled() && (this.limitOf(actor) > 0),
-      grant : actor => actor.setFlag(module.id, "masterySwaps", 1),
       summary : actor => module.format("weaponMastery.summary", { known : this.knownOf(actor).length, max : this.limitOf(actor),
-        swaps : Number(actor.getFlag(module.id, "masterySwaps")) || 0 }),
+        swaps : Number(actor.getFlag(module.id, this.SWAPS)) || 0 }),
       open : actor => this.choose(actor),
     });
   }
@@ -107,7 +108,7 @@ export class weaponMastery{
     const kinds = (await this.weaponKinds()).filter(k => pools.some(p => this.allows(p, k)));
     if(!kinds.length) return null;
     const known = this.knownOf(actor);
-    const swaps = game.user.isGM ? Infinity : (Number(actor.getFlag(module.id, "masterySwaps")) || 0);
+    const swaps = restChoices.swapsLeft(actor, "weaponMastery");
     const max = this.limitOf(actor);
     const chosen = await chooseSet(kinds.map(k => ({
       value : k.key, label : k.name, img : k.img,
@@ -126,7 +127,7 @@ export class weaponMastery{
     const removed = known.filter(k => offered.has(k) && !chosen.includes(k)).length;
     const update = { "system.traits.weaponProf.mastery.value" : [...kept, ...chosen] };
     /* Allowed past the rules : the sheet check mustn't refuse it */
-    if(Number.isFinite(swaps)) update[`flags.${module.id}.masterySwaps`] = Math.max(0, swaps + Math.max(0, known.length - max) - removed);
+    if(Number.isFinite(swaps)) update[`flags.${module.id}.${this.SWAPS}`] = Math.max(0, swaps + Math.max(0, known.length - max) - removed);
     await actor.update(update, { [module.id] : { mastery : true } });
     log.debug("Weapon masteries", actor.name, chosen);
     return chosen;
@@ -142,11 +143,11 @@ export class weaponMastery{
     const before = this.knownOf(actor);
     const after = [...(next ?? [])];
     const removed = before.filter(k => !after.includes(k)).length;
-    const swaps = (Number(actor.getFlag(module.id, "masterySwaps")) || 0) + Math.max(0, before.length - max);
+    const swaps = (Number(actor.getFlag(module.id, this.SWAPS)) || 0) + Math.max(0, before.length - max);
     let problem = null;
     if(after.length > max) problem = module.format("weaponMastery.tooMany", { name : actor.name, max });
     else if(removed > swaps) problem = module.format("weaponMastery.noSwap", { name : actor.name });
     if(problem && !limits.allow(problem, { who : actor.name, what : module.i18n("weaponMastery.sheetChange") })) return false;
-    if(removed) foundry.utils.setProperty(changes, `flags.${module.id}.masterySwaps`, Math.max(0, (Number(actor.getFlag(module.id, "masterySwaps")) || 0) - removed));
+    if(removed) foundry.utils.setProperty(changes, `flags.${module.id}.${this.SWAPS}`, Math.max(0, (Number(actor.getFlag(module.id, this.SWAPS)) || 0) - removed));
   }
 }

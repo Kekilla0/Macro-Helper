@@ -1,12 +1,11 @@
 import { module } from '../../module.js';
-import { rollModes } from '../roll-modes.js';
+import { rollModeFrom } from '../roll-modes.js';
 import { settings } from '../../settings.js';
 import { limits } from '../limits.js';
 import { logger } from '../../log.js';
 import { tokenOf } from '../../helpers/tokens.js';
 import { findItem, addTimedEffect, itemEffectOn, itemEffectOff } from '../../helpers/actors.js';
 import { originOf, idOf } from '../../helpers/utils.js';
-import { giveMode } from '../../roll-item/reasons.js';
 import { conditions } from '../conditions.js';
 import { bonusOnlyWhen } from '../bonus-only-when.js';
 import { cantUseWhile, freeUseWhile, isFreeUse, userOf } from '../use-rules.js';
@@ -62,14 +61,19 @@ export class barbarian{
     cantUseWhile("rageArmor", { enabled : () => this.enabled(), uses : item => idOf(item) === this.RAGE, while : actor => this.inHeavyArmor(actor),
       reason : actor => module.format("classes.barbarian.noRageArmor", { name : actor.name }) });
     Hooks.on("dnd5e.postUseActivity", (activity, usage) => this.onUse(activity, usage));
-    rollModes.add("reckless", config => this.onPreRollAttack(config));
+    /* Reckless : advantage on its Strength attacks, and on attacks against it */
+    rollModeFrom(effect => effect.getFlag?.(module.id, "reckless"), {
+      by : { mode : "advantage", when : attack => attack.ability === "str", reason : () => module.i18n("reasons.reckless") },
+      against : { mode : "advantage", reason : () => module.i18n("reasons.targetReckless") },
+      enabled : () => this.enabled(), id : "reckless" });
     Hooks.on("dnd5e.rollAttackV2", (rolls, { subject } = {}) => this.onAttack(subject, rolls?.[0]));
     /* Rage's damage bonus is for attacks made with Strength (a thrown weapon too, 2024), never another ability : dnd5e
        adds it to every melee weapon attack */
     bonusOnlyWhen(effect => this.isRageEffect(effect), ["system.bonuses.mwak.damage", "system.rolls.damage.mwak.bonus"],
       attack => attack.weapon && (attack.ability === "str"), { enabled : () => this.enabled(), id : "rageDamage" });
-    Hooks.on("dnd5e.preRollSavingThrowV2", config => this.dangerSense(config));
-    Hooks.on(`${module.id}.saveHint`, (message, actor, ability, { ignore }) => this.dangerSenseHint(actor, ability, ignore));
+    /* Danger Sense : its DEX save advantage switched off while Incapacitated */
+    bonusOnlyWhen(this.DANGER_SENSE, "system.abilities.dex.save.roll.mode", actor => !this.INCAPACITATED.some(s => actor?.statuses?.has(s)),
+      { enabled : () => this.enabled(), id : "dangerSense" });
     Hooks.on("createChatMessage", message => this.onCard(message));
     Hooks.on("combatTurnChange", (combat, prior, current) => this.onTurnEnd(combat, prior, current));
     /* Ends early : Incapacitated, Heavy armor on, the combat over */
@@ -256,30 +260,6 @@ export class barbarian{
     return { ...config, ability : "str" };
   }
 
-  /* ---------- Danger Sense ---------- */
-
-  /* Incapacitated : no DEX save advantage from it (when it's the only advantage) */
-  static dangerSense(config){
-    if(!this.enabled() || (config?.ability !== "dex")) return;
-    const actor = config.subject;
-    if(!this.INCAPACITATED.some(s => actor?.statuses?.has(s)) || !findItem(actor, this.DANGER_SENSE)) return;
-    const sources = [...(actor.appliedEffects ?? [])].filter(e => [...(e.system?.changes ?? e.changes ?? [])]
-      .some(c => (c.key === "system.abilities.dex.save.roll.mode") && (Number(c.value) > 0)));
-    const onlyDangerSense = sources.length && sources.every(e => /danger sense/i.test(e.name) || (idOf(e.parent) === this.DANGER_SENSE));
-    if(!onlyDangerSense) return;
-    for(const roll of config.rolls ?? []) if(roll.options) roll.options.advantage = false;
-    config.advantage = false;
-    log.debug("Danger Sense : no advantage while Incapacitated", actor.name);
-  }
-
-  /* Roll Item's save hint : Danger Sense's effect isn't named as advantage while Incapacitated */
-  static dangerSenseHint(actor, ability, ignore){
-    if(!this.enabled() || (ability !== "dex") || !this.INCAPACITATED.some(s => actor?.statuses?.has(s))) return;
-    for(const effect of actor.appliedEffects ?? []){
-      if(/danger sense/i.test(effect.name ?? "") || (idOf(effect.parent) === this.DANGER_SENSE)) ignore.add(effect);
-    }
-  }
-
   /* ---------- Reckless Attack ---------- */
 
   static RECKLESS_IMG = "icons/skills/melee/blade-tips-triple-bent-white.webp";
@@ -298,16 +278,4 @@ export class barbarian{
     return [...(actor?.appliedEffects ?? actor?.effects ?? [])].some(e => e.getFlag?.(module.id, "reckless"));
   }
 
-  /* Your STR attacks : advantage. Attacks against you : advantage */
-  static onPreRollAttack(config){
-    if(!this.enabled()) return;
-    const roll = config.rolls?.[0];
-    const attacker = config.subject?.actor;
-    if(!roll || !attacker) return;
-    roll.options ??= {};
-    const ability = config.ability ?? config.subject?.ability;
-    if(this.isReckless(attacker) && (ability === "str")) giveMode(roll, "advantage", module.i18n("reasons.reckless"));
-    const target = conditions.targetOf(config);
-    if(target?.actor && this.isReckless(target.actor)) giveMode(roll, "advantage", module.i18n("reasons.targetReckless"));
-  }
 }

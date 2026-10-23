@@ -1,24 +1,18 @@
 import { module } from '../../module.js';
 import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
-import { idOf, originItem, esc, ownerIds, chooseOption, buttonRow, addButton, makeButton } from '../../helpers/utils.js';
-import { slotsLeft, usedThisTurn, markUsedThisTurn, countedUses } from '../../helpers/actors.js';
+import { idOf, originItem, esc, ownerIds, buttonRow, addButton, makeButton } from '../../helpers/utils.js';
+import { countedUses } from '../../helpers/actors.js';
 import { pickTargets } from '../../helpers/targets.js';
 import { distanceBetween, tokenOf, getTokensWithin, hasLineOfSight } from '../../helpers/tokens.js';
 import { conditions } from '../conditions.js';
-import { damageRoll } from '../../roll-item/extra-damage.js';
-import { gm } from '../../gm.js';
 import { uses } from '../../uses.js';
 import { itemFixes } from '../item-fixes.js';
-import { limits } from '../limits.js';
 import { actions } from '../actions.js';
-import { masteries } from '../masteries.js';
 import { endCondition } from '../../roll-item/card-builder.js';
 import { TYPES } from '../../roll-item/message.js';
-import { cardSave } from '../../roll-item/card-save.js';
-import { casting, castingOptions } from '../casting.js';
-import { spellActions } from '../spell-actions.js';
-import { actionTracker } from '../action-tracker.js';
+import { castOnHit, spellDamage } from '../../roll-item/cast-on-hit.js';
+import { casting } from '../casting.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -69,19 +63,29 @@ export class paladin{
 
   static register(){
     if(game.system.id !== "dnd5e") return;
-    Hooks.on(`${module.id}.cardButtons`, (message, buttons, context) => this.cardButtons(message, buttons, context));
-    gm.handle("paladinSmiteCard", (data, user) => this.smiteCardAsGM(data, user));
-    /* A smite on the card : its spell's face (name and rules) under the weapon's, like the spell's own card */
-    Hooks.on(`${module.id}.cardFaces`, (message, faces) => this.smiteFaces(message, faces));
+    /* The smites and the Ranger's strikes : the cast-on-hit lego (one button for every one prepared) */
+    castOnHit({
+      id : "smite", enabled : () => this.enabled(),
+      spells : actor => this.smiteSpells(actor),
+      fits : (spell, kind) => { const need = this.HIT_NEEDS[idOf(spell)] ?? "melee"; return (need === "any") || (need === kind); },
+      damage : (spell, level, target) => this.damageOf(spell, level, target),
+      save : spell => this.AROUND_TARGET[idOf(spell)] ? { around : this.AROUND_TARGET[idOf(spell)] } : this.RIDERS.includes(idOf(spell)),
+      /* Paladin's Smite's free Divine Smite (the payCasting lego's ways) */
+      free : (actor, spell) => (idOf(spell) === this.DIVINE) ? { left : a => (this.freeSmite(a) ? 1 : 0), spend : a => this.payFree(a),
+        label : () => module.format("classes.paladin.smiteFree", { spell : spell.name }) } : null,
+      slotLabel : (slot, spell) => module.format(slot.pact ? "classes.paladin.smitePact" : "classes.paladin.smiteSlot", { spell : spell.name, level : slot.level, left : slot.value }),
+      /* A smite spell (or Paladin's Smite) used from the sheet : the latest hit */
+      sheet : item => !this.isSmiteSource(item) ? null : (idOf(item) === this.PALADINS_SMITE) ? { only : this.DIVINE, freeOnly : true } : { only : idOf(item) },
+      /* Only the Ranger's strikes apply : "Strike" */
+      label : choices => module.i18n(choices.some(c => !this.HIT_NEEDS[idOf(c.spell)]) ? "classes.paladin.smite" : "classes.paladin.strike"),
+      icon : choices => choices.some(c => !this.HIT_NEEDS[idOf(c.spell)]) ? "fa-sun" : "fa-crosshairs",
+      title : () => module.i18n("classes.paladin.smite"), prompt : () => module.i18n("classes.paladin.smitePrompt"),
+      noChoice : actor => module.format("classes.paladin.noSmite", { name : actor.name }),
+      noHit : (actor, item) => module.format("classes.paladin.noHit", { name : actor?.name ?? "", item : item.name }),
+      /* For the rules that follow a smite (Inspiring Smite) : Hooks "macro-helper.smite" (actor, spell, message) */
+      after : (actor, spell, message) => Hooks.callAll(`${module.id}.smite`, actor, spell, message),
+    });
     Hooks.on(`${module.id}.cardMoves`, (message, uuid, moves, { result } = {}) => this.pushMove(message, moves, result));
-    Hooks.on(`${module.id}.cardButton`, (message, id, context) => {
-      if(id === "smite") this.smite(message, context?.ray ?? null);
-    });
-    /* A smite spell (or Paladin's Smite) used from the sheet : the latest melee hit */
-    uses.onItem("smite", (item, ctx, next) => {
-      if(!this.enabled() || !this.isSmiteSource(item)) return next();
-      return this.smiteFromSheet(item);
-    });
     /* Lay on Hands : Remove Poison picks who it touches (it has no effect for Roll Item to aim) */
     uses.onActivity("layOnHands", async (activity, ctx, next) => {
       if(!this.enabled() || !this.isRemovePoison(activity)) return next();
@@ -137,199 +141,20 @@ export class paladin{
     return this.smiteCount.left(actor) ? { item, activity : null, counted : true } : null;
   }
 
-  /* The spell slots left at a level or higher : { key : "spell2", level, value } (Pact Magic too) */
-  static slotsFrom(actor, level){
-    return slotsLeft(actor, level);
-  }
-
-  /* A weapon hit on the card : "melee" or "ranged" (a thrown weapon : ranged), null when it isn't one */
-  static hitKind(message, ray){
-    const card = message?.system;
-    if((message?.type !== TYPES.attack) || !card?.isHitOn?.(ray)) return null;
-    const activity = message.getAssociatedActivity?.();
-    if((activity?.type !== "attack") || (activity.item?.type !== "weapon")) return null;
-    const type = String(activity.getActionType?.(card.attackOf(ray)?.options?.attackMode) ?? "");
-    return type.startsWith("m") ? "melee" : type.startsWith("r") ? "ranged" : null;
-  }
-
-  /* Can this spell follow that kind of hit ? */
-  static fits(spell, kind){
-    if(!kind) return false;
-    const need = this.HIT_NEEDS[idOf(spell)] ?? "melee";
-    return (need === "any") || (need === kind);
-  }
-
-  /* Every way to smite now : [{ value, label, spell, level, slot | free }] (for a kind of hit : the spells that fit it) */
-  static choicesFor(actor, { only = null, freeOnly = false, kind = null } = {}){
-    const out = [];
-    for(const spell of this.smiteSpells(actor)){
-      if(only && (idOf(spell) !== only)) continue;
-      if(kind && !this.fits(spell, kind)) continue;
-      /* The payCasting lego's ways : Paladin's Smite's free Divine Smite, then each slot */
-      const free = (idOf(spell) === this.DIVINE) ? { left : a => (this.freeSmite(a) ? 1 : 0), spend : a => this.payFree(a),
-        label : () => module.format("classes.paladin.smiteFree", { spell : spell.name }) } : null;
-      const labels = { slot : slot => module.format(slot.pact ? "classes.paladin.smitePact" : "classes.paladin.smiteSlot", { spell : spell.name, level : slot.level, left : slot.value }) };
-      for(const option of castingOptions(actor, spell, { free, labels })){
-        if(!freeOnly || option.free) out.push(option);
-      }
-    }
-    return out;
-  }
-
-  /* A melee weapon (or Unarmed Strike) attack that hit, on this card */
-  static meleeHit(message, ray){
-    const card = message?.system;
-    if((message?.type !== TYPES.attack) || !card?.isHitOn?.(ray)) return false;
-    const activity = message.getAssociatedActivity?.();
-    if((activity?.type !== "attack") || (activity.item?.type !== "weapon")) return false;
-    const mode = card.attackOf(ray)?.options?.attackMode;
-    return String(activity.getActionType?.(mode) ?? "").startsWith("m");
-  }
-
-  static smiteFaces(message, faces){
-    const ids = Object.values(message?.getFlag?.(module.id, "smite") ?? {});
-    const actor = ids.length ? message.getAssociatedActor?.() : null;
-    for(const id of new Set(ids)){
-      const spell = actor?.items?.get(id);
-      if(spell && !faces.some(f => f.uuid === spell.uuid)) faces.push({ uuid : spell.uuid });
-    }
-  }
-
-  static smitten(message, ray){
-    return !!message.getFlag(module.id, `smite.${masteries.rayKey(ray)}`);
-  }
-
-  static cardButtons(message, buttons, { ray } = {}){
-    if(!this.enabled()) return;
-    /* The card's roller, or the character's owner (the GM rolled for them : the card's part goes through the GM) */
-    const actor = message.getAssociatedActor?.();
-    if(!message.isOwner && !(actor?.isOwner && !game.user.isGM)) return;
-    const kind = this.hitKind(message, ray);
-    if(!actor?.isOwner || !kind || this.smitten(message, ray)) return;
-    const choices = this.choicesFor(actor, { kind });
-    if(!choices.length) return;
-    /* A smite is a Bonus Action : only on its own turn (not an Opportunity Attack or a readied attack), one left */
-    if(this.offTurn(actor) || !actionTracker.left(actor, "bonus")) return;
-    /* Only the Ranger's strikes apply : "Strike" */
-    const smite = choices.some(c => !this.HIT_NEEDS[idOf(c.spell)]);
-    buttons.push({ id : "smite", label : module.i18n(smite ? "classes.paladin.smite" : "classes.paladin.strike"), icon : smite ? "fa-sun" : "fa-crosshairs" });
-  }
-
-  /* In a started combat, someone else's turn */
-  static offTurn(actor){
-    const combat = game.combat;
-    if(!combat?.started || !combat.combatant) return false;
-    const current = combat.combatant.actor;
-    return !!current && (current !== actor) && (current.uuid !== actor?.uuid);
-  }
-
-  /* The creature the attack hit (its Fiend / Undead die) */
-  static targetOf(message, ray){
-    return message.system.hitTargets?.(ray)?.[0] ?? null;
-  }
-
   /**
    * A smite's extra damage at a slot level : its first damage part (a damage activity's, else its save's), scaled.
    * @returns {{ formula : string, type : string }|null}
    */
   static damageOf(spell, level, target){
-    const extra = Math.max(0, level - (Number(spell.system.level) || 1));
     if(idOf(spell) === this.DIVINE){
+      const extra = Math.max(0, level - (Number(spell.system.level) || 1));
       const unholy = this.UNHOLY.includes(target?.actor?.system?.details?.type?.value);
       return { formula : `${2 + extra + (unholy ? 1 : 0)}d8`, type : "radiant" };
     }
-    const activities = spell.system.activities?.contents ?? [];
-    const withDamage = a => a.damage?.parts?.some?.(p => p.number && p.denomination);
-    const activity = activities.find(a => (a.type === "damage") && withDamage(a)) ?? activities.find(withDamage);
-    const part = activity?.damage.parts.find(p => p.number && p.denomination);
-    if(!part) return null;
-    const number = part.number + (extra * (Number(part.scaling?.number) || 1));
-    return { formula : `${number}d${part.denomination}`, type : [...(part.types ?? [])][0] ?? "" };
+    /* No damage onto the hit's card : a save instead (Ensnaring Strike, Hail of Thorns) */
+    return this.NO_HIT_DAMAGE.includes(idOf(spell)) ? null : spellDamage(spell, level);
   }
 
-  /**
-   * Smite this card's hit : choose what to cast and how to pay, then its damage on the card.
-   * @param {ChatMessage} message
-   * @param {number|null} ray
-   * @param {object} [options]
-   * @param {string} [options.only]       one spell (from the sheet)
-   * @param {boolean} [options.freeOnly]  Paladin's Smite (from the sheet)
-   */
-  static async smite(message, ray, { only = null, freeOnly = false } = {}){
-    const actor = message.getAssociatedActor?.();
-    const kind = this.hitKind(message, ray);
-    if(!this.enabled() || !actor?.isOwner || !kind || this.smitten(message, ray)) return false;
-    const choices = this.choicesFor(actor, { only, freeOnly, kind });
-    if(!choices.length){
-      ui.notifications.warn(module.format("classes.paladin.noSmite", { name : actor.name }));
-      return false;
-    }
-    const value = await chooseOption({ title : module.i18n("classes.paladin.smite"), icon : "fa-solid fa-sun",
-      prompt : module.i18n("classes.paladin.smitePrompt"), options : choices.map(c => ({ value : c.value, label : c.label })) });
-    const choice = choices.find(c => c.value === value);
-    if(!choice) return false;
-    /* Its components, and one slot a turn (Casting) */
-    if(!casting.allowsCast(choice.spell, { slot : !choice.free })) return false;
-    /* A Bonus Action : one a turn */
-    if(usedThisTurn(actor, "smite") && !limits.allow(module.format("classes.paladin.smiteUsed", { name : actor.name }), { who : actor.name, what : choice.spell.name })) return false;
-    if(!actionTracker.left(actor, "bonus") && !limits.allow(module.format("actionTracker.spent", { name : actor.name, kind : actionTracker.label("bonus") }), { who : actor.name, what : choice.spell.name })) return false;
-
-    const target = this.targetOf(message, ray);
-    const damage = this.NO_HIT_DAMAGE.includes(idOf(choice.spell)) ? null : this.damageOf(choice.spell, choice.level, target);
-    let roll = null;
-    if(damage){
-      roll = await damageRoll(damage.formula, { type : damage.type, crit : !!message.system.attackOf(ray)?.isCritical, magical : true });
-    }
-    /* The card's part : here when it's this user's card, else the GM's client (the GM rolled the attack for them) */
-    const card = { message : message.id, ray, spell : choice.spell.id, level : choice.level, formula : damage?.formula ?? null, roll : roll ? roll.toJSON() : null };
-    if(message.isOwner) await this.writeCard(card);
-    else if(!await gm.run("paladinSmiteCard", card)) return false;
-    await this.pay(actor, choice);
-    await markUsedThisTurn(actor, "smite");
-    await actionTracker.spend(actor, { kind : "bonus", what : choice.spell.name }).catch(error => log.debug(error));
-    /* Concentration (Wrathful, Searing...) : on the spell, as if cast */
-    if(choice.spell.system.properties?.has?.("concentration")){
-      const activity = choice.spell.system.activities?.contents?.[0];
-      if(activity) await actor.beginConcentrating(activity).catch(error => log.error(error));
-    }
-    log.debug("Smite", actor.name, choice.spell.name, choice.level, damage?.formula);
-    /* For the rules that follow a smite (Inspiring Smite) : Hooks "macro-helper.smite" (actor, spell, message) */
-    Hooks.callAll(`${module.id}.smite`, actor, choice.spell, message);
-    return true;
-  }
-
-  /* The smite on the card : its damage, the smitten mark, its save (Wrathful...) or its burst (Hail of Thorns) */
-  static async writeCard({ message : id, ray = null, spell : spellId, level, formula = null, roll = null } = {}){
-    const message = game.messages.get(id);
-    const actor = message?.getAssociatedActor?.();
-    const spell = actor?.items?.get(spellId);
-    if(!message || !spell) return false;
-    if(roll){
-      const damage = CONFIG.Dice.DamageRoll.fromData(roll);
-      await message.system.addDamage([damage], { key : "smite", ray, formula,
-        label : module.format("classes.paladin.smiteLabel", { spell : spell.name, level }) });
-    }
-    await message.setFlag(module.id, `smite.${masteries.rayKey(ray)}`, spell.id);
-    await this.rider(message, spell);
-    /* Hail of Thorns : everyone within 5 ft of the target saves, on this card (its save and damage, like Ice Knife's) */
-    const around = this.AROUND_TARGET[idOf(spell)];
-    const target = this.targetOf(message, ray);
-    if(around && target) await this.aroundRider(message, spell, level, target, around);
-    return true;
-  }
-
-  /* GM : a player's smite on a card the GM rolled for their character */
-  static async smiteCardAsGM(data = {}, user){
-    const message = game.messages.get(data.message);
-    const actor = message?.getAssociatedActor?.();
-    if(!actor || !(user.isGM || actor.testUserPermission(user, "OWNER")) || this.smitten(message, data.ray ?? null)) return false;
-    return this.writeCard(data);
-  }
-
-  /* The free use or the slot (castingOptions' own pay) */
-  static async pay(actor, choice){
-    return choice.pay();
-  }
 
   /* Paladin's Smite's free Divine Smite spent : the item's use, its activity's, or counted on the actor */
   static async payFree(actor){
@@ -337,17 +162,6 @@ export class paladin{
     if(free?.counted) return this.smiteCount.spend(actor);
     if(free?.activity) return free.item.update({ [`system.activities.${free.activity.id}.uses.spent`] : (Number(free.activity.uses.spent) || 0) + 1 });
     if(free) return free.item.update({ "system.uses.spent" : (Number(free.item.system.uses.spent) || 0) + 1 });
-  }
-
-  /* Wrathful and Thunderous : their save on the card, for the creatures hit (the cardSave lego; one save per card : an
-     item's own rider stays) */
-  static async rider(message, spell){
-    if(this.RIDERS.includes(idOf(spell))) await cardSave(message, spell);
-  }
-
-  /* Hail of Thorns : the target and everyone within some feet of it save, its damage at the slot's level, the burst shown */
-  static async aroundRider(message, spell, level, target, feet){
-    await cardSave(message, spell, { around : { target, feet }, level });
   }
 
   /* Thunderous Smite : a creature that failed its save is pushed 10 ft away (the GM's button; Prone is the save's effect) */
@@ -364,31 +178,6 @@ export class paladin{
     if(!this.enabled() || (message.type !== TYPES.attack) || (result?.success !== false)) return;
     const feet = this.pushOf(message);
     if(feet) moves.push({ id : "smitePush", feet, name : fromUuidSync(message.system.rider.item, { strict : false })?.name });
-  }
-
-  /* From the sheet : the latest attack card of this actor (among the last messages) with a melee hit not yet smitten */
-  static latestHit(actor, spellId = null){
-    const recent = game.messages.contents.slice(-15).reverse();
-    for(const message of recent){
-      if((message.type !== TYPES.attack) || (message.getAssociatedActor?.()?.id !== actor.id)) continue;
-      const rays = message.system.isMulti ? message.system.rays.map((_, i) => i) : [null];
-      const ray = rays.find(r => (spellId ? this.fits({ system : { identifier : spellId } }, this.hitKind(message, r)) : this.meleeHit(message, r)) && !this.smitten(message, r));
-      if(ray !== undefined) return { message, ray };
-      return null;
-    }
-    return null;
-  }
-
-  static async smiteFromSheet(item){
-    const actor = item.actor;
-    const hit = actor && this.latestHit(actor, (item.type === "spell") ? idOf(item) : null);
-    if(!hit){
-      ui.notifications.warn(module.format("classes.paladin.noHit", { name : actor?.name ?? "", item : item.name }));
-      return null;
-    }
-    const free = idOf(item) === this.PALADINS_SMITE;
-    const done = await this.smite(hit.message, hit.ray, { only : free ? this.DIVINE : idOf(item), freeOnly : free });
-    return done ? hit.message : null;
   }
 
   static smiteFix(item){

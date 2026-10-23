@@ -158,7 +158,7 @@ export class familiars{
       if(choice !== "new") return false;
     }
     /* It casts a spell, and no spells can be cast in a Wild Shape form */
-    if(this.isWildShaped(activity.actor) && !usage?.[module.id]?.shiftedAllowed && !limits.allow(module.format("classes.druid.noSpellsShifted", { name : activity.item.name }), { who : activity.actor.name, what : activity.item.name })) return false;
+    if(this.isWildShaped(activity.actor) && (usage?.[module.id]?.cantAllowed !== "wildShapeSpells") && !limits.allow(module.format("classes.druid.noSpellsShifted", { name : activity.item.name }), { who : activity.actor.name, what : activity.item.name })) return false;
     const profile = activity.availableProfiles?.find?.(p => !p.uuid) ?? activity.availableProfiles?.[0];
     const rollData = activity.getRollData?.({ deterministic : true }) ?? {};
     const creatures = (await compendiums.entries(compendiums.FAMILIARS)).filter(a => !profile || profile.uuid || fitsProfile(a, profile, rollData));

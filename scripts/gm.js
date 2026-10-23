@@ -1,7 +1,7 @@
 import { module } from './module.js';
 import { logger } from './log.js';
 import { settings } from './settings.js';
-import { esc, buttonRow, addButton, makeButton } from './helpers/utils.js';
+import { esc, buttonRow, addButton, makeButton, ownerIds, gmIds } from './helpers/utils.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -61,43 +61,93 @@ export class gm{
   /**
    * Ask the GM to make a change to a creature the player doesn't own : a chat card with the GM's button, which runs the
    * registered handler (as run() would) for the player who asked. The GM's own use gets the card too : nothing changes
-   * on another creature without the GM's click.
+   * on another creature without the GM's click. With `deny`, a Decline button beside it (both on one row).
    * @param {string} name     a registered handler
    * @param {object} data     JSON-serializable
    * @param {object} options
    * @param {string} options.text    the card's line (what's asked)
    * @param {string} options.label   the GM's button
    * @param {Actor} [options.actor]  who's asking (the card's speaker)
+   * @param {boolean} [options.deny=false]   a Decline button too
    * @returns {Promise<ChatMessage>}  the card
    */
-  static async ask(name, data, { text, label, actor = null } = {}){
+  static async ask(name, data, { text, label, actor = null, deny = false } = {}){
     const handler = this.#handlers.get(name);
     if(!handler) throw new Error(`Macro Helper | no GM handler "${name}"`);
     return ChatMessage.implementation.create({
       speaker : actor ? ChatMessage.implementation.getSpeaker({ actor }) : { alias : module.title },
       content : `<p>${esc(text)}</p>`,
-      flags : { [module.id] : { gmAsk : { name, data, label, done : false } } },
+      flags : { [module.id] : { gmAsk : { name, data, label, deny, done : false } } },
     });
   }
 
-  /* The GM's button on an ask() card */
+  /**
+   * A use that waits for the GM's Allow (Hide : is it Heavily Obscured, out of sight ?). Call it from a use step instead
+   * of next() : nothing is used or spent yet. The card (its owners and the GM) has the GM's Allow / Decline; once
+   * allowed, the asker's client uses the activity again, with config["macro-helper"].gmAllowed (let that one through).
+   *   uses.onActivity("hide", (activity, ctx, next) => ctx.config?.["macro-helper"]?.gmAllowed ? next() : gm.askToUse(activity, ctx, { text }));
+   * @param {Activity} activity
+   * @param {object} ctx       the use step's ctx (its config is kept for the allowed use : economy...)
+   * @param {object} options
+   * @param {string} options.text    what's asked
+   * @param {string} [options.hint]  a second line (who sees them now)
+   * @param {Actor} [options.actor]  the card's speaker (default : the activity's)
+   * @returns {Promise<null>}  null : the use stops here
+   */
+  static async askToUse(activity, ctx = {}, { text, hint = "", actor = null } = {}){
+    actor ??= activity.actor;
+    const keep = foundry.utils.deepClone(ctx.config?.[module.id] ?? {});
+    for(const key of Object.keys(keep)) if(typeof keep[key] === "function") delete keep[key];
+    await ChatMessage.implementation.create({
+      speaker : ChatMessage.implementation.getSpeaker({ actor }),
+      content : `<p>${esc(text)}</p>${hint ? `<p class="hint">${esc(hint)}</p>` : ""}`,
+      whisper : [...new Set([...ownerIds(actor), ...gmIds()])],
+      flags : { [module.id] : { gmAsk : { use : activity.uuid, config : keep, label : module.format("gm.allowUse", { item : activity.item?.name ?? activity.name }), deny : true, done : false } } },
+    });
+    return null;
+  }
+
+  /* The GM's buttons on an ask() / askToUse() card : the one row, Allow (or the handler's label) and Decline */
   static #askButton(message, html){
     const ask = message.getFlag?.(module.id, "gmAsk");
-    if(!ask || !game.user.isGM) return;
+    if(!ask) return;
     const row = buttonRow(html, { key : `${module.id}-gm-ask` });
     if(row.childElementCount) return;
-    addButton(row, makeButton({ icon : "fa-gavel", text : ask.label, once : true, disabled : !!ask.done,
-      onClick : async () => {
-        const handler = this.#handlers.get(ask.name);
+    if(ask.done === "denied"){
+      const p = document.createElement("p");
+      p.textContent = module.i18n("gm.denied");
+      return row.append(p);
+    }
+    if(!game.user.isGM) return;
+    const answer = async allow => {
+      const now = message.getFlag(module.id, "gmAsk");
+      if(!now || now.done) return;
+      if(allow && now.name){
+        const handler = this.#handlers.get(now.name);
         if(!handler) return;
-        const result = await handler(ask.data, message.author ?? game.user);
+        const result = await handler(now.data, message.author ?? game.user);
         for(const note of (Array.isArray(result) ? result : [])) ui.notifications.info(note);
-        await message.setFlag(module.id, "gmAsk", { ...ask, done : true });
-      } }));
+      }
+      await message.setFlag(module.id, "gmAsk", { ...now, done : allow ? "allowed" : "denied" });
+    };
+    addButton(row, makeButton({ icon : "fa-gavel", text : ask.label, once : true, disabled : !!ask.done, onClick : () => answer(true) }));
+    if(ask.deny) addButton(row, makeButton({ icon : "fa-xmark", text : module.i18n("gm.deny"), once : true, disabled : !!ask.done, onClick : () => answer(false) }));
+  }
+
+  /* An askToUse() card allowed : the asker's client uses the activity now */
+  static async #allowed(message, changes){
+    const ask = message.getFlag?.(module.id, "gmAsk");
+    if(!ask?.use || (ask.done !== "allowed") || !foundry.utils.hasProperty(changes ?? {}, `flags.${module.id}.gmAsk`)) return;
+    if(!(message.author ?? game.user).isSelf) return;
+    const activity = await fromUuid(ask.use);
+    if(!activity) return;
+    await message.setFlag(module.id, "gmAsk.done", "used");
+    await activity.use(foundry.utils.mergeObject({ [module.id] : { ...(ask.config ?? {}), gmAllowed : true } }, {}));
   }
 
   static register(){
     Hooks.on("renderChatMessageHTML", (message, html) => this.#askButton(message, html));
+    Hooks.on("updateChatMessage", (message, changes) => this.#allowed(message, changes).catch(error => log.error(error)));
     Hooks.on("combatTurnChange", (combat, prior, current)=> this.expire(combat, prior, current));
     Hooks.on("deleteCombat", combat => this.expireCombat(combat));
     Hooks.on("combatStart", combat => this.adoptOutOfCombat(combat));

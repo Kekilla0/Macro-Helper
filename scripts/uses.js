@@ -20,9 +20,9 @@ export class uses{
   static ORDER = {
     item : [
       "castingBusy",   // Casting : a long cast under way : using anything else asks, then fails the cast
-      "wildShapeCast", // Druid : a spell while in Wild Shape (Rule Limits; Change : leave the form, then cast)
+      "cantUseInstead",// Use rules : cantUseWhile with `instead` (Druid : a spell in Wild Shape; Fix : leave the form, then cast)
       "flurry",        // Monk : Flurry of Blows uses the Unarmed Strike instead
-      "smite",         // Paladin : a smite spell from the sheet smites the latest melee hit
+      "smite",         // Cast on hit : a smite spell (or a feature casting one) from the sheet : the latest hit it fits
       "huntersMark",   // Ranger : Hunter's Mark / Favored Enemy : pay, pick, mark (or move the mark)
       "sneak",         // Rogue : Sneak Attack from the sheet : the latest qualifying hit
       "hex",           // Warlock : Hex : pay, ability, pick, curse (or move it)
@@ -45,6 +45,7 @@ export class uses{
     activity : [
       "shellToggle",   // Species : a Tortle's Shell Defense used while in its shell : it emerges instead (a Bonus Action)
       "castingBusy",   // Casting : a long cast under way : using anything else asks, then fails the cast
+      "cunningAction", // Rogue : Cunning Action's Dash / Disengage / Hide uses that Default Action, as a Bonus Action
       "noReactions",   // Spell effects : a Reaction while an effect forbids them (Arms of Hadar) : Rule Limits
       "offScene",      // Roll Item : no token on the scene being viewed : no targets (it can't see them)
       "itemMacro",     // Item Macro : a macro on the activity
@@ -59,12 +60,12 @@ export class uses{
       "spellChoice",   // Spell effects : Guidance's skill, Resistance's damage type, asked before the targets
       "enchantProfile",// Spell actions : Shillelagh's enchantment by caster level, True Strike's by the weapon
       "flurry",        // Monk : Monk's Focus's Flurry of Blows uses the Unarmed Strike instead
-      "presetTargets", // Cleric : Turn Undead targets the Undead within 30 ft itself (no pick)
+      "presetTargets", // Emanation : every matching creature round the user is targeted (Turn Undead), no pick
       "action",        // Default Actions : choose and pick first (Help)
       "maneuver",      // Maneuvers : Grapple or Shove, for the one activity that does both
       "transform",     // Druid : Wild Shape's form, a familiar and its space
       "layOnHands",    // Paladin : Remove Poison picks the creature it touches
-      "hide",          // Rogue : Cunning Action's Hide asks the GM first; used only once allowed
+      "hide",          // Default Actions : Hide asks the GM first (gm.askToUse); used only once allowed
       "healersKit",    // Default Actions : the Healer's Kit's Stabilize picks a creature at 0 HP first
       "dancingLights", // Spells : Dancing Lights : four lights or one form, where each goes
       "spellMessage",  // Spell actions : Message : who hears it and what, from a list (no pick)

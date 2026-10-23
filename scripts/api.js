@@ -7,7 +7,15 @@ import * as items from './helpers/items.js';
 import * as utils from './helpers/utils.js';
 import * as creatures from './helpers/creatures.js';
 import { restChoices } from './automation/rest-choices.js';
-import { rollModes } from './automation/roll-modes.js';
+import { rollModes, rollModeFrom } from './automation/roll-modes.js';
+import { actionTracker } from './automation/action-tracker.js';
+import { actions } from './automation/actions.js';
+import { gm } from './gm.js';
+import { emanation } from './automation/emanation.js';
+import { transform, revert } from './automation/transform.js';
+import { castOnHit } from './roll-item/cast-on-hit.js';
+import { onInitiative } from './automation/initiative.js';
+import { addSense } from './automation/creature-traits.js';
 import { onDamage } from './roll-item/damage.js';
 import { onMiss } from './roll-item/miss-damage.js';
 import { addRow, removeRow } from './roll-item/card-rows.js';
@@ -51,6 +59,10 @@ export class api{
       /* A choice in the Rest Choices window, advantage / disadvantage on attacks, a change to a roll's own damage */
       addRestChoice : choice => restChoices.add(choice),
       addRollMode : (name, fn) => rollModes.add(name, fn),
+      /* Advantage / disadvantage from an effect, on attacks by its creature or against it (Reckless Attack) */
+      rollModeFrom,
+      /* More or fewer Actions, Bonus Actions, Reactions or attacks this turn (Action Surge) */
+      actionTracker : { modify : (thing, kind, n, source) => actionTracker.modify(thing, kind, n, source) },
       onDamage : (fn, options) => onDamage(fn, options),
       /* Damage on a miss (Graze), a GM button on a creature's card row (Topple), a guard's button when a creature
          near it is attacked (Interception), something at the start of each turn */
@@ -61,13 +73,20 @@ export class api{
       castingOptions, payCasting, cardSave, damageTypeChoice,
       /* A summon activity's creature on the map; one entry chosen from the compendiums */
       summon, summonKind, pickFromCompendium,
+      /* Every matching creature round the user, no pick (Turn Undead); another creature's form taken and left (Wild Shape) */
+      emanation, transform, revert,
+      /* Spells cast onto a weapon hit's card (the smites); a button on the initiative roll; a sense on a creature's tokens */
+      castOnHit, onInitiative, addSense,
+      /* A Default Action used as part of something else (Cunning Action's Hide); a use that waits for the GM's Allow */
+      useDefaultAction : (thing, id, options) => actions.useDefault(thing, id, options),
+      askToUse : (activity, ctx, options) => gm.askToUse(activity, ctx, options),
 
       /* Helpers, see scripts/helpers */
       ...tokens,    // tokenOf, actorOf, cells, distanceBetween, getRange, getTokensWithin, highlightRange, forcedMove, pushDestination, pushAway, pullToward, addLight, removeLight, hasLight, registerPool, poolBar, removePoolBar, poolsOf
       ...targets,   // isEnemy, isAlly, alliesNear, excludeTargets, getFlanker, isFlanking, isThreatened, getThreats, getEnemiesWithinRange, pickTargets, isValidGroup, selectTargets, setTargets
       ...actors,    // damage, heal, tempHP, dropsToZero, isKilledOutright, preventDropToZero, findItem, rollSave, addTimedEffect, recoverSpellSlots, slotsLeft, usedThisTurn, markUsedThisTurn, countedUses, effectsFrom, itemEffectOn, itemEffectOff, getLastDamage, clearLastDamage, setStatus, setDefeated, getSize, stepSize, splitToken
       ...items,     // pickAndAttack, pickAttack, attackModeFor, isLongRange, isRangedItem, isRangedAttack, canThrow, getAmmunition,
-                  // getUses, hasUses, spendUses, useActivity, useAndApply, getAppliedConditions, multiattack, getHealing, updateItem, setBaseDamage, setDamage, isClassSpell, isUnarmored, conjureItem, linkItems, linkedItems
+                  // getUses, hasUses, spendUses, useActivity, useAndApply, getAppliedConditions, multiattack, untilShown, getHealing, updateItem, setBaseDamage, setDamage, isClassSpell, isUnarmored, conjureItem, linkItems, linkedItems, pickOwned, enchant
       ...utils,     // wait, waitFor, originOf, chooseOption
       ...creatures, // crOf, fitsProfile, chooseCreature, chooseCreatures, chooseOne, chooseSet, divideAmong
       /* The character's Rest Choices window (Wild Shape forms...), e.g. after a rest the GM ran for everyone */

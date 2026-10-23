@@ -7,6 +7,7 @@ import { tokenOf, actorOf, distanceBetween, getRange, isOutOfAction, hasLineOfSi
 import { pickTargets, getThreats } from './targets.js';
 import { findItem, usedThisTurn } from './actors.js';
 import { uses } from '../uses.js';
+import { wait, waitFor } from './utils.js';
 import { rollModes } from '../automation/roll-modes.js';
 
 /**
@@ -509,21 +510,28 @@ function descriptionOf(item){
  * per weapon). An entry with several weapons asks how to split its attacks first.
  *   repeat (default true) lets a target take more than one of a weapon's attacks; it's allowed, never required.
  *   Picking fewer than a weapon's attacks is fine (Enter), Esc skips that weapon and carries on with the next.
+ * With `economy`, every attack is its item's own use instead (its dialog, its activity : Attack, Grapple or Shove), one
+ * after the other once the last one's card is shown, and they cost that together : the first pays it (the action
+ * tracker), the rest come free. Flurry of Blows : economy "bonus". One closed : the rest are skipped.
+ * With `tag`, every attack card it makes carries flags["macro-helper"].tags[tag] (Open Hand Technique reads "flurry").
  * @param {Actor|Token|Item} thing   the creature (or any of its items)
  * @param {{ weapon : string|Item|Array<string|Item>, count : number }[]} plan
  * @param {object} [options]
  * @param {boolean} [options.repeat=true]   the same target can be picked more than once for a weapon
  * @param {Event} [options.event]           advantage / disadvantage keys
  * @param {object} [options.attack]         more pickAndAttack options for every weapon (disposition, long, strict...)
- * @returns {Promise<object[]|null>}  each weapon's pickAndAttack result, null if a weapon is missing or it was cancelled
+ * @param {"action"|"bonus"|"reaction"|"free"} [options.economy]   what the attacks cost together (each a use)
+ * @param {string} [options.tag]            the mark on its cards
+ * @returns {Promise<object[]|null>}  each weapon's pickAndAttack result (with `economy` : each use's), null if a weapon
+ *                                    is missing or it was cancelled
  */
-export async function multiattack(thing, plan = [], { repeat = true, event, attack = {} } = {}){
+export async function multiattack(thing, plan = [], { repeat = true, event, attack = {}, economy = null, tag = null } = {}){
   const actor = actorOf(thing);
   const steps = [];
   for(const entry of plan){
-    const items = [entry.weapon].flat().map(w => (w?.documentName === "Item") ? w : findItem(actor, w)).filter(Boolean);
+    const items = [entry.weapon ?? entry.item].flat().map(w => (w?.documentName === "Item") ? w : findItem(actor, w)).filter(Boolean);
     if(!items.length){
-      ui.notifications.warn(module.format("helpers.multiattack.missing", { name : actor?.name ?? "", weapon : [entry.weapon].flat().join(" / ") }));
+      ui.notifications.warn(module.format("helpers.multiattack.missing", { name : actor?.name ?? "", weapon : [entry.weapon ?? entry.item].flat().join(" / ") }));
       return null;
     }
     const count = Math.max(1, Math.floor(entry.count) || 1);
@@ -534,10 +542,66 @@ export async function multiattack(thing, plan = [], { repeat = true, event, atta
   }
 
   const results = [];
-  for(const { item, count } of steps){
-    results.push(await pickAndAttack(item, { ...attack, count, repeat, event }));
+  const tagged = tag ? tagCards(actor, tag) : null;
+  try {
+    if(!economy){
+      for(const { item, count } of steps) results.push(await pickAndAttack(item, { ...attack, count, repeat, event }));
+      return results;
+    }
+    for(const { item, count } of steps){
+      for(let i = 0; i < count; i++){
+        const used = await untilShown(() => item.use({ event, [module.id] : { economy : results.length ? "free" : economy } }));
+        if(!used) return results;
+        results.push(used);
+      }
+    }
+    return results;
   }
-  return results;
+  finally { tagged?.(); }
+}
+
+/* Every card this creature's uses make (this client) carries flags["macro-helper"].tags[tag]; returns the undo */
+function tagCards(actor, tag){
+  const hook = Hooks.on("preCreateChatMessage", (message, data, options, userId) => {
+    if(userId !== game.user.id) return;
+    const speaker = ChatMessage.implementation.getSpeakerActor(message.speaker);
+    if(speaker && ((speaker === actor) || (speaker.uuid === actor?.uuid) || (speaker.id === actor?.id))) message.updateSource({ [`flags.${module.id}.tags.${tag}`] : true });
+  });
+  return () => Hooks.off("preCreateChatMessage", hook);
+}
+
+/**
+ * Run a use, then wait until the cards it made are shown : Dice So Nice's dice landed, Roll Item's staged card revealed
+ * (each at most a few seconds). The next attack's window opens after the last one's result.
+ * @returns {Promise<object|null>}  the use's result, null if nothing was rolled (Roll Item's pick closed)
+ */
+export async function untilShown(fn){
+  const made = [], landed = new Set();
+  const onCreate = (message, options, userId) => { if(userId === game.user.id) made.push(message); };
+  const onLanded = id => landed.add(id);
+  Hooks.on("createChatMessage", onCreate);
+  Hooks.on("diceSoNiceRollComplete", onLanded);
+  try {
+    const result = await fn();
+    /* Roll Item picks and makes its card after the use : closed (nothing rolled) counts as not used */
+    if(result?.[module.id]?.card && !(await uses.cardOf(result))) return null;
+    /* A card can still be on its way */
+    await wait(300);
+    for(const message of made){
+      const live = game.messages.get(message.id) ?? message;
+      /* Roll Item's staged card : attack, then damage (it plays its own dice) */
+      if(live.getFlag?.(module.id, "reveal") !== undefined){
+        await waitFor(() => (game.messages.get(message.id)?.getFlag(module.id, "reveal") ?? 2) >= 2, { timeout : 15000 });
+        continue;
+      }
+      if(game.dice3d && live.rolls?.length && !live.getFlag?.("dice-so-nice", "skip")) await waitFor(() => landed.has(message.id), { timeout : 10000 });
+    }
+    return result;
+  }
+  finally {
+    Hooks.off("createChatMessage", onCreate);
+    Hooks.off("diceSoNiceRollComplete", onLanded);
+  }
 }
 
 /* "Two attacks with Scimitar or Shortbow" : how many with each. All with the first by default. */
@@ -751,3 +815,55 @@ export async function linkItems(parent, items){
 export function linkedItems(parent){
   return parent?.parent?.items?.filter?.(i => i.getFlag(module.id, LINK) === parent.id) ?? [];
 }
+
+/* ---------- One of your items, and an enchantment put on it ---------- */
+
+/**
+ * Choose one of the creature's own items (a cantrip for an invocation, a weapon to bond) : a window of the ones that
+ * pass `filter`, its pictures; one only : taken without asking; none : a warning, null.
+ * @param {Actor|Token} thing
+ * @param {(item : Item) => boolean} filter
+ * @param {object} [options]
+ * @param {string} [options.title]
+ * @param {string} [options.prompt]
+ * @param {string} [options.icon="fa-solid fa-hand-pointer"]
+ * @param {string} [options.none]   the warning when nothing fits
+ * @param {boolean} [options.ask=false]   ask even when only one fits
+ * @returns {Promise<Item|null>}
+ */
+export async function pickOwned(thing, filter, { title = "", prompt = "", icon = "fa-solid fa-hand-pointer", none = "", ask = false } = {}){
+  const actor = actorOf(thing);
+  const options = actor?.items?.filter?.(i => { try { return !!filter(i); } catch { return false; } }) ?? [];
+  if(!options.length){
+    if(none) ui.notifications.warn(none);
+    return null;
+  }
+  if((options.length === 1) && !ask) return options[0];
+  const { chooseOne } = await import('./creatures.js');
+  /* Their own names (an enchantment adds to them : "Eldritch Blast, Agonizing") */
+  const chosen = await chooseOne(options.map(i => ({ value : i.id, label : i._source?.name ?? i.name, img : i.img })),
+    { title, prompt, icon, columns : Math.min(3, options.length) });
+  return chosen ? actor.items.get(chosen) ?? null : null;
+}
+
+/**
+ * Put an item's enchantment on another item, as dnd5e's card would (Agonizing Blast on a cantrip; a homebrew "your
+ * chosen weapon deals +1d4 fire"). The enchantment's origin is the source's Enchant activity, so dnd5e lists it there
+ * and removes it with it.
+ * @param {Item} source   the item with the Enchant activity (or an enchantment effect)
+ * @param {Item} target
+ * @param {object} [options]
+ * @param {string} [options.profile]   which enchantment (its effect id; default : the activity's first)
+ * @returns {Promise<ActiveEffect|null>}
+ */
+export async function enchant(source, target, { profile = null } = {}){
+  const activity = source?.system?.activities?.find?.(a => a.type === "enchant");
+  const id = profile ?? activity?.effects?.[0]?._id;
+  const effect = (id && source.effects.get(id)) ?? source?.effects?.find?.(e => e.type === "enchantment");
+  if(!effect || !target) return null;
+  const data = foundry.utils.mergeObject(effect.toObject(), { origin : activity?.uuid ?? source.uuid, disabled : false, "flags.dnd5e.enchantmentProfile" : id ?? effect.id }, { inplace : false });
+  delete data._id;
+  const [made] = await target.createEmbeddedDocuments("ActiveEffect", [data]);
+  return made ?? null;
+}
+

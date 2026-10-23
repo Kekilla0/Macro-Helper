@@ -4,8 +4,8 @@ import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
 import { pickTargets } from '../helpers/targets.js';
-import { tokenOf, isDown } from '../helpers/tokens.js';
-import { addTimedEffect, stabilize } from '../helpers/actors.js';
+import { tokenOf, isDown, canSee } from '../helpers/tokens.js';
+import { addTimedEffect, stabilize, setStatus } from '../helpers/actors.js';
 import { giveMode } from '../roll-item/reasons.js';
 import { chooseOption, idOf } from '../helpers/utils.js';
 import { uses } from '../uses.js';
@@ -26,8 +26,12 @@ const log = logger.for(import.meta.url);
  *                      Deafened). Their next ability check with it has
  *                      advantage. Ends when used, or at the start of your next turn (out of combat : when used).
  *     Stabilize      : a creature at 0 HP within 5 ft. WIS (Medicine) DC 10 : on a success it's Stable (stabilize()).
+ *   Hide           : (2024 : Heavily Obscured or behind three-quarters / total cover, out of enemies' sight) asks the GM
+ *                    first (gm.askToUse : a card naming the enemies whose tokens see it, Allow / Decline). Nothing is
+ *                    used or spent until allowed; then DEX (Stealth) against DC 15 (a reroll counts) : Invisible on a
+ *                    success, until the GM ends it. On its own token.
  *
- * Every creature (characters and monsters) has Macro Helper's default actions : Dash, Disengage, Dodge, Help and Unarmed
+ * Every creature (characters and monsters) has Macro Helper's default actions : Dash, Disengage, Dodge, Help, Hide and Unarmed
  * Strike (its Grapple and Shove), from the Actions compendium, when its token is placed, when a combat it's in starts,
  * and (characters) when the world loads (the active GM's client). Another item with the same identifier (dnd5e's own
  * Unarmed Strike, Plutonium's "Claw Attack") is replaced by ours, so the features that change it (a Tortle's Claws,
@@ -44,6 +48,8 @@ export class actions{
   /* Assist Check's reach in feet : how far coaching carries (Inspiring Leader, Rally) */
   static ASSIST_CHECK_RANGE = 30;
   static HELP = "help";
+  static HIDE = "hide";
+  static HIDE_DC = 15;
 
   /* Default Actions setting; a creature also needs the item */
   static enabled(){
@@ -60,7 +66,18 @@ export class actions{
       for(const a of game.actors.filter(a => a.type === "character")) await this.giveBasics(a).catch(error => log.debug(error));
     }, 5000));
     /* Dodge, Dash and Disengage mark the creature here, not through Roll Item */
-    Hooks.on(`${module.id}.selfEffects`, activity => !(this.enabled() && [this.DODGE, this.DASH, this.DISENGAGE, this.HELP].includes(idOf(activity?.item))));
+    Hooks.on(`${module.id}.selfEffects`, activity => !(this.enabled() && [this.DODGE, this.DASH, this.DISENGAGE, this.HELP, this.HIDE].includes(idOf(activity?.item))));
+    /* Hide : nothing is used until the GM allows it (a declined Hide costs nothing) */
+    uses.onActivity("hide", async (activity, ctx, next) => {
+      if(!this.enabled() || (idOf(activity?.item) !== this.HIDE) || ctx.config?.[module.id]?.gmAllowed || !activity.actor?.isOwner) return next();
+      const own = activity.getUsageToken?.()?.actor ?? activity.actor;
+      const token = tokenOf(own);
+      const seen = token ? this.seenBy(token).map(t => t.name) : [];
+      return gm.askToUse(activity, ctx, { actor : own, text : module.format("actions.hide.ask", { name : own.name }),
+        hint : seen.length ? module.format("actions.hide.seenBy", { names : seen.join(", ") }) : module.i18n("actions.hide.unseen") });
+    });
+    /* Its Stealth roll rerolled to 15+ : hidden after all */
+    Hooks.on("updateChatMessage", (message, changes, options, userId) => this.onHideReroll(message, changes, userId));
     Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.onUse(activity, usage, results));
     Hooks.on("dnd5e.renderChatMessage", (message, html) => {
       if(message.getFlag?.(module.id, "autoApplied")) html.classList?.add(`${module.id}-auto-applied`);
@@ -144,6 +161,7 @@ export class actions{
       if(id === this.DODGE) return await this.dodge(own).then(() => this.autoApplied(results));
       if(id === this.DASH) return await this.mark(own, "dash", "actions.dash.mark", "icons/skills/movement/feet-winged-boots-glowing-yellow.webp").then(() => this.autoApplied(results));
       if(id === this.DISENGAGE) return await this.mark(own, "disengage", "actions.disengage.mark", "icons/skills/movement/arrow-upward-yellow.webp").then(() => this.autoApplied(results));
+      if(id === this.HIDE) return await this.rollHide(own);
       const help = usage?.[module.id]?.before?.help;
       if((id !== this.HELP) || !help?.target) return;
       if(help.mode === "attack") return await this.assistAttack(activity, help);
@@ -153,6 +171,27 @@ export class actions{
       log.error(error);
       ui.notifications.warn(error.message);
     }
+  }
+
+  /**
+   * Use one of the creature's Default Actions (Dash, Disengage, Dodge, Hide...) as part of something else : Patient
+   * Defense's Disengage, Cunning Action's Hide. Its own item is used (its card, its mark), costing `economy` instead of
+   * its Action (default : nothing, the feature already paid). Without the item (Default Actions off) : Dash, Disengage
+   * and Dodge's marks put on straight away.
+   * @param {Actor|Token} thing
+   * @param {string} id   the Default Action's identifier
+   * @param {object} [options]
+   * @param {"free"|"action"|"bonus"|"reaction"} [options.economy="free"]
+   * @returns {Promise<object|null>}  the use's result
+   */
+  static async useDefault(thing, id, { economy = "free" } = {}){
+    const actor = thing?.actor ?? thing;
+    const item = actor?.items?.find?.(i => (idOf(i) === id) && i.getFlag(module.id, "basicAction")) ?? actor?.items?.find?.(i => idOf(i) === id);
+    if(item && this.enabled()) return item.use({ [module.id] : { economy } }, { configure : false });
+    if(id === this.DODGE) await this.dodge(actor);
+    else if(id === this.DASH) await this.mark(actor, "dash", "actions.dash.mark", "icons/skills/movement/feet-winged-boots-glowing-yellow.webp");
+    else if(id === this.DISENGAGE) await this.mark(actor, "disengage", "actions.disengage.mark", "icons/skills/movement/arrow-upward-yellow.webp");
+    return null;
   }
 
   /* Applied by the module : the card's effect buttons are greyed out (for its owner and the GM) */
@@ -180,6 +219,45 @@ export class actions{
     if(actor.effects.some(e => e.getFlag(module.id, key))) return;
     await addTimedEffect(actor, { name : module.i18n(label), img, flags : { [module.id] : { [key] : true } } }, { until : "turnEnd", thisTurn : true });
     log.debug(key, actor.name);
+  }
+
+  /* ---------- Hide ---------- */
+
+  static OUT = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
+
+  /* Enemies whose tokens see this one (the vision rules) */
+  static seenBy(token){
+    const side = token?.document?.disposition;
+    return (canvas.tokens?.placeables ?? []).filter(t => (t !== token) && t.actor && (t.document.disposition !== side)
+      && (t.document.disposition !== CONST.TOKEN_DISPOSITIONS?.NEUTRAL) && !this.OUT.some(st => t.actor.statuses?.has?.(st)) && canSee(t, token));
+  }
+
+  /* DEX (Stealth) against DC 15; a success : Invisible, until the GM ends it (found, attacked, made noise) */
+  static async rollHide(actor){
+    const [roll] = await actor.rollSkill({ skill : "ste", target : this.HIDE_DC }, { configure : false },
+      { data : { flags : { [module.id] : { hideRoll : actor.uuid } } } }) ?? [];
+    if(roll) await this.hidden(actor, roll.total);
+  }
+
+  static async hidden(actor, total){
+    if(total >= this.HIDE_DC){
+      await setStatus(actor, "invisible", true);
+      ui.notifications.info(module.format("actions.hide.hidden", { name : actor.name }));
+      return true;
+    }
+    ui.notifications.info(module.format("actions.hide.notHidden", { name : actor.name }));
+    return false;
+  }
+
+  static async onHideReroll(message, changes, userId){
+    const uuid = message.getFlag?.(module.id, "hideRoll");
+    if(!uuid || (userId !== game.user.id) || !("rolls" in (changes ?? {})) || message.getFlag(module.id, "hid")) return;
+    const total = message.rolls?.[0]?.total ?? 0;
+    if(total < this.HIDE_DC) return;
+    const actor = fromUuidSync(uuid, { strict : false });
+    if(!actor?.isOwner) return;
+    if(message.isOwner) await message.setFlag(module.id, "hid", true);
+    await this.hidden(actor, total);
   }
 
   /* ---------- Help : Assist Attack ---------- */
@@ -314,7 +392,7 @@ export class actions{
   /* A creature at 0 HP within 5 ft first (none : nothing spent), then the use, then it's Stable (no check) */
   /* ---------- Every creature's default actions ---------- */
 
-  static BASICS = ["dash", "disengage", "dodge", "help", "unarmed-strike"];
+  static BASICS = ["dash", "disengage", "dodge", "help", "hide", "unarmed-strike"];
 
   static async giveBasics(actor){
     if(!this.enabled() || !game.users.activeGM?.isSelf || !["npc", "character"].includes(actor?.type)) return;

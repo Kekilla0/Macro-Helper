@@ -1,12 +1,13 @@
 import { module } from '../../module.js';
-import { idOf, buttonRow, addButton, wait, waitFor } from '../../helpers/utils.js';
+import { idOf } from '../../helpers/utils.js';
 import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
-import { isUnarmored } from '../../helpers/items.js';
+import { isUnarmored, multiattack, spendUses } from '../../helpers/items.js';
+import { bonusOnlyWhen } from '../bonus-only-when.js';
 import { actions } from '../actions.js';
 import { weaponUses } from '../weapon-uses.js';
 import { uses } from '../../uses.js';
-import { initiative } from '../initiative.js';
+import { onInitiative } from '../initiative.js';
 import { itemFixes } from '../item-fixes.js';
 import { tokenOf } from '../../helpers/tokens.js';
 import { pickTargets } from '../../helpers/targets.js';
@@ -27,13 +28,13 @@ const log = logger.for(import.meta.url);
  *                        rolls all show it (Plutonium's enchantment would force the die, and stay on in armor). The
  *                        bonus Unarmed Strike waits for the action tracker.
  *   Flurry of Blows    : a Focus Point, then the character's own Unarmed Strike twice (three times from level 10), each
- *                        its own use : Attack, Grapple or Shove.
- *   Patient Defense    : the free use : Disengage; with a Focus Point : Disengage and Dodge (the Default Actions' marks).
+ *                        its own use : Attack, Grapple or Shove (multiattack, economy "bonus", tag "flurry").
+ *   Patient Defense    : the free use : Disengage; with a Focus Point : Disengage and Dodge (the Default Actions, free).
  *   Step of the Wind   : like Patient Defense : the free use : Dash; with a Focus Point : Dash and Disengage. Plutonium's
  *                        item (one Focus Point activity, its own uses) is given the free activity when it lands.
- *   Unarmored Movement : its speed only while wearing no armor and holding no shield (its effect follows).
- *   Uncanny Metabolism : (Homebrew's Initiative Each Round : only the combat's first roll) a button on the Monk's initiative roll (its owner and the GM) while its use is left : uses
- *                        the item (Focus Points back, the healing roll).
+ *   Unarmored Movement : its speed only while wearing no armor and holding no shield (bonusOnlyWhen).
+ *   Uncanny Metabolism : a button on the Monk's initiative roll (onInitiative; Initiative Each Round : the combat's first
+ *                        roll only) while its use is left : uses the item (Focus Points back, the healing roll).
  *   Deflect Attacks    : (level 3) an attack roll hits the Monk with Bludgeoning, Piercing or Slashing damage : Deflect
  *                        on the card (its owner, its Reaction left) rolls 1d10 + DEX + Monk level, and that card's
  *                        damage to it is that much lower. Brought to 0 : Redirect (a Focus Point) picks a creature within
@@ -63,36 +64,22 @@ export class monk{
     /* Patient Defense / Step of the Wind : the Default Actions' marks are put on instead of the item's own effects
        (dnd5e's Monk's Focus carries a Dodging effect that never ends) */
     Hooks.on(`${module.id}.selfEffects`, activity => !(this.enabled() && [...this.FOCUS, this.PATIENT, this.STEP].includes(idOf(activity?.item))));
-    for(const hook of ["createItem", "updateItem", "deleteItem"]){
-      Hooks.on(hook, (item, ...rest) => { if(rest.at(-1) === game.user.id) this.syncMovement(item?.parent); });
-    }
-    /* What's in the hands changed (a shield) */
-    Hooks.on("updateActor", (actor, changes, options, userId) => {
-      if((userId === game.user.id) && foundry.utils.hasProperty(changes ?? {}, `flags.${module.id}.hands`)) this.syncMovement(actor);
-    });
+    /* Unarmored Movement : its speed only while unarmored */
+    bonusOnlyWhen(this.MOVEMENT, "system.attributes.movement.walk", actor => this.unarmored(actor), { enabled : () => this.enabled(), id : "unarmoredMovement" });
     /* Step of the Wind with only its Focus Point use : the free Dash added (dnd5e's and Plutonium's) */
     itemFixes.add({ name : "Step of the Wind", where : "owned", plan : item => { const update = this.stepUpdate(item); return update ? { update } : null; } });
-    /* Uncanny Metabolism : on the initiative roll */
-    Hooks.on("macro-helper.initiativeFeet", (combatant, add) => this.metabolismFoot(combatant, add));
-    /* Used : the cards show it greyed, on every client */
-    Hooks.on("updateItem", item => { if(idOf(item) === this.METABOLISM) this.redrawMetabolism(item.actor); });
-    Hooks.on("dnd5e.renderChatMessage", (message, html) => this.metabolismMessage(message, html));
+    /* Uncanny Metabolism : a button on the initiative roll, its first one with Initiative Each Round */
+    onInitiative({ id : "metabolism", feature : this.METABOLISM, icon : "fa-yin-yang", firstOnly : true, when : actor => this.isMonk(actor) });
     /* Flurry of Blows : the Unarmed Strike, not its own attack (an item of its own, or Monk's Focus's activity) */
     uses.onItem("flurry", (item, ctx, next) => {
-      if(this.isMonk(item.actor) && (idOf(item) === this.FLURRY) && this.unarmedOf(item.actor)) return this.flurry(item, ctx.config, ctx.dialog, ctx.message);
+      if(this.isMonk(item.actor) && (idOf(item) === this.FLURRY) && this.unarmedOf(item.actor)) return this.flurry(item, ctx.config);
       return next();
     });
     uses.onActivity("flurry", (activity, ctx, next) => {
       if(this.isMonk(activity.actor) && (idOf(activity.item) === this.POOL) && (this.kindOf(activity) === this.FLURRY) && this.unarmedOf(activity.actor)){
-        return this.flurry(activity.item, ctx.config, ctx.dialog, ctx.message);
+        return this.flurry(activity.item, ctx.config);
       }
       return next();
-    });
-    /* A Flurry of Blows strike's card says so (Open Hand Technique) : flags["macro-helper"].flurry */
-    Hooks.on("preCreateChatMessage", (message, data, options, userId) => {
-      if((userId !== game.user.id) || !this.#flurrying.size || (message.type !== TYPES.attack)) return;
-      const actor = ChatMessage.implementation.getSpeakerActor(message.speaker);
-      if(actor && this.#flurrying.has(actor.uuid)) message.updateSource({ [`flags.${module.id}.flurry`] : true });
     });
     /* Deflect Attacks */
     Hooks.on(`${module.id}.cardButtons`, (message, buttons, { ray } = {}) => this.deflectButtons(message, buttons, ray ?? null));
@@ -143,67 +130,22 @@ export class monk{
     return actor?.items?.find?.(i => idOf(i) === this.UNARMED) ?? null;
   }
 
-  /* A Focus Point, then the Unarmed Strike two times (three from level 10), each Attack, Grapple or Shove. The first
-     closed : the point back; a later one closed : the rest skipped */
-  static async flurry(item, config = {}, dialog = {}, message = {}){
+  /* A Focus Point, then the Unarmed Strike two times (three from level 10), each Attack, Grapple or Shove, together
+     one Bonus Action (multiattack's economy); its cards tagged "flurry" (Open Hand Technique). The first closed : the
+     point back */
+  static async flurry(item, config = {}){
     const actor = item.actor;
     const focus = this.focusOf(actor);
     if(focus && !(Number(focus.system.uses?.value) > 0)){
       ui.notifications.warn(module.format("classes.monk.noFocus", { name : actor.name, item : focus.name }));
       return null;
     }
-    if(focus) await focus.update({ "system.uses.spent" : (Number(focus.system.uses?.spent) || 0) + 1 });
-    const strike = this.unarmedOf(actor);
+    if(focus) await spendUses(focus, 1);
     const count = 2 + Math.min(1, Math.floor((Number(actor.classes.monk.system?.levels) || 1) / 10));
-    const results = [];
-    this.#flurrying.add(actor.uuid);
-    try {
-      for(let i = 0; i < count; i++){
-        /* Action Tracker : the first strike is the Bonus Action, the others come with it */
-        const used = await this.untilShown(() => strike.use({ event : config.event, [module.id] : { economy : i ? "free" : "bonus" } }, { ...dialog }, { ...message }));
-        if(!used) break;
-        results.push(used);
-      }
-    }
-    finally {
-      this.#flurrying.delete(actor.uuid);
-      if(!results.length && focus) await focus.update({ "system.uses.spent" : Math.max(0, (Number(focus.system.uses?.spent) || 1) - 1) });
-    }
+    const results = await multiattack(actor, [{ weapon : this.unarmedOf(actor), count }], { economy : "bonus", tag : "flurry", event : config.event }) ?? [];
+    if(!results.length && focus) await focus.update({ "system.uses.spent" : Math.max(0, (Number(focus.system.uses?.spent) || 1) - 1) });
     log.debug("Flurry of Blows", actor.name, results.length, "of", count);
     return results.at(-1) ?? null;
-  }
-
-  /**
-   * Run a use, then wait until the cards it made are shown : Dice So Nice's dice landed, Roll Item's staged card
-   * revealed (each at most a few seconds). The next strike's window opens after the first one's result.
-   */
-  static async untilShown(fn){
-    const made = [], landed = new Set();
-    const onCreate = (message, options, userId) => { if(userId === game.user.id) made.push(message); };
-    const onLanded = id => landed.add(id);
-    Hooks.on("createChatMessage", onCreate);
-    Hooks.on("diceSoNiceRollComplete", onLanded);
-    try {
-      const result = await fn();
-      /* Roll Item picks and makes its card after the use : closed (nothing rolled) counts as not used */
-      if(result?.[module.id]?.card && !(await uses.cardOf(result))) return null;
-      /* A card can still be on its way */
-      await wait(300);
-      for(const message of made){
-        const live = game.messages.get(message.id) ?? message;
-        /* Roll Item's staged card : attack, then damage (it plays its own dice) */
-        if(live.getFlag?.(module.id, "reveal") !== undefined){
-          await waitFor(() => (game.messages.get(message.id)?.getFlag(module.id, "reveal") ?? 2) >= 2, { timeout : 15000 });
-          continue;
-        }
-        if(game.dice3d && live.rolls?.length && !live.getFlag?.("dice-so-nice", "skip")) await waitFor(() => landed.has(message.id), { timeout : 10000 });
-      }
-      return result;
-    }
-    finally {
-      Hooks.off("createChatMessage", onCreate);
-      Hooks.off("diceSoNiceRollComplete", onLanded);
-    }
   }
 
   /* ---------- Focus : Patient Defense, Step of the Wind ---------- */
@@ -238,14 +180,10 @@ export class monk{
     if(![this.PATIENT, this.STEP].includes(id)) return;
     const own = activity.getUsageToken?.()?.actor ?? actor;
     const focus = this.spendsFocus(activity, usage);
-    if(id === this.PATIENT){
-      await actions.mark(own, "disengage", "actions.disengage.mark", "icons/skills/movement/arrow-upward-yellow.webp");
-      if(focus) await actions.dodge(own);
-    }
-    else {
-      await actions.mark(own, "dash", "actions.dash.mark", "icons/skills/movement/feet-winged-boots-glowing-yellow.webp");
-      if(focus) await actions.mark(own, "disengage", "actions.disengage.mark", "icons/skills/movement/arrow-upward-yellow.webp");
-    }
+    /* The Default Actions, free (the feature's Bonus Action paid) */
+    const pair = (id === this.PATIENT) ? ["disengage", "dodge"] : ["dash", "disengage"];
+    await actions.useDefault(own, pair[0]);
+    if(focus) await actions.useDefault(own, pair[1]);
     await actions.autoApplied(results);
     log.debug("Monk", activity.item.name, focus ? "Focus Point" : "free");
   }
@@ -274,85 +212,11 @@ export class monk{
     };
   }
 
-  /* ---------- Unarmored Movement ---------- */
-
-  static async syncMovement(actor){
-    if(!this.isMonk(actor) || !actor.isOwner) return;
-    const item = actor.items.find(i => idOf(i) === this.MOVEMENT);
-    if(!item) return;
-    const disabled = !this.unarmored(actor);
-    const updates = item.effects.filter(e => e.transfer && (e.disabled !== disabled)).map(e => ({ _id : e.id, disabled }));
-    if(updates.length) await item.updateEmbeddedDocuments("ActiveEffect", updates);
-  }
-
-  /* ---------- Uncanny Metabolism ---------- */
-
-  /**
-   * Its button on a roll (for its owner and the GM) : usable while its use is left, greyed once used on this roll.
-   * @param {Actor} actor
-   * @param {string} key   the roll : "<combat>.<round>" (the round's card) or a message id
-   * @returns {{ item : Item, used : boolean }|null}
-   */
-  static metabolismOf(actor, key){
-    if(!this.isMonk(actor) || !actor.isOwner) return null;
-    const item = actor.items.find(i => idOf(i) === this.METABOLISM);
-    if(!item) return null;
-    if(Number(item.system.uses?.value) > 0) return { item, used : false };
-    return (item.getFlag(module.id, "usedOn") === key) ? { item, used : true } : null;
-  }
-
-  static async useMetabolism(item, key){
-    const activity = item.system.activities?.contents?.[0] ?? [...(item.system.activities ?? [])][0];
-    const result = await (activity ? activity.use({}, { configure : false }) : item.use({}, { configure : false }));
-    if(result) await item.setFlag(module.id, "usedOn", key);
-    return result;
-  }
-
-  /* The cards with its button drawn again (greyed) */
-  static redrawMetabolism(actor){
-    if(game.combat) initiative.redraw(game.combat);
-    const latest = game.messages.contents.findLast(m => m.getFlag?.("core", "initiativeRoll") && (m.speaker?.actor === actor?.id));
-    if(latest) ui.chat?.updateMessage(latest);
-  }
-
-  static metabolismLabel(item, name){
-    return module.format("requests.featFor", { feat : item.name, name });
-  }
-
-  /* The compact initiative card : at its foot */
-  /* "When you roll Initiative" : once a combat. Homebrew's Initiative Each Round re-rolls it every round : only the
-     combat's first roll offers it (it can't be saved for later) */
-  static firstInitiative(combat){
-    return !settings.value("homebrewInitiative") || !combat || ((Number(combat.round) || 0) <= 1);
-  }
-
-  static metabolismFoot(combatant, add){
-    const combat = combatant?.combat ?? combatant?.parent;
-    const key = `${combat?.id}.${combat?.round}`;
-    const found = this.metabolismOf(combatant?.actor, key);
-    if(found && !found.used && !this.firstInitiative(combat)) return;
-    if(found) add("fa-yin-yang", this.metabolismLabel(found.item, combatant.name), () => this.useMetabolism(found.item, key), { disabled : found.used });
-  }
-
-  /* dnd5e's own initiative message (Compact Initiative off) : the Monk's latest one */
-  static metabolismMessage(message, html){
-    if(!message?.getFlag?.("core", "initiativeRoll")) return;
-    const actor = ChatMessage.implementation.getSpeakerActor?.(message.speaker) ?? game.actors.get(message.speaker?.actor);
-    const found = this.metabolismOf(actor, message.id);
-    if(!found) return;
-    if(!found.used && !this.firstInitiative(game.combat)) return;
-    const latest = game.messages.contents.findLast(m => m.getFlag?.("core", "initiativeRoll") && (m.speaker?.actor === message.speaker?.actor));
-    if(latest && (latest.id !== message.id)) return;
-    if(html.querySelector(`.${module.id}-initiative-feet`)) return;
-    addButton(buttonRow(html, { key : `${module.id}-initiative-feet` }),
-      initiative.footButton("fa-yin-yang", this.metabolismLabel(found.item, actor.name), () => this.useMetabolism(found.item, message.id), { disabled : found.used }));
-  }
   /* ---------- Deflect Attacks ---------- */
 
   static #redirectType = null;
 
   /* The Monks whose Flurry of Blows is being made (their strikes' cards are marked) */
-  static #flurrying = new Set();
 
   /* This attack's damage rolls (its own and its extra boxes), for one attack on the card */
   static attackDamage(message, ray){

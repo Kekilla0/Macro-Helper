@@ -83,7 +83,6 @@ export class actionTracker{
     Hooks.on("updateCombat", (combat, changes) => this.skipTurn(combat, changes));
     Hooks.on("createChatMessage", (message, options, userId) => this.fromMessage(message, userId));
     Hooks.on("createActiveEffect", (effect, options, userId) => this.fromEffect(effect, userId));
-    Hooks.on("dnd5e.postUseActivity", activity => this.onUsed(activity));
     Hooks.on("preMoveToken", (token, movement) => this.preMove(token, movement));
     /* token.hasReaction() (card macros) : false when its Reaction is spent or it can't take one */
     Hooks.on(`${module.id}.hasReaction`, actor => this.left(actor, "reaction") ? undefined : false);
@@ -305,13 +304,46 @@ export class actionTracker{
     (rec.log ??= []).push({ text, at : Date.now(), ...extra });
   }
 
-  /* More of one this turn (Action Surge, Haste) : shown as an added pip */
-  static async give(actor, kind, n = 1, source = ""){
+  /**
+   * More or fewer of one this turn : modify(actor, "action", 1) gives an Action (Action Surge), -1 takes one away.
+   * Kinds : action, bonus, reaction, and attack (the Attack action's attacks : +1 one more, -1 one used, Commander's
+   * Strike). An attack given before the Attack action is taken waits for it. This turn only : something lasting re-applies
+   * it each turn (onTurnStart). Out of combat, or the tracker off : nothing.
+   * @param {Actor|Token} thing
+   * @param {"action"|"bonus"|"reaction"|"attack"} kind
+   * @param {number} [n=1]
+   * @param {string} [source]   named in the turn's log
+   */
+  static async modify(thing, kind, n = 1, source = ""){
+    const actor = thing?.actor ?? thing;
     const st = this.state(actor);
-    if(!st) return;
-    st.rec.extra[kind] = (Number(st.rec.extra[kind]) || 0) + n;
-    this.note(st.rec, module.format("actionTracker.log.give", { n, kind : this.label(kind), source }));
-    await this.save(actor, st.rec);
+    n = Math.trunc(Number(n)) || 0;
+    if(!st || !n || ![...this.KINDS, "attack"].includes(kind)) return;
+    const rec = st.rec;
+    if(kind === "attack"){
+      if(!rec.attack) rec.attackExtra = (Number(rec.attackExtra) || 0) + n;
+      else this.addAttacks(rec.attack, n);
+    }
+    else if(n > 0) rec.extra[kind] = (Number(rec.extra[kind]) || 0) + n;
+    else rec.used[kind] = Math.min(this.total(rec, kind), (Number(rec.used[kind]) || 0) - n);
+    const label = (kind === "attack") ? module.i18n("actionTracker.attack") : this.label(kind);
+    this.note(rec, module.format("actionTracker.log.give", { n : (n > 0) ? `+${n}` : n, kind : label, source }));
+    await this.save(actor, rec);
+  }
+
+  /* n more attacks in the pool (n < 0 : that many taken from anywhere in it) */
+  static addAttacks(pool, n){
+    if(n > 0){ pool.any = (pool.any ?? 0) + n; pool.total = (Number(pool.total) || 0) + n; return; }
+    for(let i = 0; i < -n; i++){
+      if((pool.any ?? 0) > 0){ pool.any -= 1; continue; }
+      const shared = pool.shared?.find(g => g.n > 0);
+      if(shared){ shared.n -= 1; continue; }
+      const left = Object.keys(pool.left ?? {}).find(k => pool.left[k] > 0);
+      if(left){ pool.left[left] -= 1; continue; }
+      const use = Object.keys(pool.uses ?? {}).find(k => pool.uses[k] > 0);
+      if(use){ pool.uses[use] -= 1; continue; }
+      break;
+    }
   }
 
   /* ---------- What a use costs ---------- */
@@ -604,6 +636,8 @@ export class actionTracker{
     }
     if(attack === "new"){
       rec.attack = this.attackPool(actor, activity);
+      /* Attacks given or taken before the Attack action (modify(actor, "attack", n)) */
+      if(rec.attackExtra){ this.addAttacks(rec.attack, rec.attackExtra); rec.attackExtra = 0; }
       if(this.isAttack(activity) || this.swapsIn(activity) || this.REPLACES_ATTACK.has(idOf(activity?.item))) this.takeAttack(rec.attack, activity.item);
       rec.light = this.isAttack(activity) && this.isLight(activity.item);
     }
@@ -689,12 +723,6 @@ export class actionTracker{
     if(!rec.ready) return "";
     const trigger = module.i18n(`actionTracker.trigger.${rec.ready.trigger}`) + (rec.ready.turnOf ? ` (${rec.ready.turnOf.name})` : "");
     return `<span class="readied" data-tooltip="${esc(module.format("actionTracker.ready.marker", { what : rec.ready.name, trigger }))}"><i class="fa-solid fa-hourglass-half" inert></i></span>`;
-  }
-
-  /* Action Surge : one more Action this turn */
-  static async onUsed(activity){
-    if(!this.enabled() || !activity?.actor?.isOwner) return;
-    if(idOf(activity.item) === "action-surge") await this.give(activity.actor, "action", 1, activity.item.name);
   }
 
   /* A chat line saying what it used (Mage Hand moved : flags.actionUsed { type }) : its author's client */

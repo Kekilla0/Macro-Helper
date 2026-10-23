@@ -11,6 +11,8 @@ import { limits } from '../limits.js';
 import { tokenOf, fitSpace } from '../../helpers/tokens.js';
 import { restChoices } from '../rest-choices.js';
 import { familiars } from '../familiars.js';
+import { transform, revert, revertEverywhere, isReverting } from '../transform.js';
+import { cantUseWhile } from '../use-rules.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -45,6 +47,8 @@ export class druid{
   static WILD_COMPANION = "wild-companion";
   static CIRCLE_FORMS = "circle-forms";
   static INCAPACITATED = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
+  /* Known forms' changes left (Rest Choices' count), on the Wild Shape item */
+  static SWAPS = "swaps.wildShapeForms";
 
   static enabled(){
     return (game.system.id === "dnd5e") && settings.value("classRules");
@@ -67,20 +71,30 @@ export class druid{
       }
       return next();
     });
-    /* A spell while shifted : Rule Limits, or (Change) leave the form first */
-    uses.onItem("wildShapeCast", async (item, ctx, next) => {
-      const form = ctx.config?.[module.id]?.leftForm ? null : this.castingShifted(item);
-      if(!form) return next();
-      const original = this.originalOf(form);
-      const left = await this.leaveToCast(item, form, original);
-      if(left === false) return;
-      /* Warn : cast in the form, already said (Wild Companion's own check needn't say it again) */
-      if(left !== "left"){ uses.mark(ctx, { shiftedAllowed : true }); return next(); }
-      /* Cast from the form (Wild Companion) : its item went with the form, the Druid's own is used */
-      if(item.actor !== form) return next();
-      const own = original?.items?.find(i => (i.type === item.type) && (idOf(i) === idOf(item)));
-      return own?.use({ ...ctx.config, [module.id] : { ...(ctx.config?.[module.id] ?? {}), leftForm : true } }, ctx.dialog, ctx.message);
-    });
+    /* No spells in a form : Rule Limits, or (Rule Fixes) leave the form first, then cast */
+    cantUseWhile("wildShapeSpells", { enabled : () => this.enabled(),
+      uses : item => (item.type === "spell") || (idOf(item) === this.WILD_COMPANION),
+      while : (actor, item) => !!this.castingShifted(item),
+      reason : (actor, item) => module.format("classes.druid.noSpellsShifted", { name : item.name }),
+      instead : {
+        label : () => module.i18n("classes.druid.leaveAndCast"),
+        run : (actor, item) => this.leave(this.castingShifted(item)),
+        /* In combat a Bonus Action spell can't follow leaving (its Bonus Action) */
+        when : (actor, item) => {
+          const form = this.castingShifted(item);
+          const bonus = (item.system?.activities ?? []).some?.(a => a.activation?.type === "bonus");
+          return !(bonus && this.inCombat(form, this.originalOf(form)));
+        },
+        whyNot : (actor, item) => module.format("classes.druid.leaveTakesBonus", { name : item.name }),
+        /* Cast from the form (Wild Companion) : its item went with the form, the Druid's own is used */
+        use : (item, ctx, next) => {
+          const form = item.actor;
+          if(!this.isWildShaped(form)) return next();
+          const original = this.originalOf(form);
+          const own = original?.items?.find(i => (i.type === item.type) && (idOf(i) === idOf(item)));
+          return own?.use({ ...ctx.config }, ctx.dialog, ctx.message);
+        },
+      } });
     Hooks.on("dnd5e.transformActorV2", (actor, source, data, transform) => this.onTransform(actor, data, transform));
     Hooks.on("createActiveEffect", effect => this.onEffect(effect));
     Hooks.on("updateActiveEffect", effect => this.onEffect(effect));
@@ -102,12 +116,11 @@ export class druid{
       if(druid.enabled() && ((idOf(this.item) === druid.WILD_SHAPE) || ((idOf(this.item) === druid.CIRCLE_FORMS) && druid.moonOn()))) return druid.pickForm(druid.originalOf(this.actor), this.item);
       return wrapped(...args);
     });
-    gm.handle("wildShape", (data, user) => this.wildShapeAsGM(data, user));
-    gm.handle("wildShapeLeave", (data, user) => this.leaveAsGM(data, user));
     restChoices.add({
-      id : "wildShapeForms", label : "restChoices.wildShapeForms", rest : "long",
+      id : "wildShapeForms", label : "restChoices.wildShapeForms", rest : "long", count : 1,
+      /* The count is kept on the Druid's Wild Shape item (the same in a form) */
+      holder : actor => this.wildShapeItem(this.originalOf(actor)),
       applies : actor => this.enabled() && !!this.wildShapeItem(this.originalOf(actor)),
-      grant : actor => this.wildShapeItem(this.originalOf(actor))?.setFlag(module.id, "formSwaps", 1),
       summary : actor => this.formsSummary(actor),
       open : actor => this.manageForms(actor),
     });
@@ -172,7 +185,7 @@ export class druid{
 
   static formsSummary(actor){
     const original = this.originalOf(actor);
-    const swaps = Number(this.wildShapeItem(original)?.getFlag(module.id, "formSwaps")) || 0;
+    const swaps = Number(this.wildShapeItem(original)?.getFlag(module.id, this.SWAPS)) || 0;
     return module.format("classes.druid.formsSummary", { known : this.knownForms(original).length, max : this.formLimit(original), swaps });
   }
 
@@ -191,7 +204,7 @@ export class druid{
       return null;
     }
     const known = this.knownForms(original);
-    const swaps = game.user.isGM ? Infinity : (Number(item.getFlag(module.id, "formSwaps")) || 0);
+    const swaps = restChoices.swapsLeft(original, "wildShapeForms");
     const max = this.formLimit(original);
     const chosen = await chooseCreatures(eligible, {
       known, max, swaps, allowPast : limits.canGoPast(),
@@ -201,7 +214,7 @@ export class druid{
     if(!chosen) return null;
     const removed = known.filter(uuid => eligible.some(a => a.uuid === uuid) && !chosen.includes(uuid)).length;
     const update = { [`flags.${module.id}.forms`] : [...chosen] };
-    if(Number.isFinite(swaps)) update[`flags.${module.id}.formSwaps`] = Math.max(0, swaps - removed);
+    if(Number.isFinite(swaps)) update[`flags.${module.id}.${this.SWAPS}`] = Math.max(0, swaps - removed);
     /* Past the rules on purpose : the GM is told */
     const free = swaps + Math.max(0, known.length - max);
     if(chosen.past && (removed > free)){
@@ -233,7 +246,7 @@ export class druid{
         rejectClose : false,
       });
       if(choice === "leave"){
-        await this.leave(actor, original);
+        await this.leave(actor);
         return false;
       }
       if(choice !== "new") return false;
@@ -302,7 +315,7 @@ export class druid{
     this.#chosen.delete(activity.item?.uuid);
     try {
       if(own.wildShape?.form){
-        await gm.run("wildShape", { actor : activity.actor.uuid, item : activity.item.uuid, activity : activity.id, ...own.wildShape });
+        await transform(activity.actor, own.wildShape.form, { activity });
       }
     } catch(error){
       log.error(error);
@@ -310,13 +323,9 @@ export class druid{
     }
   }
 
-  /* The new form's token data, caught as dnd5e builds it, for the Druid's tokens on other scenes */
-  static #prototype = new Map();
-
   /* The form's duration, as an effect on it : half the Druid level in hours (at least 1) */
   static onTransform(actor, data, transform){
     if((transform?.preset !== "wildshape") || !data) return;
-    if(data.prototypeToken) this.#prototype.set(actor.id, foundry.utils.deepClone(data.prototypeToken));
     if(!this.enabled() || !Array.isArray(data.effects)) return;
     /* Temp HP don't stack : dnd5e sets the form's, keep the Druid's own when they're higher */
     const hp = data.system?.attributes?.hp;
@@ -350,74 +359,9 @@ export class druid{
     });
   }
 
-  /**
-   * GM : take the form, for the Druid's owner. Only a form it knows (the GM : any). dnd5e only updates the tokens on
-   * the scene the GM is viewing, so the Druid's tokens elsewhere are updated here, from the same token data.
-   */
-  static async wildShapeAsGM({ actor : uuid, item : itemUuid, activity : activityId, form, token : tokenUuid = null, x, y } = {}, user){
-    const actor = fromUuidSync(uuid ?? "", { strict : false });
-    if(!actor?.testUserPermission(user, "OWNER")) return false;
-    const original = this.originalOf(actor);
-    if(!user.isGM && !this.knownForms(original).includes(form)) return false;
-    const source = await fromUuid(form ?? "");
-    const activity = fromUuidSync(itemUuid ?? "", { strict : false })?.system?.activities?.get(activityId);
-    if(!source || !activity?.settings) return false;
-
-    const place = (Number.isFinite(x) && Number.isFinite(y)) ? { token : tokenUuid, x, y } : null;
-    /* Unlinked token : dnd5e changes the token itself, wherever it is; then it goes where it fits */
-    if(actor.isToken){
-      const done = !!(await actor.transformInto(source, activity.settings, { renderSheet : false }));
-      if(done && place) await actor.token?.update({ x : place.x, y : place.y });
-      return done;
-    }
-
-    const tokens = game.scenes.contents.flatMap(s => s.tokens.filter(t => t.actorLink && (t.actorId === actor.id)));
-    await actor.transformInto(source, activity.settings.clone({ transformTokens : false }), { renderSheet : false });
-    const shape = game.actors.filter(a => a.isPolymorphed && (a.getFlag("dnd5e", "originalActor") === original.id) && (a.id !== actor.id))
-      .sort((a, b) => (a._stats?.createdTime ?? 0) - (b._stats?.createdTime ?? 0)).pop();
-    const prototype = this.#prototype.get(actor.id);
-    this.#prototype.delete(actor.id);
-    if(!shape || !prototype) return !!shape;
-    await this.#retarget(tokens, shape, prototype, source, place);
-    return true;
-  }
-
-  /* The Druid's tokens become the form's (what dnd5e's transformInto does for the viewed scene) */
-  static async #retarget(tokens, shape, prototype, source, place = null){
-    const fromSource = ["width", "height", "alpha", "lockRotation", "ring"];
-    const textureFromSource = ["offsetX", "offsetY", "scaleX", "scaleY", "src", "tint"];
-    const fromSelf = ["bar1", "bar2", "displayBars", "displayName", "actorLink", "disposition"];
-    const kept = [...fromSelf, "rotation", "elevation", "hidden", "level"];
-    const byScene = new Map();
-    for(const t of tokens){
-      const data = foundry.utils.deepClone(prototype);
-      data._id = t.id;
-      data.actorId = shape.id;
-      data.actorLink = true;
-      for(const k of kept) data[k] = t[k];
-      /* The token the player used : where the form fits (worked out on their map) */
-      if(place && (t.uuid === place.token)){ data.x = place.x; data.y = place.y; }
-      data.name = `${t.name} (${source.name})`;
-      foundry.utils.setProperty(data, "flags.dnd5e.originalActor", shape.getFlag("dnd5e", "originalActor"));
-      foundry.utils.setProperty(data, "flags.dnd5e.isPolymorphed", true);
-      if(!t.flags.dnd5e?.previousTokenData){
-        const previous = { texture : {} };
-        for(const k of [...fromSource, ...fromSelf, "name"]) previous[k] = t[k];
-        for(const k of textureFromSource) previous.texture[k] = t.texture[k];
-        foundry.utils.setProperty(data, "flags.dnd5e.previousTokenData", previous);
-      }
-      if(!byScene.has(t.parent)) byScene.set(t.parent, []);
-      byScene.get(t.parent).push(data);
-    }
-    for(const [scene, updates] of byScene) await scene.updateEmbeddedDocuments("Token", updates);
-  }
-
-  /* Leave the form (the GM's client reverts it), back to the Druid's own size where it fits */
-  static async leave(form, original){
-    const token = tokenOf(form);
-    const size = original?.prototypeToken ?? {};
-    const place = token ? fitSpace(token, Number(size.width) || 1, Number(size.height) || Number(size.width) || 1) : null;
-    return gm.run("wildShapeLeave", { actor : form.uuid, token : token?.document.uuid ?? null, x : place?.x, y : place?.y });
+  /* Leave the form (the transform lego's revert), back to the Druid's own size where it fits */
+  static async leave(form){
+    return revert(form);
   }
 
   /* ---------- Spells while shifted ---------- */
@@ -448,63 +392,6 @@ export class druid{
   static inCombat(form, original){
     const ids = [form?.id, original?.id].filter(Boolean);
     return game.combats.some(c => c.started && c.combatants.some(x => ids.includes(x.actorId)));
-  }
-
-  /**
-   * A spell in a form. Rule Fixes : leave the form first (its Bonus Action; Offer a Fix asks, Fix Automatically just
-   * does it); in combat a Bonus Action spell can't follow that, so Rule Limits decides. Otherwise Rule Limits decides.
-   * @returns {Promise<boolean|"left">}  false : stop; true : go ahead in the form; "left" : the form was left
-   */
-  static async leaveToCast(item, form, original){
-    const who = original?.name ?? form.name;
-    const rule = module.format("classes.druid.noSpellsShifted", { name : item.name });
-    if(limits.fixMode() === "off") return limits.allow(rule, { who, what : item.name });
-    const bonus = (item.system?.activities ?? []).some?.(a => a.activation?.type === "bonus");
-    if(bonus && this.inCombat(form, original)) return limits.allow(module.format("classes.druid.leaveTakesBonus", { name : item.name }), { who, what : item.name });
-    const outcome = await limits.resolve(rule, { who, what : item.name, fixLabel : module.i18n("classes.druid.leaveAndCast"),
-      fix : () => this.leave(form, original) });
-    return (outcome === "fixed") ? "left" : (outcome === "allowed");
-  }
-
-  /* GM : leave the form, for its owner */
-  static async leaveAsGM({ actor : uuid, token : tokenUuid = null, x, y } = {}, user){
-    const actor = fromUuidSync(uuid ?? "", { strict : false });
-    if(!actor?.testUserPermission(user, "OWNER") || !this.isWildShaped(actor)) return false;
-    await this.revertEverywhere(actor);
-    /* Back to its own size where it fits (a smaller Druid stays put; no room : it stays where the form was) */
-    const token = tokenUuid ? fromUuidSync(tokenUuid, { strict : false }) : null;
-    if(token && Number.isFinite(x) && Number.isFinite(y)) await token.update({ x, y }).catch(() => {});
-    return true;
-  }
-
-  /**
-   * End the form. dnd5e reverts the tokens on the scene the GM is viewing; the ones on other scenes are put back here
-   * first, the way it does them.
-   * @returns {Promise<Actor|null>}  the Druid
-   */
-  static async revertEverywhere(actor){
-    if(!actor.isToken){
-      const original = game.actors.get(actor.getFlag("dnd5e", "originalActor"));
-      if(original){
-        const base = (await original.getTokenDocument()).toObject();
-        for(const scene of game.scenes){
-          if(canvas.ready && (scene === canvas.scene)) continue;
-          const updates = scene.tokens.filter(t => t.actorId === actor.id).map(t => {
-            const update = foundry.utils.deepClone(base);
-            update._id = t.id;
-            foundry.utils.mergeObject(update, t.getFlag("dnd5e", "previousTokenData") ?? {});
-            for(const k of ["x", "y", "elevation", "hidden", "rotation", "level"]) delete update[k];
-            return update;
-          });
-          if(updates.length) await scene.updateEmbeddedDocuments("Token", updates, { diff : false, recursive : false });
-        }
-      }
-    }
-    this.#reverting.add(actor.id);
-    let reverted;
-    try { reverted = await actor.revertOriginalForm({ renderSheet : false }); }
-    finally { setTimeout(() => this.#reverting.delete(actor.id), 2000); }
-    return (reverted?.documentName === "Token") ? reverted.actor : (reverted ?? null);
   }
 
   /* A Wild Shape use spent while shifted is spent on the form's copy of the item : the Druid's own follows (GM) */
@@ -540,8 +427,6 @@ export class druid{
 
   /* ---------- The form's and the Druid's effects, linked ---------- */
 
-  static #reverting = new Set();
-
   /* The other side : the Druid for a form, the form on the scene for the Druid */
   static partnerActor(actor){
     if(this.isWildShaped(actor)) return game.actors.get(actor.getFlag("dnd5e", "originalActor")) ?? null;
@@ -561,7 +446,7 @@ export class druid{
     if(!this.enabled() || !game.users.activeGM?.isSelf || (actor?.documentName !== "Actor")) return true;
     if(effect.getFlag?.(module.id, "wildShape") || effect.getFlag?.(module.id, "auraOf")) return true;
     const form = this.isWildShaped(actor) ? actor : this.formOf(actor);
-    return !form || this.#reverting.has(form.id);
+    return !form || isReverting(form.id);
   }
 
   /* Ended on one side : ended on the other */
@@ -593,7 +478,7 @@ export class druid{
     if(!this.isWildShaped(actor)) return;
     log.debug("Wild Shape ends", actor.name, why);
     const carried = this.CARRIED.filter(s => actor.statuses?.has(s));
-    const original = await this.revertEverywhere(actor);
+    const original = await revertEverywhere(actor);
     for(const status of carried){
       if(original && !original.statuses?.has(status)) await original.toggleStatusEffect(status, { active : true });
     }
@@ -607,7 +492,7 @@ export class druid{
   static onRest(actor, result, config){
     if(!this.enabled() || !actor?.isOwner) return;
     if(this.restEndsForm(actor, config)){
-      gm.run("wildShapeLeave", { actor : actor.uuid })
+      revert(actor)
         .then(() => ui.notifications.info(module.format("classes.druid.ended", { name : actor.name, why : module.i18n("classes.druid.rested") })))
         .catch(error => log.error(error));
     }

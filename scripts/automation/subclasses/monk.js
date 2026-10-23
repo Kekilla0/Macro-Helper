@@ -83,7 +83,7 @@ export class monkTraditions{
     if(!hit?.actor?.isOwner || !hit.target || (idOf(hit.item) !== monk.UNARMED)) return;
     const key = `${message.id}|${ray}`;
     if(this.attuned(hit.actor) && !this.#done.has(`e|${key}`)) buttons.push({ id : "elemental", icon : "fa-fire-flame-curved", label : module.i18n("subclasses.monk.elemental") });
-    if(message.getFlag(module.id, "flurry") && subclasses.has(hit.actor, this.OPEN_HAND) && !this.#done.has(`o|${key}`)){
+    if(message.getFlag(module.id, "tags.flurry") && subclasses.has(hit.actor, this.OPEN_HAND) && !this.#done.has(`o|${key}`)){
       buttons.push({ id : "openHand", icon : "fa-hand", label : subclasses.has(hit.actor, this.OPEN_HAND).name });
     }
   }

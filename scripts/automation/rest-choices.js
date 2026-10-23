@@ -1,6 +1,7 @@
 import { module } from '../module.js';
 import { esc } from '../helpers/utils.js';
 import { logger } from '../log.js';
+import { limits } from './limits.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -24,7 +25,15 @@ const log = logger.for(import.meta.url);
  *   grant(actor, { levels }) : the rest / level happened : allow its change (a swap...), may be async; levels : how
  *                     many levels the class gained,
  *   summary(actor)  : one line for the window ("3 / 4 known · 1 swap"),
- *   open(actor)     : change it (its own window), async
+ *   open(actor, swap) : change it (its own window), async
+ *   count           : how many changes the rest / level allows (a number, or (actor, { levels }) => number). The window
+ *                     counts them : the rest / level sets them (before grant), and open gets `swap` :
+ *                       swap.left     changes left (the GM : Infinity, changes freely)
+ *                       swap.allow()  may one more be made : one left, or past it Rule Limits (Warn : a notice)
+ *                       swap.spend()  one made
+ *                     restChoices.swapsLeft(actor, id) for the summary. Something free (filling up to a limit) needs
+ *                     neither.
+ *   holder(actor)   : with count, the document keeping the count (default : the actor; a Wild Shape form : its Druid)
  * }
  */
 export class restChoices{
@@ -32,6 +41,49 @@ export class restChoices{
 
   static add(choice){
     this.#choices.set(choice.id, choice);
+  }
+
+  /* ---------- The count of changes (choice.count) ---------- */
+
+  static #holder(actor, choice){
+    return choice?.holder?.(actor) ?? actor;
+  }
+
+  /* Changes left for this choice (the GM : Infinity) */
+  static swapsLeft(actor, id){
+    if(game.user.isGM) return Infinity;
+    const holder = this.#holder(actor, this.#choices.get(id));
+    return Number(holder?.getFlag?.(module.id, `swaps.${id}`)) || 0;
+  }
+
+  /* What a choice's open() gets : the count, checked and spent */
+  static swapOf(actor, choice){
+    const left = this.swapsLeft(actor, choice.id);
+    return {
+      left,
+      allow : async () => (left > 0) || limits.allow(module.format("restChoices.noSwap", { name : actor.name, choice : module.i18n(choice.label) }),
+        { who : actor.name, what : module.i18n(choice.label) }),
+      spend : async () => {
+        const holder = this.#holder(actor, choice);
+        const now = this.swapsLeft(actor, choice.id);
+        if(Number.isFinite(now) && holder?.isOwner) await holder.setFlag(module.id, `swaps.${choice.id}`, Math.max(0, now - 1));
+      },
+    };
+  }
+
+  /* A choice's own window, with its count when it has one */
+  static async openChoice(actor, choice){
+    return choice?.open?.(actor, choice.count ? this.swapOf(actor, choice) : undefined);
+  }
+
+  /* The rest / level happened : its count set, then the choice's own grant */
+  static async grantChoice(actor, choice, { levels = 1 } = {}){
+    if(choice.count){
+      const n = (typeof choice.count === "function") ? choice.count(actor, { levels }) : choice.count;
+      const holder = this.#holder(actor, choice);
+      if(holder?.isOwner) await holder.setFlag(module.id, `swaps.${choice.id}`, Math.max(0, Number(n) || 0));
+    }
+    await choice.grant?.(actor, { levels });
   }
 
   static register(){
@@ -181,7 +233,7 @@ export class restChoices{
   static async grantAndOpen(actor, choices, { sequence = false, levels = null, level = false } = {}){
     if(!choices.length) return;
     for(const choice of choices){
-      try { await choice.grant?.(actor, { levels : levels?.get(choice.id) ?? 1 }); }
+      try { await this.grantChoice(actor, choice, { levels : levels?.get(choice.id) ?? 1 }); }
       catch(error){ log.error(choice.id, error); }
     }
     /* The player's window : here for a player; from the GM, on an owning player's client when one is online, else here */
@@ -194,7 +246,7 @@ export class restChoices{
   /* Each choice's own window, one after the other (the next once the last is closed) */
   static async sequence(actor, choices){
     for(const choice of choices){
-      try { await choice.open?.(actor); }
+      try { await this.openChoice(actor, choice); }
       catch(error){ log.error(choice.id, error); }
     }
   }
@@ -219,7 +271,7 @@ export class restChoices{
       render : (event, dialog) => {
         dialog.element.querySelectorAll("button[data-choice]").forEach(button => button.addEventListener("click", async () => {
           const choice = this.#choices.get(button.dataset.choice);
-          await choice?.open(actor);
+          await this.openChoice(actor, choice);
           const summary = button.closest(".form-fields")?.querySelector(".summary");
           if(summary && choice) summary.textContent = choice.summary(actor);
         }));

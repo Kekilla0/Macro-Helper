@@ -1,5 +1,7 @@
 import { module } from '../../module.js';
 import { settings } from '../../settings.js';
+import { cantUseWhile } from '../use-rules.js';
+import { addSense } from '../creature-traits.js';
 import { logger } from '../../log.js';
 import { idOf, chooseOption, originItem } from '../../helpers/utils.js';
 import { markSpell } from '../marks.js';
@@ -7,9 +9,7 @@ import { TYPES } from '../../roll-item/message.js';
 import { pacts } from './warlock-pacts.js';
 import { restChoices } from '../rest-choices.js';
 import { chooseOne } from '../../helpers/creatures.js';
-import { limits } from '../limits.js';
-import { patch } from '../../patch.js';
-import { isClassSpell } from '../../helpers/items.js';
+import { isClassSpell, pickOwned, enchant } from '../../helpers/items.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -71,26 +71,21 @@ export class warlock{
       damage : () => ({ formula : "1d6", type : "necrotic", label : "Hex" }),
       text : { marked : "classes.warlock.hexed", moved : "classes.warlock.hexMoved", mark : "classes.warlock.hexShort", moveHere : "marks.moveHere", done : "classes.warlock.hexedShort" },
     });
-    /* Devil's Sight : its detection mode, and on the tokens of creatures that have it */
-    /* At init : tokens are prepared with the world, before setup */
-    {
-      warlock.registerDevilsSight();
-      patch.wrap("CONFIG.Token.documentClass.prototype._prepareDetectionModes", function(wrapped, ...args){
-        try { if(warlock.enabled() && this.actor?.items?.some?.(i => idOf(i) === warlock.DEVILS_SIGHT)) this.detectionModes.devilsSight ??= { enabled : true, range : warlock.DEVILS_RANGE }; }
-        catch(error){ log.debug("Devil's Sight", error); }
-        return wrapped(...args);
-      });
-    }
+    /* Devil's Sight : its detection mode, on the tokens of creatures that have it (the sense lego). At init : tokens are
+       prepared with the world, before setup */
+    this.registerDevilsSight();
+    addSense("devilsSight", { feature : this.DEVILS_SIGHT, mode : "devilsSight", range : this.DEVILS_RANGE, enabled : () => this.enabled() });
     /* Magical Cunning with every Pact slot there : nothing to regain */
-    Hooks.on("dnd5e.preUseActivity", activity => this.cunningCheck(activity));
+    cantUseWhile("magicalCunning", { enabled : () => this.enabled(), uses : item => idOf(item) === "magical-cunning",
+      while : actor => (Number(actor.system?.spells?.pact?.max) > 0) && (Number(actor.system.spells.pact.value) >= Number(actor.system.spells.pact.max)),
+      reason : actor => module.format("classes.warlock.cunningFull", { name : actor.name }) });
     /* An invocation put on a cantrip : which one, as it's picked */
     Hooks.on("createItem", (item, options, userId) => { if(userId === game.user.id) this.onInvocationAdded(item); });
     restChoices.add({
-      id : "invocationCantrips", label : "restChoices.invocationCantrips", rest : "level", classes : ["warlock"],
+      id : "invocationCantrips", label : "restChoices.invocationCantrips", rest : "level", classes : ["warlock"], count : 1,
       applies : actor => this.enabled() && this.cantripInvocations(actor).length > 0,
-      grant : actor => actor.setFlag(module.id, "cantripSwaps", 1),
       summary : actor => this.cantripSummary(actor),
-      open : actor => this.chooseCantrips(actor),
+      open : (actor, swap) => this.chooseCantrips(actor, swap),
     });
     Hooks.on(`${module.id}.cardMoves`, (message, uuid, moves, context) => this.repelMove(message, uuid, moves, context));
   }
@@ -129,15 +124,6 @@ export class warlock{
       id : "devilsSight", label : "classes.warlock.devilsSight", type : Base.DETECTION_TYPES.SIGHT, walls : true, angle : true, tokenConfig : true });
   }
 
-  /* ---------- Magical Cunning ---------- */
-
-  static cunningCheck(activity){
-    if(!this.enabled() || (idOf(activity?.item) !== "magical-cunning") || !activity.actor) return;
-    const pact = activity.actor.system?.spells?.pact;
-    if(!(Number(pact?.max) > 0) || (Number(pact.value) < Number(pact.max))) return;
-    if(!limits.allow(module.format("classes.warlock.cunningFull", { name : activity.actor.name }), { who : activity.actor.name, what : activity.item.name })) return false;
-  }
-
   /* ---------- Invocations on a cantrip ---------- */
 
   /* The Warlock's invocations that go on a cantrip */
@@ -171,31 +157,14 @@ export class warlock{
     });
   }
 
-  /* Put the invocation's enchantment on the cantrip (as dnd5e's card would) */
-  static async enchant(invocation, cantrip){
-    const activity = invocation.system.activities?.find?.(a => a.type === "enchant");
-    const profile = activity?.effects?.[0]?._id;
-    const source = (profile && invocation.effects.get(profile)) ?? invocation.effects.find(e => e.type === "enchantment");
-    if(!activity || !source) return false;
-    const data = foundry.utils.mergeObject(source.toObject(), { origin : activity.uuid, disabled : false, "flags.dnd5e.enchantmentProfile" : profile ?? source.id }, { inplace : false });
-    delete data._id;
-    await cantrip.createEmbeddedDocuments("ActiveEffect", [data]);
-    return true;
-  }
-
-  /* Which cantrip it goes on : asked (one choice : taken) */
+  /* Which cantrip it goes on : asked (one choice : taken), then its enchantment put on it */
   static async assign(actor, invocation){
     const options = this.candidates(actor, invocation);
-    if(!options.length){
-      ui.notifications.warn(module.format("classes.warlock.noCantrip", { name : actor.name, invocation : invocation.name }));
-      return null;
-    }
-    /* Their own names (an enchantment adds to them : "Eldritch Blast, Agonizing") */
-    const chosen = (options.length === 1) ? options[0].id : await chooseOne(options.map(c => ({ value : c.id, label : c._source?.name ?? c.name, img : c.img })),
-      { title : invocation.name, icon : "fa-solid fa-wand-sparkles", columns : 3, prompt : module.format("classes.warlock.cantripPrompt", { invocation : invocation.name }) });
-    const cantrip = chosen ? actor.items.get(chosen) : null;
+    const cantrip = await pickOwned(actor, i => options.includes(i), { title : invocation.name, icon : "fa-solid fa-wand-sparkles",
+      prompt : module.format("classes.warlock.cantripPrompt", { invocation : invocation.name }),
+      none : module.format("classes.warlock.noCantrip", { name : actor.name, invocation : invocation.name }) });
     if(!cantrip) return null;
-    await this.enchant(invocation, cantrip);
+    await enchant(invocation, cantrip);
     log.debug("Invocation on a cantrip", actor.name, invocation.name, cantrip.name);
     return cantrip;
   }
@@ -215,14 +184,13 @@ export class warlock{
 
   /* The row : each invocation without a cantrip gets one; all placed : moving one (a Warlock level gained; the GM freely;
      past that, Rule Limits) */
-  static async chooseCantrips(actor){
+  static async chooseCantrips(actor, swap){
     const open = this.cantripInvocations(actor).filter(i => !this.cantripOf(actor, i));
     if(open.length){
       for(const invocation of open) await this.assign(actor, invocation);
       return;
     }
-    const swaps = game.user.isGM ? Infinity : (Number(actor.getFlag(module.id, "cantripSwaps")) || 0);
-    if(!(swaps > 0) && !limits.allow(module.i18n("classes.warlock.cantripRule"), { who : actor.name, what : module.i18n("restChoices.invocationCantrips") })) return;
+    if(swap && !await swap.allow()) return;
     const invocations = this.cantripInvocations(actor);
     const pick = await chooseOne(invocations.map(i => ({ value : i.id, label : i.name, img : i.img, detail : this.cantripOf(actor, i)?._source?.name ?? "" })),
       { title : module.i18n("restChoices.invocationCantrips"), icon : "fa-solid fa-wand-sparkles", columns : 2, prompt : module.i18n("classes.warlock.cantripMove") });
@@ -233,7 +201,7 @@ export class warlock{
     if(!moved) return;
     const effect = old?.effects?.find?.(e => (e.type === "enchantment") && (originItem(e) === invocation));
     if(effect) await effect.delete();
-    if(Number.isFinite(swaps)) await actor.setFlag(module.id, "cantripSwaps", Math.max(0, swaps - 1));
+    await swap?.spend();
   }
 
   /* ---------- Repelling Blast ---------- */

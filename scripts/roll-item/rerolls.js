@@ -2,6 +2,7 @@ import { module } from '../module.js';
 import { buttonRow, addButton, makeButton } from '../helpers/utils.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
+import { spendUses } from '../helpers/items.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -236,6 +237,10 @@ let failHooked = false;
  *     formula : source => "1d6",
  *     label : source => "Use Bardic Inspiration (1d6)", icon : "fa-music",
  *     after : (actor, source, message) => {}, once it's added (the die used up)
+ *     cost : (actor, source) => item,         an item one use of which pays for it (Second Wind); none : nothing spent
+ *     pay : "use" | "success",                when `cost` is spent : on the button (default), or only if the roll
+ *                                             then succeeds (Tactical Mind); a save or check with no DC known : the
+ *                                             GM's Spend button on its message
  *   })
  * A roll with no DC or AC known counts as failed (its owner judges).
  */
@@ -261,11 +266,20 @@ export function failedRoll(roll){
 const testsOf = rule => rule.tests ?? ["attack", "save", "check"];
 const rayKey = ray => Number.isInteger(ray) ? String(ray) : "single";
 
-/* A save / check message : its owner's button, once */
+/* A save / check message : its owner's button, once; the GM's Spend button while the result isn't known */
 function failTestButtons(message, buttons, actor, roll){
-  if(!actor?.isOwner || message.getFlag?.("core", "initiativeRoll") || !failedRoll(roll)) return;
+  if(!actor?.isOwner || message.getFlag?.("core", "initiativeRoll")) return;
   for(const rule of failRules){
-    if(!testsOf(rule).includes(message.type) || message.getFlag?.(module.id, rule.id)) continue;
+    const done = message.getFlag?.(module.id, rule.id);
+    if(game.user.isGM && rule.cost && (done?.pay === "unknown")){
+      const item = rule.cost(actor, null);
+      if(item) buttons.push({ id : `${rule.id}Spend`, icon : "fa-heart-crack", label : module.format("rerolls.spend", { item : item.name }), run : async () => {
+        if(message.getFlag(module.id, rule.id)?.pay !== "unknown") return;
+        await spendUses(item, 1, { warn : true });
+        await message.setFlag(module.id, `${rule.id}.pay`, "spent");
+      } });
+    }
+    if(!failedRoll(roll) || !testsOf(rule).includes(message.type) || done) continue;
     const source = rule.source(actor);
     if(!source) continue;
     buttons.push({ id : rule.id, icon : rule.icon ?? "fa-dice", label : rule.label(source), run : async () => {
@@ -273,10 +287,21 @@ function failTestButtons(message, buttons, actor, roll){
       if(!now || !message.isOwner || message.getFlag?.(module.id, rule.id)) return;
       const { updated, extra } = await addDie(message.rolls[0], rule.formula(now));
       await rerolls.replace(message, updated, [extra]);
-      await message.setFlag(module.id, rule.id, true);
+      const target = updated.options?.target;
+      const pay = await payFor(rule, actor, now, Number.isFinite(target) ? (updated.total >= target) : null);
+      await message.setFlag(module.id, rule.id, { pay });
       await rule.after?.(actor, now, message);
     } });
   }
+}
+
+/* The rule's cost, by its `pay` : "spent", "none" (it failed anyway, or nothing to pay) or "unknown" (the GM's button) */
+async function payFor(rule, actor, source, success){
+  const item = rule.cost?.(actor, source);
+  if(!item) return "none";
+  if((rule.pay === "success") && (success !== true)) return (success === false) ? "none" : "unknown";
+  await spendUses(item, 1, { warn : true });
+  return "spent";
 }
 
 /* A missed attack on a card : the attacker's owner's button, once per attack */
@@ -298,5 +323,6 @@ async function failAttackClicked(message, id, ray){
   if(!source || !message.isOwner || message.getFlag?.(module.id, `${rule.id}.${rayKey(ray)}`)) return;
   if(!await message.system.addBonus(ray, rule.formula(source))) return;
   await message.setFlag(module.id, `${rule.id}.${rayKey(ray)}`, true);
+  await payFor(rule, attacker, source, !!message.system.isHitOn?.(ray));
   await rule.after?.(attacker, source, message);
 }

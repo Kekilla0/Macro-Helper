@@ -114,3 +114,5 @@ whether the module covers it or you need to edit the item.
 | **Second-Story Work** (Rogue 3, Thief) | No climb speed. | An effect is added when it lands (Climb Speed = Speed). |
 | **Tides of Chaos** (Sorcerer 3, Wild Magic) | No activity or effect. | Nothing: using it gives Advantage on the next D20 Test; the module tracks its recharge. |
 | **Potent Cantrip** (Wizard 3, Evoker) | Text only. | Your cantrips' saves are set to half damage on a success when they're added (and when you gain it). |
+| **Misty Visions** (Warlock invocation) | No Foundry data for the 2024 version (Plutonium's override is the 2014 one's empty activity); only its rule data says Silent Image is cast without a slot. | Check on import that Silent Image arrives as an at-will spell; otherwise set the spell's casting method to At Will by hand. |
+| **Blessed Warrior**, **Druidic Warrior** (Fighting Style, Paladin / Ranger 2) | No effects; Plutonium asks for the two cantrips on import (CHA / WIS as the casting ability). Replacing one of them on a level isn't offered. | Nothing for now; the cantrip swap on a level is a later Rest Choices row. |
