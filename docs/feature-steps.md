@@ -33,9 +33,9 @@ Legos are listed in [api.md](api.md). "Data" means the item's own dnd5e or Pluto
 | Wizard | Arcane Recovery | after a Short Rest, or its use | slots back up to half the level | `recoverSpellSlots`, `restChoices` |
 | Wizard | Ritual Adept | casting a ritual from the book | - | casting.js (rituals), `isClassSpell` |
 
-## Not legos (yet)
+## Still to become legos
 
-Parts written for one feature only. When a new feature needs the same steps, turn the part into a lego and move both onto it.
+Parts still written inside one feature's code. Each one becomes a generic lego (named for what it does, not for the feature), and the feature is moved onto it.
 
 | Part | Where | What it does | Could be shared with |
 |---|---|---|---|
