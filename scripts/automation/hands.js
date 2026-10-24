@@ -308,6 +308,9 @@ export class hands{
     await actor.setFlag(module.id, "hands", { main : next.main ?? null, off : next.off ?? null });
     if(updates.length) await actor.updateEmbeddedDocuments("Item", updates, { [module.id] : { hands : true } });
     await this.syncLights(actor, held, was);
+    /* A conjured item that goes once let go (Flame Blade's blade) */
+    const gone = [...was].filter(id => !held.has(id) && actor.items.get(id)?.getFlag(module.id, "vanishes"));
+    if(gone.length) await actor.deleteEmbeddedDocuments("Item", gone);
     log.debug("Hands", actor.name, next);
   }
 

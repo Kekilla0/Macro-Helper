@@ -761,18 +761,21 @@ export function predictModeWhy(activity, target, { attackMode, disadvantage = fa
 /* ---------- Conjured and linked items ---------- */
 
 /**
- * An item conjured onto a creature : a copy of `source` (a document or its uuid : a compendium's weapon), equipped, in
- * a free hand (Hands; else the main hand). With `key`, one at a time : an earlier one conjured with that key goes
- * (Pact of the Blade's weapon; Shadow Blade, a homebrew "summon a spectral shield").
+ * An item conjured onto a creature : a copy of `source` (a document or its uuid : a compendium's weapon; or an item's
+ * data : Flame Blade's blade), equipped, in a free hand (Hands; else the main hand). With `key`, one at a time : an
+ * earlier one conjured with that key goes (Pact of the Blade's weapon; Shadow Blade, a homebrew "summon a spectral
+ * shield"). With `vanish`, it goes once it leaves the hand; with `until`, when that effect ends (a Concentration).
  * @param {Actor|Token} thing
- * @param {Item|string} source
+ * @param {Item|string|object} source
  * @param {object} [options]
  * @param {string} [options.key]
  * @param {object} [options.data]      merged into the copy (flags...)
  * @param {boolean} [options.hand=true]
+ * @param {boolean} [options.vanish=false]
+ * @param {ActiveEffect} [options.until]
  * @returns {Promise<Item|null>}
  */
-export async function conjureItem(thing, source, { key = null, data = {}, hand = true } = {}){
+export async function conjureItem(thing, source, { key = null, data = {}, hand = true, vanish = false, until = null } = {}){
   const actor = actorOf(thing);
   const doc = (typeof source === "string") ? await fromUuid(source) : source;
   if(!actor?.isOwner || !doc) return null;
@@ -780,12 +783,14 @@ export async function conjureItem(thing, source, { key = null, data = {}, hand =
     const old = actor.items.filter(i => i.getFlag(module.id, "conjured") === key).map(i => i.id);
     if(old.length) await actor.deleteEmbeddedDocuments("Item", old);
   }
-  const copy = doc.toObject();
+  const copy = (doc instanceof foundry.abstract.Document) ? doc.toObject() : foundry.utils.deepClone(doc);
   delete copy._id;
-  foundry.utils.mergeObject(copy, { system : { equipped : true, quantity : 1 }, flags : { [module.id] : { conjured : key ?? true } } });
+  foundry.utils.mergeObject(copy, { system : { equipped : true, quantity : 1 }, flags : { [module.id] : { conjured : key ?? true, ...(vanish ? { vanishes : true } : {}) } } });
   foundry.utils.mergeObject(copy, data);
   const [item] = await actor.createEmbeddedDocuments("Item", [copy]);
   if(item && hand && hands.manages(actor)) await hands.put(actor, actor.items.get(item.id) ?? item, hands.freeHand(actor, item) ?? "main");
+  /* dnd5e deletes an effect's dependents with it (the active GM) */
+  if(item && until && !until.isDeleted) await until.setFlag("dnd5e", "dependents", [...(until.getFlag("dnd5e", "dependents") ?? []), { uuid : item.uuid }]);
   return item ?? null;
 }
 

@@ -13,7 +13,11 @@ import { idOf, chooseOption, buttonRow, addButton, makeButton, esc, ownerIds, or
 import { conditions } from './conditions.js';
 import { rollRequests } from '../requests/requests.js';
 import { heldLight } from './held-light.js';
-import { stabilize, addTimedEffect } from '../helpers/actors.js';
+import { stabilize, addTimedEffect, spendHitDice, heal } from '../helpers/actors.js';
+import { itemFixes } from './item-fixes.js';
+import { conjureItem } from '../helpers/items.js';
+import { endCondition } from '../roll-item/card-builder.js';
+import { saveModeAgainst } from './roll-modes.js';
 import { pickTargets, pickSpace } from '../helpers/targets.js';
 import { tokenOf, getRange, addLight, removeLight, getTokensInArea, distanceBetween, canSee } from '../helpers/tokens.js';
 const log = logger.for(import.meta.url);
@@ -36,9 +40,13 @@ const log = logger.for(import.meta.url);
  *                   goes); casting it again moves it.
  *   Around target : a save for everyone in an area round the creature hit or aimed at (Ice Knife : on its own attack card;
  *                   Hail of Thorns from its Strike) : the area shown, its own save card, no slot (the cast paid).
- *   Sustained     : Witch Bolt cast again at the same creature while its Concentration lasts : its later turns' damage
- *                   (1d12, no roll, no slot : a Bonus Action you remember to take) instead of a new casting; the first
- *                   card no longer rolls it.
+ *   Sustained     : a spell used again while its Concentration lasts does its later part, no slot (the sustain lego) :
+ *                   Witch Bolt at the same creature (its 1d12, a Bonus Action; the first card no longer rolls it), Heat
+ *                   Metal's Reheat, Flame Blade's attack (a Magic action; let go of the blade : evoked again).
+ *   Flame Blade   : cast, a blade in a free hand that lights the token; it goes when let go or the Concentration ends.
+ *   Cures         : Lesser Restoration, Protection from Poison : the creature touched picked first, which condition ends
+ *                   asked; ended once cast (the end-condition lego). Protection's effect : advantage on saves vs Poisoned.
+ *   Arcane Vigor  : straight to its casting, then its Hit Point Dice (the spend-Hit-Dice lego) heal the caster.
  *   Leap          : Chromatic Orb : two of its damage d8s the same : a Leap button for its caster, a free attack at
  *                   another creature within 30 ft of the one hit (as many leaps as the slot's level, each creature once).
  *   Flee          : Dissonant Whispers : a creature that failed its save has a Fleeing (Reaction) button on its row (the
@@ -111,7 +119,11 @@ export class spellActions{
   static SIZES = ["tiny", "sm", "med", "lg", "huge", "grg"];
   /* An area save after the attack (feet round the target), hit or miss */
   static AFTER_ATTACK = { "ice-knife" : 5 };
-  static SUSTAINED = ["witch-bolt"];
+  /* A creature touched : one of these conditions on it ends */
+  static CURES = { "lesser-restoration" : ["blinded", "deafened", "paralyzed", "poisoned"], "protection-from-poison" : ["poisoned"] };
+  static VIGOR = "arcane-vigor";
+  static BONUS_CASTS = ["flame-blade", "arcane-vigor"];
+  static FLAME_BLADE = { id : "flame-blade", light : { bright : 10, dim : 20, color : "#ff7a1a", alpha : 0.35, animation : { type : "torch", speed : 3, intensity : 3 } } };
   static LEAP = { "chromatic-orb" : { feet : 30 } };
   static FLEE = ["dissonant-whispers"];
   static SHIELD = { spell : "shield", ac : 5, negates : ["magic-missile"] };
@@ -162,9 +174,22 @@ export class spellActions{
     uses.onItem("afterAttack", (item, ctx, next) => this.afterAttackStep(item, ctx, next));
     Hooks.on(`${module.id}.riderTargets`, (save, target, out) => this.burstTargets(save, target, out));
     /* Sustained */
-    Hooks.on(`${module.id}.isExtra`, activity => !this.SUSTAINED.includes(idOf(activity?.item)));
+    this.sustainDefaults();
+    Hooks.on(`${module.id}.isExtra`, activity => !this.#sustained.has(idOf(activity?.item)));
     uses.onItem("sustained", (item, ctx, next) => this.sustainedStep(item, ctx, next));
+    uses.onActivity("sustainedActivity", (activity, ctx, next) => this.sustainedActivityStep(activity, ctx, next));
     Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.noteSustained(activity, usage, results));
+    /* Flame Blade */
+    uses.onItem("conjuredBlade", (item, ctx, next) => this.bladeStep(item, ctx, next));
+    itemFixes.add({ name : "Bonus Action casts", where : "owned", plan : item => this.bonusCastFix(item) });
+    /* Cures */
+    uses.onActivity("cure", (activity, ctx, next) => this.cureStep(activity, ctx, next));
+    Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.onCure(activity, usage, results));
+    saveModeAgainst("protection-from-poison", ["poisoned"], { enabled : () => this.enabled() });
+    /* Arcane Vigor (its Cast's own roll : the largest Hit Die, not rolled on the card) */
+    uses.onItem("arcaneVigor", (item, ctx, next) => this.vigorStep(item, ctx, next));
+    Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.onVigor(activity, usage, results));
+    Hooks.on(`${module.id}.rollFormula`, activity => idOf(activity?.item) !== this.VIGOR);
     /* Leap */
     Hooks.on(`${module.id}.cardButtons`, (message, buttons, context) => this.leapButtons(message, buttons, context));
     Hooks.on(`${module.id}.cardButton`, (message, id, context) => { if(id === "orbLeap") this.leap(message, context); });
@@ -420,7 +445,7 @@ export class spellActions{
     if(!inside.includes(token)) inside.push(token);
     canvas.tokens.setTargets(inside.map(t => t.id));
     const scaling = Math.max(0, (Number(level) || Number(spell.system.level) || 1) - (Number(spell.system.level) || 1));
-    return save.use({ consume : { spellSlot : false, resources : false }, scaling, [module.id] : { skipPick : true, noCast : true, useTargets : true } }, { configure : false });
+    return save.use({ consume : { spellSlot : false, resources : false }, scaling, spell : this.slotAt(spell, spell.system.level + scaling), [module.id] : { skipPick : true, noCast : true, useTargets : true } }, { configure : false });
   }
 
   static async regionAsGM({ scene, name, color, x, y, radius, activity, origin } = {}){
@@ -456,26 +481,69 @@ export class spellActions{
       x : token.center.x, y : token.center.y, radius, activity : save.uuid, origin : (tokenOf(save.item?.actor)?.document ?? token.document).uuid }).catch(error => log.debug(error));
   }
 
-  /* ========== Sustained (Witch Bolt) ========== */
+  /* ========== Sustained (Witch Bolt, Heat Metal, Flame Blade : the sustain lego) ========== */
+
+  static #sustained = new Map();
+
+  static addSustained(id, rule){
+    this.#sustained.set(id, rule);
+  }
+
+  /* The spells' own rules (register) : what using them again while their Concentration lasts does */
+  static sustainDefaults(){
+    const of = (item, test) => item.system.activities?.find?.(test) ?? null;
+    sustain("witch-bolt", { sameTarget : true, use : item => of(item, a => a.type === "damage") });
+    sustain("heat-metal", { scaled : true, cast : item => of(item, a => (a.type === "damage") && !/reheat/i.test(a.name ?? "")),
+      use : item => of(item, a => (a.type === "damage") && /reheat/i.test(a.name ?? "")) ?? [...(item.system.activities ?? [])].filter(a => a.type === "damage").at(-1) });
+    sustain(this.FLAME_BLADE.id, { scaled : true, cast : item => this.evokeOf(item),
+      /* The blade in hand : its attack (a Magic action); let go : evoked again (a Bonus Action) */
+      use : item => this.bladeOf(item) ? { activity : of(item, a => a.type === "attack"), economy : "action" } : this.evokeOf(item),
+      used : (activity, concentration) => (activity.id === this.evokeOf(activity.item)?.id) ? this.evokeBlade(activity, concentration) : null });
+  }
+
+  static rule(item){
+    return this.enabled() ? (this.#sustained.get(idOf(item)) ?? null) : null;
+  }
 
   static sustainedOf(actor, item){
     return actor?.effects?.find?.(e => e.statuses?.has?.("concentrating") && (e.getFlag("dnd5e", "item")?.id === item?.id) && e.getFlag(module.id, "sustained")) ?? null;
   }
 
-  /* Cast : remember who it's on (with its Concentration) */
+  static concentrationOf(actor, item){
+    return actor?.effects?.find?.(e => e.statuses?.has?.("concentrating") && (e.getFlag("dnd5e", "item")?.id === item?.id)) ?? null;
+  }
+
+  /* A use at that level with no slot spent : dnd5e scales a spell by its usage's slot (not by `scaling`) */
+  static slotAt(item, level){
+    return { slot : `spell${Math.max(Number(item?.system?.level) || 1, Number(level) || 0)}` };
+  }
+
+  /* The slot level it was cast at */
+  static castLevelOf(activity, usage){
+    return Number(activity.actor?.system?.spells?.[usage?.spell?.slot]?.level) || ((Number(activity.item.system.level) || 1) + (Number(usage?.scaling) || 0));
+  }
+
+  /* Cast : its Concentration remembers the level (and, for the same target only, who it's on); a later use : the rule's after-step */
   static async noteSustained(activity, usage, results){
-    if(!this.SUSTAINED.includes(idOf(activity?.item)) || (activity.type !== "attack") || !results || !activity.actor?.isOwner || usage?.[module.id]?.noCast) return;
-    /* The target : the attack card's, once it's made (picked after the use; its card promise waits for the dice) */
-    const card = await this.nextCard(activity.item);
-    const target = card?.system?.targets?.[0]?.token ?? null;
-    if(!target) return;
+    const rule = this.rule(activity?.item);
+    if(!rule || !results || !activity.actor?.isOwner) return;
+    if(usage?.[module.id]?.noCast) return rule.used?.(activity, this.sustainedOf(activity.actor, activity.item), usage);
+    /* The target : the card's, once it's made (picked after the use; its card promise waits for the dice) */
+    let target = null;
+    if(rule.sameTarget){
+      const card = await this.nextCard(activity.item);
+      target = card?.system?.targets?.[0]?.token ?? null;
+      if(!target) return;
+    }
     /* Its Concentration may land a moment later */
     let concentration = null;
     for(let i = 0; (i < 20) && !concentration; i++){
-      concentration = activity.actor.effects.find(e => e.statuses?.has?.("concentrating") && (e.getFlag("dnd5e", "item")?.id === activity.item.id));
+      concentration = this.concentrationOf(activity.actor, activity.item);
       if(!concentration) await new Promise(resolve => setTimeout(resolve, 250));
     }
-    if(concentration) await concentration.setFlag(module.id, "sustained", { target, level : (Number(activity.item.system.level) || 1) + (Number(usage?.scaling) || 0) });
+    if(!concentration) return;
+    await concentration.setFlag(module.id, "sustained", { target, level : this.castLevelOf(activity, usage) });
+    await rule.used?.(activity, concentration, usage);
   }
 
   /* The next card made for this item (up to a minute : the pick can take a while), null if none */
@@ -489,13 +557,33 @@ export class spellActions{
     });
   }
 
-  /* Cast again at the same creature : the later turns' damage, no slot, no roll */
+  /* The later use : its activity at the level cast (scaled) or the spell's own, no slot, no new Concentration */
+  static useSustained(item, sustained, rule, { usage = {}, extra = {} } = {}){
+    const picked = rule.use?.(item, sustained) ?? null;
+    const { activity, economy = rule.economy ?? "bonus" } = picked?.activity ? picked : { activity : picked };
+    if(!activity) return null;
+    const level = Number(sustained.getFlag(module.id, "sustained")?.level) || Number(item.system.level) || 0;
+    const { chooseActivity, spell, ...rest } = usage;
+    return activity.use({ ...rest, consume : { spellSlot : false, resources : false }, concentration : { begin : false },
+      spell : this.slotAt(item, rule.scaled ? level : item.system.level),
+      [module.id] : { ...(rest[module.id] ?? {}), ...extra, noCast : true, economy, note : module.i18n("spellActions.sustainedNote") } }, { configure : false });
+  }
+
+  /* Used again while its Concentration lasts : the later use (Witch Bolt : at the same creature; another : a new casting) */
   static async sustainedStep(item, ctx, next){
-    if(!this.enabled() || !this.SUSTAINED.includes(idOf(item))) return next();
+    const rule = this.rule(item);
+    if(!rule) return next();
     const sustained = this.sustainedOf(item.actor, item);
-    const damage = item.system.activities?.find?.(a => a.type === "damage");
+    const { chooseActivity, ...usage } = ctx.config ?? {};
+    if(!sustained){
+      /* Not yet cast : straight to its casting (no choice of activity) */
+      const cast = rule.cast?.(item);
+      return cast ? cast.use(usage, ctx.dialog, ctx.message) : next();
+    }
+    if(!rule.sameTarget) return this.useSustained(item, sustained, rule, { usage });
+    const damage = rule.use?.(item, sustained);
     const attack = item.system.activities?.find?.(a => a.type === "attack");
-    if(!sustained || !damage || !attack) return next();
+    if(!damage || !attack) return next();
     /* Pick Targets : the creature is picked first (the same one or a new casting decides what this is) */
     const caster = tokenOf(item);
     const pick = settings.value("rollItemPick");
@@ -511,9 +599,105 @@ export class spellActions{
       /* Another creature : a new casting at it (no second pick) */
       return picking ? attack.use({ [module.id] : { useTargets : true } }) : next();
     }
-    return damage.use({ consume : { spellSlot : false, resources : false }, concentration : { begin : false }, scaling : 0,
-      [module.id] : { skipPick : true, noCast : true, economy : "bonus", note : module.i18n("spellActions.sustainedNote") } }, { configure : false });
+    return this.useSustained(item, sustained, rule, { extra : { skipPick : true } });
   }
+
+  /* The later use's own activity used directly (its sheet button) : as the later use, not a new casting */
+  static sustainedActivityStep(activity, ctx, next){
+    const rule = this.rule(activity?.item);
+    if(!rule || ctx.config?.[module.id]?.noCast) return next();
+    const sustained = this.sustainedOf(activity.actor, activity.item);
+    const later = sustained ? rule.use?.(activity.item, sustained) : null;
+    if((later?.activity ?? later)?.id !== activity.id) return next();
+    return this.useSustained(activity.item, sustained, rule, { usage : ctx.config ?? {} });
+  }
+
+  /* ---------- Flame Blade ---------- */
+
+  static evokeOf(item){
+    return item?.system?.activities?.find?.(a => a.type === "utility") ?? null;
+  }
+
+  /* Its blade on the caster (conjured, in hand while it lasts) */
+  static bladeOf(item){
+    return item?.actor?.items?.find?.(i => i.getFlag(module.id, "sustains") === item.id) ?? null;
+  }
+
+  /* Evoked : a scimitar-shaped blade in a free hand, lit; it goes when let go or when the Concentration ends */
+  static async evokeBlade(activity, concentration){
+    const spell = activity.item;
+    if(!concentration || this.bladeOf(spell)) return;
+    await conjureItem(spell.actor, {
+      name : spell.name, type : "weapon", img : spell.img,
+      system : { identifier : `${this.FLAME_BLADE.id}-blade`, type : { value : "simpleM", baseItem : "scimitar" }, weight : { value : 0 }, price : { value : 0 },
+        description : { value : spell.system.description?.value ?? "" } },
+      flags : { [module.id] : { sustains : spell.id, light : { light : this.FLAME_BLADE.light } } },
+    }, { key : `${this.FLAME_BLADE.id}:${spell.id}`, vanish : true, until : concentration });
+  }
+
+  /* The blade used : the spell's later use (its attack) */
+  static bladeStep(item, ctx, next){
+    const spell = item?.actor?.items?.get?.(item.getFlag?.(module.id, "sustains") ?? "");
+    if(!spell || !this.enabled()) return next();
+    return spell.use({ legacy : false, event : ctx.config?.event });
+  }
+
+  /* Their casting is a Bonus Action (Plutonium's Evoke Blade and Arcane Vigor's Cast : an action) */
+  static bonusCastFix(item){
+    if((item.type !== "spell") || !this.BONUS_CASTS.includes(idOf(item))) return null;
+    const cast = this.evokeOf(item);
+    if(!cast || (cast.activation?.type === "bonus")) return null;
+    return { update : { [`system.activities.${cast.id}.activation`] : { type : "bonus", value : 1, override : true } } };
+  }
+
+  /* ========== Cures (Lesser Restoration, Protection from Poison) ========== */
+
+  /* The creature touched, and which of its conditions ends (asked when it has more than one), before the casting */
+  static async cureStep(activity, ctx, next){
+    const ends = this.CURES[idOf(activity?.item)];
+    if(!ends || !this.enabled() || ctx.config?.[module.id]?.cure) return next();
+    const [target] = await pickTargets(activity.item, { count : 1, range : canvas.scene?.grid.distance ?? 5, disposition : "any", includeSelf : true, confirm : "auto" });
+    if(!target) return;
+    const has = ends.filter(c => target.actor?.statuses?.has?.(c));
+    const type = (has.length < 2) ? (has[0] ?? null) : await chooseOption({ title : activity.item.name, icon : "fa-solid fa-hand-holding-medical",
+      prompt : module.format("spellActions.curePrompt", { name : target.name }),
+      options : has.map(c => ({ value : c, label : game.i18n.localize(CONFIG.statusEffects.find(e => e.id === c)?.name ?? c) })) });
+    if(has.length && !type) return;
+    uses.mark(ctx, { cure : { target : target.document.uuid, type }, skipPick : true, useTargets : true });
+    return next();
+  }
+
+  /* Cast : the condition ends (the end-condition lego : the GM's button when it isn't the caster's own creature) */
+  static async onCure(activity, usage, results){
+    const cure = usage?.[module.id]?.cure;
+    if(!this.CURES[idOf(activity?.item)] || !this.enabled() || !results || !cure?.type || !activity.actor?.isOwner) return;
+    const target = fromUuidSync(cure.target ?? "", { strict : false });
+    if(target?.actor) await endCondition(target, cure.type, { from : activity.item, by : activity.actor });
+  }
+
+  /* ========== Arcane Vigor ========== */
+
+  /* Straight to its casting (its Expend activities are Plutonium's per-size stand-ins); none of its Hit Dice left : not cast */
+  static vigorStep(item, ctx, next){
+    if(!this.enabled() || (idOf(item) !== this.VIGOR)) return next();
+    const cast = this.evokeOf(item);
+    if(!cast) return next();
+    if(!item.actor?.items?.some?.(i => (i.type === "class") && (Number(i.system.hd?.value) > 0))){
+      ui.notifications.warn(module.format("helpers.hitDice.none", { name : item.actor?.name ?? "", n : 1 }));
+      return null;
+    }
+    const { chooseActivity, ...usage } = ctx.config ?? {};
+    return cast.use(usage, ctx.dialog, ctx.message);
+  }
+
+  /* Cast : one Hit Die, or up to the slot's level, rolled and expended; healed by the roll + the spellcasting modifier */
+  static async onVigor(activity, usage, results){
+    if(!this.enabled() || (idOf(activity?.item) !== this.VIGOR) || (activity.type !== "utility") || !results || !activity.actor?.isOwner) return;
+    const mod = Number(activity.getRollData?.()?.mod ?? activity.item.getRollData?.()?.mod) || 0;
+    const spent = await spendHitDice(activity.actor, { max : Math.max(2, this.castLevelOf(activity, usage)), bonus : mod ? String(mod) : "", flavor : activity.item.name });
+    if(spent) await heal(activity.actor, Math.max(0, spent.total));
+  }
+
 
   /* ========== Leap (Chromatic Orb) ========== */
 
@@ -564,6 +748,7 @@ export class spellActions{
     this.#leapType = type ? { item : item.id, type, at : Date.now() } : null;
     canvas.tokens.setTargets([next.id]);
     return activity.use({ consume : { spellSlot : false, resources : false }, scaling : Number(message.system?.scaling) || 0,
+      spell : this.slotAt(item, (Number(item?.system?.level) || 1) + (Number(message.system?.scaling) || 0)),
       [module.id] : { skipPick : true, useTargets : true, noCast : true, cardFlags : { orbLeap : { root : root.id } } } }, { configure : false });
   }
 
@@ -1562,4 +1747,23 @@ export class spellActions{
     if(!data || !game.users.activeGM?.isSelf) return;
     await this.lightOffAsGM(data).catch(error => log.debug(error));
   }
+}
+
+/**
+ * The sustain lego : a spell used again while its Concentration lasts does its later part instead of a new casting, at
+ * the slot level it was cast at, with no slot and no new Concentration (Witch Bolt's later damage, Heat Metal's
+ * Reheat, Flame Blade's attack; a homebrew "while it lasts, a Bonus Action to..."). Read as :
+ *   sustain("heat-metal", { scaled : true, use : item => item.system.activities.getName("Reheat") });
+ * @param {string} id   the spell's identifier
+ * @param {object} rule
+ * @param {(item : Item, concentration : ActiveEffect) => Activity|{ activity : Activity, economy : string }} rule.use
+ *                      the later use (economy : its cost, "bonus" by default : "action", "reaction", "free")
+ * @param {(item : Item) => Activity} [rule.cast]   the casting, used with no choice of activity while it isn't up
+ * @param {boolean} [rule.scaled=false]   the later use's dice scale with the level cast (Witch Bolt's don't)
+ * @param {boolean} [rule.sameTarget=false]  only at the creature it was cast at; another creature : a new casting
+ * @param {string} [rule.economy="bonus"]
+ * @param {(activity, concentration, usage) => any} [rule.used]  after a casting or a later use (Flame Blade : the blade)
+ */
+export function sustain(id, rule){
+  spellActions.addSustained(id, rule);
 }

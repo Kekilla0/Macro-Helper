@@ -4,6 +4,9 @@ import { attackOf } from '../roll-item/damage.js';
 import { giveMode } from '../roll-item/reasons.js';
 import { effectsFrom } from '../helpers/actors.js';
 import { conditions } from './conditions.js';
+import { module } from '../module.js';
+import { getAppliedConditions } from '../helpers/items.js';
+import { idOf } from '../helpers/utils.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -116,3 +119,57 @@ export function rollModeFrom(match, { by = null, against = null, enabled = null,
     give(rule.against, target?.actor);
   });
 }
+
+/**
+ * Advantage (or disadvantage) on saves made to avoid or end conditions, for a creature with a trait or an effect that
+ * gives it : Dwarven Resilience, Brave, Fey Ancestry; Protection from Poison's effect. A save avoids them when its card
+ * puts one on, ends them when it's rolled for an effect that has one (the turn's repeat save; rollSave's flags.against).
+ *
+ *   saveModeAgainst("dwarven-resilience", ["poisoned"]);
+ *
+ * @param {string|string[]} match   item identifiers : a trait on the creature (not a spell it knows), or an effect from one
+ * @param {string[]} against        the conditions
+ * @param {object} [options]
+ * @param {string} [options.mode="advantage"]
+ * @param {() => boolean} [options.enabled]
+ * @param {string} [options.id]     its key (default : the identifiers); the same key again replaces it
+ */
+const againstRules = new Map();
+export function saveModeAgainst(match, against, { mode = "advantage", enabled = null, id = null } = {}){
+  const key = id ?? [match].flat().map(String).join(",");
+  const added = againstRules.has(key);
+  againstRules.set(key, { ids : [match].flat(), against : [against].flat(), mode, enabled });
+  if(added) return;
+  rollModes.add(`saves:${key}`, (config, message) => {
+    const rule = againstRules.get(key);
+    const conditions = conditionsOfSave(message);
+    const source = (rule.enabled && !rule.enabled()) ? null : saveSourceOf(config.subject, rule, conditions);
+    if(source) giveRollMode(config, rule.mode, source);
+  }, { rolls : "save" });
+}
+
+/* What a save is made against : its flags' conditions, or those its card puts on */
+function conditionsOfSave(message){
+  const flagged = message?.data?.flags?.[module.id]?.against;
+  if(flagged?.length) return new Set(flagged);
+  const card = game.messages.get(message?.data?.system?.origin?.id ?? message?.data?.system?.origin);
+  return card ? getAppliedConditions(card) : new Set();
+}
+
+/* The name of what gives this creature the rule for these conditions (a trait, or an effect's), or null */
+function saveSourceOf(actor, rule, conditions){
+  if(!actor?.items || !rule.against.some(c => conditions.has(c))) return null;
+  const trait = actor.items.find(i => (i.type !== "spell") && rule.ids.includes(idOf(i)));
+  return trait?.name ?? effectsFrom(actor, rule.ids)[0]?.name ?? null;
+}
+
+/* A card's save row : the hint shows it before the roll */
+Hooks.on(`${module.id}.saveHint`, (card, actor, ability, { adv, dis } = {}) => {
+  const conditions = card ? getAppliedConditions(card) : new Set();
+  if(!conditions.size) return;
+  for(const rule of againstRules.values()){
+    if(rule.enabled && !rule.enabled()) continue;
+    const source = saveSourceOf(actor, rule, conditions);
+    if(source) ((rule.mode === "disadvantage") ? dis : adv)?.push(source);
+  }
+});

@@ -49,8 +49,9 @@ export class heldLight{
   }
 
 
+  /* By identifier, or the item's own (flags["macro-helper"].light = { light } : a conjured blade's, burning as long as it lasts) */
   static sourceOf(item){
-    return this.SOURCES[idOf(item)] ?? null;
+    return this.SOURCES[idOf(item)] ?? item?.getFlag?.(module.id, "light") ?? null;
   }
 
   static key(id){
@@ -84,7 +85,7 @@ export class heldLight{
   static async lightUp(actor, item){
     const source = this.sourceOf(item);
     if(!source) return false;
-    const timed = this.mode() === "timed";
+    const timed = (this.mode() === "timed") && (Number(source.hours) > 0);
     let seconds = source.hours * 3600;
     if(timed){
       if(item.getFlag(module.id, "burnedOut")){
@@ -135,7 +136,7 @@ export class heldLight{
       /* Marked lit and actually lighting (a token turned back from a form can keep the mark with the form's dark light) */
       const lighting = (Number(token.light?.dim) > 0) || (Number(token.light?.bright) > 0);
       if(!source || (hasLight(token, this.key(id)) && lighting)) continue;
-      if((this.mode() === "timed") && !this.effectOf(actor, id)) continue;
+      if((this.mode() === "timed") && (Number(source.hours) > 0) && !this.effectOf(actor, id)) continue;
       await addLight(token, source.light, { key : this.key(id) });
     }
   }

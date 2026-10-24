@@ -7,11 +7,12 @@ import { gm } from '../gm.js';
 import { uses } from '../uses.js';
 import { pickTargets } from '../helpers/targets.js';
 import { findItem, usedThisTurn, markUsedThisTurn, preventDropToZero } from '../helpers/actors.js';
-import { spendUses, getAppliedConditions } from '../helpers/items.js';
+import { spendUses } from '../helpers/items.js';
 import { masteries } from './masteries.js';
 import { rerolls, extraD20 } from '../roll-item/rerolls.js';
 import { itemFixes } from './item-fixes.js';
 import { onDamage } from '../roll-item/damage.js';
+import { saveModeAgainst } from './roll-modes.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -82,7 +83,7 @@ export class feats{
       this.enhancedUnarmedStrike(attack, damage);
       this.tortleClaws(attack, damage);
     });
-    Hooks.on("dnd5e.preRollSavingThrowV2", (config, dialog, message) => this.onPreRollSave(config, message));
+    for(const [id, against] of Object.entries(this.SAVE_ADVANTAGES)) saveModeAgainst(id, against, { enabled : () => this.speciesEnabled() });
     Hooks.on("dnd5e.preUseActivity", activity => this.battleMedicKit(activity));
     Hooks.on("dnd5e.postUseActivity", activity => this.shellDefense(activity));
     /* Shell Defense again while in the shell : a toggle, it emerges (nothing else happens) */
@@ -96,7 +97,6 @@ export class feats{
     Hooks.on("dnd5e.restCompleted", (actor, result) => { if(result?.longRest && actor?.isOwner && actor.getFlag(module.id, "relentlessUsed")) actor.unsetFlag(module.id, "relentlessUsed"); });
     Hooks.on("dnd5e.postUseActivity", activity => this.battleMedicSpendKit(activity));
     Hooks.on(`${module.id}.preApplyRow`, (message, actor) => this.battleMedicHitDie(message, actor));
-    Hooks.on(`${module.id}.saveHint`, (message, actor, ability, { adv }) => { const trait = this.saveTraitFor(actor, message); if(trait) adv.push(trait.name); });
     Hooks.on(`${module.id}.rerollButtons`, (message, buttons, { actor, roll }) => this.luckyTestButtons(message, buttons, actor, roll));
     gm.handle("luckyAgainst", (data, user) => this.luckyAgainstAsGM(data, user));
 
@@ -158,33 +158,12 @@ export class feats{
 
   /* ---------- Save traits ---------- */
 
-  /* Advantage on saves against these conditions, by the item identifier of the trait that grants it */
+  /* Advantage on saves to avoid or end these conditions, by the item identifier of the trait that grants it (saveModeAgainst) */
   static SAVE_ADVANTAGES = {
     "brave" : ["frightened"],
     "fey-ancestry" : ["charmed"],
     "dwarven-resilience" : ["poisoned"],
   };
-
-  /* A save rolled from a card that applies a condition the saver has a trait against : advantage */
-  static onPreRollSave(config, message){
-    const trait = this.saveTraitFor(config.subject, game.messages.get(message?.data?.system?.origin));
-    if(!trait) return;
-    config.advantage = true;
-    log.debug("Save advantage", config.subject.name, trait.name);
-  }
-
-  /**
-   * The trait giving a creature advantage on a save rolled from this card (Brave against its Frightened...).
-   * @param {Actor} actor
-   * @param {ChatMessage} card
-   * @returns {Item|null}
-   */
-  static saveTraitFor(actor, card){
-    if(!this.speciesEnabled() || !actor?.items || !card) return null;
-    const against = getAppliedConditions(card);
-    if(!against.size) return null;
-    return actor.items.find(i => (this.SAVE_ADVANTAGES[i.identifier ?? i.system?.identifier] ?? []).some(c => against.has(c))) ?? null;
-  }
 
   /* ---------- Savage Attacker ---------- */
 

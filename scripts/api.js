@@ -7,7 +7,8 @@ import * as items from './helpers/items.js';
 import * as utils from './helpers/utils.js';
 import * as creatures from './helpers/creatures.js';
 import { restChoices } from './automation/rest-choices.js';
-import { rollModes, rollModeFrom, giveRollMode } from './automation/roll-modes.js';
+import { rollModes, rollModeFrom, giveRollMode, saveModeAgainst } from './automation/roll-modes.js';
+import { sustain } from './automation/spell-actions.js';
 import { castingChoice, castingChoiceOf } from './automation/casting-choice.js';
 import { extendDurations } from './automation/durations.js';
 import { saveRowToggle, toggledOn } from './roll-item/row-toggles.js';
@@ -65,7 +66,7 @@ export class api{
       addRollMode : (name, fn, options) => rollModes.add(name, fn, options),
       /* Advantage / disadvantage from an effect, on attacks by its creature or against it (Reckless Attack); one given
          by an addRollMode rule for saves or checks */
-      rollModeFrom, giveRollMode,
+      rollModeFrom, giveRollMode, saveModeAgainst, sustain,
       /* A choice made as a spell is cast, paid once it's cast (Metamagic); longer durations (Extended Spell); toggles on
          a save card's rows (Careful, Heightened); a reroll button on a card after the roll (Empowered, Seeking) */
       castingChoice, castingChoiceOf, extendDurations, saveRowToggle, toggledOn, rerollButton, rerolled,
@@ -92,7 +93,7 @@ export class api{
       /* Helpers, see scripts/helpers */
       ...tokens,    // tokenOf, actorOf, cells, distanceBetween, getRange, getTokensWithin, highlightRange, forcedMove, pushDestination, pushAway, pullToward, addLight, removeLight, hasLight, registerPool, poolBar, removePoolBar, poolsOf
       ...targets,   // isEnemy, isAlly, alliesNear, excludeTargets, getFlanker, isFlanking, isThreatened, getThreats, getEnemiesWithinRange, pickTargets, isValidGroup, selectTargets, setTargets
-      ...actors,    // damage, heal, tempHP, dropsToZero, isKilledOutright, preventDropToZero, findItem, rollSave, addTimedEffect, recoverSpellSlots, slotsLeft, spellSlots, addSpellSlot, usedThisTurn, markUsedThisTurn, countedUses, effectsFrom, itemEffectOn, itemEffectOff, giveEffect, getLastDamage, clearLastDamage, setStatus, setDefeated, getSize, stepSize, splitToken
+      ...actors,    // damage, heal, tempHP, spendHitDice, dropsToZero, isKilledOutright, preventDropToZero, findItem, rollSave, addTimedEffect, recoverSpellSlots, slotsLeft, spellSlots, addSpellSlot, usedThisTurn, markUsedThisTurn, countedUses, effectsFrom, itemEffectOn, itemEffectOff, giveEffect, getLastDamage, clearLastDamage, setStatus, setDefeated, getSize, stepSize, splitToken
       ...items,     // pickAndAttack, pickAttack, attackModeFor, isLongRange, isRangedItem, isRangedAttack, canThrow, getAmmunition,
                   // getUses, hasUses, spendUses, useActivity, useAndApply, getAppliedConditions, multiattack, untilShown, getHealing, updateItem, setBaseDamage, setDamage, isClassSpell, isUnarmored, conjureItem, linkItems, linkedItems, pickOwned, enchant, replaceItem
       ...utils,     // wait, waitFor, originOf, chooseOption

@@ -38,7 +38,9 @@ export class uses{
       "water",         // Spell actions : Create or Destroy Water : fill containers or rain (douse flames)
       "illusion",      // Spell actions : Disguise Self, Silent Image, Sanctuary : straight to casting (the other activity is for others); the image's space
       "afterAttack",   // Spell actions : Ice Knife goes to its attack (its shard's save comes after)
-      "sustained",     // Spell actions : Witch Bolt again at the same creature : its later turns' damage
+      "sustained",     // Spell actions : a spell again while its Concentration lasts (sustain : Witch Bolt, Heat Metal, Flame Blade)
+      "conjuredBlade", // Spell actions : Flame Blade's blade used : the spell's attack
+      "arcaneVigor",   // Spell actions : Arcane Vigor straight to its casting (its Hit Dice after)
       "subclassItem",  // Subclasses : an item with nothing to roll does its rule (Tides of Chaos)
       "fastForward",   // Roll Item : one attack with its riders skips dnd5e's choice of activity
     ],
@@ -49,6 +51,7 @@ export class uses{
       "noReactions",   // Spell effects : a Reaction while an effect forbids them (Arms of Hadar) : Rule Limits
       "offScene",      // Roll Item : no token on the scene being viewed : no targets (it can't see them)
       "itemMacro",     // Item Macro : a macro on the activity
+      "sustainedActivity", // Spell actions : a sustained spell's later activity used from the sheet : no new casting
       "ritual",        // Spells : cast as a Ritual (no slot, 10 minutes longer) or normally
       "castLevel",     // Spells : a levelled spell aimed at creatures asks its slot level first (the pick counts upcast targets)
       "longCast",      // Casting : 1 minute or more (or a Ritual) : begun with Concentration, cast from its card later
@@ -72,6 +75,7 @@ export class uses{
       "placedSummon",  // Spell actions : Mage Hand : its caster picks the space, the GM makes it
       "spellLight",    // Spell actions : Light on a token or a square, Produce Flame in hand
       "spareTheDying", // Spell actions : Spare the Dying picks a creature at 0 HP first
+      "cure",          // Spell actions : Lesser Restoration, Protection from Poison : the creature touched, which condition ends
       "subclassUse",   // Subclasses : a feature that picks or divides first (Preserve Life, Invoke Duplicity's space)
       "pactWeapon",    // Warlock : Forge Pact Weapon : bond a weapon or conjure one
       "pickTargets",   // Roll Item : pick targets on the map (Pick Targets)

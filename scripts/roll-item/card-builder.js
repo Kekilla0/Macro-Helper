@@ -457,7 +457,7 @@ export async function giveCondition(thing, type, { save = null, dc = null, repea
   if(!actor || !type) return { applied : false, save : null };
   let rolled = null;
   if(save && Number.isFinite(Number(dc))){
-    rolled = await rollSave(thing, save, Number(dc), { from : options.from ?? null });
+    rolled = await rollSave(thing, save, Number(dc), { from : options.from ?? null, flags : { against : [type] } });
     if(!rolled) return { applied : false, save : null };
     rolled = { total : rolled.total, success : rolled.success };
     if(rolled.success) return { applied : false, save : rolled };

@@ -205,7 +205,8 @@ export class repeating{
     const config = { ability, skill, target : dc ?? undefined };
     /* A save : the save lego, with the bonus of what it saves against */
     const from = repeat.from?.item ? fromUuidSync(repeat.from.item, { strict : false }) : null;
-    const rolls = (type === "save") ? (await rollSave(actor, ability, dc, { from : (from?.documentName === "Item") ? from : null, dialog : true }))?.roll
+    const rolls = (type === "save") ? (await rollSave(actor, ability, dc, { from : (from?.documentName === "Item") ? from : null, dialog : true,
+        flags : effect?.statuses?.size ? { against : [...effect.statuses] } : null }))?.roll
       : skill ? await actor.rollSkill({ skill, ability, target : dc ?? undefined }) : await actor.rollAbilityCheck(config);
     const roll = Array.isArray(rolls) ? rolls[0] : rolls;
     if(!roll) return;

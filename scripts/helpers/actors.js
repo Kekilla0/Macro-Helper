@@ -96,6 +96,64 @@ export async function tempHP(thing, value, source){
   return true;
 }
 
+/**
+ * The spend-Hit-Dice lego : a character rolls some of its unexpended Hit Point Dice and they're expended (Arcane Vigor;
+ * a homebrew "spend a Hit Die to..."). How many of each size is asked (up to `max`; no question when there's only one
+ * way). The roll is posted with `bonus` added; nothing is healed here (the rule does what it wants with the total).
+ * @param {Actor|Token} thing
+ * @param {object} [options]
+ * @param {number} [options.max=1]      at most this many dice
+ * @param {number} [options.min=1]      at least this many
+ * @param {string} [options.bonus]      added to the roll (a formula : "@abilities.int.mod")
+ * @param {string} [options.flavor]     the roll card's title
+ * @returns {Promise<{ total : number, roll : Roll, dice : Object<string, number> }|null>}  null : none spent
+ */
+export async function spendHitDice(thing, { max = 1, min = 1, bonus = "", flavor = "" } = {}){
+  const actor = actorOf(thing);
+  if(!actor?.isOwner) return null;
+  /* What each size has left, over every class of that size */
+  const left = {};
+  for(const cls of actor.items.filter(i => (i.type === "class") && (Number(i.system.hd?.value) > 0))) left[cls.system.hd.denomination] = (left[cls.system.hd.denomination] ?? 0) + Number(cls.system.hd.value);
+  const sizes = Object.keys(left).sort((a, b) => Number(b.slice(1)) - Number(a.slice(1)));
+  const most = Math.min(max, Object.values(left).reduce((a, b) => a + b, 0));
+  if(!sizes.length || (most < min)){
+    ui.notifications.warn(module.format("helpers.hitDice.none", { name : actor.name, n : min }));
+    return null;
+  }
+  let dice = { [sizes[0]] : most };
+  if((sizes.length > 1) || (most > min)){
+    const fields = sizes.map(d => `<div class="form-group"><label>${d} (${left[d]})</label><input type="number" name="${d}" min="0" max="${Math.min(left[d], most)}" value="${(d === sizes[0]) ? Math.min(left[d], most) : 0}"></div>`).join("");
+    dice = await foundry.applications.api.DialogV2.wait({
+      window : { title : flavor || module.i18n("helpers.hitDice.title"), icon : "fa-solid fa-dice-d20" },
+      content : `<p>${module.format("helpers.hitDice.prompt", { min, max : most })}</p>${fields}`,
+      buttons : [{ action : "ok", label : module.i18n("helpers.hitDice.roll"), icon : "fa-solid fa-dice", default : true,
+        callback : (event, button) => Object.fromEntries(sizes.map(d => [d, Math.clamp(Math.floor(Number(button.form.elements[d].value) || 0), 0, left[d])])) }],
+      rejectClose : false,
+    }).catch(() => null);
+    if(!dice || (dice === "ok")) return null;
+    const count = Object.values(dice).reduce((a, b) => a + b, 0);
+    if((count < min) || (count > most)){
+      ui.notifications.warn(module.format("helpers.hitDice.count", { min, max : most }));
+      return null;
+    }
+  }
+  const terms = Object.entries(dice).filter(([, n]) => n > 0).map(([d, n]) => `${n}${d}`);
+  const roll = await new Roll([...terms, bonus].filter(Boolean).join(" + "), actor.getRollData()).evaluate();
+  await roll.toMessage({ speaker : ChatMessage.implementation.getSpeaker({ actor }), flavor });
+  /* Expended : each size from its classes in turn */
+  const updates = [];
+  for(const [d, n] of Object.entries(dice)){
+    let todo = n;
+    for(const cls of actor.items.filter(i => (i.type === "class") && (i.system.hd?.denomination === d))){
+      const take = Math.min(todo, Number(cls.system.hd.value) || 0);
+      if(take > 0) updates.push({ _id : cls.id, "system.hd.spent" : (Number(cls.system.hd.spent) || 0) + take });
+      todo -= take;
+    }
+  }
+  if(updates.length) await actor.updateEmbeddedDocuments("Item", updates);
+  return { total : roll.total, roll, dice };
+}
+
 /* ---------- Dropping to 0 HP ----------
  * For "reduced to 0 hit points but not killed outright" features (Relentless Endurance, Undead Fortitude...).
  * `amount` is the damage after resistances, as dnd5e's "dnd5e.preApplyDamage" hook gives it : temp HP soak first.
@@ -174,7 +232,8 @@ function saveActivityOf(from, ability){
  * @param {boolean} [options.dialog]      dnd5e's roll dialog first (default : none)
  * @param {boolean} [options.secret]      a private GM roll (default : an NPC's, with the DM Screen setting on)
  * @param {ChatMessage} [options.card]    the card it's for : the save links to it, and a secret save's success is noted on it
- * @param {object}  [options.flags]       the save message's own flags (macro-helper's)
+ * @param {object}  [options.flags]       the save message's own flags (macro-helper's); `against` : the conditions it's
+ *                                        made to avoid or end (["poisoned"] : saveModeAgainst's traits count)
  * @returns {Promise<{ success : boolean|null, total : number, roll : Roll }|null>}  null if it wasn't rolled
  */
 export async function rollSave(thing, ability, dc = null, { from = null, bonus = null, cover = 0, event = null, dialog = false, secret, card = null, flags = null } = {}){
@@ -303,7 +362,7 @@ export async function giveEffect(thing, data, { save = null, dc = null, from = n
   if(!actor) return { applied : false, asked : false, save : null };
   let rolled = null;
   if(save && Number.isFinite(Number(dc))){
-    rolled = await rollSave(thing, save, Number(dc), { from });
+    rolled = await rollSave(thing, save, Number(dc), { from, flags : data?.statuses?.length ? { against : [...data.statuses] } : null });
     if(!rolled || rolled.success) return { applied : false, asked : false, save : rolled };
   }
   const effect = foundry.utils.mergeObject({ showIcon : CONST.ACTIVE_EFFECT_SHOW_ICON?.ALWAYS ?? 2, origin : from?.uuid ?? null, img : from?.img ?? null }, data, { inplace : false });
