@@ -285,6 +285,51 @@ export async function itemEffectOn(item, { on = null, effect : id = null, activi
 }
 
 /**
+ * An effect on a creature, after its save when one is given (a success : none); until "turnStart" / "turnEnd" of `of`'s
+ * next turn (default : the item's owner). The GM's client puts it on; on a creature that isn't the user's own (gm.mine),
+ * after the GM's button on a card (asked). A maneuver's Goaded, a smite's Seared.
+ * @param {Actor|Token|TokenDocument} thing
+ * @param {object} data                the effect's data
+ * @param {object} [options]
+ * @param {string} [options.save]      the ability saved with
+ * @param {number} [options.dc]
+ * @param {Item} [options.from]        what it comes from (its origin, picture, the save's source)
+ * @param {string} [options.until]     "turnStart" | "turnEnd"
+ * @param {Actor|Token} [options.of]   whose turn
+ * @returns {Promise<{ applied : boolean, asked : boolean, save : object|null }>}
+ */
+export async function giveEffect(thing, data, { save = null, dc = null, from = null, until = null, of = null } = {}){
+  const actor = actorOf(thing);
+  if(!actor) return { applied : false, asked : false, save : null };
+  let rolled = null;
+  if(save && Number.isFinite(Number(dc))){
+    rolled = await rollSave(thing, save, Number(dc), { from });
+    if(!rolled || rolled.success) return { applied : false, asked : false, save : rolled };
+  }
+  const effect = foundry.utils.mergeObject({ showIcon : CONST.ACTIVE_EFFECT_SHOW_ICON?.ALWAYS ?? 2, origin : from?.uuid ?? null, img : from?.img ?? null }, data, { inplace : false });
+  if(until) foundry.utils.setProperty(effect, `flags.${module.id}.expires`, gm.timedStamp(actorOf(of) ?? from?.actor ?? actor, until));
+  const payload = { actor : actor.uuid, data : effect, item : from?.uuid ?? null };
+  /* Not the user's own creature : the GM's button puts it on */
+  if(!gm.mine(actor)){
+    const name = tokenOf(thing)?.name ?? actor.name;
+    await gm.ask("giveEffectAsk", payload, { actor : from?.actor ?? null,
+      text : module.format("giveEffect.ask", { item : from?.name ?? "", name, effect : effect.name }),
+      label : module.format("giveEffect.button", { name, effect : effect.name }) });
+    return { applied : false, asked : true, save : rolled };
+  }
+  const applied = !!await gm.run("giveEffect", payload);
+  return { applied, asked : false, save : rolled };
+}
+
+/* GM : giveEffect's effect put on (the ask card's button calls it with the GM as user) */
+export async function giveEffectAsGM({ actor : uuid, data } = {}, user){
+  const actor = fromUuidSync(uuid ?? "", { strict : false });
+  if(!actor || !data || !(user?.isGM || gm.mine(actor, user))) return false;
+  await actor.createEmbeddedDocuments("ActiveEffect", [data]);
+  return true;
+}
+
+/**
  * The effects itemEffectOn turned on, off again : an item's own switched off, a copy removed.
  * @param {Actor|Token|TokenDocument} thing
  * @param {string|string[]|Function} match   as effectsFrom

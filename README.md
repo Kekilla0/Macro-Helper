@@ -60,7 +60,8 @@ The main pieces, as methods on tokens, actors and items. Most also exist as `Mac
 | `MacroHelper.onFailedTest({ id, source, formula })` | A die a creature adds to its missed attack or failed save or check (Bardic Inspiration). |
 | `MacroHelper.markSpell({ id, spell, free, hours, damage })` | A spell that marks one creature and hurts it more on every attack, ending with Concentration (Hunter's Mark, Hex). |
 | `MacroHelper.weaponUses(id, { applies, abilities, die })` | The abilities and damage die a weapon attacks with while a rule applies (Martial Arts, Pact of the Blade). |
-| `MacroHelper.endsWhen(match, { incapacitated, damaged, heavyArmor, combatEnd })` | What a rule's effects end on (Rage, Turned). |
+| `MacroHelper.endsWhen(match, { incapacitated, damaged, heavyArmor, combatEnd, attacks, casts })` | What a rule's effects end on (Rage, Turned, Invisibility). |
+| `MacroHelper.giveEffect(target, data, { save, dc, from, until })` | An effect on a creature, after its save; the GM's button when it isn't yours (Goaded, Seared). |
 | `MacroHelper.onMiss({ formula })`, `MacroHelper.addRow({ run, withDamage })` | Damage on a miss (Graze), and a GM button on a hit creature's card row (Topple, Sap). |
 | `MacroHelper.onAttacked({ when, within, run })`, `MacroHelper.onTurnStart({ run })` | A creature's Reaction button when one near it is attacked or hit (Interception, Protection), and something at the start of its turns. |
 | `MacroHelper.bonusOnlyWhen(match, key, test)` | An effect's bonus only where a check holds (Rage's Strength attacks, Dueling, Defense in armor). |

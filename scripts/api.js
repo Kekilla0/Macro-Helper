@@ -92,7 +92,7 @@ export class api{
       /* Helpers, see scripts/helpers */
       ...tokens,    // tokenOf, actorOf, cells, distanceBetween, getRange, getTokensWithin, highlightRange, forcedMove, pushDestination, pushAway, pullToward, addLight, removeLight, hasLight, registerPool, poolBar, removePoolBar, poolsOf
       ...targets,   // isEnemy, isAlly, alliesNear, excludeTargets, getFlanker, isFlanking, isThreatened, getThreats, getEnemiesWithinRange, pickTargets, isValidGroup, selectTargets, setTargets
-      ...actors,    // damage, heal, tempHP, dropsToZero, isKilledOutright, preventDropToZero, findItem, rollSave, addTimedEffect, recoverSpellSlots, slotsLeft, spellSlots, addSpellSlot, usedThisTurn, markUsedThisTurn, countedUses, effectsFrom, itemEffectOn, itemEffectOff, getLastDamage, clearLastDamage, setStatus, setDefeated, getSize, stepSize, splitToken
+      ...actors,    // damage, heal, tempHP, dropsToZero, isKilledOutright, preventDropToZero, findItem, rollSave, addTimedEffect, recoverSpellSlots, slotsLeft, spellSlots, addSpellSlot, usedThisTurn, markUsedThisTurn, countedUses, effectsFrom, itemEffectOn, itemEffectOff, giveEffect, getLastDamage, clearLastDamage, setStatus, setDefeated, getSize, stepSize, splitToken
       ...items,     // pickAndAttack, pickAttack, attackModeFor, isLongRange, isRangedItem, isRangedAttack, canThrow, getAmmunition,
                   // getUses, hasUses, spendUses, useActivity, useAndApply, getAppliedConditions, multiattack, untilShown, getHealing, updateItem, setBaseDamage, setDamage, isClassSpell, isUnarmored, conjureItem, linkItems, linkedItems, pickOwned, enchant, replaceItem
       ...utils,     // wait, waitFor, originOf, chooseOption

@@ -1,7 +1,7 @@
 import { module } from '../module.js';
 import { logger } from '../log.js';
 import { idOf, chooseOption } from '../helpers/utils.js';
-import { usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
+import { usedThisTurn, markUsedThisTurn, giveEffect } from '../helpers/actors.js';
 import { damageRoll } from './extra-damage.js';
 import { gm } from '../gm.js';
 import { uses } from '../uses.js';
@@ -28,6 +28,9 @@ const log = logger.for(import.meta.url);
  *     damage : (spell, level, target) => ({ formula, type }) | null,   default : the spell's first damage part, scaled
  *     save : spell => true | { around : 5 } | null,     its save on the card (around : everyone within that many feet
  *                                                       of the target)
+ *     effect : spell => true | null,                    the spell's effect goes on the creature hit (giveEffect : the
+ *                                                       GM's button when it isn't the caster's own), at the slot level
+ *                                                       cast (Searing Smite's Seared, Shining Smite's Shining)
  *     free : (actor, spell) => ({ left, spend, label }) | null,   a free casting (castingOptions)
  *     slotLabel : (slot, spell) => "…",
  *     sheet : item => ({ only : spellIdentifier, freeOnly }) | null,  an item used from the sheet that works on the
@@ -193,10 +196,26 @@ export async function cast(id, message, ray, { only = null, freeOnly = false } =
     const activity = choice.spell.system.activities?.contents?.[0];
     if(activity) await actor.beginConcentrating(activity).catch(error => log.error(error));
   }
+  if(target && rule.effect?.(choice.spell)) await hitEffect(choice.spell, choice.level, target).catch(error => log.error(error));
   log.debug("Cast on hit", actor.name, choice.spell.name, choice.level, damage?.formula);
   await rule.after?.(actor, choice.spell, message, choice);
   Hooks.callAll(`${module.id}.castOnHit`, actor, choice.spell, message, id);
   return true;
+}
+
+/* The spell's effect on the creature hit : its damage activity's (else any activity's, else the item's first), with
+   the slot level cast (repeating effects scale their dice by it) */
+async function hitEffect(spell, level, target){
+  const activities = spell.system.activities?.contents ?? [];
+  const id = activities.find(a => (a.type === "damage") && a.effects?.length)?.effects[0]?._id ?? activities.find(a => a.effects?.length)?.effects[0]?._id;
+  const source = (id && spell.effects.get(id)) ?? spell.effects.find(e => !e.transfer) ?? null;
+  if(!source) return null;
+  const data = source.toObject();
+  delete data._id;
+  data.transfer = false;
+  data.origin = spell.uuid;
+  foundry.utils.setProperty(data, "flags.dnd5e.spellLevel", level);
+  return giveEffect(target, data, { from : spell });
 }
 
 /* The spell on the card : its damage, the done mark, its save (Wrathful...) or its burst (Hail of Thorns) */

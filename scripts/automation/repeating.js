@@ -16,6 +16,8 @@ const log = logger.for(import.meta.url);
  *     when : { at : "start" | "end", of },                   whose turn (actor uuid : the affected creature, unless the
  *                                                            spell says the caster's)
  *     damage : "1d6[fire]",                                  taken first, at that turn (Searing Smite, Ensnaring Strike)
+ *     once : true,                                           the damage once, then the effect ends (no roll : Melf's Acid
+ *                                                            Arrow's acid at the end of its next turn)
  *     onFail : "unconscious",                                a failed roll turns it into that condition for the rest
  *                                                            of its duration, with no more rolls (Sleep)
  *     endsOnDamage : true,                                   it ends when the creature takes damage (Sleep)
@@ -38,6 +40,10 @@ export class repeating{
     "searing-smite" : { label : "start", roll : { type : "save", ability : "con" }, damage : { die : "d6", type : "fire" } },
     "ensnaring-strike" : { label : "start", roll : { type : "check", ability : "str", skill : "ath", action : true }, damage : { die : "d6", type : "piercing" } },
     "ray-of-sickness" : { label : "time", of : "caster" },
+    "blindness-deafness" : { label : "end", roll : { type : "save", ability : "con" } },
+    "crown-of-madness" : { label : "end", roll : { type : "save", ability : "wis" } },
+    /* 2d4 Acid at the end of its next turn (count : the dice at the spell's own level) */
+    "melfs-acid-arrow" : { label : "end", damage : { die : "d4", type : "acid", count : 2 }, once : true },
     "chill-touch" : { label : "time", of : "caster" },
     /* 2024 Sleep : Incapacitated, the save again at the end of its next turn; failed : Unconscious; damage wakes it */
     "sleep" : { label : "end", roll : { type : "save", ability : "wis" }, onFail : "unconscious", endsOnDamage : true },
@@ -59,6 +65,8 @@ export class repeating{
     Hooks.on("updateWorldTime", () => this.expireTimed());
     Hooks.on("renderChatMessageHTML", (message, html) => this.render(message, html));
     Hooks.on("dnd5e.applyDamage", (actor, amount) => this.onDamaged(actor, amount));
+    /* Its later damage is the effect's (Melf's Acid Arrow's 2d4) : that damage activity isn't rolled with the attack */
+    Hooks.on(`${module.id}.isExtra`, activity => !(this.enabled() && this.TABLE[idOf(activity?.item)]?.once && this.TABLE[idOf(activity?.item)]?.damage));
   }
 
   /* ---------- The template on the item's effects ---------- */
@@ -70,7 +78,7 @@ export class repeating{
     if(!entry) return null;
     const updateEffects = (item.effects?.contents ?? [...(item.effects ?? [])]).filter(e => !e.getFlag?.(module.id, "repeat"))
       .map(e => ({ _id : e.id, [`flags.${module.id}.repeat`] : { template : true, label : entry.label, roll : entry.roll ?? null, damage : entry.damage ?? null, of : entry.of ?? "target",
-        onFail : entry.onFail ?? null, endsOnDamage : !!entry.endsOnDamage, tempHP : entry.tempHP ?? null } }));
+        onFail : entry.onFail ?? null, endsOnDamage : !!entry.endsOnDamage, tempHP : entry.tempHP ?? null, once : !!entry.once } }));
     return updateEffects.length ? { updateEffects } : null;
   }
 
@@ -85,7 +93,7 @@ export class repeating{
     const dc = Number(save?.save?.dc?.value) || Number(caster?.system?.attributes?.spell?.dc) || null;
     /* The damage grows with the slot (Searing Smite +1d6 a level above its own) */
     const castLevel = Number(effect.getFlag?.("dnd5e", "spellLevel")) || Number(item?.system?.level) || 1;
-    const dice = Math.max(1, 1 + castLevel - (Number(item?.system?.level) || 1));
+    const dice = Math.max(1, (Number(repeat.damage?.count) || 1) + castLevel - (Number(item?.system?.level) || 1));
     const filled = {
       template : false,
       label : repeat.label,
@@ -95,6 +103,7 @@ export class repeating{
       damage : repeat.damage ? `${dice}${repeat.damage.die}[${repeat.damage.type}]` : null,
       onFail : repeat.onFail ?? null,
       endsOnDamage : !!repeat.endsOnDamage,
+      once : !!repeat.once,
       /* The caster's spellcasting modifier, now (at least 1) */
       tempHP : (repeat.tempHP === "spellcasting") ? Math.max(1, Number(caster?.system?.abilities?.[caster?.system?.attributes?.spellcasting]?.mod) || 0) : (Number(repeat.tempHP) || null),
     };
@@ -185,6 +194,9 @@ export class repeating{
     const type = repeat.damage.match(/\[(\w+)\]/)?.[1];
     await actor.applyDamage([{ value : roll.total, type }], { isDelta : true });
     await message.setFlag(module.id, "repeatCard.damageDone", true);
+    /* Once : the effect has done its part */
+    const effect = repeat.once ? fromUuidSync(message.getFlag(module.id, "repeatCard")?.effect ?? "", { strict : false }) : null;
+    if(effect && !effect.isDeleted) await effect.delete();
   }
 
   /* The roll : a success ends the effect on this creature */

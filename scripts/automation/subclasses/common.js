@@ -6,8 +6,7 @@ import { cardBuilder } from '../../roll-item/card-builder.js';
 import { gm } from '../../gm.js';
 import { uses } from '../../uses.js';
 import { rerolls, addDie } from '../../roll-item/rerolls.js';
-import { rollSave } from '../../helpers/actors.js';
-import { actorOf, tokenOf } from '../../helpers/tokens.js';
+import { giveEffect } from '../../helpers/actors.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -23,11 +22,7 @@ const log = logger.for(import.meta.url);
  *                                              registered `label` with onOffer.
  *   subclasses.onOffer(key, run)               what a key's button does (run(actor, data, message))
  *   subclasses.giveEffect(target, data, { save, dc, from, until, of })
- *                                              an effect on a creature (a maneuver's Goaded, Addle), after its save
- *                                              when one is given (a success : none); until "turnStart" / "turnEnd" of
- *                                              `of`'s next turn (default : the item's owner). The GM's client puts it on;
- *                                              on a creature that isn't the user's own (gm.mine), after the GM's
- *                                              button on a card (asked).
+ *                                              the giveEffect lego (helpers/actors.js) : a maneuver's Goaded, Addle
  *   subclasses.onUseStep(id, fn)               a use step (uses.js, "subclassUse") for one item identifier :
  *                                              fn(activity, ctx, next), before the targets are picked
  *   subclasses.changeRoll(message, change, by) a reaction's change to someone else's roll, made by the GM (a roll on a
@@ -52,9 +47,6 @@ export class subclasses{
     Hooks.on("renderChatMessageHTML", (message, html) => this.offerButtons(message, html));
     gm.handle("subclassRoll", (data, user) => this.changeRollAsGM(data, user));
     gm.handle("subclassEffectsEnd", (data, user) => this.endEffectsAsGM(data, user));
-    gm.handle("subclassEffect", (data, user) => this.giveEffectAsGM(data, user));
-    /* GM : the button of giveEffect's ask card (the GM said yes) */
-    gm.handle("subclassEffectAsk", data => this.giveEffectAsGM(data, game.user));
     gm.handle("subclassOfferDone", (data, user) => this.offerDoneAsGM(data, user));
     uses.onActivity("subclassUse", (activity, ctx, next) => {
       const fn = this.enabled() ? this.#useSteps.get(idOf(activity?.item)) : null;
@@ -64,39 +56,9 @@ export class subclasses{
 
   static #useSteps = new Map();
 
-  /**
-   * An effect on a creature, after its save (see above).
-   * @returns {Promise<{ applied : boolean, asked : boolean, save : object|null }>}
-   */
-  static async giveEffect(thing, data, { save = null, dc = null, from = null, until = null, of = null } = {}){
-    const actor = actorOf(thing);
-    if(!actor) return { applied : false, save : null };
-    let rolled = null;
-    if(save && Number.isFinite(Number(dc))){
-      rolled = await rollSave(thing, save, Number(dc), { from });
-      if(!rolled || rolled.success) return { applied : false, save : rolled };
-    }
-    const effect = foundry.utils.mergeObject({ showIcon : CONST.ACTIVE_EFFECT_SHOW_ICON?.ALWAYS ?? 2, origin : from?.uuid ?? null, img : from?.img ?? null }, data, { inplace : false });
-    if(until) foundry.utils.setProperty(effect, `flags.${module.id}.expires`, gm.timedStamp(actorOf(of) ?? from?.actor ?? actor, until));
-    const payload = { actor : actor.uuid, data : effect, item : from?.uuid ?? null };
-    /* Not the user's own creature : the GM's button puts it on */
-    if(!gm.mine(actor)){
-      const name = tokenOf(thing)?.name ?? actor.name;
-      await gm.ask("subclassEffectAsk", payload, { actor : from?.actor ?? null,
-        text : module.format("subclasses.effectAsk", { item : from?.name ?? "", name, effect : effect.name }),
-        label : module.format("subclasses.effectButton", { name, effect : effect.name }) });
-      return { applied : false, asked : true, save : rolled };
-    }
-    const applied = !!await gm.run("subclassEffect", payload);
-    return { applied, asked : false, save : rolled };
-  }
-
-  static async giveEffectAsGM({ actor : uuid, data, item : itemUuid } = {}, user){
-    const actor = fromUuidSync(uuid ?? "", { strict : false });
-    const item = fromUuidSync(itemUuid ?? "", { strict : false });
-    if(!actor || !data || !(user?.isGM || gm.mine(actor, user))) return false;
-    await actor.createEmbeddedDocuments("ActiveEffect", [data]);
-    return true;
+  /* An effect on a creature, after its save : the giveEffect lego */
+  static giveEffect(thing, data, options = {}){
+    return giveEffect(thing, data, options);
   }
 
   /* GM : effects an item of the user's gave others, ended (a blessing given again, the giver's Long Rest) */

@@ -54,6 +54,7 @@ export class spellEffects{
     "starry-wisp" : { noInvisible : true, glow : { dim : 10, color : "#cfe3ff" } },
     "guiding-bolt" : { nextAttackAgainst : "advantage" },
     "faerie-fire" : { attackersMode : "advantage", noInvisible : true, glow : { dim : 10, color : "#d9b3ff" } },
+    "shining-smite" : { attackersMode : "advantage", noInvisible : true, glow : { dim : 5, color : "#fff1b3" } },
     "protection-from-evil-and-good" : { attackersOfTypes : { types : ["aberration", "celestial", "elemental", "fey", "fiend", "undead"], mode : "disadvantage", resist : ["charmed", "frightened"] } },
     "compelled-duel" : { onlyAgainstOrigin : "disadvantage" },
     "arms-of-hadar" : { noReactions : true },

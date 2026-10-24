@@ -25,7 +25,8 @@ const log = logger.for(import.meta.url);
  *                     The damage goes on the card as its own box (crits like the attack); Divine Smite : 2d8 radiant,
  *                     +1d8 a slot level above 1st, +1d8 against a Fiend or Undead. Wrathful (Frightened) and Thunderous
  *                     (pushed, Prone) put their save on the card for the target (a failed Thunderous save : the GM's
- *                     Push button); concentration starts for any that need it (none of the 2024 ones do). Searing's burning each turn waits for the spell batch. Once per attack; a second
+ *                     Push button); concentration starts for any that need it (none of the 2024 ones do). Searing's Seared and Shining's
+ *                     Shining go on the creature hit (the GM's button when it isn't the caster's own). Once per attack; a second
  *                     smite in a turn (a Bonus Action) follows Rule Limits. Using a smite spell or Paladin's Smite from
  *                     the sheet smites the latest melee hit instead (Plutonium makes them Actions with their own damage).
  *                     The Ranger's spells that follow a weapon hit work the same way (the button says Strike when only
@@ -53,6 +54,8 @@ export class paladin{
   static LAY_ON_HANDS = "lay-on-hands";
   /* Smites whose save happens on the hit (the rest : ongoing saves, the spell batch) */
   static RIDERS = ["wrathful-smite", "thunderous-smite", "ensnaring-strike"];
+  /* Smites whose effect goes on the creature hit (Searing's burn each turn : repeating effects) */
+  static ON_TARGET = ["searing-smite", "shining-smite"];
   static UNHOLY = ["fiend", "undead"];
   static DIVINE_SENSE = "divine-sense";
   static SENSED = ["celestial", "fiend", "undead"];
@@ -69,6 +72,7 @@ export class paladin{
       spells : actor => this.smiteSpells(actor),
       fits : (spell, kind) => { const need = this.HIT_NEEDS[idOf(spell)] ?? "melee"; return (need === "any") || (need === kind); },
       damage : (spell, level, target) => this.damageOf(spell, level, target),
+      effect : spell => this.ON_TARGET.includes(idOf(spell)),
       save : spell => this.AROUND_TARGET[idOf(spell)] ? { around : this.AROUND_TARGET[idOf(spell)] } : this.RIDERS.includes(idOf(spell)),
       /* Paladin's Smite's free Divine Smite (the payCasting lego's ways) */
       free : (actor, spell) => (idOf(spell) === this.DIVINE) ? { left : a => (this.freeSmite(a) ? 1 : 0), spend : a => this.payFree(a),

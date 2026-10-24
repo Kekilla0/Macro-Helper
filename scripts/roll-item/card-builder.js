@@ -9,7 +9,7 @@ import { rollOptions, rollOptionDamage, rollOptionD20, rollOptionDamageDice } fr
 import { disease } from '../automation/disease.js';
 import { patch } from '../patch.js';
 import { setDamage } from '../helpers/items.js';
-import { rollSave, rollSaveAsGM, setStatus } from '../helpers/actors.js';
+import { rollSave, rollSaveAsGM, setStatus, giveEffectAsGM } from '../helpers/actors.js';
 import { damageRoll } from './extra-damage.js';
 import { onDamage } from './damage.js';
 import { noteReason } from './reasons.js';
@@ -939,6 +939,9 @@ export class cardBuilder{
     gm.handle("forcedMove", data => forcedMoveAsGM(data));
     /* GM : a save for a creature the asking user doesn't own (rollSave) */
     gm.handle("rollSave", data => rollSaveAsGM(data));
+    /* GM : an effect giveEffect puts on (the user's own creature), or its ask card's button (the GM said yes) */
+    gm.handle("giveEffect", (data, user) => giveEffectAsGM(data, user));
+    gm.handle("giveEffectAsk", data => giveEffectAsGM(data, game.user));
     /* GM : a creature pulled out of the one engulfing it (by a creature its user owns, beside it; the one pulled out the
        user's own creature, else the GM's button : cardPullOutAsk) */
     gm.handle("cardPullOut", (data, user) => this.pullOutAsGM(data, user));

@@ -75,6 +75,9 @@ export class conditions{
     Hooks.on("dnd5e.applyDamage", (actor, amount) => { if((amount > 0) && actor?.isOwner) this.endsOn(actor, "damaged", null, { here : true }); });
     Hooks.on("updateItem", (item, changes) => { if(foundry.utils.getProperty(changes ?? {}, "system.equipped")) this.onArmorEnds(item); });
     Hooks.on("createItem", item => { if(item.system?.equipped) this.onArmorEnds(item); });
+    /* Its own attack roll or spell : on the client that made it */
+    Hooks.on("dnd5e.rollAttackV2", (rolls, { subject } = {}) => { const actor = subject?.actor; if(actor?.isOwner) this.endsOn(actor, "attacks", null, { here : true }); });
+    Hooks.on("dnd5e.postUseActivity", activity => { const actor = activity?.actor; if((activity?.item?.type === "spell") && actor?.isOwner) this.endsOn(actor, "casts", null, { here : true }); });
     Hooks.on("deleteCombat", combat => { for(const c of combat?.combatants ?? []) if(c.actor) this.endsOn(c.actor, "combatEnd"); });
   }
 
@@ -92,8 +95,10 @@ export class conditions{
    *   heavyArmor     it equips Heavy armor
    *   combatEnd      a combat it's in ends
    *   sourceDown     the creature it came from (its origin item's owner) is Incapacitated (Turned, when the Cleric drops)
+   *   attacks        the creature with it makes an attack roll (just after it : the roll still had it; Invisibility)
+   *   casts          it casts a spell (Invisibility)
    *   end            (actor, effects, why) instead of the default : an item's own effect switched off, any other deleted
-   * why : "incapacitated", "damaged", "heavyArmor", "combatEnd" or "sourceDown". The active GM's client ends them.
+   * why : "incapacitated", "damaged", "heavyArmor", "combatEnd", "sourceDown", "attacks" or "casts". The active GM's client ends them.
    * @param {string|Function} match
    * @param {object} rule
    */

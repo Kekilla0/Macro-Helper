@@ -12,6 +12,9 @@ import { patch } from '../patch.js';
 import { chooseOption, plainText } from '../helpers/utils.js';
 import { TYPES } from '../roll-item/message.js';
 import { isClassSpell } from '../helpers/items.js';
+import { originItem } from '../helpers/utils.js';
+import { rollModeFrom } from './roll-modes.js';
+import { onMiss } from '../roll-item/miss-damage.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -50,17 +53,34 @@ const log = logger.for(import.meta.url);
  *   Material cost   : a spell whose material says "worth 10+ GP" but has no cost in its data (Find Familiar) gets it. A Wizard with Ritual Adept casts the
  *                     rituals in its spellbook (its Wizard spells) without preparing them : as a Ritual only. The card
  *                     notes it (flags.ritual for the action tracker).
+ *   Blur            : attack rolls against the caster have disadvantage, unless the attacker has Blindsight or
+ *                     Truesight reaching it (its Concentration is the effect).
+ *   Invisibility    : ends just after its creature makes an attack roll or casts a spell.
+ *   Melf's Acid Arrow : a miss deals half the attack's damage (no acid later); a hit's acid at the end of the target's
+ *                     next turn is a repeating effect (automation/repeating.js).
  *   Range           : Rule Limits on and no target pick (Pick Targets off, or Roll Item off) : a spell aimed at
  *                     creatures out of its range (Distant Spell's doubled range, Touch 30 ft) follows Rule Limits.
  */
 export class spells{
   static BLADE_WARD = "blade-ward";
   static RAY_OF_SICKNESS = "ray-of-sickness";
+  static BLUR = "blur";
+  static INVISIBILITY = "invisibility";
+  static ACID_ARROW = "melfs-acid-arrow";
   /* The effects the fixes add (16-character ids, so a fix can tell it's done) */
   static EFFECT_IDS = { "blade-ward" : "mhBladeWardWard1", "ray-of-sickness" : "mhRaySicknessPsn" };
 
   static enabled(){
     return (game.system.id === "dnd5e") && settings.value("spellRules");
+  }
+
+  /* Does one of these senses of the attacker reach the target (its range, in feet) */
+  static sensesReach(actor, target, senses){
+    const ranges = actor?.system?.attributes?.senses?.ranges ?? {};
+    const best = Math.max(0, ...senses.map(s => Number(ranges[s]) || 0));
+    if(!best) return false;
+    const from = tokenOf(actor);
+    return !from || !target || (distanceBetween(from, target) <= best);
   }
 
   /* Fixes are for 2024 items (a 2014 copy of the spell or creature is left as it is) */
@@ -103,6 +123,14 @@ export class spells{
     Hooks.on(`${module.id}.targetCount`, (activity, usage, data) => { data.count += this.upcastTargets(activity, usage); });
     Hooks.on("dnd5e.postUseActivity", (activity, usage) => this.agathysCast(activity, usage));
     Hooks.on("updateActor", (actor, changes) => this.agathysGone(actor, changes));
+    /* Blur : not against an attacker whose Blindsight or Truesight reaches it */
+    rollModeFrom(this.BLUR, { against : { mode : "disadvantage", when : (attack, target) => !this.sensesReach(attack.actor, target, ["blindsight", "truesight"]),
+      reason : () => module.i18n("spells.blurred") }, enabled : () => this.enabled(), id : this.BLUR });
+    conditions.endsWhen(effect => this.enabled() && (idOf(originItem(effect)) === this.INVISIBILITY), { attacks : true, casts : true });
+    /* Melf's Acid Arrow : half the attack's damage on a miss */
+    onMiss({ id : "melfsAcidArrow", enabled : () => this.enabled(), when : miss => idOf(miss.item) === this.ACID_ARROW,
+      formula : miss => String(Math.floor(miss.damage.reduce((sum, roll) => sum + (Number(roll.total) || 0), 0) / 2)),
+      type : () => "acid", label : miss => miss.item.name });
     Hooks.on("createChatMessage", (message, options, userId) => { if(userId === game.user.id) this.agathysCard(message); });
     Hooks.on(`${module.id}.cardButtons`, (message, buttons, { ray } = {}) => this.agathysButtons(message, buttons, ray));
     Hooks.on(`${module.id}.cardButton`, (message, id, { ray } = {}) => { if(String(id).startsWith("agathys|")) this.agathysHit(message, id.split("|")[1], ray ?? null); });
