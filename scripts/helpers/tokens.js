@@ -380,7 +380,7 @@ function pointOf(thing){
  * Afterwards Hooks "macro-helper.pushed" (token, moved, wanted, item, { direction, name }) : `wanted` is how far it
  * should have gone (a pull only up to the space beside the one pulling), so a shorter move hit something (Homebrew :
  * Push Into Obstacles).
- * Moving a token you can't move asks the GM (a chat card with the GM's button).
+ * A creature that isn't the user's own (gm.mine) asks the GM : a chat card with the GM's button.
  *   await MacroHelper.forcedMove(target, { from : token, feet : 10, name : "Repelling Blast" })
  *   await MacroHelper.forcedMove(target, { direction : "toward", from : { x, y }, feet : 15 })    toward a point
  * @param {Token|TokenDocument|Actor} thing   who is moved
@@ -390,14 +390,15 @@ function pointOf(thing){
  * @param {Token|TokenDocument|Actor|{x : number, y : number}} options.from   who (or where) it moves away from / toward
  * @param {Item} [options.item]    what moved it (a collision's chat line names it)
  * @param {string} [options.name]  its name, without an item (default : the item's)
+ * @param {boolean} [options.confirmed=false]  the GM's button : move it now
  * @returns {Promise<number|null>}  how far it moved, in feet (0 : it couldn't move); null : the GM was asked
  */
-export async function forcedMove(thing, { direction = "away", feet = 10, from = null, item = null, name = null } = {}){
+export async function forcedMove(thing, { direction = "away", feet = 10, from = null, item = null, name = null, confirmed = false } = {}){
   const token = tokenOf(thing), origin = pointOf(from);
   if(!token?.actor || !origin) return 0;
   const toward = direction === "toward";
   const label = name ?? item?.name ?? "";
-  if(!token.document.canUserModify(game.user, "update")){
+  if(!confirmed && !gm.mine(token.actor)){
     const source = isPoint(from) ? { x : origin.x, y : origin.y } : (tokenOf(from)?.document?.uuid ?? null);
     await gm.ask("forcedMove", { token : token.document.uuid, direction, feet, from : source, item : item?.uuid ?? null, name : label },
       { actor : tokenOf(isPoint(from) ? null : from)?.actor ?? null, text : module.format(toward ? "tokens.pullAsk" : "tokens.pushAsk", { name : token.name, feet, item : label }),
@@ -420,13 +421,13 @@ export async function forcedMove(thing, { direction = "away", feet = 10, from = 
   return moved;
 }
 
-/* The GM's button on a forcedMove card a player's move asked for */
+/* The GM's button on a forcedMove card */
 export async function forcedMoveAsGM({ token : uuid, direction, feet, from, item : itemUuid, name } = {}){
   const token = fromUuidSync(uuid ?? "", { strict : false })?.object;
   const source = isPoint(from) ? from : fromUuidSync(from ?? "", { strict : false });
   const item = itemUuid ? fromUuidSync(itemUuid, { strict : false }) : null;
   if(!token || !source) return false;
-  return (await forcedMove(token, { direction, feet, from : source, item, name })) !== null;
+  return (await forcedMove(token, { direction, feet, from : source, item, name, confirmed : true })) !== null;
 }
 
 /**

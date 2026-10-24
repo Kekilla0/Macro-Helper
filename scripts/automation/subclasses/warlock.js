@@ -156,8 +156,9 @@ export class warlockPatrons{
       if(!item || (t === downed) || !isEnemy(t, downed)) continue;
       if(!((killer === t.actor) || (distanceBetween(t, downed) <= 10))) continue;
       const temp = Math.max(1, (Number(t.actor.system.abilities?.cha?.mod) || 0) + (Number(t.actor.classes?.warlock?.system?.levels) || 0));
-      if(t.actor.isOwner) await tempHP(t.actor, temp, item);
-      else await gm.run("darkOnesBlessing", { actor : t.actor.uuid, item : item.uuid });
+      if(gm.mine(t.actor)) await tempHP(t.actor, temp, item);
+      else await gm.ask("darkOnesBlessing", { actor : t.actor.uuid, item : item.uuid }, { actor : t.actor,
+        text : module.format("subclasses.warlock.blessingAsk", { name : t.name, n : temp }), label : module.format("subclasses.warlock.blessingButton", { name : t.name, n : temp }) });
       log.debug("Dark One's Blessing", t.name, temp);
     }
   }

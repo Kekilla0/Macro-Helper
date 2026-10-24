@@ -54,9 +54,10 @@ function renderRows(message, html){
     const li = document.createElement("li");
     li.className = "macro-helper-row";
     const done = message.getFlag(module.id, `targetCardDone.${index}`);
-    /* Its own action (a Reaction) : its player, or the GM when none of its players is here */
+    /* Its own action (a Reaction) : its player, or the GM when none of its players is here. A change to it : the GM, or
+       the player whose own character it is */
     const playerHere = !!token?.actor && game.users.some(u => u.active && !u.isGM && token.actor.testUserPermission(u, "OWNER"));
-    const may = row.self ? (!!token?.actor?.isOwner && (!game.user.isGM || !playerHere)) : (game.user.isGM || !!token?.actor?.isOwner);
+    const may = row.self ? (!!token?.actor?.isOwner && (!game.user.isGM || !playerHere)) : (game.user.isGM || gm.mine(token?.actor));
     li.innerHTML = `<img class="token" src="${esc(token?.texture?.src ?? token?.actor?.img ?? "icons/svg/mystery-man.svg")}" alt="" data-token="${esc(row.token ?? "")}">
       <span class="name">${esc(token?.name ?? "?")}</span>
       <span class="macro-helper-row-apply">${done

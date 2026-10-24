@@ -128,7 +128,7 @@ async function place(rule, actor, spell, { pay = null, move = null, data = {} } 
     await casting.concentrate(actor, spell, (rule.hours?.(level) ?? 1) * 3600);
   }
   const words = { name : actor.name, target : target.name, spell : spell.name, ...(rule.words?.(data) ?? {}) };
-  /* The mark itself is on another creature : the spell's card, a row for it (the GM, or its owner) */
+  /* The mark itself is on another creature : the spell's card, a row for it (the GM, or the player whose character it is) */
   await postTargetCard({ actor, item : spell, text : module.format(move ? rule.text.moved : rule.text.marked, words),
     rows : [{ token : target.document.uuid, action : rule.id,
       data : { ...data, caster : actor.uuid, spell : spell.uuid, target : target.document.uuid, from : move?.effect.uuid ?? null, hours : rule.hours?.(level) ?? 1 },
@@ -142,8 +142,8 @@ async function applyMark(rule, { caster : casterUuid, spell : spellUuid, target 
   const caster = fromUuidSync(casterUuid ?? "", { strict : false });
   const target = fromUuidSync(targetUuid ?? "", { strict : false });
   const spell = fromUuidSync(spellUuid ?? "", { strict : false });
-  /* The caster's owner or the marked creature's (its row's button), or the GM */
-  if(!game.user.isGM || !caster || !target?.actor || (user && !caster.testUserPermission(user, "OWNER") && !target.actor.testUserPermission(user, "OWNER"))) return false;
+  /* Its row's button : the GM, or the player whose own character is marked */
+  if(!game.user.isGM || !caster || !target?.actor || (user && !user.isGM && !gm.mine(target.actor, user))) return false;
   /* Concentration gone before the GM got to it : nothing to mark */
   if(!casting.concentrationOn(caster, spell)){
     ui.notifications.warn(module.format("marks.noConcentration", { name : caster.name, spell : spell?.name ?? "" }));

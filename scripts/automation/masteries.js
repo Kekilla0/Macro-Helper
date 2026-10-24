@@ -234,7 +234,8 @@ export class masteries{
   static async pushCollision(target, moved, feet, item, name = null){
     if(moved >= feet) return;
     const actor = target.actor;
-    await giveCondition(target, "prone", { from : item });
+    /* The push itself was allowed (its own creature, or the GM's button) : what it hits follows from it */
+    await giveCondition(target, "prone", { from : item, confirmed : true });
     if(moved > 0) return;
 
     const roll = await new CONFIG.Dice.DamageRoll("1d6", {}, { type : "bludgeoning" }).evaluate();

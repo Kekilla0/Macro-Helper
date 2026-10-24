@@ -98,7 +98,7 @@ export class cardMoves {
       const from = this.fromOf(message, move.from);
       if(!target || !from) return;
       const moved = await forcedMove(target, { direction : move.direction ?? "away", feet : Number(move.feet), from,
-        item : message.getAssociatedItem?.() ?? null, name : move.name ?? null });
+        item : message.getAssociatedItem?.() ?? null, name : move.name ?? null, confirmed : true });
       await message.setFlag(module.id, this.flagOf(key), true);
       await move.after?.(moved);
     }

@@ -152,6 +152,8 @@ export class spellActions{
     Hooks.on("renderActivityUsageDialog", (app, html) => this.lockProfile(app, html));
     uses.onActivity("spellLight", (activity, ctx, next) => this.lightStep(activity, ctx, next));
     gm.handle("spellLight", data => this.lightAsGM(data));
+    /* GM : the button of a Light on a creature that isn't the caster's user's own */
+    gm.handle("spellLightAsk", data => this.lightAsGM(data));
     gm.handle("spellLightOff", data => this.lightOffAsGM(data));
     Hooks.on("deleteActiveEffect", effect => this.onLightEnded(effect));
     /* Around the target */
@@ -771,12 +773,12 @@ export class spellActions{
       foundry.utils.mergeObject(ctx.message ?? {}, { data : { flags : { [module.id] : { goodberries : counts } } } }, { inplace : false }));
   }
 
-  /* A Goodberry card's rows : Spawn, for the creature's owner or the GM */
+  /* A Goodberry card's rows : Spawn, for the GM or the user whose own creature it is */
   static berryButton(message, uuid, buttons){
     const counts = message?.getFlag?.(module.id, "goodberries");
     const n = counts?.[uuid.replaceAll(".", "-")];
     const actor = n ? fromUuidSync(uuid, { strict : false })?.actor : null;
-    if(!actor || !(game.user.isGM || actor.isOwner)) return;
+    if(!actor || !(game.user.isGM || gm.mine(actor))) return;
     const done = !!message.getFlag(module.id, `berriesGiven.${uuid.replaceAll(".", "-")}`);
     buttons.push({ id : "spawnBerries", icon : "fa-seedling", disabled : done,
       label : module.format(done ? "spellActions.goodberry.spawned" : "spellActions.goodberry.spawn", { n }) });
@@ -788,12 +790,12 @@ export class spellActions{
     await gm.run("goodberries", { message : message.id, token : uuid, n });
   }
 
-  /* GM : that creature's berries (its owner or the GM pressed Spawn), stacked; the card remembers */
+  /* GM : that creature's berries (the GM, or the user whose own creature it is, pressed Spawn), stacked; the card remembers */
   static async goodberriesAsGM({ message : id, token : uuid, n = 1 } = {}, user){
     const message = game.messages.get(id);
     const actor = fromUuidSync(uuid ?? "", { strict : false })?.actor;
     const key = `berriesGiven.${String(uuid).replaceAll(".", "-")}`;
-    if(!message || !actor || message.getFlag(module.id, key) || !(user.isGM || actor.testUserPermission(user, "OWNER"))) return false;
+    if(!message || !actor || message.getFlag(module.id, key) || !(user.isGM || gm.mine(actor, user))) return false;
     const count = Math.min(this.GOODBERRY.max, Number(message.getFlag(module.id, "goodberries")?.[String(uuid).replaceAll(".", "-")]) || Number(n) || 1);
     const source = await fromUuid(this.GOODBERRY.item).catch(() => null);
     if(!source) return ui.notifications.warn(module.i18n("spellActions.goodberry.noItem"));
@@ -1517,7 +1519,11 @@ export class spellActions{
     /* Cast again : the old light goes */
     const old = actor.effects.filter(e => e.getFlag(module.id, "spellLight")?.item === activity.item.uuid);
     if(old.length) await actor.deleteEmbeddedDocuments("ActiveEffect", old.map(e => e.id));
-    const made = await gm.run("spellLight", { ...where, light : spec.light, key : `spell-${activity.item.id}` });
+    const lit = { ...where, light : spec.light, key : `spell-${activity.item.id}` };
+    const on = where.token ? fromUuidSync(where.token, { strict : false }) : null;
+    /* On a creature that isn't the user's own : the GM's button lights it */
+    const made = (on && !gm.mine(on)) ? (await gm.ask("spellLightAsk", lit, { actor, text : module.format("spellActions.lightAsk", { name : actor.name, spell : activity.item.name, target : on.name }),
+      label : module.format("spellActions.lightButton", { target : on.name }) }), { token : where.token }) : await gm.run("spellLight", lit);
     await actor.createEmbeddedDocuments("ActiveEffect", [{
       name : activity.item.name, img : activity.item.img, origin : activity.item.uuid,
       duration : { value : Math.round(spec.seconds / 60), units : "minutes" },

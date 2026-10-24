@@ -56,7 +56,7 @@ The main pieces, as methods on tokens, actors and items. Most also exist as `Mac
 | `MacroHelper.cutDamage(card, token, { amount, label })` | A card's damage to one creature made lower when applied (Interception, Deflect Attacks, Protective Field). |
 | `token.actor.save("con", 13, { from : item })` | The save lego: one save, rolled the way every rule rolls it. |
 | `token.applyCondition("prone", { save, dc, duration, repeat })`, `token.grapple(target)` | A condition, or a grapple, straight on a creature with no card. |
-| `token.endCondition("poisoned", { from })` | A condition taken off a creature (Lay on Hands' Remove Poison). Any creature but the one doing it or your own character: the GM's button. |
+| `token.endCondition("poisoned", { from })` | A condition taken off a creature (Lay on Hands' Remove Poison). Any creature that isn't your own (your character and its summons; the GM's: no player owns it): the GM's button. |
 | `MacroHelper.onFailedTest({ id, source, formula })` | A die a creature adds to its missed attack or failed save or check (Bardic Inspiration). |
 | `MacroHelper.markSpell({ id, spell, free, hours, damage })` | A spell that marks one creature and hurts it more on every attack, ending with Concentration (Hunter's Mark, Hex). |
 | `MacroHelper.weaponUses(id, { applies, abilities, die })` | The abilities and damage die a weapon attacks with while a rule applies (Martial Arts, Pact of the Blade). |

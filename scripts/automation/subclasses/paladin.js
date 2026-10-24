@@ -111,7 +111,7 @@ export class paladinOaths{
     const others = [];
     for(const [t, n] of shares){
       if(!(n > 0)) continue;
-      if(t.actor?.isOwner && !game.user.isGM) await tempHP(t.actor, n, item);
+      if(gm.mine(t.actor)) await tempHP(t.actor, n, item);
       else others.push([t.document.uuid, n]);
     }
     if(others.length){

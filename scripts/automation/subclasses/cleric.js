@@ -138,7 +138,7 @@ export class clericDomains{
     for(const [uuid, amount] of shares){
       const target = fromUuidSync(uuid, { strict : false });
       if(!target?.actor) continue;
-      if(target.actor.isOwner && !game.user.isGM) await heal(target.actor, amount);
+      if(gm.mine(target.actor)) await heal(target.actor, amount);
       else others.push([uuid, amount]);
     }
     if(!others.length) return;

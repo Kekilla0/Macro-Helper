@@ -3,6 +3,7 @@ import { logger } from '../log.js';
 import { idOf } from '../helpers/utils.js';
 import { tokenOf } from '../helpers/tokens.js';
 import { hitOf } from './hit-bonus.js';
+import { gm } from '../gm.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -19,7 +20,8 @@ const log = logger.for(import.meta.url);
  *                                                           shown beside the button)
  *     withDamage : true,                                    applying the hit's damage to that creature runs it first
  *                                                           (it isn't optional : Sap, Slow, Vex)
- *     mayRun : row => row.target.actor.isOwner,             who else may run it with the damage (the GM always may)
+ *     mayRun : row => gm.mine(row.target),                  who else may run it with the damage (the GM always may;
+ *                                                           default : the user's own creature, gm.mine)
  *   })
  *
  * row : the hit (hitOf : actor, token, item, activity, roll, critical, ability...) at this creature : target (its token),
@@ -130,7 +132,7 @@ async function withDamage(message, actor){
         try {
           const row = rowOf(rule, message, ray, uuid);
           if(!row || rowDone(message, rule.id, ray, uuid)) continue;
-          if(!game.user.isGM && !(message.isOwner && (rule.mayRun?.(row) ?? actor.isOwner))) continue;
+          if(!game.user.isGM && !(message.isOwner && (rule.mayRun?.(row) ?? gm.mine(actor)))) continue;
           await run(rule, message, ray, uuid, row);
         } catch(error){ log.error("Row", rule.id, error); }
       }

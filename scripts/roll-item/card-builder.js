@@ -418,7 +418,8 @@ export async function trample(thing, feet, { size = "medium", disengage = false,
 }
 
 /* A condition straight on a creature, no card (Flumph's Prone Deficiency) : applyCondition's options; from : the item,
-   by : the creature doing it (default : the item's owner). Someone else's creature : a card with the GM's button (null) */
+   by : the creature doing it (default : the item's owner). Not the user's own creature (gm.mine) : a card with the GM's
+   button (null). confirmed : on at once (a consequence of a change the GM already allowed) */
 export async function applyConditionNow(thing, spec = {}){
   const actor = thing?.actor ?? thing;
   const doc = thing?.document ?? ((thing?.documentName === "Token") ? thing : actor?.token ?? actor?.getActiveTokens?.(false, true)?.[0]?.document ?? null);
@@ -426,8 +427,8 @@ export async function applyConditionNow(thing, spec = {}){
   const part = applyCondition(spec);
   const by = spec.by ? (tokenOf(spec.by)?.document ?? spec.by.actor ?? spec.by) : null;
   const data = { actor : actor.uuid, token : doc?.uuid ?? null, part, origin : spec.from?.uuid ?? spec.from ?? null, by : by?.uuid ?? null };
-  /* Someone else's creature : the GM's button puts it on */
-  if(!actor.isOwner){
+  /* Not the user's own creature : the GM's button puts it on */
+  if(!spec.confirmed && !gm.mine(actor)){
     const status = CONFIG.statusEffects.find(s => s.id === spec.type);
     const condition = status ? game.i18n.localize(status.name) : String(spec.type ?? "");
     const name = (doc ?? actor).name;
@@ -447,8 +448,8 @@ export async function applyConditionNow(thing, spec = {}){
  *   repeat       "end" / "start" : it saves again (same ability and DC) at that point of each of its turns, ending it
  *   from, by     the item, and the creature doing it (default : the item's owner) : its name, its origin
  *   ...          applyCondition's other options (with, escape, label, insteadOfDamage...)
- * Already under it : the harsher one stays. Done by the GM's client; for a creature the user doesn't own, the GM's
- * button on a card puts it on (asked : true).
+ * Already under it : the harsher one stays. Done by the GM's client; on a creature that isn't the user's own (gm.mine),
+ * the GM's button on a card puts it on (asked : true).
  * @returns {Promise<{ applied : boolean, asked : boolean, save : { total : number, success : boolean }|null }>}
  */
 export async function giveCondition(thing, type, { save = null, dc = null, repeat = null, ...options } = {}){
@@ -466,20 +467,10 @@ export async function giveCondition(thing, type, { save = null, dc = null, repea
   return { applied : !!result, asked : result === null, save : rolled };
 }
 
-/* Is this creature the user's own to change without the GM : the one doing it (on itself), or the player's own
-   character. Anything else (another creature the player happens to own, any creature for the GM) : the GM's button */
-function isOwnCreature(actor, doer){
-  if(!actor?.isOwner) return false;
-  const same = (a, b) => !!a && !!b && ((a === b) || (a.uuid === b.uuid));
-  if(same(actor, doer)) return true;
-  return !game.user.isGM && same(actor, game.user.character);
-}
-
 /**
  * The end-condition lego : a condition taken off a creature, the way every rule ends one (Lay on Hands' Remove Poison,
- * Lesser Restoration). Read as : target.endCondition("poisoned", { from : item }). On the creature doing it, or the
- * player's own character, it ends at once; on any other creature (the GM's use too), the GM's button on a card ends it
- * (asked : true). Nothing to end : neither.
+ * Lesser Restoration). Read as : target.endCondition("poisoned", { from : item }). On the user's own creature (gm.mine)
+ * it ends at once; on any other, the GM's button on a card ends it (asked : true). Nothing to end : neither.
  * @param {Token|Actor} thing
  * @param {string} type      the condition's id ("poisoned")
  * @param {object} [options]
@@ -490,7 +481,7 @@ function isOwnCreature(actor, doer){
 export async function endCondition(thing, type, { from = null, by = null } = {}){
   const actor = thing?.actor ?? thing;
   if(!actor?.statuses?.has?.(type)) return { ended : false, asked : false };
-  if(isOwnCreature(actor, by?.actor ?? by ?? from?.actor)) return { ended : await setStatus(actor, type, false), asked : false };
+  if(gm.mine(actor)) return { ended : await setStatus(actor, type, false), asked : false };
   const status = CONFIG.statusEffects.find(s => s.id === type);
   const condition = status ? game.i18n.localize(status.name) : String(type);
   const name = (thing?.document ?? thing)?.name ?? actor.name;
@@ -914,6 +905,8 @@ export class cardBuilder{
       if(ended?.actor) Hooks.callAll(`${module.id}.turnEnd`, ended.actor, ended.token, combat);
     });
     gm.handle("cardRelease", (data, user) => this.releaseAsGM(data, user));
+    /* GM : the button of release()'s ask card (the GM said yes) */
+    gm.handle("cardReleaseAsk", data => this.releaseAsGM(data, game.user));
     gm.handle("cardShared", (data, user) => this.sharedAsGM(data, user));
     registerTargetCards();
     /* This instead of the damage : that creature takes none of the card's damage */
@@ -946,15 +939,11 @@ export class cardBuilder{
     gm.handle("forcedMove", data => forcedMoveAsGM(data));
     /* GM : a save for a creature the asking user doesn't own (rollSave) */
     gm.handle("rollSave", data => rollSaveAsGM(data));
-    /* GM : a creature pulled out of the one engulfing it (by a creature its user owns, beside it) */
-    gm.handle("cardPullOut", async ({ target : uuid, puller } = {}, user) => {
-      const doc = fromUuidSync(uuid ?? "", { strict : false });
-      const by = fromUuidSync(puller ?? "", { strict : false });
-      if(!doc?.actor || !(user.isGM || by?.testUserPermission?.(user, "OWNER"))) return false;
-      const ids = doc.actor.effects.filter(e => e.getFlag(module.id, "engulfedBy")).map(e => e.id);
-      if(ids.length) await doc.actor.deleteEmbeddedDocuments("ActiveEffect", ids, { [module.id] : { reason : module.format("cardBuilder.pulledOut", { name : by?.name ?? "" }) } });
-      return true;
-    });
+    /* GM : a creature pulled out of the one engulfing it (by a creature its user owns, beside it; the one pulled out the
+       user's own creature, else the GM's button : cardPullOutAsk) */
+    gm.handle("cardPullOut", (data, user) => this.pullOutAsGM(data, user));
+    /* GM : the button of a pull-out's ask card (the GM said yes) */
+    gm.handle("cardPullOutAsk", data => this.pullOutAsGM(data, game.user));
     this.objectHooks();
     this.expiryHooks();
     /* Out of an engulfing creature once that effect ends (escape, pulled out) : beside it */
@@ -1040,14 +1029,14 @@ export class cardBuilder{
         /* This or the damage : once the damage is applied to it, the choice is made */
         if(part.insteadOfDamage && !done && Object.keys(target?.actor?.getFlag?.(module.id, `applied.${message.id}`) ?? {}).length) return;
         if(part.kind === "condition"){
-          if(!(game.user.isGM || target?.actor?.isOwner)) return;
+          if(!(game.user.isGM || gm.mine(target?.actor))) return;
           const status = CONFIG.statusEffects.find(s => s.id === part.type);
           const name = part.label ?? game.i18n.localize(status?.name ?? part.type);
           /* The condition's own picture and name; once applied, greyed out */
           buttons.push({ id : `part:${index}`, img : status?.img ?? null, icon : "fa-circle-exclamation", disabled : done, label : name });
         }
         else if(["effect", "attach", "disease", "engulf", "immunity"].includes(part.kind)){
-          if(!(game.user.isGM || target?.actor?.isOwner)) return;
+          if(!(game.user.isGM || gm.mine(target?.actor))) return;
           const item = message.getAssociatedItem?.();
           /* An attach that brings conditions says so : "Attach (Blinded)" */
           const also = (part.with ?? []).map(id => game.i18n.localize(CONFIG.statusEffects.find(st => st.id === id)?.name ?? id)).join(", ");
@@ -1105,7 +1094,7 @@ export class cardBuilder{
     const message = game.messages.get(id);
     const part = message?.getFlag(module.id, KEY)?.parts?.[index];
     const actor = fromUuidSync(uuid ?? "", { strict : false })?.actor;
-    if(!part || !actor || !(user.isGM || actor.testUserPermission(user, "OWNER"))) return false;
+    if(!part || !actor || !(user.isGM || gm.mine(actor, user))) return false;
     const item = message.getAssociatedItem?.();
     const sourceToken = message.getAssociatedToken?.() ?? null;
     const context = { origin : item?.uuid ?? null, by : message.getAssociatedActor?.() ?? null, sourceToken, targetToken : fromUuidSync(uuid, { strict : false }) };
@@ -1126,12 +1115,21 @@ export class cardBuilder{
     return true;
   }
 
+  static async pullOutAsGM({ target : uuid, puller } = {}, user){
+    const doc = fromUuidSync(uuid ?? "", { strict : false });
+    const by = fromUuidSync(puller ?? "", { strict : false });
+    if(!doc?.actor || !(user.isGM || (by?.testUserPermission?.(user, "OWNER") && gm.mine(doc, user)))) return false;
+    const ids = doc.actor.effects.filter(e => e.getFlag(module.id, "engulfedBy")).map(e => e.id);
+    if(ids.length) await doc.actor.deleteEmbeddedDocuments("ActiveEffect", ids, { [module.id] : { reason : module.format("cardBuilder.pulledOut", { name : by?.name ?? "" }) } });
+    return true;
+  }
+
   /* GM : a grappler lets go (its owner or the GM pressed Release) */
   static async releaseAsGM({ target : uuid, by } = {}, user){
     const token = fromUuidSync(uuid ?? "", { strict : false });
     const grappler = fromUuidSync(by ?? "", { strict : false });
     const owner = grappler?.actor ?? grappler;
-    if(!token?.actor || !(user.isGM || owner?.testUserPermission?.(user, "OWNER"))) return false;
+    if(!token?.actor || !(user.isGM || (owner?.testUserPermission?.(user, "OWNER") && gm.mine(token, user)))) return false;
     const mine = g => g.by && ((g.by.uuid === grappler?.uuid) || (g.by.actor?.uuid === owner?.uuid) || (g.by.uuid === owner?.uuid));
     const ids = grapplesOn(token.actor).filter(mine).map(g => g.effect.id);
     if(ids.length) await token.actor.deleteEmbeddedDocuments("ActiveEffect", ids, { [module.id] : { reason : module.format("cardBuilder.released", { name : grappler?.name ?? "" }) } });
@@ -1154,15 +1152,21 @@ export class cardBuilder{
 
   static async sharedAsGM({ token : uuid, amount, from } = {}, user){
     const actor = fromUuidSync(uuid ?? "", { strict : false })?.actor;
-    if(!actor || !(user.isGM || actor.testUserPermission(user, "OWNER"))) return false;
+    if(!actor || !(user.isGM || gm.mine(actor, user))) return false;
     await actor.applyDamage(Number(amount) || 0, { [module.id] : { shared : { from } } });
     return true;
   }
 
+  /* Let go : at once when the one held is the user's own creature (gm.mine), else the GM's button */
   static async release(grappler, target){
     const by = (grappler?.document ?? grappler)?.uuid;
     const uuid = (target?.document ?? target)?.uuid;
-    if(by && uuid) await gm.run("cardRelease", { target : uuid, by });
+    if(!by || !uuid) return;
+    if(gm.mine(target)) return gm.run("cardRelease", { target : uuid, by });
+    const name = (target?.document ?? target)?.name ?? "";
+    await gm.ask("cardReleaseAsk", { target : uuid, by }, { actor : grappler?.actor ?? null,
+      text : module.format("cardBuilder.releaseAsk", { by : (grappler?.document ?? grappler)?.name ?? "", name }),
+      label : module.format("cardBuilder.releaseButton", { name }) });
   }
 
   /* A part's duration : rounds (a number) or Foundry's duration data */
@@ -1302,7 +1306,7 @@ export class cardBuilder{
 
   static async applyNowAsGM({ actor : uuid, token : tokenUuid, part, origin, by : byUuid = null } = {}, user){
     const actor = fromUuidSync(uuid ?? "", { strict : false });
-    if(!actor || !part || !(user.isGM || actor.testUserPermission(user, "OWNER"))) return false;
+    if(!actor || !part || !(user.isGM || gm.mine(actor, user))) return false;
     const targetToken = tokenUuid ? fromUuidSync(tokenUuid, { strict : false }) : null;
     const item = origin ? fromUuidSync(origin, { strict : false }) : null;
     const doer = byUuid ? fromUuidSync(byUuid, { strict : false }) : null;
@@ -1495,7 +1499,11 @@ export class cardBuilder{
     await actionTracker.spend(actor, { kind : "action", what : module.format("actionTracker.bar.pullOut", { name : inside.name }) });
     /* Out first (the burn could drop the puller), then the burn, success or not */
     const damage = effect.getFlag(module.id, "pullDamage");
-    if(roll.total >= dc) await gm.run("cardPullOut", { target : inside.document.uuid, puller : actor.uuid }).catch(error => log.debug(error));
+    const out = { target : inside.document.uuid, puller : actor.uuid };
+    if(roll.total < dc) log.debug("Pull out failed", inside.name);
+    else if(gm.mine(inside)) await gm.run("cardPullOut", out).catch(error => log.debug(error));
+    else await gm.ask("cardPullOutAsk", out, { actor, text : module.format("cardBuilder.pullOutAsk", { by : actor.name, name : inside.name }),
+      label : module.format("actionTracker.bar.pullOut", { name : inside.name }) });
     if(damage){
       const hurt = await new CONFIG.Dice.DamageRoll(damage, {}, {}).evaluate();
       await hurt.toMessage({ speaker : ChatMessage.implementation.getSpeaker({ actor }), flavor : module.format("cardBuilder.pullBurn", { name : actor.name }) });

@@ -73,6 +73,8 @@ export class actionTracker{
     uses.onActivity("economyApproval", (activity, ctx, next) => this.approvalStep(activity, ctx, next));
     gm.handle("economyAnswer", (data, user) => this.answerAsGM(data, user));
     gm.handle("wake", (data, user) => this.wakeAsGM(data, user));
+    /* GM : the button of wake()'s ask card (the GM said yes) */
+    gm.handle("wakeAsk", data => this.wakeAsGM(data, game.user));
     Hooks.on("renderChatMessageHTML", (message, html) => this.drawRequest(message, html));
     Hooks.on("updateChatMessage", message => this.answered(message));
     Hooks.on("renderCombatTracker", (app, html) => this.drawTracker(html));
@@ -178,15 +180,22 @@ export class actionTracker{
     const what = module.format("actionTracker.bar.wake", { name : sleeper?.name ?? "" });
     if(!sleeper || !this.wakeEffects(sleeper.actor).length) return;
     if(!this.left(actor, "action") && !limits.allow(module.format("actionTracker.spent", { name : actor.name, kind : this.label("action") }), { who : actor.name, what })) return;
-    const ok = await gm.run("wake", { target : (sleeper.document ?? sleeper).uuid, by : (token.document ?? token).uuid });
+    const data = { target : (sleeper.document ?? sleeper).uuid, by : (token.document ?? token).uuid };
+    /* Not the user's own creature : the GM's button wakes it (the Action is spent now) */
+    if(!gm.mine(sleeper)){
+      await gm.ask("wakeAsk", data, { actor, text : module.format("actionTracker.wakeAsk", { by : token.name, name : sleeper.name }),
+        label : module.format("actionTracker.bar.wake", { name : sleeper.name }) });
+      return this.spend(actor, { kind : "action", what });
+    }
+    const ok = await gm.run("wake", data);
     if(ok) await this.spend(actor, { kind : "action", what });
   }
 
-  /* GM : the waker's owner (or the GM) pressed Wake, and it's still within 5 ft */
+  /* GM : the GM (its button), or the user whose own creature the sleeper is, and it's still within 5 ft */
   static async wakeAsGM({ target : uuid, by } = {}, user){
     const sleeper = fromUuidSync(uuid ?? "", { strict : false });
     const waker = fromUuidSync(by ?? "", { strict : false });
-    if(!sleeper?.actor || !waker?.actor || !(user.isGM || waker.actor.testUserPermission(user, "OWNER"))) return false;
+    if(!sleeper?.actor || !waker?.actor || !(user.isGM || (waker.actor.testUserPermission(user, "OWNER") && gm.mine(sleeper, user)))) return false;
     if(!this.sleepersNear(waker.object).some(t => t.document === sleeper)) return false;
     const ids = this.wakeEffects(sleeper.actor).map(e => e.id);
     await sleeper.actor.deleteEmbeddedDocuments("ActiveEffect", ids, { [module.id] : { reason : module.format("actionTracker.woken", { name : waker.name }) } });

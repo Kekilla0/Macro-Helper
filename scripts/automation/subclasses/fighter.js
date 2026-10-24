@@ -250,7 +250,7 @@ export class fighterArchetypes{
     const n = Number.isFinite(total) ? total : (await this.rollDie(fighter)).total;
     const data = { name : module.format("subclasses.fighter.acBonus", { item : item.name, n }), img : item.img, origin : item.uuid,
       changes : [{ key : "system.attributes.ac.bonus", type : "add", mode : 2, value : String(n) }] };
-    if(onto.isOwner) await addTimedEffect(onto, data, { of : fighter, until : "turnStart" });
+    if(gm.mine(onto)) await addTimedEffect(onto, data, { of : fighter, until : "turnStart" });
     else await subclasses.giveEffect(onto, data, { from : item, until : "turnStart", of : fighter });
   }
 
@@ -267,9 +267,9 @@ export class fighterArchetypes{
     if(onto) await this.acBonus(actor, item, onto, total);
   }
 
-  /* A token moved to a space (its owner, else the GM's button) */
+  /* A token moved to a space (the user's own creature, else the GM's button) */
   static async moveTo(actor, token, point, item){
-    if(token.document.isOwner) return token.document.update({ x : point.x, y : point.y }, { animate : false });
+    if(gm.mine(token.actor)) return token.document.update({ x : point.x, y : point.y }, { animate : false });
     return gm.ask("fighterMove", { token : token.document.uuid, x : point.x, y : point.y, item : item.uuid },
       { actor, label : module.i18n("subclasses.fighter.moveIt"), text : module.format("subclasses.fighter.moveAsk", { name : actor.name, item : item.name, target : token.name }) });
   }

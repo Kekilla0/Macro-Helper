@@ -38,6 +38,27 @@ export class gm{
   }
 
   /**
+   * Is that creature the user's own, to change at once without the GM's button : for a player, their own character
+   * (user.character) and what it summoned, when they own it; for the GM, a creature no player owns. Anything else (another creature a
+   * player happens to own, a player's creature for the GM) goes through ask().
+   *   if(gm.mine(target)) await change(target); else await gm.ask("change", { ... }, { text, label });
+   * @param {Actor|Token|TokenDocument} thing
+   * @param {User} [user=game.user]
+   * @returns {boolean}
+   */
+  static mine(thing, user = game.user){
+    const actor = thing?.actor ?? thing;
+    if(!actor || !user) return false;
+    if(user.isGM) return !game.users.some(u => !u.isGM && actor.testUserPermission(u, "OWNER"));
+    const own = user.character;
+    if(!own || !actor.testUserPermission(user, "OWNER")) return false;
+    const same = a => !!a && ((a === own) || (a.uuid === own.uuid));
+    /* Its summon (Find Familiar, a Wild Companion) : dnd5e notes the item that summoned it */
+    const summoner = fromUuidSync(actor.getFlag?.("dnd5e", "summon.origin") ?? "", { strict : false })?.actor;
+    return same(actor) || same(summoner);
+  }
+
+  /**
    * Run a registered query as the GM : here when you are the GM, else on the active GM's client.
    * @param {string} name
    * @param {object} data   JSON-serializable
