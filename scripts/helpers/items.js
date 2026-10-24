@@ -7,7 +7,8 @@ import { tokenOf, actorOf, distanceBetween, getRange, isOutOfAction, hasLineOfSi
 import { pickTargets, getThreats } from './targets.js';
 import { findItem, usedThisTurn } from './actors.js';
 import { uses } from '../uses.js';
-import { wait, waitFor } from './utils.js';
+import { wait, waitFor, idOf } from './utils.js';
+import { gm } from '../gm.js';
 import { rollModes } from '../automation/roll-modes.js';
 
 /**
@@ -59,6 +60,65 @@ export function isUnarmored(thing, { shield = true } = {}){
   const actor = actorOf(thing);
   const armor = actor?.items?.some?.(i => (i.type === "equipment") && ["light", "medium", "heavy"].includes(i.system.type?.value) && i.system.equipped);
   return !armor && !(shield && hasShieldEquipped(actor));
+}
+
+/* Metal or not, by base item (or identifier) : weapons are, but for these; armor : Heavy all, Medium only these */
+const NOT_METAL_WEAPONS = ["club", "greatclub", "quarterstaff", "sling", "blowgun", "shortbow", "longbow", "whip", "net",
+  "handcrossbow", "lightcrossbow", "heavycrossbow", "unarmedstrike"];
+const METAL_MEDIUM_ARMOR = ["chainshirt", "scalemail", "breastplate", "halfplate"];
+
+/**
+ * Is an item made of metal (Heat Metal's object; a homebrew "metal armor" rule) : Heavy armor; Medium armor that is a
+ * Chain Shirt, Scale Mail, Breastplate or Half Plate; weapons, except the wooden, leather and rope ones (Club, Greatclub,
+ * Quarterstaff, Sling, Blowgun, Shortbow, Longbow, Whip, Net) and crossbows. Light armor, shields, natural weapons and
+ * Unarmed Strike : no. flags["macro-helper"].metal (true / false) on the item decides instead (a metal shield).
+ * @param {Item} item
+ * @returns {boolean}
+ */
+export function isMetal(item){
+  const own = item?.getFlag?.(module.id, "metal");
+  if(typeof own === "boolean") return own;
+  const type = item?.system?.type?.value;
+  const key = String(item?.system?.type?.baseItem || idOf(item) || "").toLowerCase().replace(/[^a-z]/g, "");
+  if(item?.type === "weapon") return (type !== "natural") && !NOT_METAL_WEAPONS.some(k => key.startsWith(k));
+  if(item?.type !== "equipment") return false;
+  if(type === "heavy") return true;
+  return (type === "medium") && METAL_MEDIUM_ARMOR.some(k => key.startsWith(k));
+}
+
+/**
+ * What a creature holds : its hands' items (Hands), else its equipped weapons (not natural ones) and shields.
+ * @param {Actor|Token|TokenDocument} thing
+ * @returns {Item[]}
+ */
+export function heldItems(thing){
+  const actor = actorOf(thing);
+  if(!actor?.items) return [];
+  if(hands.manages(actor)) return hands.heldItems(actor);
+  return actor.items.filter(i => i.system.equipped && (((i.type === "weapon") && (i.system.type?.value !== "natural")) || hands.isShield(i)));
+}
+
+/**
+ * A creature lets go of an item it holds (Heat Metal's failed save; a homebrew "drops its weapon") : out of its hand,
+ * still on its sheet (with Hands off, or a creature whose hands aren't in use : unequipped). Not the user's own creature
+ * (gm.mine) : the GM's button drops it.
+ * @param {Actor|Token|TokenDocument} thing
+ * @param {Item} item
+ * @param {object} [options]
+ * @param {Item} [options.from]   what makes it drop (the ask card's speaker and line)
+ * @returns {Promise<{ dropped : boolean, asked : boolean }>}
+ */
+export async function dropHeld(thing, item, { from = null } = {}){
+  const actor = actorOf(thing);
+  if(!actor || !item) return { dropped : false, asked : false };
+  const name = tokenOf(thing)?.name ?? actor.name;
+  if(!gm.mine(actor)){
+    await gm.ask("dropHeld", { actor : actor.uuid, item : item.id }, { actor : from?.actor ?? null,
+      text : module.format("helpers.dropHeld.ask", { name, item : item.name, from : from?.name ?? "" }),
+      label : module.format("helpers.dropHeld.button", { name, item : item.name }) });
+    return { dropped : false, asked : true };
+  }
+  return { dropped : await hands.drop(actor, item), asked : false };
 }
 
 /**

@@ -22,6 +22,7 @@ const log = logger.for(import.meta.url);
  *
  * Rules :
  *   nextAttack : "disadvantage"   its next attack roll has it, then the effect ends (Vicious Mockery)
+ *   attacksMode : "disadvantage"  its attack rolls have it while the effect lasts (Heat Metal's armor)
  *   noHealing : true              it can't regain Hit Points (temporary ones still come) (Chill Touch)
  *   attackersMinus : "1d4"        attack rolls against it subtract that (Blade Ward)
  *   noInvisible : true            being Invisible gives it nothing (Starry Wisp)
@@ -192,6 +193,9 @@ export class spellEffects{
     for(const effect of this.withRule(actor, "nextAttack")){
       giveMode(roll, effect.getFlag(module.id, "rule").nextAttack, module.format("spellEffects.reason", { effect : effect.name }));
       used.push(effect.uuid);
+    }
+    for(const effect of this.withRule(actor, "attacksMode")){
+      giveMode(roll, effect.getFlag(module.id, "rule").attacksMode, module.format("spellEffects.reason", { effect : effect.name }));
     }
     const target = this.targetOf(config);
     const theirs = target?.actor;

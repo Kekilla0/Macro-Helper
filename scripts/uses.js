@@ -76,6 +76,7 @@ export class uses{
       "spellLight",    // Spell actions : Light on a token or a square, Produce Flame in hand
       "spareTheDying", // Spell actions : Spare the Dying picks a creature at 0 HP first
       "cure",          // Spell actions : Lesser Restoration, Protection from Poison : the creature touched, which condition ends
+      "heatMetal",     // Spell actions : Heat Metal : the creature and its metal object; Reheat : whoever holds or wears it now
       "subclassUse",   // Subclasses : a feature that picks or divides first (Preserve Life, Invoke Duplicity's space)
       "pactWeapon",    // Warlock : Forge Pact Weapon : bond a weapon or conjure one
       "pickTargets",   // Roll Item : pick targets on the map (Pick Targets)

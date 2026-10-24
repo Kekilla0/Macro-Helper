@@ -5,7 +5,7 @@ import { idOf, chooseOption, esc } from '../../helpers/utils.js';
 import { addTimedEffect, rollSave } from '../../helpers/actors.js';
 import { tokenOf, distanceBetween, canSee, forcedMove } from '../../helpers/tokens.js';
 import { pickTargets, pickSpace } from '../../helpers/targets.js';
-import { spendUses } from '../../helpers/items.js';
+import { spendUses, heldItems, dropHeld } from '../../helpers/items.js';
 import { chooseOne } from '../../helpers/creatures.js';
 import { giveMode } from '../../roll-item/reasons.js';
 import { onHit, hitOf } from '../../roll-item/hit-bonus.js';
@@ -175,9 +175,22 @@ export class fighterArchetypes{
     }
     else if(id === "disarming-attack"){
       const save = await rollSave(target, "str", dc, { from : item });
-      if(save && !save.success) await ChatMessage.implementation.create({ speaker : ChatMessage.implementation.getSpeaker({ actor : hit.actor }),
-        content : `<p>${esc(module.format("subclasses.fighter.disarmed", { name : target.name }))}</p>` });
+      if(save && !save.success) await this.disarm(hit, target, item);
     }
+  }
+
+  /* Disarming Attack's failed save : it drops one object it's holding, the attacker's choice (still on its sheet) */
+  static async disarm(hit, target, item){
+    const speaker = ChatMessage.implementation.getSpeaker({ actor : hit.actor });
+    const held = heldItems(target);
+    if(!held.length) return ChatMessage.implementation.create({ speaker, content : `<p>${esc(module.format("subclasses.fighter.disarmedNothing", { name : target.name }))}</p>` });
+    const chosen = (held.length === 1) ? held[0].id : await chooseOne(held.map(i => ({ value : i.id, label : i.name, img : i.img })),
+      { title : item.name, icon : "fa-solid fa-hand", prompt : module.format("subclasses.fighter.disarmPrompt", { name : target.name }), columns : Math.min(3, held.length) });
+    const object = chosen ? target.actor.items.get(chosen) : null;
+    if(!object) return;
+    const { dropped } = await dropHeld(target, object, { from : item });
+    if(dropped) await ChatMessage.implementation.create({ speaker,
+      content : `<p>${esc(module.format("helpers.dropHeld.dropped", { name : target.name, item : object.name, from : item.name }))}</p>` });
   }
 
   /* Commander's Strike : a willing ally, a die spent, then its card : the ally's Attack (Reaction) button, the die on

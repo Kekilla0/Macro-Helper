@@ -1,5 +1,6 @@
 import { module } from '../module.js';
 import { patch } from '../patch.js';
+import { gm } from '../gm.js';
 import { idOf, esc } from '../helpers/utils.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
@@ -43,6 +44,7 @@ export class hands{
     Hooks.on("deleteItem", (item, options, userId) => this.onDelete(item, userId));
     Hooks.on("dnd5e.getItemContextOptions", (item, options) => this.contextOptions(item, options));
     Hooks.on("dnd5e.preRollAttackV2", config => this.onPreRollAttack(config));
+    gm.handle("dropHeld", (data, user) => this.dropAsGM(data, user));
     /* A hotbar macro (dnd5e's "use this item", by name) with several items of that name : the right one, not the first */
     Hooks.once("setup", () => patch.wrap("CONFIG.Macro.documentClass.prototype.execute", function(wrapped, scope = {}){
       const used = hands.useDuplicate(this, scope);
@@ -334,6 +336,29 @@ export class hands{
     if(next.main === next.off) next.main = next.off = null;
     else next[slot] = null;
     await this.save(actor, this.normalised(actor, next));
+  }
+
+  /* Let go of an item (dropped : out of its hand, still on the sheet); a creature whose hands aren't in use, or with the
+     setting off : no longer equipped. False : it wasn't held */
+  static async drop(actor, item){
+    if(!actor || !item) return false;
+    if(this.manages(actor) && this.inUse(actor)){
+      const slot = this.handOf(actor, item);
+      if(!slot) return false;
+      await this.empty(actor, (slot === "off") ? "off" : "main");
+      return true;
+    }
+    if(!item.system?.equipped) return false;
+    await item.update({ "system.equipped" : false }, { [module.id] : { hands : true } });
+    return true;
+  }
+
+  /* GM : dropHeld's drop (its ask card's button calls it with the GM as user) */
+  static async dropAsGM({ actor : uuid, item : id } = {}, user){
+    const actor = fromUuidSync(uuid ?? "", { strict : false });
+    const item = actor?.items?.get?.(id ?? "");
+    if(!item || !(user?.isGM || gm.mine(actor, user))) return false;
+    return this.drop(actor, item);
   }
 
   /* ---------- The sheet ---------- */

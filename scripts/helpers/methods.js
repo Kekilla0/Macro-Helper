@@ -6,7 +6,7 @@ import { isEnemy, isAlly, getThreats, isThreatened, getEnemiesWithinRange, pickT
 import { getSize, setStatus, setDefeated, splitToken, damage, heal, tempHP, dropsToZero, isKilledOutright, preventDropToZero, findItem,
   rollSave, addTimedEffect, recoverSpellSlots, slotsLeft, spellSlots, addSpellSlot, usedThisTurn, markUsedThisTurn, getLastDamage, clearLastDamage, stabilize } from './actors.js';
 import { setBaseDamage, setDamage, updateItem, attackModeFor, isLongRange, isRangedItem, isRangedAttack, canThrow, getAmmunition, pickAndAttack,
-  getUses, hasUses, spendUses, useActivity, useAndApply, multiattack, getHealing, pickAttack, isOtherHandFree, hasShieldEquipped, isClassSpell, replaceItem } from './items.js';
+  getUses, hasUses, spendUses, useActivity, useAndApply, multiattack, getHealing, pickAttack, isOtherHandFree, hasShieldEquipped, isClassSpell, replaceItem, isMetal } from './items.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -98,6 +98,7 @@ export const METHODS = {
     spendUses : call(spendUses),                                    // (amount, { warn }) -> fresh item | null
     useActivity : call(useActivity),                                // ({ activity, configure, event }) -> dnd5e usage results | null
     isClassSpell : call(isClassSpell),                              // (cls) -> boolean, a spell of that class ("sorcerer")
+    isMetal : call(isMetal),                                        // () -> boolean, a metal weapon / Medium-Heavy metal armor (flag overrides)
     replaceWith : call(replaceItem),                                // (source, { origin }) -> Promise<new Item>, in this one's place (a swap)
     rollItem : function(options){ return rollItem.roll(this, options); },
   },

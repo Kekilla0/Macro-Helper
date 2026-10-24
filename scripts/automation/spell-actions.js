@@ -13,9 +13,9 @@ import { idOf, chooseOption, buttonRow, addButton, makeButton, esc, ownerIds, or
 import { conditions } from './conditions.js';
 import { rollRequests } from '../requests/requests.js';
 import { heldLight } from './held-light.js';
-import { stabilize, addTimedEffect, spendHitDice, heal } from '../helpers/actors.js';
+import { stabilize, addTimedEffect, spendHitDice, heal, rollSave, giveEffect } from '../helpers/actors.js';
 import { itemFixes } from './item-fixes.js';
-import { conjureItem } from '../helpers/items.js';
+import { conjureItem, isMetal, dropHeld, heldItems } from '../helpers/items.js';
 import { endCondition } from '../roll-item/card-builder.js';
 import { saveModeAgainst } from './roll-modes.js';
 import { pickTargets, pickSpace } from '../helpers/targets.js';
@@ -43,6 +43,11 @@ const log = logger.for(import.meta.url);
  *   Sustained     : a spell used again while its Concentration lasts does its later part, no slot (the sustain lego) :
  *                   Witch Bolt at the same creature (its 1d12, a Bonus Action; the first card no longer rolls it), Heat
  *                   Metal's Reheat, Flame Blade's attack (a Magic action; let go of the blade : evoked again).
+ *   Heat Metal    : the creature, then which of its metal objects (isMetal : held weapons, then worn armor; none : it
+ *                   can't be cast, nothing spent). The holder or wearer who takes its damage makes a CON save; failed :
+ *                   a held object is dropped (dropHeld), worn armor gives Disadvantage on attack rolls and ability checks
+ *                   until the start of the caster's next turn. Reheat hits whoever holds or wears it now (taken off,
+ *                   dropped : nothing to heat), within the spell's range. Plutonium's "On Damage Save" is hidden.
  *   Flame Blade   : cast, a blade in a free hand that lights the token; it goes when let go or the Concentration ends.
  *   Cures         : Lesser Restoration, Protection from Poison : the creature touched picked first, which condition ends
  *                   asked; ended once cast (the end-condition lego). Protection's effect : advantage on saves vs Poisoned.
@@ -122,6 +127,7 @@ export class spellActions{
   /* A creature touched : one of these conditions on it ends */
   static CURES = { "lesser-restoration" : ["blinded", "deafened", "paralyzed", "poisoned"], "protection-from-poison" : ["poisoned"] };
   static VIGOR = "arcane-vigor";
+  static HEAT_METAL = { id : "heat-metal", abilities : ["str", "dex", "con", "int", "wis", "cha"] };
   static BONUS_CASTS = ["flame-blade", "arcane-vigor"];
   static FLAME_BLADE = { id : "flame-blade", light : { bright : 10, dim : 20, color : "#ff7a1a", alpha : 0.35, animation : { type : "torch", speed : 3, intensity : 3 } } };
   static LEAP = { "chromatic-orb" : { feet : 30 } };
@@ -186,6 +192,10 @@ export class spellActions{
     uses.onActivity("cure", (activity, ctx, next) => this.cureStep(activity, ctx, next));
     Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.onCure(activity, usage, results));
     saveModeAgainst("protection-from-poison", ["poisoned"], { enabled : () => this.enabled() });
+    /* Heat Metal */
+    uses.onActivity("heatMetal", (activity, ctx, next) => this.heatStep(activity, ctx, next));
+    Hooks.on("dnd5e.applyDamage", (actor, amount, options) => this.onHeated(actor, amount, options));
+    itemFixes.add({ name : "Heat Metal's save hidden", where : "owned", plan : item => this.heatSaveFix(item) });
     /* Arcane Vigor (its Cast's own roll : the largest Hit Die, not rolled on the card) */
     uses.onItem("arcaneVigor", (item, ctx, next) => this.vigorStep(item, ctx, next));
     Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.onVigor(activity, usage, results));
@@ -493,8 +503,13 @@ export class spellActions{
   static sustainDefaults(){
     const of = (item, test) => item.system.activities?.find?.(test) ?? null;
     sustain("witch-bolt", { sameTarget : true, use : item => of(item, a => a.type === "damage") });
-    sustain("heat-metal", { scaled : true, cast : item => of(item, a => (a.type === "damage") && !/reheat/i.test(a.name ?? "")),
-      use : item => of(item, a => (a.type === "damage") && /reheat/i.test(a.name ?? "")) ?? [...(item.system.activities ?? [])].filter(a => a.type === "damage").at(-1) });
+    sustain(this.HEAT_METAL.id, { scaled : true, cast : item => of(item, a => (a.type === "damage") && !/reheat/i.test(a.name ?? "")),
+      use : item => of(item, a => (a.type === "damage") && /reheat/i.test(a.name ?? "")) ?? [...(item.system.activities ?? [])].filter(a => a.type === "damage").at(-1),
+      /* Its Concentration remembers the object */
+      used : (activity, concentration, usage) => {
+        const object = usage?.[module.id]?.heatObject;
+        if(concentration && object && (concentration.getFlag(module.id, "heatMetal") !== object)) return concentration.setFlag(module.id, "heatMetal", object);
+      } });
     sustain(this.FLAME_BLADE.id, { scaled : true, cast : item => this.evokeOf(item),
       /* The blade in hand : its attack (a Magic action); let go : evoked again (a Bonus Action) */
       use : item => this.bladeOf(item) ? { activity : of(item, a => a.type === "attack"), economy : "action" } : this.evokeOf(item),
@@ -648,6 +663,99 @@ export class spellActions{
     const cast = this.evokeOf(item);
     if(!cast || (cast.activation?.type === "bonus")) return null;
     return { update : { [`system.activities.${cast.id}.activation`] : { type : "bonus", value : 1, override : true } } };
+  }
+
+  /* ========== Heat Metal ========== */
+
+  /* Its metal objects : held ones (weapons), then worn armor */
+  static metalOf(actor){
+    if(!actor?.items) return [];
+    const held = heldItems(actor);
+    const worn = actor.items.filter(i => (i.type === "equipment") && !hands.isShield(i) && i.system.equipped);
+    return [...held, ...worn].filter(i => isMetal(i));
+  }
+
+  /* Whoever holds or wears it now (its token on this scene), null when nobody does */
+  static heatHolder(object){
+    const actor = object?.actor;
+    if(!actor || !this.metalOf(actor).some(i => i.id === object.id)) return null;
+    const token = tokenOf(actor);
+    return (token?.document?.parent === canvas.scene) ? token : null;
+  }
+
+  /* Cast : the creature, then which metal object; Reheat : whoever holds or wears it now, within range */
+  static async heatStep(activity, ctx, next){
+    const item = activity?.item;
+    const own = ctx.config?.[module.id] ?? {};
+    if(!this.enabled() || (idOf(item) !== this.HEAT_METAL.id) || (activity.type !== "damage") || own.heatObject) return next();
+    const range = getRange(activity) || 60;
+    const caster = tokenOf(item);
+    if(own.noCast){
+      const object = fromUuidSync(this.concentrationOf(activity.actor, item)?.getFlag(module.id, "heatMetal") ?? "", { strict : false });
+      const holder = this.heatHolder(object);
+      if(!object || !holder){
+        ui.notifications.warn(module.format("spellActions.heatMetal.notHeld", { item : object?.name ?? item.name, spell : item.name }));
+        return null;
+      }
+      if(caster && (distanceBetween(caster, holder) > range)){
+        ui.notifications.warn(module.format("spellActions.heatMetal.outOfRange", { item : object.name, name : holder.name, range }));
+        return null;
+      }
+      canvas.tokens.setTargets([holder.id]);
+      uses.mark(ctx, { heatObject : object.uuid, skipPick : true, useTargets : true });
+      uses.flag(ctx, { heatMetal : object.uuid });
+      return next();
+    }
+    const [target] = await pickTargets(item, { count : 1, range, disposition : "any", includeSelf : false, confirm : "auto" }) ?? [];
+    if(!target) return null;
+    const metal = this.metalOf(target.actor);
+    if(!metal.length){
+      ui.notifications.warn(module.format("spellActions.heatMetal.noMetal", { name : target.name, spell : item.name }));
+      return null;
+    }
+    const { chooseOne } = await import('../helpers/creatures.js');
+    const chosen = (metal.length === 1) ? metal[0].id : await chooseOne(metal.map(i => ({ value : i.id, label : i.name, img : i.img })),
+      { title : item.name, icon : "fa-solid fa-fire", prompt : module.format("spellActions.heatMetal.prompt", { name : target.name }), columns : Math.min(3, metal.length) });
+    const object = chosen ? target.actor.items.get(chosen) : null;
+    if(!object) return null;
+    canvas.tokens.setTargets([target.id]);
+    uses.mark(ctx, { heatObject : object.uuid, skipPick : true, useTargets : true });
+    uses.flag(ctx, { heatMetal : object.uuid, note : module.format("spellActions.heatMetal.note", { item : object.name, name : target.name }) });
+    return next();
+  }
+
+  /* Its holder or wearer took the damage (the client that applied it) : a CON save; failed, a held object is dropped,
+     worn armor gives Disadvantage on attack rolls and ability checks until the start of the caster's next turn */
+  static async onHeated(actor, amount, options){
+    const card = options?.origin;
+    const uuid = card?.getFlag?.(module.id, "heatMetal");
+    if(!uuid || !this.enabled() || !(amount > 0) || !actor?.isOwner) return;
+    const object = fromUuidSync(uuid, { strict : false });
+    if(!object?.actor || (object.actor.uuid !== actor.uuid) || !this.heatHolder(object)) return;
+    const spell = card.getAssociatedItem?.() ?? null;
+    const dc = spell?.system?.activities?.find?.(a => a.type === "save")?.save?.dc?.value ?? spell?.actor?.system?.attributes?.spell?.dc;
+    const token = tokenOf(actor) ?? actor;
+    const save = await rollSave(token, "con", dc, { from : spell, card });
+    if(!save || save.success) return;
+    /* Held : dropped */
+    if(!object.system?.equipped || (object.type === "weapon") || hands.isShield(object)){
+      const { dropped } = await dropHeld(token, object, { from : spell });
+      if(dropped) await ChatMessage.implementation.create({ speaker : ChatMessage.implementation.getSpeaker({ actor }),
+        content : `<p>${esc(module.format("helpers.dropHeld.dropped", { name : token.name ?? actor.name, item : object.name, from : spell?.name ?? "" }))}</p>` });
+      return;
+    }
+    /* Worn : it can't be dropped */
+    await giveEffect(token, { name : module.format("spellActions.heatMetal.effect", { spell : spell?.name ?? "", item : object.name }), img : spell?.img ?? null,
+      changes : this.HEAT_METAL.abilities.map(a => ({ key : `system.abilities.${a}.check.roll.mode`, type : "add", mode : 2, value : "-1" })),
+      flags : { [module.id] : { rule : { attacksMode : "disadvantage" } } } }, { from : spell, until : "turnStart", of : spell?.actor ?? null });
+  }
+
+  /* Plutonium's "On Damage Save" : the save comes with the damage, never used on its own (hidden) */
+  static heatSaveFix(item){
+    if((item.type !== "spell") || (idOf(item) !== this.HEAT_METAL.id)) return null;
+    const save = item.system.activities?.find?.(a => a.type === "save");
+    if(!save || (save.visibility?.level?.max === 0)) return null;
+    return { update : { [`system.activities.${save.id}.visibility.level.max`] : 0 } };
   }
 
   /* ========== Cures (Lesser Restoration, Protection from Poison) ========== */
