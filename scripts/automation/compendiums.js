@@ -64,9 +64,11 @@ export class compendiums{
    * @param {object} [options]
    * @param {string[]} [options.fields]   more index fields (system.type, system.level, system.properties...)
    * @param {string} [options.notice]     a progress notice while reading
+   * @param {(entry : object) => string} [options.key]   what makes two entries the same (default : the identifier, else
+   *                                       the name) : "metamagic-careful-spell" and "careful-spell" as one
    * @returns {Promise<object[]>}  index entries (uuid, name, img, ...), sorted by name
    */
-  static async search(filter, { fields = [], notice = null } = {}){
+  static async search(filter, { fields = [], notice = null, key = null } = {}){
     const bar = notice ? ui.notifications.info(notice, { progress : true }) : null;
     const found = new Map();
     try {
@@ -79,7 +81,7 @@ export class compendiums{
         const granted = e => !!(Number(e.system?.uses?.max) || String(e.system?.uses?.max ?? "").trim());
         for(const entry of index){
           if(String(entry.system?.source?.rules ?? "") === "2014") continue;
-          const id = entry.system?.identifier || entry.name;
+          const id = key?.(entry) ?? (entry.system?.identifier || entry.name);
           const had = found.get(id);
           if((had && !(granted(had) && !granted(entry))) || !filter(entry)) continue;
           found.set(id, entry);
@@ -165,16 +167,17 @@ export class compendiums{
  * @param {number} [options.columns]
  * @param {(entry) => string} [options.detail]   a line under each name
  * @param {string} [options.empty]       the warning when there's nothing to choose
+ * @param {(entry) => string} [options.key]   every Item compendium : what makes two entries the same (compendiums.search)
  * @returns {Promise<Document|null>}  the chosen document (from its compendium), null : none to choose, or closed
  */
-export async function pickFromCompendium(filter = () => true, { pack = null, fields = [], title = "", prompt = "", icon = "fa-solid fa-book", columns = 3, notice = null, detail = null, empty = null } = {}){
+export async function pickFromCompendium(filter = () => true, { pack = null, fields = [], title = "", prompt = "", icon = "fa-solid fa-book", columns = 3, notice = null, detail = null, empty = null, key = null } = {}){
   let entries;
   if(pack){
     const found = compendiums.pack(pack) ?? game.packs.get(pack);
     const index = found ? await found.getIndex({ fields : [...(compendiums.INDEX_FIELDS[found.documentName] ?? []), ...fields] }) : [];
     entries = [...index].filter(filter).sort((a, b) => a.name.localeCompare(b.name));
   }
-  else entries = await compendiums.search(filter, { fields, notice });
+  else entries = await compendiums.search(filter, { fields, notice, key });
   if(!entries.length){
     if(empty) ui.notifications.warn(empty);
     return null;

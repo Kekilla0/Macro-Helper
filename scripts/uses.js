@@ -53,8 +53,8 @@ export class uses{
       "castLevel",     // Spells : a levelled spell aimed at creatures asks its slot level first (the pick counts upcast targets)
       "longCast",      // Casting : 1 minute or more (or a Ritual) : begun with Concentration, cast from its card later
       "slotPerTurn",   // Casting : a second spell slot this turn follows Rule Limits
+      "castingChoice", // Casting choice : an option chosen as it's cast, paid once cast (Metamagic; Quickened : its economy)
       "economy",       // Action Tracker : its Action / Bonus Action / Reaction (Rule Limits for a second), spent once used
-      "metamagic",     // Sorcerer : Metamagic chosen and paid before a Sorcerer spell is cast (Distant : the range picked)
       "components",    // Components : V (not Silenced), S (a free hand), M (a focus, or a pouch and a free hand) : Rule Limits
       "spellCommand",  // Spell actions : Command : which command, before the targets
       "spellChoice",   // Spell effects : Guidance's skill, Resistance's damage type, asked before the targets

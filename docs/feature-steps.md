@@ -35,8 +35,6 @@ Legos are listed in [api.md](api.md). "Data" means the item's own dnd5e or Pluto
 
 ## Level 2
 
-The Sorcerer's Font of Magic and Metamagic come in their own round (L2b).
-
 | Class | Feature | Trigger | Steps | Built on |
 |---|---|---|---|---|
 | Barbarian | Danger Sense | a DEX save | advantage, not while Incapacitated | `bonusOnlyWhen` (its effect switched off while Incapacitated) |
@@ -58,6 +56,11 @@ The Sorcerer's Font of Magic and Metamagic come in their own round (L2b).
 | Ranger | Ensnaring Strike, Hail of Thorns | a weapon hit (Hail : ranged) | its save on the card (Hail : everyone within 5 ft of the target) | `castOnHit` (the smites' button) |
 | Rogue | Cunning Action | its use | Dash, Disengage or Hide as the Bonus Action | `useDefaultAction` |
 | (anyone) | Hide (Default Action) | its use | the GM's Allow / Decline, nothing spent before; Stealth DC 15; Invisible | `askToUse`, `setStatus` |
+| Sorcerer | Font of Magic | its use | a window: a slot into Sorcery Points, or points into a slot (2024 costs and levels), the slot past the maximum, gone on a Long Rest | `spellSlots`, `addSpellSlot`, `spendUses`; the window and its costs are its own |
+| Sorcerer | Metamagic (cast-time options) | casting a spell | which option (or none), paid in Sorcery Points once cast; Distant: range x2 (Touch 30 ft); Quickened: a Bonus Action, no other level 1+ spell that turn; Subtle: no V, S or uncosted M; Twinned: +1 target; Transmuted: the damage type; Extended: durations x2 (24 h), advantage on its Concentration saves | `castingChoice`, `cantUseWhile` (after Quickened), `onDamage` (`setType`), `extendDurations`; which spells each option fits is its own |
+| Sorcerer | Careful Spell, Heightened Spell | the save card | toggles on its rows: up to the CHA modifier succeed, no damage where a success takes half / one creature's first save at disadvantage | `saveRowToggle` |
+| Sorcerer | Empowered Spell, Seeking Spell | the card, after the roll | the lowest CHA-modifier damage dice / a missed spell attack rolled again, paid, once | `rerollButton` |
+| Sorcerer | Metamagic (swap) | gaining a Sorcerer level | one option replaced per level, from the compendiums | `addRestChoice` (`count`), `pickFromCompendium` (`key`), `replaceItem` |
 | Warlock | Magical Cunning | its use | not while every Pact slot is full | `cantUseWhile` |
 | Warlock | Agonizing Blast, Eldritch Spear, Repelling Blast | the invocation picked | which known Warlock cantrip; its enchantment on it; moved on a level | `pickOwned`, `enchant`, `addRestChoice` (`count`); which cantrips qualify is its own |
 | Warlock | Repelling Blast (push) | its cantrip's hit | the GM's push 10 ft, Large or smaller | the card's moves (as the Push mastery) |
@@ -75,5 +78,7 @@ Parts still written inside one feature's code. Each one becomes a generic lego (
 | Pact weapon one at a time | warlock-pacts.js `onPactFormed` | forming a pact weapon ends the last (a bonded weapon's enchantment, a conjured one) | `conjureItem`'s `key` covers conjured ones only |
 | Book of Shadows pool | warlock-pacts.js `openBook` | fill empty places from the compendiums, one swap a level | Wizard's spellbook count (S4) |
 | Bonus Unarmed Strike | monk.js (the action tracker) | a Bonus Action attack after the Attack action | Two-Weapon Fighting's extra attack |
-| Roll modes for saves and checks | (none yet) | advantage on saves or checks "while X" from code, not an effect | Extended Spell's Concentration advantage (L2b). Danger Sense now switches its effect with `bonusOnlyWhen` |
+| Pool conversion window | sorcerer.js `font` | one resource turned into another at set rates (spell slots and Sorcery Points, both ways) | homebrew pools traded for slots or uses |
+| Cast-time damage type | sorcerer.js `chooseFor` / `transmute` | a damage type chosen as it's cast, used for its damage (and a reroll within the minute) | `damageTypeChoice` with a type chosen before the roll |
+| Level 1+ spells this turn | sorcerer.js (`leveledSpell` on `dnd5e.postUseActivity`) | marks a level 1+ spell cast this turn, slot or not | casting.js's one-slot-a-turn mark (slots only) |
 | Shared form effects | druid.js `linkNew`, `endPartner` | an effect on a form goes on its original too, and ends on both | other transformations (Polymorph keeps none : only `transform` users that share) |

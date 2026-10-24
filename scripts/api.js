@@ -7,7 +7,11 @@ import * as items from './helpers/items.js';
 import * as utils from './helpers/utils.js';
 import * as creatures from './helpers/creatures.js';
 import { restChoices } from './automation/rest-choices.js';
-import { rollModes, rollModeFrom } from './automation/roll-modes.js';
+import { rollModes, rollModeFrom, giveRollMode } from './automation/roll-modes.js';
+import { castingChoice, castingChoiceOf } from './automation/casting-choice.js';
+import { extendDurations } from './automation/durations.js';
+import { saveRowToggle, toggledOn } from './roll-item/row-toggles.js';
+import { rerollButton, rerolled } from './roll-item/reroll-buttons.js';
 import { actionTracker } from './automation/action-tracker.js';
 import { actions } from './automation/actions.js';
 import { gm } from './gm.js';
@@ -58,9 +62,13 @@ export class api{
       endsWhen : (match, rule) => conditions.endsWhen(match, rule),
       /* A choice in the Rest Choices window, advantage / disadvantage on attacks, a change to a roll's own damage */
       addRestChoice : choice => restChoices.add(choice),
-      addRollMode : (name, fn) => rollModes.add(name, fn),
-      /* Advantage / disadvantage from an effect, on attacks by its creature or against it (Reckless Attack) */
-      rollModeFrom,
+      addRollMode : (name, fn, options) => rollModes.add(name, fn, options),
+      /* Advantage / disadvantage from an effect, on attacks by its creature or against it (Reckless Attack); one given
+         by an addRollMode rule for saves or checks */
+      rollModeFrom, giveRollMode,
+      /* A choice made as a spell is cast, paid once it's cast (Metamagic); longer durations (Extended Spell); toggles on
+         a save card's rows (Careful, Heightened); a reroll button on a card after the roll (Empowered, Seeking) */
+      castingChoice, castingChoiceOf, extendDurations, saveRowToggle, toggledOn, rerollButton, rerolled,
       /* More or fewer Actions, Bonus Actions, Reactions or attacks this turn (Action Surge) */
       actionTracker : { modify : (thing, kind, n, source) => actionTracker.modify(thing, kind, n, source) },
       onDamage : (fn, options) => onDamage(fn, options),
@@ -84,9 +92,9 @@ export class api{
       /* Helpers, see scripts/helpers */
       ...tokens,    // tokenOf, actorOf, cells, distanceBetween, getRange, getTokensWithin, highlightRange, forcedMove, pushDestination, pushAway, pullToward, addLight, removeLight, hasLight, registerPool, poolBar, removePoolBar, poolsOf
       ...targets,   // isEnemy, isAlly, alliesNear, excludeTargets, getFlanker, isFlanking, isThreatened, getThreats, getEnemiesWithinRange, pickTargets, isValidGroup, selectTargets, setTargets
-      ...actors,    // damage, heal, tempHP, dropsToZero, isKilledOutright, preventDropToZero, findItem, rollSave, addTimedEffect, recoverSpellSlots, slotsLeft, usedThisTurn, markUsedThisTurn, countedUses, effectsFrom, itemEffectOn, itemEffectOff, getLastDamage, clearLastDamage, setStatus, setDefeated, getSize, stepSize, splitToken
+      ...actors,    // damage, heal, tempHP, dropsToZero, isKilledOutright, preventDropToZero, findItem, rollSave, addTimedEffect, recoverSpellSlots, slotsLeft, spellSlots, addSpellSlot, usedThisTurn, markUsedThisTurn, countedUses, effectsFrom, itemEffectOn, itemEffectOff, getLastDamage, clearLastDamage, setStatus, setDefeated, getSize, stepSize, splitToken
       ...items,     // pickAndAttack, pickAttack, attackModeFor, isLongRange, isRangedItem, isRangedAttack, canThrow, getAmmunition,
-                  // getUses, hasUses, spendUses, useActivity, useAndApply, getAppliedConditions, multiattack, untilShown, getHealing, updateItem, setBaseDamage, setDamage, isClassSpell, isUnarmored, conjureItem, linkItems, linkedItems, pickOwned, enchant
+                  // getUses, hasUses, spendUses, useActivity, useAndApply, getAppliedConditions, multiattack, untilShown, getHealing, updateItem, setBaseDamage, setDamage, isClassSpell, isUnarmored, conjureItem, linkItems, linkedItems, pickOwned, enchant, replaceItem
       ...utils,     // wait, waitFor, originOf, chooseOption
       ...creatures, // crOf, fitsProfile, chooseCreature, chooseCreatures, chooseOne, chooseSet, divideAmong
       /* The character's Rest Choices window (Wild Shape forms...), e.g. after a rest the GM ran for everyone */

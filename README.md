@@ -74,9 +74,11 @@ The main pieces, as methods on tokens, actors and items. Most also exist as `Mac
 | `MacroHelper.emanation(id, rule)`, `MacroHelper.transform(actor, form)`, `MacroHelper.revert(form)` | Every matching creature round the user targeted with no pick (Turn Undead); another creature's form taken and left (Wild Shape). |
 | `MacroHelper.castOnHit(rule)`, `MacroHelper.onInitiative(rule)`, `MacroHelper.addSense(id, rule)` | Spells cast onto a weapon hit's card (the smites), a button on the initiative roll (Uncanny Metabolism), a sense on a creature's tokens (Devil's Sight). |
 | `MacroHelper.pickOwned(actor, filter)`, `MacroHelper.enchant(source, target)` | One of the creature's own items chosen, and an item's enchantment put on it (Agonizing Blast on a cantrip). |
+| `MacroHelper.castingChoice(rule)`, `MacroHelper.extendDurations(actor, item)` | A choice made as a spell is cast, paid from a pool once it's cast (Metamagic); an item's Concentration and effects made to last longer (Extended Spell). |
+| `MacroHelper.saveRowToggle(rule)`, `MacroHelper.rerollButton(rule)` | Toggles on a save card's rows: the chosen succeed without rolling, or roll at advantage or disadvantage (Careful, Heightened Spell); a paid button that rolls a card's lowest damage dice or a missed attack again (Empowered, Seeking Spell). |
 | `token.push(target, 10)`, `token.pull(target, 10)`, `token.teleport(30, { item })`, `token.leap(30, { item })`, `token.trample(feet)` | Movement. |
 | `token.damage(value, type)`, `token.heal(value)`, `item.useAndApply()` | Hit points, through dnd5e's damage rules. |
-| `item.spendUses(n)`, `token.useReaction(name)`, `actor.usedThisTurn(key)`, `actor.slotsLeft(level)` | Resources and the action economy. |
+| `item.spendUses(n)`, `token.useReaction(name)`, `actor.usedThisTurn(key)`, `actor.slotsLeft(level)`, `actor.addSpellSlot(level, n)` | Resources and the action economy (a slot made past the maximum: Font of Magic). |
 | `token.poolBar("grit", { item, flag, color })` | A pool of points (an item's uses, or a flag) as a coloured bar on the token, hidden when empty (Arcane Ward). |
 | `token.reactionMove({ feet, noOA })`, `token.reactionAttack({ extraDamage })` | A creature's Reaction spent moving (without Opportunity Attacks) or on one weapon attack, on anyone's turn (Mantle of Inspiration, Commander's Strike, Riposte). |
 | `target.isType("undead")`, `target.isSmaller("large")`, `token.canSee(other)`, `token.distanceTo(other)`, `token.isEnemy(other)` | Facts about a creature, for `when` checks. |

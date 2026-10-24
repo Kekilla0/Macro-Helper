@@ -65,8 +65,9 @@ export class components{
   static needs(activity, config = {}){
     const props = activity?.item?.system?.properties;
     const has = key => !!props?.has?.(key);
-    const subtle = config?.[module.id]?.metamagic === "subtle-spell";
-    const need = { v : has("vocal") && !subtle, s : has("somatic") && !subtle, m : has("material") };
+    /* Components a rule left out of this use (Subtle Spell) : config["macro-helper"].components = { v : false, s : false } */
+    const drop = config?.[module.id]?.components ?? {};
+    const need = { v : has("vocal") && (drop.v !== false), s : has("somatic") && (drop.s !== false), m : has("material") && (drop.m !== false) };
     /* Rules that drop some (Improved Illusions : no V; Psychic Spells : no V or S) : Hooks "macro-helper.components" (activity, need) */
     Hooks.callAll(`${module.id}.components`, activity, need);
     return need;

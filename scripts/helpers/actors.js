@@ -469,6 +469,42 @@ export function slotsLeft(thing, minLevel = 1){
 }
 
 /**
+ * Every spell slot level a creature has (its maximum above 0), lowest first, Pact Magic's last.
+ * @param {Actor|Token} thing
+ * @returns {{ key : string, level : number, value : number, max : number, pact? : boolean }[]}
+ */
+export function spellSlots(thing){
+  const spells = (thing?.actor ?? thing)?.system?.spells ?? {};
+  const out = [];
+  for(let l = 1; l <= 9; l++){
+    const slot = spells[`spell${l}`];
+    if(Number(slot?.max) > 0) out.push({ key : `spell${l}`, level : l, value : Number(slot.value) || 0, max : Number(slot.max) });
+  }
+  const pact = spells.pact;
+  if(Number(pact?.max) > 0) out.push({ key : "pact", level : Number(pact.level) || 0, value : Number(pact.value) || 0, max : Number(pact.max), pact : true });
+  return out;
+}
+
+/**
+ * Add spell slots to a level, or (negative) spend them : a slot made by a feature (Font of Magic) goes on top of that
+ * level's count, past its maximum; dnd5e's Long Rest sets the level back to its maximum, so such a slot goes then.
+ * Never below 0. The creature's owner (or the GM) only.
+ * @param {Actor|Token} thing
+ * @param {number|string} level   1-9, or "pact" (or a key : "spell3")
+ * @param {number} [amount=1]
+ * @returns {Promise<number|null>}  the level's slots now, null : no such level, or not yours
+ */
+export async function addSpellSlot(thing, level, amount = 1){
+  const actor = actorOf(thing);
+  const key = (level === "pact") || String(level).startsWith("spell") ? String(level) : `spell${Number(level)}`;
+  const slot = actor?.system?.spells?.[key];
+  if(!slot || !actor.isOwner || !(Number(slot.max) > 0)) return null;
+  const value = Math.max(0, (Number(slot.value) || 0) + (Number(amount) || 0));
+  await actor.update({ [`system.spells.${key}.value`] : value });
+  return value;
+}
+
+/**
  * Choose expended spell slots to get back, up to a combined level (Arcane Recovery, Natural Recovery).
  * A dialog lists the spent slots up to `maxLevel` with the running total; the slots are restored on confirm.
  * With `item`, it needs a use left, and one is spent once something is recovered.

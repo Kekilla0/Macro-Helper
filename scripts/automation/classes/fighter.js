@@ -7,6 +7,7 @@ import { compendiums, pickFromCompendium } from '../compendiums.js';
 import { restChoices } from '../rest-choices.js';
 import { onFailedTest } from '../../roll-item/rerolls.js';
 import { findItem } from '../../helpers/actors.js';
+import { replaceItem } from '../../helpers/items.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -44,15 +45,9 @@ export class fighter{
       id : "fightingStyle", label : "restChoices.fightingStyle", rest : "level", classes : ["fighter", "paladin", "ranger"], count : 1,
       applies : actor => this.enabled() && !!this.styleOf(actor),
       summary : actor => module.format("classes.fighter.styleSummary", { name : this.styleOf(actor)?.name ?? "—",
-        swaps : this.swapsText(restChoices.swapsLeft(actor, "fightingStyle")) }),
+        swaps : restChoices.swapsText(actor, "fightingStyle") }),
       open : (actor, swap) => this.swapStyle(actor, swap),
     });
-  }
-
-
-  /* "1", "∞" (the GM) */
-  static swapsText(n){
-    return Number.isFinite(n) ? n : "∞";
   }
 
   /* A Fighting Style feat's own name ("dueling" for "fighting-style-dueling") */
@@ -110,17 +105,8 @@ export class fighter{
       title : module.format("classes.fighter.styleTitle", { name : actor.name }), icon : "fa-solid fa-shield-halved", columns : 3,
       prompt : module.format("classes.fighter.stylePrompt", { name : current?.name ?? "—" }) });
     if(!source) return;
-    const data = source.toObject();
-    delete data._id;
-    /* In the old one's place : its id (the class's advancement still points to it) and its class link, so the sheet
-       files it under the class's features, not Other Features */
-    const origin = current?.getFlag("dnd5e", "advancementOrigin") ?? this.styleOrigin(actor);
-    if(origin) foundry.utils.setProperty(data, "flags.dnd5e.advancementOrigin", origin);
-    if(current){
-      data._id = current.id;
-      await current.delete();
-    }
-    await actor.createEmbeddedDocuments("Item", [data], { keepId : !!current });
+    /* In the old one's place, with its class link, so the sheet files it under the class's features */
+    await replaceItem(current, source, { actor, origin : this.styleOrigin(actor) });
     await swap?.spend();
     log.debug("Fighting Style", actor.name, current?.name, "->", source.name);
   }

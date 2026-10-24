@@ -31,7 +31,7 @@ const log = logger.for(import.meta.url);
  *                       swap.left     changes left (the GM : Infinity, changes freely)
  *                       swap.allow()  may one more be made : one left, or past it Rule Limits (Warn : a notice)
  *                       swap.spend()  one made
- *                     restChoices.swapsLeft(actor, id) for the summary. Something free (filling up to a limit) needs
+ *                     restChoices.swapsLeft(actor, id) / swapsText(actor, id) ("∞" for the GM) for the summary. Something free (filling up to a limit) needs
  *                     neither.
  *   holder(actor)   : with count, the document keeping the count (default : the actor; a Wild Shape form : its Druid)
  * }
@@ -54,6 +54,12 @@ export class restChoices{
     if(game.user.isGM) return Infinity;
     const holder = this.#holder(actor, this.#choices.get(id));
     return Number(holder?.getFlag?.(module.id, `swaps.${id}`)) || 0;
+  }
+
+  /* The same, for a summary line ("∞" for the GM) */
+  static swapsText(actor, id){
+    const n = this.swapsLeft(actor, id);
+    return Number.isFinite(n) ? String(n) : "∞";
   }
 
   /* What a choice's open() gets : the count, checked and spent */

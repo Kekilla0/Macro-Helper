@@ -13,6 +13,10 @@ const log = logger.for(import.meta.url);
  *
  * The same rules run for the roll (dnd5e.preRollAttackV2) and for the pick map's colours before it (predictMode), so
  * the map always shows what the roll will do. They run in ORDER (a rule not in it runs last).
+ *
+ * A rule can be for saves and checks instead (add's `rolls`) : "save" (every saving throw, Concentration's too), "check"
+ * (ability checks, skills, tools, initiative), "concentration" (Concentration saves only). Those get dnd5e's save or
+ * check config (subject : the actor, ability, hookNames, rolls) and give a mode with giveRollMode.
  */
 export class rollModes{
   static ORDER = [
@@ -25,26 +29,30 @@ export class rollModes{
     "reckless",    // Barbarian : Reckless Attack
     "protection",  // Fighting Styles : Protection
     "innate",      // Sorcerer : Innate Sorcery (Sorcerer spell attacks)
+    "extended",    // Durations : an extended Concentration's saves (Extended Spell)
   ];
 
   static #rules = [];
 
   /**
    * @param {string} name   its place in ORDER
-   * @param {(config : object) => void} fn
+   * @param {(config : object, message? : object) => void} fn   (saves and checks : dnd5e's message config too)
+   * @param {object} [options]
+   * @param {string|string[]} [options.rolls="attack"]   which rolls : "attack", "save", "check", "concentration"
    */
-  static add(name, fn){
+  static add(name, fn, { rolls = "attack" } = {}){
     if(this.#rules.some(r => r.name === name)) return;
     const rank = n => { const i = this.ORDER.indexOf(n.split(":")[0]); return (i < 0) ? Infinity : i; };
-    this.#rules.push({ name, fn });
+    this.#rules.push({ name, fn, rolls : new Set([rolls].flat()) });
     this.#rules.sort((a, b) => rank(a.name) - rank(b.name));
   }
 
-  /* Every rule on this config (a rule that throws is logged and skipped) */
-  static apply(config){
+  /* Every rule for these rolls on this config (a rule that throws is logged and skipped) */
+  static apply(config, kinds = ["attack"], message = null){
     for(const rule of this.#rules){
-      try { rule.fn(config); }
-      catch(error){ log.error("Attack mode rule", rule.name, error); }
+      if(!kinds.some(k => rule.rolls.has(k))) continue;
+      try { rule.fn(config, message); }
+      catch(error){ log.error("Roll mode rule", rule.name, error); }
     }
   }
 
@@ -53,7 +61,20 @@ export class rollModes{
     /* item.roll()'s own advantage / disadvantage / bonus / critical range (card macros) */
     this.add("macro", config => rollOptionModes(config));
     Hooks.on("dnd5e.preRollAttackV2", config => this.apply(config));
+    /* Saves and checks : the rule gets the roll's message config too (a save rolled from a card : its origin) */
+    Hooks.on("dnd5e.preRollSavingThrowV2", (config, dialog, message) => this.apply(config, config?.hookNames?.includes?.("concentration") ? ["save", "concentration"] : ["save"], message));
+    Hooks.on("dnd5e.preRollAbilityCheckV2", (config, dialog, message) => this.apply(config, ["check"], message));
   }
+}
+
+/**
+ * Advantage or disadvantage on a save or check about to be rolled (a rule's config) : on the config and on each of its
+ * rolls, with the reason shown.
+ */
+export function giveRollMode(config, mode, reason){
+  if(!config) return;
+  config[mode] = true;
+  for(const roll of config.rolls ?? []) if(roll) giveMode(roll, mode, reason ?? "");
 }
 
 /**

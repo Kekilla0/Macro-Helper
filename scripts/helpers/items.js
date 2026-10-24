@@ -791,6 +791,33 @@ export async function conjureItem(thing, source, { key = null, data = {}, hand =
 
 const LINK = "linkedTo";
 
+/**
+ * Put a copy of `source` on the creature in an item's place (a swap : a Fighting Style, a Metamagic option, a homebrew
+ * "learn another"). The new item takes the old one's id (the class's advancement still points to it) and its class
+ * link, so the sheet files it in the same place. Without `current` it's added with `origin` as its class link.
+ * @param {Item|null} current          the item that goes (owned)
+ * @param {Item|string} source         the one that comes (a document or uuid : a compendium entry)
+ * @param {object} [options]
+ * @param {Actor} [options.actor]      the creature, when there's no `current`
+ * @param {string} [options.origin]    the class link (dnd5e's advancementOrigin) when `current` has none
+ * @returns {Promise<Item|null>}  the new item
+ */
+export async function replaceItem(current, source, { actor = null, origin = null } = {}){
+  const owner = current?.actor ?? actorOf(actor);
+  const from = (typeof source === "string") ? await fromUuid(source) : source;
+  if(!owner || !from) return null;
+  const data = from.toObject();
+  delete data._id;
+  const link = current?.getFlag?.("dnd5e", "advancementOrigin") ?? origin;
+  if(link) foundry.utils.setProperty(data, "flags.dnd5e.advancementOrigin", link);
+  if(current){
+    data._id = current.id;
+    await current.delete();
+  }
+  const [made] = await owner.createEmbeddedDocuments("Item", [data], { keepId : !!current });
+  return made ?? null;
+}
+
 /* The links work from the start (not only once something links in this session) */
 Hooks.on("deleteItem", async (item, options, userId) => {
   const actor = item?.parent;
