@@ -13,6 +13,7 @@ import { rollSave, rollSaveAsGM, setStatus, giveEffectAsGM } from '../helpers/ac
 import { damageRoll } from './extra-damage.js';
 import { onDamage } from './damage.js';
 import { noteReason } from './reasons.js';
+import { idOf, originItem } from '../helpers/utils.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -560,23 +561,64 @@ export function grappling(thing){
 
 /**
  * In a "Damage about to apply" (dnd5e.preApplyDamage) item-hook macro : the creature takes only part of the damage,
- * and another takes that same amount (Rug of Smothering : half, to the creature it smothers) : a card with that
- * creature's row and an Apply button (its owner or the GM).
+ * and another takes that same amount (Rug of Smothering : half, to the creature it smothers). `keep` : the creature
+ * still takes all of it, and the other takes that part too (Warding Bond's caster : all of it). The other's damage has
+ * no type (no resistance cuts it) : at once when it's the user's own creature (gm.mine), else a card with its row and
+ * an Apply button (its owner or the GM).
  */
-export function shareDamage(args, other, fraction = 0.5){
+export function shareDamage(args, other, fraction = 0.5, { keep = false, item = null } = {}){
   const [actor, amount, updates, options] = args ?? [];
   const target = other?.actor ?? other;
   if(!actor || !updates || !(amount > 0) || !target || (target === actor)) return 0;
+  /* Damage already passed on through this creature : not back round again */
+  const chain = [...(options?.[module.id]?.shared?.chain ?? []), actor.uuid];
+  if(chain.includes(target.uuid)) return 0;
   const part = Math.floor(amount * fraction);
-  const hp = actor.system?.attributes?.hp ?? {};
-  const temp = Number(hp.temp) || 0;
-  const fromTemp = Math.min(temp, part);
-  updates["system.attributes.hp.temp"] = temp - fromTemp;
-  updates["system.attributes.hp.value"] = Math.max(0, (Number(hp.value) || 0) - (part - fromTemp));
-  /* The combat log : what it really took */
-  if(options) options[module.id] = { ...(options[module.id] ?? {}), taken : part };
-  if(part > 0) setTimeout(() => cardBuilder.postShared(actor, other, part).catch(error => log.debug("Shared damage", error)), 0);
+  if(!keep){
+    const hp = actor.system?.attributes?.hp ?? {};
+    const temp = Number(hp.temp) || 0;
+    const fromTemp = Math.min(temp, part);
+    updates["system.attributes.hp.temp"] = temp - fromTemp;
+    updates["system.attributes.hp.value"] = Math.max(0, (Number(hp.value) || 0) - (part - fromTemp));
+    /* The combat log : what it really took */
+    if(options) options[module.id] = { ...(options[module.id] ?? {}), taken : part };
+  }
+  if(part > 0) setTimeout(() => cardBuilder.sendShared(actor, other, part, { item, chain }).catch(error => log.debug("Shared damage", error)), 0);
   return part;
+}
+
+/**
+ * The shared-damage lego : while a creature has one of these effects, part of each damage it takes goes to the creature
+ * the effect came from (its origin item's owner) too.
+ *   sharesDamage("warding-bond", { fraction : 1, keep : true })
+ *   match     an item identifier (the effects that item puts on a creature) or effect => boolean
+ *   fraction  the part passed on (1 : the same amount)
+ *   keep      true : the creature still takes all of it; false : it takes only the rest
+ * An effect with flags["macro-helper"].shareDamage ({ fraction, keep }) does the same.
+ */
+const sharing = [];
+export function sharesDamage(match, { fraction = 1, keep = true } = {}){
+  sharing.push({ match, fraction, keep });
+}
+
+function shareRuleOf(effect){
+  const flag = effect.getFlag?.(module.id, "shareDamage");
+  if(flag) return { fraction : Number(flag.fraction ?? 1), keep : flag.keep ?? true };
+  return sharing.find(r => (typeof r.match === "function") ? r.match(effect) : (idOf(originItem(effect)) === r.match)) ?? null;
+}
+
+/* The effects that share this creature's damage : each with the creature it goes to. Those it keeps all of : once it's
+   taken (after : another rule may stop it); the others before, as they take their part off */
+function damageShares(args, { after = false } = {}){
+  const [actor] = args;
+  for(const effect of [...(actor?.effects ?? [])]){
+    if(effect.disabled || effect.isSuppressed) continue;
+    const rule = shareRuleOf(effect);
+    if(!rule || (!!rule.keep !== after)) continue;
+    const item = originItem(effect);
+    const source = item?.actor;
+    if(source && (source !== actor)) shareDamage(args, source, rule.fraction, { keep : rule.keep, item });
+  }
 }
 
 /**
@@ -908,6 +950,9 @@ export class cardBuilder{
     /* GM : the button of release()'s ask card (the GM said yes) */
     gm.handle("cardReleaseAsk", data => this.releaseAsGM(data, game.user));
     gm.handle("cardShared", (data, user) => this.sharedAsGM(data, user));
+    /* sharesDamage : on the client that applies the damage */
+    Hooks.on("dnd5e.preApplyDamage", (...args) => damageShares(args));
+    Hooks.on("dnd5e.applyDamage", (actor, amount, options) => damageShares([actor, amount, {}, options], { after : true }));
     registerTargetCards();
     /* This instead of the damage : that creature takes none of the card's damage */
     Hooks.on("dnd5e.preApplyDamage", (actor, amount, updates, options = {}) => {
@@ -1140,23 +1185,30 @@ export class cardBuilder{
   }
 
   /* The shared damage's card : one row, Apply (the creature's owner or the GM) */
-  static async postShared(from, other, amount){
+  /* Shared damage to the other creature : at once when it's the user's own (gm.mine), else postShared's card */
+  static async sendShared(from, other, amount, { item = null, chain = [] } = {}){
+    const target = other?.actor ?? other;
+    if(gm.mine(target, game.user)) return target.applyDamage(amount, { [module.id] : { shared : { from : from.name, chain } } });
+    return this.postShared(from, other, amount, { item, chain });
+  }
+
+  static async postShared(from, other, amount, { item = null, chain = [] } = {}){
     const token = (other?.document ?? other);
     const tokenDoc = (token?.documentName === "TokenDocument") ? token : (other?.actor ?? other)?.getActiveTokens?.(false, true)?.[0] ?? null;
     if(!tokenDoc) return;
-    /* The feature it comes from : the effect that links them (the Rug's Smothering), else none */
-    const link = from.effects?.find?.(e => e.getFlag(module.id, "holding") === tokenDoc.uuid);
-    const item = link?.origin ? fromUuidSync(link.origin, { strict : false }) : null;
+    /* The feature it comes from : given, or the effect that links them (the Rug's Smothering), else none */
+    const link = item ? null : from.effects?.find?.(e => e.getFlag(module.id, "holding") === tokenDoc.uuid);
+    item ??= link?.origin ? fromUuidSync(link.origin, { strict : false }) : null;
     await postTargetCard({ actor : from, item : item ?? { name : from.name, img : from.img, labels : {} },
       text : module.format("cardBuilder.sharedText", { name : tokenDoc.name, n : amount, from : from.name }),
       rows : [{ token : tokenDoc.uuid, label : module.format("cardBuilder.sharedApply", { n : amount }), action : "cardShared",
-        data : { token : tokenDoc.uuid, amount, from : from.name }, done : module.format("cardBuilder.sharedDone", { n : amount }) }] });
+        data : { token : tokenDoc.uuid, amount, from : from.name, chain }, done : module.format("cardBuilder.sharedDone", { n : amount }) }] });
   }
 
-  static async sharedAsGM({ token : uuid, amount, from } = {}, user){
+  static async sharedAsGM({ token : uuid, amount, from, chain = [] } = {}, user){
     const actor = fromUuidSync(uuid ?? "", { strict : false })?.actor;
     if(!actor || !(user.isGM || gm.mine(actor, user))) return false;
-    await actor.applyDamage(Number(amount) || 0, { [module.id] : { shared : { from } } });
+    await actor.applyDamage(Number(amount) || 0, { [module.id] : { shared : { from, chain } } });
     return true;
   }
 

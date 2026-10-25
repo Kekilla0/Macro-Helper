@@ -16,6 +16,7 @@ import { originItem } from '../helpers/utils.js';
 import { rollModeFrom } from './roll-modes.js';
 import { onMiss } from '../roll-item/miss-damage.js';
 import { willingSave } from './willing.js';
+import { sharesDamage } from '../roll-item/card-builder.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -59,6 +60,9 @@ const log = logger.for(import.meta.url);
  *   Invisibility    : ends just after its creature makes an attack roll or casts a spell.
  *   Melf's Acid Arrow : a miss deals half the attack's damage (no acid later); a hit's acid at the end of the target's
  *                     next turn is a repeating effect (automation/repeating.js).
+ *   Warding Bond    : each time the bonded creature takes damage, its caster takes the same amount (no type : its
+ *                     resistances don't cut it). The bond ends when the caster drops to 0 HP, when they're more than
+ *                     60 ft apart, or when the spell is cast again on either of them.
  *   Range           : Rule Limits on and no target pick (Pick Targets off, or Roll Item off) : a spell aimed at
  *                     creatures out of its range (Distant Spell's doubled range, Touch 30 ft) follows Rule Limits.
  */
@@ -69,6 +73,7 @@ export class spells{
   static INVISIBILITY = "invisibility";
   static ACID_ARROW = "melfs-acid-arrow";
   static ENLARGE_REDUCE = "enlarge-reduce";
+  static WARDING_BOND = "warding-bond";
   /* The effects the fixes add (16-character ids, so a fix can tell it's done) */
   static EFFECT_IDS = { "blade-ward" : "mhBladeWardWard1", "ray-of-sickness" : "mhRaySicknessPsn" };
 
@@ -132,6 +137,9 @@ export class spells{
     rollModeFrom(this.BLUR, { against : { mode : "disadvantage", when : (attack, target) => !this.sensesReach(attack.actor, target, ["blindsight", "truesight"]),
       reason : () => module.i18n("spells.blurred") }, enabled : () => this.enabled(), id : this.BLUR });
     conditions.endsWhen(effect => this.enabled() && (idOf(originItem(effect)) === this.INVISIBILITY), { attacks : true, casts : true });
+    /* Warding Bond : its caster takes the same damage as the bonded creature; ends at 0 HP, beyond 60 ft, or cast again */
+    sharesDamage(effect => this.enabled() && (idOf(originItem(effect)) === this.WARDING_BOND), { fraction : 1, keep : true });
+    conditions.endsWhen(effect => this.enabled() && (idOf(originItem(effect)) === this.WARDING_BOND), { sourceZeroHP : true, apart : 60, recast : true });
     /* Melf's Acid Arrow : half the attack's damage on a miss */
     onMiss({ id : "melfsAcidArrow", enabled : () => this.enabled(), when : miss => idOf(miss.item) === this.ACID_ARROW,
       formula : miss => String(Math.floor(miss.damage.reduce((sum, roll) => sum + (Number(roll.total) || 0), 0) / 2)),

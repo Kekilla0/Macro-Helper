@@ -79,6 +79,9 @@ export class conditions{
     Hooks.on("dnd5e.rollAttackV2", (rolls, { subject } = {}) => { const actor = subject?.actor; if(actor?.isOwner) this.endsOn(actor, "attacks", null, { here : true }); });
     Hooks.on("dnd5e.postUseActivity", activity => { const actor = activity?.actor; if((activity?.item?.type === "spell") && actor?.isOwner) this.endsOn(actor, "casts", null, { here : true }); });
     Hooks.on("deleteCombat", combat => { for(const c of combat?.combatants ?? []) if(c.actor) this.endsOn(c.actor, "combatEnd"); });
+    Hooks.on("updateActor", (actor, changes) => this.onSourceZeroHP(actor, changes));
+    Hooks.on("updateToken", (tokenDoc, changes) => this.onApart(tokenDoc, changes));
+    Hooks.on("createActiveEffect", effect => this.onRecast(effect));
   }
 
   /* ---------- Ends when ---------- */
@@ -97,8 +100,13 @@ export class conditions{
    *   sourceDown     the creature it came from (its origin item's owner) is Incapacitated (Turned, when the Cleric drops)
    *   attacks        the creature with it makes an attack roll (just after it : the roll still had it; Invisibility)
    *   casts          it casts a spell (Invisibility)
+   *   sourceZeroHP   the creature it came from drops to 0 Hit Points (Warding Bond)
+   *   apart          feet : it and the creature it came from are farther apart than that (their tokens on the scene)
+   *   recast         the same item's effect is put on its creature again, or on the creature it came from : the old one
+   *                  ends (Warding Bond, "cast again on either of the connected creatures")
    *   end            (actor, effects, why) instead of the default : an item's own effect switched off, any other deleted
-   * why : "incapacitated", "damaged", "heavyArmor", "combatEnd", "sourceDown", "attacks" or "casts". The active GM's client ends them.
+   * why : "incapacitated", "damaged", "heavyArmor", "combatEnd", "sourceDown", "attacks", "casts", "sourceZeroHP", "apart"
+   * or "recast". The active GM's client ends them.
    * @param {string|Function} match
    * @param {object} rule
    */
@@ -192,15 +200,64 @@ export class conditions{
     const actor = (effect?.parent?.documentName === "Actor") ? effect.parent : effect?.parent?.actor;
     if(!this.isIncapacitated(actor)) return;
     await this.endsOn(actor, "incapacitated");
-    if(!this.#endsWhen.some(r => r.sourceDown)) return;
-    /* Effects on others that came from this creature */
+    await this.#fromSource(actor, "sourceDown");
+  }
+
+  /* The effects on other creatures that came from this one and end on `why` : effect -> rule, by creature */
+  static #othersFrom(actor, why, filter = () => true){
+    const out = new Map();
+    if(!this.#endsWhen.some(r => r[why])) return out;
     const mine = item => item?.actor && ((item.actor.uuid === actor.uuid) || (item.actor.id === actor.id));
     const others = [...game.actors, ...(canvas.tokens?.placeables ?? []).filter(t => t.actor && !t.document.actorLink).map(t => t.actor)];
     for(const other of new Set(others)){
       if(other === actor) continue;
-      const found = new Map([...this.#endingOn(other, "sourceDown")].filter(([e]) => mine(this.#itemOf(e))));
-      if(found.size) await this.endsOn(other, "sourceDown", found);
+      const found = new Map([...this.#endingOn(other, why)].filter(([e, rule]) => mine(this.#itemOf(e)) && filter(e, rule, other)));
+      if(found.size) out.set(other, found);
     }
+    return out;
+  }
+
+  static async #fromSource(actor, why, filter){
+    for(const [other, found] of this.#othersFrom(actor, why, filter)) await this.endsOn(other, why, found);
+  }
+
+  /* Dropped to 0 Hit Points : what came from it and ends so (the active GM) */
+  static onSourceZeroHP(actor, changes){
+    if(!game.users.activeGM?.isSelf || !foundry.utils.hasProperty(changes ?? {}, "system.attributes.hp.value")) return;
+    if(Number(actor?.system?.attributes?.hp?.value) > 0) return;
+    return this.#fromSource(actor, "sourceZeroHP");
+  }
+
+  /* Too far apart : a token moved, its effects from others and others' from it measured (the active GM) */
+  static async onApart(tokenDoc, changes){
+    if(!game.users.activeGM?.isSelf || !["x", "y", "elevation"].some(k => k in (changes ?? {}))) return;
+    const actor = tokenDoc?.actor;
+    if(!actor || !this.#endsWhen.some(r => r.apart)) return;
+    const far = (a, b, feet) => {
+      const ta = (a === actor) ? (tokenDoc.object ?? tokenDoc) : tokenOf(a);
+      const tb = (b === actor) ? (tokenDoc.object ?? tokenDoc) : tokenOf(b);
+      if(!ta || !tb) return false;
+      if((ta.document ?? ta).parent !== (tb.document ?? tb).parent) return true;
+      return distanceBetween(ta, tb) > Number(feet);
+    };
+    const own = new Map([...this.#endingOn(actor, "apart")].filter(([e, rule]) => {
+      const source = this.#itemOf(e)?.actor;
+      return source && (source !== actor) && far(actor, source, rule.apart);
+    }));
+    if(own.size) await this.endsOn(actor, "apart", own);
+    await this.#fromSource(actor, "apart", (e, rule, other) => far(actor, other, rule.apart));
+  }
+
+  /* The same item's effect again on a creature it linked : the old links end, this creature's own and those it made */
+  static async onRecast(effect){
+    if(!game.users.activeGM?.isSelf || (effect?.parent?.documentName !== "Actor")) return;
+    const rule = this.#endsWhen.find(r => r.recast && this.#matches(r, effect));
+    if(!rule) return;
+    const actor = effect.parent;
+    const same = e => (e !== effect) && (e.id !== effect.id) && this.#matches(rule, e);
+    const own = new Map([...this.#endingOn(actor, "recast")].filter(([e]) => same(e)));
+    if(own.size) await this.endsOn(actor, "recast", own);
+    await this.#fromSource(actor, "recast", e => same(e));
   }
 
   /* Heavy armor put on */
