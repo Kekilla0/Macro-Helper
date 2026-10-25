@@ -8,6 +8,7 @@ import { giveCondition } from '../../roll-item/card-builder.js';
 import { conditions } from '../conditions.js';
 import { monk } from '../classes/monk.js';
 import { subclasses } from './common.js';
+import { addRange } from '../ranges.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -39,7 +40,7 @@ export class monkTraditions{
     onHit({ id : this.HARM, feature : this.HARM, icon : "fa-hand-holding-droplet", enabled : () => this.enabled(), once : "turn",
       when : hit => unarmed(hit), cost : hit => ({ item : monk.focusOf(hit.actor), amount : 1 }),
       formula : hit => `1d${monk.facesOf(hit.actor)} + @abilities.wis.mod`, types : () => ["necrotic"] });
-    Hooks.on(`${module.id}.reach`, (item, more) => { if(this.enabled() && (idOf(item) === monk.UNARMED) && this.attuned(item.actor)) more.feet += 10; });
+    addRange(actor => this.attuned(actor), 10, { reach : true, id : "elementalAttunement", enabled : () => this.enabled(), when : ({ item }) => idOf(item) === monk.UNARMED });
     Hooks.on(`${module.id}.cardButtons`, (message, buttons, { ray } = {}) => this.cardButtons(message, buttons, ray ?? null));
     Hooks.on(`${module.id}.cardButton`, (message, id, { ray } = {}) => this.cardClicked(message, String(id), ray ?? null));
     conditions.endOnIncapacitated(this.ATTUNEMENT);

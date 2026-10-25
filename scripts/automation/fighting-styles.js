@@ -141,7 +141,7 @@ export class fightingStyles{
     if(this.styleOf(actor, "thrown-weapon-fighting") && attack.thrown && attack.properties.has("thr")) damage.add("2");
 
     /* Two-Weapon Fighting : the modifier dnd5e leaves off a Light weapon's extra attack */
-    if(this.styleOf(actor, "two-weapon-fighting") && attack.offHand && (damage.modifier > 0)) damage.add("@mod");
+    if(this.styleOf(actor, "two-weapon-fighting") && attack.offHand && (damage.modifier > 0) && !damage.has("@mod")) damage.add("@mod");
 
     /* Unarmed Fighting */
     if(attack.unarmed && this.styleOf(actor, "unarmed-fighting")) this.unarmedDamage(attack, damage);

@@ -8,6 +8,7 @@ import { TYPES } from '../../roll-item/message.js';
 import { itemFixes } from '../item-fixes.js';
 import { casting } from '../casting.js';
 import { subclasses } from './common.js';
+import { addRange } from '../ranges.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -52,10 +53,7 @@ export class wizardSchools{
     Hooks.on("createItem", (item, options, userId) => { if((userId === game.user.id) && (idOf(item) === this.POTENT)) this.potentAll(item.actor); });
     /* Improved Illusions */
     Hooks.on(`${module.id}.components`, (activity, need) => { if(this.illusionist(activity?.item)) need.v = false; });
-    Hooks.on(`${module.id}.range`, (item, more) => {
-      const range = item?.system?.range;
-      if(this.illusionist(item) && ((range?.units ?? "ft") === "ft") && (Number(range?.value) >= 10)) more.feet += 60;
-    });
+    addRange(this.IMPROVED, 60, { enabled : () => this.enabled(), when : ({ item }) => this.illusionist(item) && ((item.system.range?.units ?? "ft") === "ft") && (Number(item.system.range?.value) >= 10) });
   }
 
   /* The slot a spell was cast with */

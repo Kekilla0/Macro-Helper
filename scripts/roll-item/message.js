@@ -283,7 +283,14 @@ export function registerMessages(){
   /* Half and Three-Quarters Cover don't count for an item that says so (Sacred Flame); Total Cover still does. The
      buttons stay, the GM can still set them : they're just not applied */
   const IGNORES_COVER = /no benefit from half cover or three-quarters cover|ignores? (?:half and three-quarters |half or three-quarters )?cover/i;
-  const ignoresCover = message => !!message.getFlag?.(module.id, "ignoreCover") || IGNORES_COVER.test(plainText(message.getAssociatedItem?.()?.system?.description?.value));
+  /* Hook : a rule says its creature's attacks skip cover (Sharpshooter) : macro-helper.ignoresCover (message, answer), it sets
+     answer.ignore */
+  const ignoresCover = message => {
+    if(message.getFlag?.(module.id, "ignoreCover")) return true;
+    const answer = { ignore : false };
+    Hooks.callAll(`${module.id}.ignoresCover`, message, answer);
+    return answer.ignore || IGNORES_COVER.test(plainText(message.getAssociatedItem?.()?.system?.description?.value));
+  };
   const coverOf = (message, uuid) => {
     const level = message.getFlag?.(module.id, `cover.${uuidKey(uuid)}`)?.level ?? "none";
     return (["half", "threeQuarters"].includes(level) && ignoresCover(message)) ? "none" : level;

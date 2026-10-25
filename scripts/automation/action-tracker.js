@@ -533,11 +533,28 @@ export class actionTracker{
       + Math.max(0, ...(pool?.choice ?? []).map(b => b.reduce((a, e) => a + e.n, 0)));
   }
 
+  /* A Light weapon, after an attack this turn with a different Light weapon (the Light property's extra attack) */
+  static otherLight(rec, item){
+    if(!rec.light || !this.isLight(item)) return false;
+    return !Array.isArray(rec.lightIds) || rec.lightIds.some(id => id !== item?.id);
+  }
+
+  /* Rules that make an attack start a new Attack action when one is left, rather than take a remaining attack of the
+     last one (Loading : that weapon already fired on it) : (activity, rec, actor) => boolean */
+  static NEW_ACTION = new Set();
+
+  static needsNewAction(activity, rec){
+    for(const fn of this.NEW_ACTION){
+      try { if(fn(activity, rec, activity.actor)) return true; } catch(error){ log.error("New action rule", error); }
+    }
+    return false;
+  }
+
   /* After the Attack action's attacks : the Bonus Action attack it allows */
   static bonusAttack(activity, rec){
     const item = activity.item;
     /* The Light property's extra attack, unless Nick already made it part of the Attack action */
-    if(rec.light && this.isLight(item) && !rec.nick) return true;
+    if(this.otherLight(rec, item) && !rec.nick) return true;
     return (idOf(item) === "unarmed-strike") && !!activity.actor?.items?.some?.(i => idOf(i) === "martial-arts");
   }
 
@@ -559,9 +576,10 @@ export class actionTracker{
     if((attack || swap || this.isMultiattack(activity.item)) && (cost === "action")){
       if(st.rec.attack){
         const pool = foundry.utils.deepClone(st.rec.attack);
+        if(attack && (this.remaining(st.rec, "action") > 0) && this.needsNewAction(activity, st.rec)) return { kind : "action", attack : "new" };
         if((attack || swap) && this.takeAttack(pool, activity.item)) return { kind : null, attack : "more", pool };
         /* Nick (mastery) : the Light property's extra attack is part of the Attack action, once a turn */
-        if(attack && st.rec.light && this.isLight(activity.item) && !st.rec.nick && masteries.nick(activity)) return { kind : null, attack : "more", pool, nick : true };
+        if(attack && this.otherLight(st.rec, activity.item) && !st.rec.nick && masteries.nick(activity)) return { kind : null, attack : "more", pool, nick : true };
         if(attack && (this.remaining(st.rec, "bonus") > 0) && this.bonusAttack(activity, st.rec)) return { kind : "bonus", attack : "bonus" };
         if(this.remaining(st.rec, "action") > 0) return { kind : "action", attack : "new" };
         return { kind : "action", attack : "over", pool };
@@ -620,6 +638,16 @@ export class actionTracker{
     return result;
   }
 
+  /**
+   * The Action, Bonus Action or Reaction the creature's latest use was paid with ("action:1", "bonus:1",
+   * "reaction:1"); null with the tracker off or out of combat.
+   * @param {Actor} actor
+   * @returns {string|null}
+   */
+  static paidBy(actor){
+    return this.state(this.payerOf(actor))?.rec?.paidBy ?? null;
+  }
+
   /* The use came to nothing : as it was, unless something else was spent since */
   static async refund(actor, before, spent){
     const now = actor.getFlag(module.id, "economy");
@@ -635,6 +663,9 @@ export class actionTracker{
     const rec = st.rec;
     const { kind = null, attack = null } = plan;
     if(kind) rec.used[kind] = (Number(rec.used[kind]) || 0) + 1;
+    /* Which use pays for what follows ("action:2" : the second Action, after Action Surge) : the Attack action's later
+       attacks stay on it (Loading : one shot per Action, Bonus Action or Reaction) */
+    if(kind) rec.paidBy = `${kind}:${rec.used[kind]}`;
     /* An Action or a Bonus Action, not both (Slowing Breath) : using one spends the other too */
     if(["action", "bonus"].includes(kind) && this.oneAction(actor)){
       const other = (kind === "action") ? "bonus" : "action";
@@ -655,11 +686,13 @@ export class actionTracker{
       if(rec.attackExtra){ this.addAttacks(rec.attack, rec.attackExtra); rec.attackExtra = 0; }
       if(this.isAttack(activity) || this.swapsIn(activity) || this.REPLACES_ATTACK.has(idOf(activity?.item))) this.takeAttack(rec.attack, activity.item);
       rec.light = this.isAttack(activity) && this.isLight(activity.item);
+      rec.lightIds = rec.light ? [activity.item.id] : [];
     }
     else if(attack === "more"){
       rec.attack = plan.pool;
       if(plan.nick) rec.nick = true;
       rec.light = rec.light || this.isLight(activity?.item);
+      if(this.isLight(activity?.item)) rec.lightIds = [...new Set([...(rec.lightIds ?? []), activity.item.id])];
     }
     if(this.isAttack(activity)) rec.made = (Number(rec.made) || 0) + 1;
     const name = activity?.item?.name ?? activity?.name ?? plan.what ?? "";

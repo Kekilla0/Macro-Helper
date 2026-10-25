@@ -69,6 +69,16 @@ Legos are listed in [api.md](api.md). "Data" means the item's own dnd5e or Pluto
 | Warlock | Fiendish Vigor, Mask of Many Faces, Otherworldly Leap, Misty Visions | - | - | data (Misty Visions: see plutonium-notes) |
 | Wizard | Scholar | - | - | data |
 
+## Feats
+
+| Feat | Trigger | Steps | Built on |
+|---|---|---|---|
+| Sharpshooter | a ranged weapon attack | ignores Half and Three-Quarters Cover (thrown too); a Ranged weapon: no threatened or long-range disadvantage | `ignoresCover`, `ignoresDisadvantage` |
+| Spell Sniper | a spell attack | ignores Half and Three-Quarters Cover; no threatened disadvantage; +60 ft (range 10 ft or more) | `ignoresCover`, `ignoresDisadvantage`, `addRange` |
+| Crossbow Expert | a crossbow attack | no Loading limit; loads with no free hand; no threatened disadvantage; a Light crossbow's extra attack adds the modifier | `ignoresProperty`, `ignoresDisadvantage`, `onDamage` |
+| Elemental Adept | adding it; its spells' damage | a damage type per copy; that type ignores Resistance; 1s count as 2s | `itemChoice` (`unique`), `ignoresResistance`, `damage.minDie` (`types`) |
+| Poisoner | Poison damage | ignores Resistance | `ignoresResistance` |
+
 ## Still to become legos
 
 Parts still written inside one feature's code. Each one becomes a generic lego (named for what it does, not for the feature), and the feature is moved onto it.

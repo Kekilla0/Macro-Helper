@@ -144,9 +144,21 @@ export class DamageParts{
     return false;
   }
 
-  /* Each die counts at least this (Great Weapon Fighting : 1s and 2s count as 3) */
-  minDie(n){
+  /* A part already in the roll ("@mod" : the modifier is added) */
+  has(part){
+    const target = flat(part);
+    return this.rolls.some(roll => (roll.parts ?? []).some(p => flat(p).includes(target)));
+  }
+
+  /**
+   * Each die counts at least this (Great Weapon Fighting : 1s and 2s count as 3).
+   * @param {number} n
+   * @param {object} [options]
+   * @param {string[]} [options.types]  only the rolls of these damage types (Elemental Adept : its type)
+   */
+  minDie(n, { types = null } = {}){
     for(const roll of this.rolls){
+      if(types && !types.includes(roll.options?.type)) continue;
       roll.parts = (roll.parts ?? []).map(p => /min/i.test(String(p)) ? p : String(p).replace(/(\d*)d(\d+)/gi, `$1d$2min${n}`));
     }
     return this;

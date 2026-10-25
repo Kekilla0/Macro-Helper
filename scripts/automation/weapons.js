@@ -7,13 +7,17 @@ import { hands } from './hands.js';
 import { usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
 import { giveMode } from '../roll-item/reasons.js';
 import { uses } from '../uses.js';
+import { propertyIgnored } from './ignores.js';
+import { actionTracker } from './action-tracker.js';
 import { tokenOf, distanceBetween, getRange, actingFrom } from '../helpers/tokens.js';
 
 /**
  * Weapon properties, from the weapon's data and dnd5e's rules version (Modern 2024 / Legacy 2014) :
  *   Heavy        : disadvantage below STR 13 (melee) / DEX 13 (ranged) (2024), or for a Small / Tiny creature (2014)
  *   Hands        : two. A Two-Handed weapon takes both, other weapons and shields one; what's equipped must leave room
- *   Loading      : one shot per turn from that weapon, whatever the number of attacks (in combat)
+ *   Loading      : one shot from that weapon per Action, Bonus Action or Reaction that fires it, whatever the number of
+ *                  attacks (in combat; with the Action Tracker off, one a turn)
+ *   Ammunition   : loading a one-handed Ammunition weapon (Hand Crossbow, Sling) takes the other hand (Hands)
  *   Light        : an off-hand attack needs an attack with a different Light weapon first this turn (in combat)
  *   In hand      : a character's weapon must be equipped (natural weapons and Unarmed Strike always are)
  *   Range        : with no map pick (Pick Targets off, or Roll Item off), a target beyond the weapon's reach (melee),
@@ -42,6 +46,12 @@ export class weapons{
   }
   static register(){
     if(game.system.id !== "dnd5e") return;
+    /* Loading : a shot from a weapon that already fired on this Attack action starts the next Action's (Action Surge) */
+    actionTracker.NEW_ACTION.add((activity, rec, actor) => {
+      const item = activity?.item;
+      if((settings.value("weaponRules") === "off") || !item?.system?.properties?.has?.("lod") || propertyIgnored(actor, item, "lod")) return false;
+      return this.#used(actor, `loading.${item.id}.action${Number(rec.used?.action) || 0}`);
+    });
     Hooks.on("dnd5e.preRollAttackV2", config => this.onPreRollAttack(config));
     rollModes.add("heavy", config => this.heavyMode(config));
     Hooks.on("dnd5e.rollAttackV2", (rolls, { subject } = {}) => this.onRollAttack(subject, rolls?.[0]));
@@ -217,7 +227,20 @@ export class weapons{
       }
     }
 
-    if(props.has("lod") && this.#used(actor, `loading.${item.id}`)) problems.push(module.format("rules.weapon.loading", { item : item.name }));
+    if(props.has("lod") && this.#used(actor, this.loadingKey(actor, item)) && !propertyIgnored(actor, item, "lod")) problems.push(module.format("rules.weapon.loading", { item : item.name }));
+    /* Ammunition : loading a one-handed weapon (a Hand Crossbow, a Sling) takes the other hand, unless a rule skips it
+       (Crossbow Expert : ignoresProperty "amm") */
+    if(hands.manages(actor) && props.has("amm") && !props.has("two") && !thrown && !propertyIgnored(actor, item, "amm")){
+      const busy = hands.heldItems(actor).filter(i => (i.id !== item.id) && hands.canHold(i));
+      if(busy.length){
+        const names = busy.map(i => i.name).join(", ");
+        if(change){
+          for(const other of busy) other.update({ "system.equipped" : false });
+          changed.push(module.format("rules.weapon.loadHandFreed", { item : item.name, items : names }));
+        }
+        else fixable(module.format("rules.weapon.loadHand", { item : item.name, items : names }), { type : "free", ids : busy.map(i => i.id) });
+      }
+    }
     /* Hands : an off-hand attack is with what the left hand holds */
     if(attackMode.endsWith("offhand") && hands.manages(actor) && (putIn !== "off") && (hands.handOf(actor, item) !== "off")){
       problems.push(module.format("hands.notOffHand", { item : item.name }));
@@ -298,12 +321,19 @@ export class weapons{
     return item.system.properties?.has?.("two") ? 2 : 1;
   }
 
+  /* Loading's shot : one per Action, Bonus Action or Reaction that fires it (the Action Tracker says which paid); with
+     the tracker off, one a turn */
+  static loadingKey(actor, item){
+    const paid = actionTracker.paidBy(actor);
+    return paid ? `loading.${item.id}.${paid.replace(":", "")}` : `loading.${item.id}`;
+  }
+
   /* After a weapon attack : remember Loading's shot, and a Light weapon's main-hand attack, for the rest of the turn */
   static async onRollAttack(activity, roll){
     const item = activity?.item, actor = activity?.actor;
     if((item?.type !== "weapon") || !actor?.isOwner || (settings.value("weaponRules") === "off")) return;
     const props = item.system.properties ?? new Set();
-    if(props.has("lod")) await this.#mark(actor, `loading.${item.id}`);
+    if(props.has("lod")) await this.#mark(actor, this.loadingKey(actor, item));
     if(props.has("lgt") && !String(roll?.options?.attackMode ?? "").endsWith("offhand")){
       await this.#mark(actor, `light.${item.id}`);
       /* Out of combat there are no turns : the last Light weapon attack, for a minute */

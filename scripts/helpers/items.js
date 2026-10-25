@@ -10,6 +10,7 @@ import { uses } from '../uses.js';
 import { wait, waitFor, idOf } from './utils.js';
 import { gm } from '../gm.js';
 import { rollModes } from '../automation/roll-modes.js';
+import { disadvantageIgnored } from '../automation/ignores.js';
 
 /**
  * Item helpers.
@@ -323,8 +324,11 @@ export async function pickAttack(item, { count = 1, disposition = "nonAlly", wit
       threatened ? module.format("helpers.attack.threatened", { names : threats.map(t => t.name).join(", ") }) : "",
     ].filter(Boolean).join(" ");
 
+    /* Long range / threatened, unless a rule lets this attack skip it (Sharpshooter, Spell Sniper : ignoresDisadvantage) */
+    const isLong = t => isLongRange(item, t, by) && !disadvantageIgnored(item, t, "longRange", { activity : attack });
+    const isThreat = t => threatened && isRangedAttack(item, t, by) && !disadvantageIgnored(item, t, "threatened", { activity : attack });
     /* Pick : each candidate coloured by how the attack would roll against it */
-    const longOrThreat = t => isLongRange(item, t, by) || (threatened && isRangedAttack(item, t, by));
+    const longOrThreat = t => isLong(t) || isThreat(t);
     /* Behind a wall (total cover) : not a target. Unseen (darkness, Invisible) still is, at disadvantage */
     const reachable = t => hasLineOfSight(at, t) && (!filter || filter(t));
     const targets = await pickTargets(item, {
@@ -337,7 +341,7 @@ export async function pickAttack(item, { count = 1, disposition = "nonAlly", wit
       tokenColor : t => predictMode(attack, t, { attackMode : attackModeFor(item, t, { long, ...by }), disadvantage : longOrThreat(t) }),
       /* Hovering a coloured candidate : why */
       tokenWhy : t => predictModeWhy(attack, t, { attackMode : attackModeFor(item, t, { long, ...by }), disadvantage : longOrThreat(t),
-        disadvantageWhy : isLongRange(item, t, by) ? module.i18n("helpers.pick.whyLong") : module.i18n("helpers.pick.whyThreatened") }),
+        disadvantageWhy : isLong(t) ? module.i18n("helpers.pick.whyLong") : module.i18n("helpers.pick.whyThreatened") }),
     });
     if(!targets.length) return null;   // cancelled, or nothing in range (pickTargets said which)
 
@@ -355,8 +359,8 @@ export async function pickAttack(item, { count = 1, disposition = "nonAlly", wit
     }
 
     /* Disadvantage at long range, or for a ranged / thrown attack while threatened */
-    const disadvantage = target => (isLongRange(item, target, by) && module.i18n("reasons.longRange"))
-      || ((threatened && isRangedAttack(item, target, by)) && module.i18n("reasons.threatened"));
+    const disadvantage = target => (isLong(target) && module.i18n("reasons.longRange"))
+      || (isThreat(target) && module.i18n("reasons.threatened"));
     return { attack, targets, attackMode, disadvantage };
   }
   catch(error){

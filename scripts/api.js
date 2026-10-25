@@ -15,6 +15,9 @@ import { saveRowToggle, toggledOn } from './roll-item/row-toggles.js';
 import { willingSave, willingOn } from './automation/willing.js';
 import { changeSize } from './automation/size.js';
 import { lendItem, lends } from './automation/lend-item.js';
+import { ignoresDisadvantage, ignoresCover, ignoresProperty, ignoresResistance } from './automation/ignores.js';
+import { addRange } from './automation/ranges.js';
+import { itemChoice, choiceOf, askChoice } from './automation/item-choices.js';
 import { zone, zones } from './automation/zones.js';
 import { giveAura } from './automation/auras.js';
 import { addSpellPool, openSpellPool, spellPools } from './automation/spell-pools.js';
@@ -82,6 +85,11 @@ export class api{
       willingSave, willingOn, changeSize,
       /* A use lent to a creature as an item of its own, with the lender's numbers (Dragon's Breath) */
       lendItem, lends,
+      /* Attacks or damage that skip a rule : disadvantage (threatened, long range), cover, a weapon property's limit,
+         Resistance (Sharpshooter, Elemental Adept); a longer range or reach (Spell Sniper) */
+      ignoresDisadvantage, ignoresCover, ignoresProperty, ignoresResistance, addRange,
+      /* A choice made once for an item, kept on it (Elemental Adept's damage type) */
+      itemChoice, choiceOf, askChoice,
       /* An area that acts on whoever enters it or starts / ends a turn in it (Cloud of Daggers, Moonbeam); moving one */
       zone, moveZone : (thing, region) => zones.moveArea(thing?.actor ?? thing ?? canvas.tokens?.controlled?.[0]?.actor ?? game.user.character, region),
       /* An area round a creature, going where it goes, giving those inside a condition or effects (a stench) */
