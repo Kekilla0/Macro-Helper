@@ -15,7 +15,8 @@ import { saveRowToggle, toggledOn } from './roll-item/row-toggles.js';
 import { willingSave, willingOn } from './automation/willing.js';
 import { changeSize } from './automation/size.js';
 import { lendItem, lends } from './automation/lend-item.js';
-import { ignoresDisadvantage, ignoresCover, ignoresProperty, ignoresResistance } from './automation/ignores.js';
+import { ignoresDisadvantage, ignoresCover, ignoresProperty, ignoresResistance, ignoresTerrain } from './automation/ignores.js';
+import { speedAs, standUpCost, dragsFreely } from './automation/movement.js';
 import { saveDamage } from './automation/save-damage.js';
 import { reducesDamage } from './automation/damage-reduction.js';
 import { onHitMove } from './roll-item/card-moves.js';
@@ -28,7 +29,7 @@ import { rerollButton, rerolled } from './roll-item/reroll-buttons.js';
 import { actionTracker } from './automation/action-tracker.js';
 import { bonusAttackAfter } from './automation/bonus-attacks.js';
 import { reactionAttackOn, opportunityInstead } from './automation/action-ready.js';
-import { actions } from './automation/actions.js';
+import { actions, onDefaultAction, actionAs } from './automation/actions.js';
 import { gm } from './gm.js';
 import { emanation } from './automation/emanation.js';
 import { transform, revert } from './automation/transform.js';
@@ -92,7 +93,7 @@ export class api{
       lendItem, lends,
       /* Attacks or damage that skip a rule : disadvantage (threatened, long range), cover, a weapon property's limit,
          Resistance (Sharpshooter, Elemental Adept); a longer range or reach (Spell Sniper) */
-      ignoresDisadvantage, ignoresCover, ignoresProperty, ignoresResistance, addRange, saveDamage, reducesDamage, onHitMove, raiseCardAC, raisedCardAC, isAttackAction,
+      ignoresDisadvantage, ignoresCover, ignoresProperty, ignoresResistance, ignoresTerrain, addRange, saveDamage, reducesDamage, onHitMove, raiseCardAC, raisedCardAC, isAttackAction,
       /* An attack as the Bonus Action after something this turn (Light, Martial Arts, Pole Strike, Hew); more moments
          for a Reaction attack (Reactive Strike, Sentinel) and something to do instead of an Opportunity Attack (War
          Caster); two weapons drawn as one (Quick Draw) */
@@ -126,6 +127,11 @@ export class api{
       castOnHit, onInitiative, addSense,
       /* A Default Action used as part of something else (Cunning Action's Hide); a use that waits for the GM's Allow */
       useDefaultAction : (thing, id, options) => actions.useDefault(thing, id, options),
+      /* Something after a Default Action (Charger's Dash); a Default Action as a Bonus Action (Keen Mind's Study) */
+      onDefaultAction, actionAs,
+      /* A speed equal to another (Athlete's climb); what standing up costs (Hop Up); dragging a grappled creature
+         without the extra cost (Fast Wrestler) */
+      speedAs, standUpCost, dragsFreely,
       askToUse : (activity, ctx, options) => gm.askToUse(activity, ctx, options),
 
       /* Helpers, see scripts/helpers */

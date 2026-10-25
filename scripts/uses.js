@@ -57,6 +57,7 @@ export class uses{
       "longCast",      // Casting : 1 minute or more (or a Ritual) : begun with Concentration, cast from its card later
       "slotPerTurn",   // Casting : a second spell slot this turn follows Rule Limits
       "castingChoice", // Casting choice : an option chosen as it's cast, paid once cast (Metamagic; Quickened : its economy)
+      "actionAs",      // Default Actions : a Default Action a rule lets cost a Bonus Action (Keen Mind's Study) : which one
       "economy",       // Action Tracker : its Action / Bonus Action / Reaction (Rule Limits for a second), spent once used
       "components",    // Components : V (not Silenced), S (a free hand), M (a focus, or a pouch and a free hand) : Rule Limits
       "actFrom",       // Act from : a place the use can be made from (Invoke Duplicity's illusion) : themself or there, before any pick

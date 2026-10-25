@@ -9,7 +9,54 @@ import { addTimedEffect, stabilize, setStatus } from '../helpers/actors.js';
 import { giveMode } from '../roll-item/reasons.js';
 import { chooseOption, idOf } from '../helpers/utils.js';
 import { uses } from '../uses.js';
+import { actionTracker } from './action-tracker.js';
 const log = logger.for(import.meta.url);
+
+/**
+ * Default Action legos (Charger, Speedy, Keen Mind, Observant; a monster's "when it Dashes, it can also Hide", a
+ * homebrew "you can Search as a Bonus Action") :
+ *
+ *   onDefaultAction(match, { action : "dash", run : (actor, source) => {} })   once it has taken that Default Action
+ *                                     (its own item, Cunning Action's, Step of the Wind's) : Charger's 10 ft more
+ *   actionAs(match, { action : "study", as : "bonus" })   that Default Action may cost a Bonus Action instead (on its
+ *                                     turn, both left : it chooses; only the Bonus Action left : that one)
+ *
+ *   match  an item identifier the creature has (or several), or (actor) => the item (or anything truthy) that gives it
+ *   action a Default Action's identifier (or several); enabled () => boolean, id (default : the match and the action)
+ */
+const defaultRules = { after : new Map(), as : new Map() };
+
+function sourceOf(actor, match){
+  if(!actor) return null;
+  if(typeof match === "function"){
+    try { return match(actor) || null; } catch(error){ log.error("Default action match", error); return null; }
+  }
+  const ids = [match].flat();
+  return actor.items?.find?.(i => (i.type !== "spell") && ids.includes(idOf(i))) ?? null;
+}
+
+const ruleKey = (match, action, id) => id ?? `${(typeof match === "function") ? foundry.utils.randomID() : [match].flat().join(",")}:${[action].flat().join(",")}`;
+
+export function onDefaultAction(match, { action, run, enabled = null, id = null } = {}){
+  if(!action || (typeof run !== "function")) return;
+  defaultRules.after.set(ruleKey(match, action, id), { match, actions : [action].flat(), run, enabled });
+}
+
+export function actionAs(match, { action, as = "bonus", enabled = null, id = null } = {}){
+  if(!action) return;
+  defaultRules.as.set(ruleKey(match, action, id), { match, actions : [action].flat(), as, enabled });
+}
+
+/* The rules of a kind holding for this creature and Default Action : [{ rule, source }] */
+function defaultRulesFor(kind, actor, action){
+  const found = [];
+  for(const rule of defaultRules[kind].values()){
+    if((rule.enabled && !rule.enabled()) || !rule.actions.includes(action)) continue;
+    const source = sourceOf(actor, rule.match);
+    if(source) found.push({ rule, source });
+  }
+  return found;
+}
 
 /**
  * The basic actions dnd5e has no automation for, from items you add to a character (examples/items : dodge.json,
@@ -26,6 +73,8 @@ const log = logger.for(import.meta.url);
  *                      Deafened). Their next ability check with it has
  *                      advantage. Ends when used, or at the start of your next turn (out of combat : when used).
  *     Stabilize      : a creature at 0 HP within 5 ft. WIS (Medicine) DC 10 : on a success it's Stable (stabilize()).
+ *   Search, Study  : a WIS (Insight, Medicine, Perception, Survival) or INT (Arcana, History, Investigation, Nature,
+ *                    Religion) check, the skill chosen on the card; the GM sets the DC.
  *   Hide           : (2024 : Heavily Obscured or behind three-quarters / total cover, out of enemies' sight) asks the GM
  *                    first (gm.askToUse : a card naming the enemies whose tokens see it, Allow / Decline). Nothing is
  *                    used or spent until allowed; then DEX (Stealth) against DC 15 (a reroll counts) : Invisible on a
@@ -50,6 +99,8 @@ export class actions{
   static HELP = "help";
   static HIDE = "hide";
   static HIDE_DC = 15;
+  static SEARCH = "search";
+  static STUDY = "study";
 
   /* Default Actions setting; a creature also needs the item */
   static enabled(){
@@ -86,6 +137,8 @@ export class actions{
     Hooks.on("dnd5e.rollAttackV2", rolls => this.consume(rolls?.[0]));
     Hooks.on("dnd5e.preRollSkillV2", config => this.onPreRollCheck(config, `skill:${config.skill}`));
     Hooks.on("dnd5e.preRollToolV2", config => this.onPreRollCheck(config, `tool:${config.tool}`));
+    /* A Default Action some rule lets cost a Bonus Action (Keen Mind's Study) : which one, before the tracker spends */
+    uses.onActivity("actionAs", (activity, ctx, next) => this.actionAsStep(activity, ctx, next));
     /* Help : who and what, chosen and picked before the use; the card shows them */
     uses.onActivity("action", async (activity, ctx, next) => {
       const before = await this.beforeUse(activity);
@@ -158,9 +211,13 @@ export class actions{
     try {
       /* On the token's own actor : an unlinked token opened from the sidebar would otherwise miss it */
       const own = activity.getUsageToken?.()?.actor ?? tokenOf(activity.actor)?.actor ?? activity.actor;
-      if(id === this.DODGE) return await this.dodge(own).then(() => this.autoApplied(results));
-      if(id === this.DASH) return await this.mark(own, "dash", "actions.dash.mark", "icons/skills/movement/feet-winged-boots-glowing-yellow.webp").then(() => this.autoApplied(results));
-      if(id === this.DISENGAGE) return await this.mark(own, "disengage", "actions.disengage.mark", "icons/skills/movement/arrow-upward-yellow.webp").then(() => this.autoApplied(results));
+      /* Its mark first, then the rules that follow it (Charger's 10 ft counts on the Dash's movement) */
+      const basic = !!activity.item?.getFlag?.(module.id, "basicAction") || this.BASICS.includes(id);
+      if(id === this.DODGE) await this.dodge(own).then(() => this.autoApplied(results));
+      else if(id === this.DASH) await this.mark(own, "dash", "actions.dash.mark", "icons/skills/movement/feet-winged-boots-glowing-yellow.webp").then(() => this.autoApplied(results));
+      else if(id === this.DISENGAGE) await this.mark(own, "disengage", "actions.disengage.mark", "icons/skills/movement/arrow-upward-yellow.webp").then(() => this.autoApplied(results));
+      if(basic) this.took(own, id);
+      if([this.DODGE, this.DASH, this.DISENGAGE].includes(id)) return;
       if(id === this.HIDE) return await this.rollHide(own);
       const help = usage?.[module.id]?.before?.help;
       if((id !== this.HELP) || !help?.target) return;
@@ -191,7 +248,40 @@ export class actions{
     if(id === this.DODGE) await this.dodge(actor);
     else if(id === this.DASH) await this.mark(actor, "dash", "actions.dash.mark", "icons/skills/movement/feet-winged-boots-glowing-yellow.webp");
     else if(id === this.DISENGAGE) await this.mark(actor, "disengage", "actions.disengage.mark", "icons/skills/movement/arrow-upward-yellow.webp");
+    if([this.DODGE, this.DASH, this.DISENGAGE].includes(id)) this.took(actor, id);
     return null;
+  }
+
+  /* It took a Default Action : the rules that follow it (onDefaultAction) */
+  static took(actor, id){
+    if(!actor || !id) return;
+    for(const { rule, source } of defaultRulesFor("after", actor, id)){
+      Promise.resolve().then(() => rule.run(actor, source)).catch(error => log.error("Default action rule", error));
+    }
+  }
+
+  /* actionAs : a Bonus Action instead of the Action, when a rule allows it (its turn, the tracker counting) */
+  static async actionAsStep(activity, ctx, next){
+    const own = ctx.config?.[module.id] ?? {};
+    if(!this.enabled() || own.economy || !activity?.actor?.isOwner || (activity.activation?.type !== "action")) return next();
+    const actor = activity.getUsageToken?.()?.actor ?? activity.actor;
+    const id = idOf(activity.item);
+    const found = defaultRulesFor("as", actor, id)[0];
+    const st = found ? actionTracker.state(actionTracker.payerOf(actor)) : null;
+    if(!st?.mine) return next();
+    const payer = actionTracker.payerOf(actor);
+    const as = found.rule.as;
+    const action = actionTracker.left(payer, "action") > 0, other = actionTracker.left(payer, as) > 0;
+    let kind = null;
+    if(action && other){
+      kind = await chooseOption({ title : activity.item?.name ?? activity.name, icon : "fa-solid fa-stopwatch",
+        prompt : module.format("actions.as.prompt", { name : found.source.name ?? "" }),
+        options : [{ value : "action", label : actionTracker.label("action") }, { value : as, label : actionTracker.label(as) }] });
+      if(!kind) return null;
+    }
+    else if(other) kind = as;
+    if(kind && (kind !== "action")) uses.mark(ctx, { economy : kind });
+    return next();
   }
 
   /* Applied by the module : the card's effect buttons are greyed out (for its owner and the GM) */
@@ -392,7 +482,7 @@ export class actions{
   /* A creature at 0 HP within 5 ft first (none : nothing spent), then the use, then it's Stable (no check) */
   /* ---------- Every creature's default actions ---------- */
 
-  static BASICS = ["dash", "disengage", "dodge", "help", "hide", "unarmed-strike"];
+  static BASICS = ["dash", "disengage", "dodge", "help", "hide", "search", "study", "unarmed-strike"];
 
   static async giveBasics(actor){
     if(!this.enabled() || !game.users.activeGM?.isSelf || !["npc", "character"].includes(actor?.type)) return;

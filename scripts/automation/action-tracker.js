@@ -12,6 +12,7 @@ import { masteries } from './masteries.js';
 import { controllerOf } from './summons.js';
 import { bonusAttackAfter, bonusAttackRule } from './bonus-attacks.js';
 import { rollItem } from '../roll-item/roll-item.js';
+import { movement } from './movement.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -229,11 +230,16 @@ export class actionTracker{
     }
   }
 
+  /* What standing up costs : half its Speed (a Dash doesn't double it), or less (standUpCost : Athlete's Hop Up) */
+  static standCost(actor){
+    return movement.standCost(actor, this.speedOf(actor, "walk") / (this.isDashing(actor) ? 2 : 1));
+  }
+
   /* Its turn, Prone : stand up (half its Speed of movement) */
   static async standUp(actor, token){
     const st = this.state(actor);
     if(!st || !actor.statuses?.has?.("prone")) return;
-    const cost = Math.floor(this.speedOf(actor, "walk") / (this.isDashing(actor) ? 4 : 2));
+    const cost = this.standCost(actor);
     const moved = token ? this.movedOf(token) : 0;
     const left = this.speedOf(actor, "walk") - moved - (Number(st.rec.standing) || 0);
     if((cost > left) && !limits.allow(module.format("actionTracker.cantStand", { name : actor.name, cost, left }), { who : actor.name, what : module.i18n("actionTracker.standUp") })) return;

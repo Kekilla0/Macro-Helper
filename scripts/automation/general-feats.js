@@ -2,7 +2,7 @@ import { module } from '../module.js';
 import { settings } from '../settings.js';
 import { idOf } from '../helpers/utils.js';
 import { onDamage } from '../roll-item/damage.js';
-import { ignoresDisadvantage, ignoresCover, ignoresProperty, ignoresResistance } from './ignores.js';
+import { ignoresDisadvantage, ignoresCover, ignoresProperty, ignoresResistance, ignoresTerrain } from './ignores.js';
 import { addRange } from './ranges.js';
 import { itemChoice, choiceOf } from './item-choices.js';
 import { onHit, isAttackAction } from '../roll-item/hit-bonus.js';
@@ -22,6 +22,11 @@ import { bonusAttackAfter } from './bonus-attacks.js';
 import { actionReady, reactionAttackOn, opportunityInstead } from './action-ready.js';
 import { actionTracker } from './action-tracker.js';
 import { fightingStyles } from './fighting-styles.js';
+import { speedAs, standUpCost, dragsFreely } from './movement.js';
+import { onDefaultAction, actionAs } from './actions.js';
+import { rollModeFrom } from './roll-modes.js';
+import { rollItem } from '../roll-item/roll-item.js';
+import { grappling, isSmaller } from '../roll-item/card-builder.js';
 
 /**
  * General feats (level 4+, Feats setting), each built from legos the way an Item Macro would be :
@@ -72,6 +77,15 @@ import { fightingStyles } from './fighting-styles.js';
  *   Dual Wielder     : after attacking with a Light weapon on the Attack action, one attack as the Bonus Action with a
  *                      different Melee weapon without Two-Handed (no positive modifier to its damage, unless Two-Weapon
  *                      Fighting); Quick Draw : two weapons without Two-Handed go in hand for the price of one.
+ *   Speedy           : Speed + 10 (Plutonium's effect); having taken the Dash action, Difficult Terrain costs no extra
+ *                      movement for the rest of the turn; Opportunity Attacks against it have disadvantage.
+ *   Athlete          : a Climb Speed equal to its Speed; standing up from Prone costs 5 ft of movement. Its running
+ *                      jumps after 5 ft : nothing to change (no jump rule counts the run-up).
+ *   Grappler         : Punch and Grab : once a turn, an Unarmed Strike's hit (Damage, the Attack action) : a button
+ *                      for its Grapple too, at that creature; advantage on attacks against a creature it grapples;
+ *                      Fast Wrestler : dragging a creature its size or smaller costs no extra movement.
+ *   Keen Mind        : the Study action may be its Bonus Action. Observant : the Search action may be.
+ *   Charger          : Improved Dash : its Dash gives 10 ft more movement (the Action Tracker's count).
  */
 export class generalFeats{
   static SHARPSHOOTER = "sharpshooter";
@@ -93,6 +107,11 @@ export class generalFeats{
   static SENTINEL = "sentinel";
   static WAR_CASTER = "war-caster";
   static DUAL_WIELDER = "dual-wielder";
+  static SPEEDY = "speedy";
+  static ATHLETE = "athlete";
+  static GRAPPLER = "grappler";
+  static KEEN_MIND = "keen-mind";
+  static OBSERVANT = "observant";
 
   /* Polearm Master's weapons : a Quarterstaff, a Spear, or one with Heavy and Reach */
   static polearm(item){
@@ -142,6 +161,7 @@ export class generalFeats{
     const enabled = () => this.enabled();
     this.registerHitRiders(enabled);
     this.registerExtraAttacks(enabled);
+    this.registerMovement(enabled);
 
     /* Sharpshooter */
     ignoresCover(this.SHARPSHOOTER, { enabled, when : ({ item, message }) => this.rangedWeaponAttack(item, message) });
@@ -294,6 +314,51 @@ export class generalFeats{
       when : ({ item, light }) => this.meleeWeapon(item) && !item.system.properties?.has?.("two") && light.some(id => id !== item.id),
       damage : (attack, damage) => { if(!fightingStyles.styleOf(attack.actor, "two-weapon-fighting")) damage.noModifier(); } });
     actionTracker.drawsTwo(this.DUAL_WIELDER, { enabled, when : item => !item.system?.properties?.has?.("two") });
+  }
+
+  /* ---------- Movement and actions (Speedy, Athlete, Grappler, Keen Mind, Observant, Charger's Dash) ---------- */
+
+  static registerMovement(enabled){
+    /* Speedy */
+    ignoresTerrain(this.SPEEDY, { enabled, when : ({ actor }) => !!actor.effects?.some?.(e => !e.disabled && e.getFlag(module.id, "dash")) });
+    rollModeFrom(this.SPEEDY, { id : "speedy-agile", trait : true, enabled,
+      against : { mode : "disadvantage", when : attack => !!(attack.tags?.opportunity || rollItem.usedTags(attack.activity).opportunity),
+        reason : () => module.i18n("feats.speedy.agile") } });
+
+    /* Athlete */
+    speedAs(this.ATHLETE, { speed : "climb", as : "walk", enabled });
+    standUpCost(this.ATHLETE, 5, { enabled });
+
+    /* Grappler */
+    onHit({ id : "punch-and-grab", feature : this.GRAPPLER, enabled, once : "turn", attackAction : true, icon : "fa-hand-back-fist",
+      when : hit => hit.unarmed && !!hit.target && !!this.grappleOf(hit.item) && !grappling(hit.actor).some(t => (t.document ?? t) === (hit.target.document ?? hit.target)),
+      label : hit => module.format("feats.grappler.grab", { name : hit.feature?.name ?? "" }),
+      after : hit => this.punchAndGrab(hit) });
+    rollModeFrom(this.GRAPPLER, { id : "grappler-advantage", trait : true, enabled,
+      by : { mode : "advantage", when : (attack, target) => !!target && grappling(attack.actor).some(t => (t.document ?? t) === (target.document ?? target)),
+        reason : () => module.i18n("feats.grappler.advantage") } });
+    dragsFreely(this.GRAPPLER, { enabled, when : (grappler, held) => isSmaller(held, grappler.system?.traits?.size ?? "med") });
+
+    /* Keen Mind, Observant */
+    actionAs(this.KEEN_MIND, { action : "study", enabled });
+    actionAs(this.OBSERVANT, { action : "search", enabled });
+
+    /* Charger : Improved Dash */
+    onDefaultAction(this.CHARGER, { action : "dash", enabled, run : actor => actionTracker.useMovement(actor, 10) });
+  }
+
+  /* The Grapple activity of an Unarmed Strike */
+  static grappleOf(item){
+    return [...(item?.system?.activities ?? [])].find(a => (a.type === "save") && /grapple/i.test(a.name ?? "")) ?? null;
+  }
+
+  /* Punch and Grab : the same Unarmed Strike's Grapple at the creature hit, part of this attack (nothing more spent) */
+  static async punchAndGrab(hit){
+    const activity = this.grappleOf(hit.item);
+    const target = hit.target?.object ?? hit.target;
+    if(!activity || !target?.id) return;
+    canvas.tokens.setTargets([target.id]);
+    return activity.use({ [module.id] : { economy : "free", skipPick : true, useTargets : true } });
   }
 
   /* War Caster's spells : what it could cast with an Action now (readyChoices), at one creature */

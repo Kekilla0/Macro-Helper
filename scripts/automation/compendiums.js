@@ -25,7 +25,7 @@ export class compendiums{
   static FAMILIARS = "familiars";
   static FIGHTING_STYLES = "fighting-styles";
   static ACTIONS = "actions";
-  static SEEDS = ["dash", "disengage", "dodge", "help", "hide", "unarmed-strike", "reckless-attack"];
+  static SEEDS = ["dash", "disengage", "dodge", "help", "hide", "search", "study", "unarmed-strike", "reckless-attack"];
 
   static INDEX_FIELDS = {
     Actor : ["system.details.cr", "system.details.type", "system.attributes.movement", "system.traits.size", "prototypeToken.texture.src", "prototypeToken.width", "prototypeToken.height"],

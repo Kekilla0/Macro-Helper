@@ -1,6 +1,7 @@
 import { module } from '../module.js';
 import { logger } from '../log.js';
 import { idOf } from '../helpers/utils.js';
+import { patch } from '../patch.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -15,6 +16,9 @@ const log = logger.for(import.meta.url);
  *   ignoresProperty(match, "lod", { when })                               a weapon property's limit ("lod" : Loading's
  *                                                                         one shot; "amm" : a free hand to load)
  *   ignoresResistance(match, types, { when })                             its damage of those types ignores Resistance
+ *   ignoresTerrain(match, { types, when })                                Difficult Terrain costs it no extra movement
+ *                                                                         (types : dnd5e's, "all" by default; "magical",
+ *                                                                         "nonmagical", "plants", "web"...)
  *
  *   match  an item identifier the creature has (or several), or (actor) => the item (or anything truthy) that gives it
  *   when   (info) => boolean : this attack or damage qualifies. info { actor, item, activity, target (token), source (the
@@ -22,7 +26,7 @@ const log = logger.for(import.meta.url);
  *   types  damage types, or (source, info) => damage types (a choice kept on the feat : Elemental Adept)
  *   enabled () => boolean leaves the rule off (its setting). The same id (default : the match) replaces the rule.
  */
-const rules = { disadvantage : new Map(), cover : new Map(), property : new Map(), resistance : new Map() };
+const rules = { disadvantage : new Map(), cover : new Map(), property : new Map(), resistance : new Map(), terrain : new Map() };
 
 const keyOf = (match, id) => id ?? ((typeof match === "function") ? Symbol() : [match].flat().map(String).join(","));
 
@@ -91,6 +95,17 @@ export function ignoresResistance(match, types, { when = null, enabled = null, i
   rules.resistance.set(keyOf(match, id), { match, types, when, enabled });
 }
 
+/**
+ * Difficult Terrain doesn't cost it extra movement (Speedy's Dash; a monster's Spider Climb "ignores webs"), through
+ * dnd5e's own list (attributes.movement.ignoredDifficultTerrain) : the ruler and the move's cost both follow it.
+ * `when` gets { actor, source } here (Speedy : only while Dashing).
+ * @param {string|string[]|Function} match
+ * @param {object} [options]  { types = ["all"], when, enabled, id }
+ */
+export function ignoresTerrain(match, { types = ["all"], when = null, enabled = null, id = null } = {}){
+  rules.terrain.set(keyOf(match, id), { match, types : [types].flat(), when, enabled });
+}
+
 /* ---------- Asked by the rules they skip ---------- */
 
 /**
@@ -141,7 +156,26 @@ function resistancesIgnored(message, target){
   return types;
 }
 
+/* Difficult Terrain : the types its rules ignore, added to dnd5e's list once its data is ready */
+function terrainIgnored(actor){
+  const list = actor.system?.attributes?.movement?.ignoredDifficultTerrain;
+  if(!(list instanceof Set)) return;
+  for(const rule of rules.terrain.values()){
+    if(rule.enabled && !rule.enabled()) continue;
+    const source = sourceOf(actor, rule.match);
+    if(!source) continue;
+    try { if(rule.when && !rule.when({ actor, source })) continue; } catch(error){ log.error("Ignores terrain", error); continue; }
+    for(const type of rule.types) list.add(type);
+  }
+}
+
 export function registerIgnores(){
+  patch.wrap("CONFIG.Actor.documentClass.prototype.prepareDerivedData", function(wrapped, ...args){
+    const result = wrapped(...args);
+    if(rules.terrain.size) terrainIgnored(this);
+    return result;
+  });
+
   /* Cover : Roll Item asks (its cover chips stay, they're just not counted) */
   Hooks.on(`${module.id}.ignoresCover`, (message, answer) => {
     if(answer.ignore) return;

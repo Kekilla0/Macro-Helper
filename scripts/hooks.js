@@ -12,6 +12,7 @@ import { weapons } from './automation/weapons.js';
 import { homebrew } from './automation/homebrew.js';
 import { actions } from './automation/actions.js';
 import { actionTracker } from './automation/action-tracker.js';
+import { movement } from './automation/movement.js';
 import { actionBar } from './automation/action-bar.js';
 import { actionReady } from './automation/action-ready.js';
 import { combatLog } from './automation/combat-log.js';
@@ -107,6 +108,7 @@ Hooks.once("init", ()=> {
   homebrew.register();
   actions.register();
   actionTracker.register();
+  movement.register();
   actionBar.register();
   actionReady.register();
   combatLog.register();

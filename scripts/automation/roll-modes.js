@@ -94,13 +94,14 @@ export function giveRollMode(config, mode, reason){
  *         attackOf (actor, item, weapon, melee, ranged, ability...), `target` the target's token (or null). `reason` may
  *         be a function (attack, target) => string (translated when the roll is made).
  * options : enabled() (the rule's setting), id (added again with the same id, it replaces the old one; default : the
- *         match). Runs at the "reckless" place in rollModes.ORDER unless `order` names another.
+ *         match), trait (the item itself on the creature gives it too, not only its effects : a feat such as
+ *         Grappler). Runs at the "reckless" place in rollModes.ORDER unless `order` names another.
  */
 const fromRules = new Map();
-export function rollModeFrom(match, { by = null, against = null, enabled = null, id = null, order = "reckless" } = {}){
+export function rollModeFrom(match, { by = null, against = null, enabled = null, id = null, order = "reckless", trait = false } = {}){
   const key = id ?? [match].flat().map(String).join(",");
   const added = fromRules.has(key);
-  fromRules.set(key, { match, by, against, enabled });
+  fromRules.set(key, { match, by, against, enabled, trait });
   if(added) return;
   rollModes.add(`${order}:${key}`, config => {
     const rule = fromRules.get(key);
@@ -110,7 +111,9 @@ export function rollModeFrom(match, { by = null, against = null, enabled = null,
     if(!roll || !attack.actor) return;
     const target = conditions.targetOf(config);
     const give = (side, actor) => {
-      if(!side || !actor || !effectsFrom(actor, rule.match).length) return;
+      const ids = (typeof rule.match === "function") ? null : [rule.match].flat();
+      const has = effectsFrom(actor, rule.match).length || (rule.trait && ids && actor?.items?.some?.(i => (i.type !== "spell") && ids.includes(idOf(i))));
+      if(!side || !actor || !has) return;
       if(side.when && !side.when(attack, target)) return;
       const reason = (typeof side.reason === "function") ? side.reason(attack, target) : side.reason;
       giveMode(roll, side.mode ?? "advantage", reason ?? "");

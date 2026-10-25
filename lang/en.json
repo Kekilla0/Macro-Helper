@@ -715,6 +715,7 @@
   "actions.hide.unseen" : "No enemy token sees them now.",
   "actions.dash.mark" : "Dashing",
   "actions.disengage.mark" : "Disengaged",
+  "actions.as.prompt" : "{name} : take it as your Action or your Bonus Action ?",
   "settings.methodsActor.title" : "Methods on Actors",
   "settings.methodsActor.hint" : "The helpers as methods on documents : actor.getSize(), token.distanceTo(other), item.getRange()...",
   "settings.methodsToken.title" : "Methods on Tokens",
@@ -1472,5 +1473,8 @@
   "feats.polearm.reactiveStrike" : "Reactive Strike",
   "feats.sentinel.halt" : "{name} : Halt (Speed 0)",
   "feats.sentinel.halted" : "{name} : Halted",
-  "feats.warCaster.cast" : "Cast a Spell"
+  "feats.warCaster.cast" : "Cast a Spell",
+  "feats.speedy.agile" : "Speedy : an Opportunity Attack",
+  "feats.grappler.advantage" : "Grappler : it holds the target",
+  "feats.grappler.grab" : "{name} : Punch and Grab (Grapple too)"
 }

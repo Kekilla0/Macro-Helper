@@ -85,6 +85,11 @@ Legos are listed in [api.md](api.md). "Data" means the item's own dnd5e or Pluto
 | Shield Master | a melee weapon hit within 5 ft; a DEX save for half | once a turn: STR save, then push 5 ft or Prone (the attacker's choice); Interpose Shield: a Reaction after a success, no damage | `onHit` (no formula, `attackAction`, `within`), `rollSave`, `forcedMove` / `giveCondition`, `saveDamage` (`reaction`) |
 | Charger | a melee hit after a straight run | 10 ft or more straight toward it: once a turn 1d8 or a 10 ft push | `chargedAt`, `onHit` (`attackAction`), `onHitMove` |
 | Defensive Duelist | hit by a melee attack | holding a Finesse weapon: a Reaction, + PB AC against melee until its next turn, the hit judged again | `onAttacked` (`self`), `raiseCardAC`, `giveEffect` (rule `acOnlyAgainst`) |
+| Speedy | the Dash action; an Opportunity Attack at it | Dashed: Difficult Terrain costs nothing extra this turn; OAs at it have disadvantage | `ignoresTerrain` (`when` Dashing), `rollModeFrom` (`trait`, `tags.opportunity` / `rollItem.usedTags`) |
+| Athlete | always; standing up | Climb Speed = Speed; standing costs 5 ft | `speedAs`, `standUpCost` |
+| Grappler | an Unarmed Strike hit; attacking someone it holds; dragging | once a turn its Grapple too (nothing spent); advantage; no extra cost for its size or smaller | `onHit` (no formula, `attackAction`), `rollModeFrom` (`trait`), `dragsFreely` |
+| Keen Mind, Observant | Study / Search | a Bonus Action instead (its choice) | `actionAs` |
+| Charger (Improved Dash) | the Dash action | 10 ft more movement | `onDefaultAction`, `useMovement` |
 | Heavy Armor Master | an attack's B / P / S damage | in Heavy armor, PB less (Plutonium's always-on effect off) | `reducesDamage` (`attacks`), `wearsArmor`, `itemFixes` |
 
 ## Still to become legos

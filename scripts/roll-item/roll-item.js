@@ -36,6 +36,11 @@ export class rollItem{
     return () => this.#useTags.delete(key);
   }
 
+  /* The tags this activity's attack rolls get now (tagUse) : a roll mode rule reads them before the roll */
+  static usedTags(activity){
+    return { ...(this.#useTags.get(activity?.uuid) ?? {}) };
+  }
+
 
   /**
    * @param {Item5e} item

@@ -98,7 +98,7 @@ export class actionBar{
     /* In its shell (Tortle) : Emerge, its Bonus Action */
     const shell = !dying && st.mine && may && actor.effects?.some?.(e => !e.disabled && e.getFlag(module.id, "rule")?.shell);
     const buttons = dying ? [`<button type="button" class="death-save"><i class="fa-solid fa-skull" inert></i> ${esc(module.i18n("actionTracker.bar.deathSave"))}</button>`]
-      : [prone ? `<button type="button" class="stand-up"><i class="fa-solid fa-person-arrow-up-from-line" inert></i> ${esc(module.format("actionTracker.bar.standUp", { cost : Math.floor(speed / 2) }))}</button>` : "",
+      : [prone ? `<button type="button" class="stand-up"><i class="fa-solid fa-person-arrow-up-from-line" inert></i> ${esc(module.format("actionTracker.bar.standUp", { cost : actionTracker.standCost(actor) }))}</button>` : "",
          ...grapples.map(g => `<button type="button" class="escape" data-effect="${g.effect.id}"><i class="fa-solid fa-hand-back-fist" inert></i> ${esc(module.format(g.effect.getFlag(module.id, "grapple")?.engulf ? "actionTracker.bar.escapeEngulf" : g.attach ? "actionTracker.bar.detachFrom" : g.free ? "actionTracker.bar.breakFree" : "actionTracker.bar.escapeFrom", { name : g.free ? g.effect.name : g.byName, dc : g.dc }))}</button>`),
          ...holds.map(t => { const attached = attachedTo(token)?.document === (t.document ?? t);
            return `<button type="button" class="release" data-target="${(t.document ?? t).uuid}"${attached ? ` data-attached="1"` : ""}><i class="fa-solid fa-hand" inert></i> ${esc(module.format(attached ? "actionTracker.bar.detach" : "actionTracker.bar.release", { name : t.name }))}</button>`; }),

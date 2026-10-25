@@ -8,6 +8,7 @@ import { actionTracker } from './action-tracker.js';
 import { reactionMoveOf } from '../roll-item/card-builder.js';
 import { hands } from './hands.js';
 import { uses } from '../uses.js';
+import { movement as moves } from './movement.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -557,13 +558,15 @@ export class actionReady{
     const actor = token.actor;
     if(!actor || !actionTracker.combatOf(actor)) return;
     const done = new Set(own.oaDone ?? []);
+    /* The creatures it drags (grappled) come along : they never see it leave or come */
+    for(const t of moves.enabled() ? moves.heldBy(token) : []) done.add(t.uuid);
     const provoked = this.provokes(token, movement);
     const leavers = provoked ? token.parent.tokens.filter(t => this.canReact(t, token) && !done.has(t.uuid) && !provoked.spared.has(t.uuid)
       /* Can't make Opportunity Attacks (Open Hand Technique's Addle) */
       && !t.actor.appliedEffects?.some?.(e => e.getFlag(module.id, "rule")?.noOpportunity)
       && (this.reachOf(t.actor) > 0) && (!t.object || !token.object || canSee(t.object, token.object))) : [];
     const enterers = attackRules.size ? token.parent.tokens.filter(t => this.canReact(t, token))
-      .flatMap(t => this.rulesOf(t, "enters", token).filter(({ rule }) => !done.has(`${t.uuid}|${rule.id}`))
+      .flatMap(t => this.rulesOf(t, "enters", token).filter(({ rule }) => !done.has(t.uuid) && !done.has(`${t.uuid}|${rule.id}`))
         .map(({ rule }) => ({ t, rule, reach : this.ruleReach(t.actor, rule) })).filter(e => e.reach > 0)) : [];
     if(!leavers.length && !enterers.length) return;
     const path = this.pathOf(token, movement);

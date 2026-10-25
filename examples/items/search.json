@@ -1,0 +1,106 @@
+{
+  "name": "Search",
+  "type": "feat",
+  "img": "icons/tools/scribal/magnifying-glass.webp",
+  "system": {
+    "description": {
+      "value": "<p>When you take the Search action, you make a Wisdom check to discern something that isn’t obvious. The Search table suggests which skills are applicable when you take this action, depending on what you’re trying to detect.</p><p><strong>Insight</strong> : a creature’s state of mind. <strong>Medicine</strong> : a creature’s ailment. <strong>Perception</strong> : a concealed creature or object. <strong>Survival</strong> : tracks or food.</p><p><em>Macro Helper</em> : choose the skill on the card; the GM sets the DC.</p>",
+      "chat": ""
+    },
+    "identifier": "search",
+    "source": {
+      "rules": "2024",
+      "book": "Macro Helper"
+    },
+    "activities": {
+      "mhSearchActivity": {
+        "type": "check",
+        "name": "Search",
+        "_id": "mhSearchActivity",
+        "sort": 100000,
+        "activation": {
+          "type": "action",
+          "value": null,
+          "override": false,
+          "condition": ""
+        },
+        "consumption": {
+          "scaling": {
+            "allowed": false
+          },
+          "spellSlot": true,
+          "targets": []
+        },
+        "description": {
+          "chatFlavor": "A Wisdom check : Insight, Medicine, Perception or Survival.",
+          "value": ""
+        },
+        "duration": {
+          "units": "inst",
+          "concentration": false,
+          "override": false
+        },
+        "effects": [],
+        "range": {
+          "override": true,
+          "units": "self"
+        },
+        "target": {
+          "template": {
+            "contiguous": false,
+            "units": "ft",
+            "type": ""
+          },
+          "affects": {
+            "choice": false,
+            "count": "1",
+            "type": "self",
+            "special": ""
+          },
+          "override": true,
+          "prompt": false
+        },
+        "uses": {
+          "spent": 0,
+          "recovery": [],
+          "max": ""
+        },
+        "img": "",
+        "roll": {
+          "formula": "",
+          "name": "",
+          "prompt": false,
+          "visible": false
+        },
+        "check": {
+          "ability": "wis",
+          "associated": [
+            "ins",
+            "med",
+            "prc",
+            "sur"
+          ],
+          "bonus": "",
+          "dc": {
+            "calculation": "",
+            "formula": ""
+          },
+          "visible": true
+        }
+      }
+    },
+    "uses": {
+      "spent": 0,
+      "recovery": [],
+      "max": ""
+    },
+    "type": {
+      "value": "",
+      "subtype": ""
+    },
+    "requirements": "",
+    "properties": []
+  },
+  "effects": [],
+  "flags": {}
+}
