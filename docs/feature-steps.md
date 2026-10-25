@@ -78,6 +78,14 @@ Legos are listed in [api.md](api.md). "Data" means the item's own dnd5e or Pluto
 | Crossbow Expert | a crossbow attack | no Loading limit; loads with no free hand; no threatened disadvantage; a Light crossbow's extra attack adds the modifier | `ignoresProperty`, `ignoresDisadvantage`, `onDamage` |
 | Elemental Adept | adding it; its spells' damage | a damage type per copy; that type ignores Resistance; 1s count as 2s | `itemChoice` (`unique`), `ignoresResistance`, `damage.minDie` (`types`) |
 | Poisoner | Poison damage | ignores Resistance | `ignoresResistance` |
+| Crusher | a hit dealing Bludgeoning; a critical one | once a turn a 5 ft push (one size larger at most); critical: attacks against it have advantage until the attacker's next turn | `onHitMove` (`once`, `larger`), `addRow` (`withDamage`), `giveEffect` (rule `attackersMode`) |
+| Piercer | a hit dealing Piercing; a critical one | once a turn reroll a damage die; critical: one more Piercing die | `rerollButton` (`once`), `onDamage` (`critDice`) |
+| Slasher | a hit dealing Slashing; a critical one | once a turn -10 ft Speed until the attacker's next turn; critical: disadvantage on its attacks until then | `addRow` (`once`, `withDamage`), `giveEffect` (rule `attacksMode`) |
+| Great Weapon Master | a Heavy weapon's damage | + PB, Attack action on its turn | `onDamage`, `isAttackAction` |
+| Shield Master | a melee weapon hit within 5 ft; a DEX save for half | once a turn: STR save, then push 5 ft or Prone (the attacker's choice); Interpose Shield: a Reaction after a success, no damage | `onHit` (no formula, `attackAction`, `within`), `rollSave`, `forcedMove` / `giveCondition`, `saveDamage` (`reaction`) |
+| Charger | a melee hit after a straight run | 10 ft or more straight toward it: once a turn 1d8 or a 10 ft push | `chargedAt`, `onHit` (`attackAction`), `onHitMove` |
+| Defensive Duelist | hit by a melee attack | holding a Finesse weapon: a Reaction, + PB AC against melee until its next turn, the hit judged again | `onAttacked` (`self`), `raiseCardAC`, `giveEffect` (rule `acOnlyAgainst`) |
+| Heavy Armor Master | an attack's B / P / S damage | in Heavy armor, PB less (Plutonium's always-on effect off) | `reducesDamage` (`attacks`), `wearsArmor`, `itemFixes` |
 
 ## Still to become legos
 
@@ -91,4 +99,6 @@ Parts still written inside one feature's code. Each one becomes a generic lego (
 | Pool conversion window | sorcerer.js `font` | one resource turned into another at set rates (spell slots and Sorcery Points, both ways) | homebrew pools traded for slots or uses |
 | Cast-time damage type | sorcerer.js `chooseFor` / `transmute` | a damage type chosen as it's cast, used for its damage (and a reroll within the minute) | `damageTypeChoice` with a type chosen before the roll |
 | Level 1+ spells this turn | sorcerer.js (`leveledSpell` on `dnd5e.postUseActivity`) | marks a level 1+ spell cast this turn, slot or not | casting.js's one-slot-a-turn mark (slots only) |
+| Card AC raised (Shield, monster Parry) | spell-actions.js `shieldAsGM`, creature-traits.js `parryAsGM`, subclasses/common.js `changeRollAsGM` (`ac`) | a creature's AC higher on a card that's out, once | `raiseCardAC` (Defensive Duelist) : move them onto it |
+| A push after a hit (Tavern Brawler, mastery Push) | feats.js `brawlerMove`, masteries.js `pushMove` | the GM's push button, once a turn / once per attack, a size limit | `onHitMove` (Crusher, Charger) : move them onto it |
 | Shared form effects | druid.js `linkNew`, `endPartner` | an effect on a form goes on its original too, and ends on both | other transformations (Polymorph keeps none : only `transform` users that share) |

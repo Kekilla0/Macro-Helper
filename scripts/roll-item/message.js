@@ -180,7 +180,7 @@ export function registerMessages(){
       if(!results.has(keyUuid(key))) results.set(keyUuid(key), { total : null, success : !!value?.success });
     }
     /* Rules can settle a row without a roll (macro-helper.rowResults : Careful Spell's automatic success) : set
-       results.set(tokenUuid, { total : null, success, auto : reason, noDamage }) */
+       results.set(tokenUuid, { total : null, success, auto : reason, noDamage, multiplier }) */
     Hooks.callAll(`${module.id}.rowResults`, message, results);
     return results;
   };
@@ -353,8 +353,9 @@ export function registerMessages(){
 
   /* Full damage on a failure, onSave (half / none) on a success */
   const multiplierFor = (result, onSave) => {
-    /* A rule's "no damage" (Careful Spell, where a success would take half) */
+    /* A rule's "no damage" (Careful Spell, where a success would take half), or its own share (Evasion : half on a failure) */
     if(result?.noDamage) return 0;
+    if(Number.isFinite(result?.multiplier)) return result.multiplier;
     if(!result?.success) return 1;
     return (onSave === "none") ? 0 : (onSave === "half") ? 0.5 : 1;
   };

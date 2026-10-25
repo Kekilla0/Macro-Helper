@@ -1527,13 +1527,21 @@ export class rollItem{
     const { ability, ammunition, attackMode, mastery } = attack?.options ?? {};
     const { TargetsField } = dnd5e.dataModels.chatMessage.fields;
 
+    /* Each target's AC for this attack : rules change it (Hook macro-helper.targetAC (activity, attack, descriptor, actor) :
+       an AC bonus only against melee attacks) */
+    const targets = TargetsField.getDescriptors();
+    for(const target of targets){
+      const actor = TargetsField.resolve(target).actor;
+      if(actor) Hooks.callAll(`${module.id}.targetAC`, activity, attack, target, actor);
+    }
+
     const messageData = {
       type : TYPES.attack,
       speaker : ChatMessage.implementation.getSpeaker({ actor : activity.actor }),
       rolls,
       system : {
         ...activity.messageSources,
-        targets : TargetsField.getDescriptors(),
+        targets,
         ability, ammunition, mastery, scaling, rays, rider, disadvantage, disadvantageWhy,
         mode : attackMode,
       },

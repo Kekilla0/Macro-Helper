@@ -34,6 +34,8 @@ const log = logger.for(import.meta.url);
  *                                 (Protection from Evil and Good)
  *   onlyAgainstOrigin : "disadvantage"   its attacks on anyone but the caster have it (Compelled Duel)
  *   noReactions : true            it can't take Reactions (Rule Limits) (Arms of Hadar)
+ *   acOnlyAgainst : "melee"       the effect's AC bonus counts only against melee (or "ranged") attacks (Defensive
+ *                                 Duelist's Parry)
  *   sanctuary : true              targeted by an attack or a damaging spell : the attacker makes a WIS save (the
  *                                 caster's spell DC) first; failed, it targets again (the same creature : nothing
  *                                 happens). It ends when this creature attacks or casts a spell (Sanctuary)
@@ -83,6 +85,7 @@ export class spellEffects{
     Hooks.on("deleteActiveEffect", effect => { this.glow(effect, false); this.revealInvisible(effect, false); });
     Hooks.on("updateActiveEffect", (effect, changes) => { if("disabled" in (changes ?? {})) this.glow(effect, !effect.disabled); });
     rollModes.add("spellEffects", config => this.attackRules(config));
+    Hooks.on(`${module.id}.targetAC`, (activity, attack, target, actor) => this.acOnlyAgainst(activity, attack, target, actor));
     /* The roll exists (not rolled yet) once dnd5e has built it : the penalty to attackers goes in then */
     Hooks.on("dnd5e.postAttackRollConfiguration", (rolls, config) => this.attackPenalty(rolls, config));
     Hooks.on("dnd5e.rollAttackV2", rolls => this.spendOnAttack(rolls));
@@ -185,7 +188,7 @@ export class spellEffects{
 
   /* Attack rolls : the attacker's next-attack rule (spent after the roll), the target's penalty to attackers */
   static attackRules(config){
-    if(!this.enabled()) return;
+    /* Read whatever put the rule there (a spell, a feat's or a maneuver's effect) : no setting of its own */
     const actor = config.subject?.actor;
     const roll = config.rolls?.[0];
     if(!actor || !roll) return;
@@ -219,6 +222,20 @@ export class spellEffects{
       if(origin && theirs && (theirs !== origin) && (theirs.id !== origin.id)) giveMode(roll, effect.getFlag(module.id, "rule").onlyAgainstOrigin, module.format("spellEffects.reason", { effect : effect.name }));
     }
     if(used.length) roll.options[module.id] = { ...(roll.options[module.id] ?? {}), spellConsume : used };
+  }
+
+  /* An AC bonus only against one kind of attack : taken off the card's AC for the other kind */
+  static acOnlyAgainst(activity, attack, target, actor){
+    if(!Number.isFinite(target?.ac)) return;
+    let action = "";
+    try { action = String(activity?.getActionType?.(attack?.options?.attackMode) ?? ""); } catch {}
+    const kind = action.startsWith("m") ? "melee" : action.startsWith("r") ? "ranged" : "";
+    for(const effect of this.withRule(actor, "acOnlyAgainst")){
+      if(effect.getFlag(module.id, "rule").acOnlyAgainst === kind) continue;
+      const bonus = [...(effect.system?.changes ?? effect.changes ?? [])].filter(c => c.key === "system.attributes.ac.bonus")
+        .reduce((sum, c) => sum + (Number(dnd5e.utils.simplifyBonus(c.value, actor.getRollData())) || 0), 0);
+      target.ac -= bonus;
+    }
   }
 
   /* Attack rolls against it subtract the dice (Blade Ward) : terms added to the built roll, before it's rolled */

@@ -2,6 +2,7 @@ import { module } from '../module.js';
 import { logger } from '../log.js';
 import { idOf } from '../helpers/utils.js';
 import { hasUses, spendUses } from '../helpers/items.js';
+import { usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -21,6 +22,7 @@ const log = logger.for(import.meta.url);
  *     label : (actor, feature, { n, cost }) => "...", icon : "fa-burst",
  *     face : true, subtitle : (actor, feature) => "...",   once used, the feature is shown under the card's
  *                                                      description, laid out like the item (macro-helper.cardFaces)
+ *     once : "turn",                                   the roller uses it once a turn (in combat)
  *     enabled : () => true,
  *   })
  */
@@ -76,6 +78,7 @@ function buttonOf(rule, card, ray){
   const actor = card?.getAssociatedActor?.();
   const feature = actor && featureOf(rule, actor);
   if(!feature || !actor.isOwner || rerolled(card, rule.id, ray)) return null;
+  if((rule.once === "turn") && usedThisTurn(actor, `reroll-${rule.id}`)) return null;
   if(rule.when && !rule.when(card, actor)) return null;
   if(rule.roll === "attack"){
     if(!card.system?.isHitOn || card.system.isHitOn(ray)) return null;
@@ -94,6 +97,7 @@ async function clicked(rule, card, ray){
   const cost = rule.cost?.(actor, card) ?? null;
   if(cost?.item && !(await spendUses(cost.item, cost.amount ?? 1))) return;
   await card.setFlag(module.id, `rerolls.${rule.id}.${rayKey(ray)}`, true);
+  if(rule.once === "turn") await markUsedThisTurn(actor, `reroll-${rule.id}`);
   if(rule.roll === "attack") await card.system.rerollAttackRoll(ray);
   else await card.system.rerollLowestDamage(Math.max(1, Number(rule.n?.(actor, card)) || 1));
   log.debug("Reroll", rule.id, actor.name);

@@ -5,6 +5,7 @@ import { tokenOf, distanceBetween } from '../helpers/tokens.js';
 import { usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
 import { spendUses } from '../helpers/items.js';
 import { TYPES } from './message.js';
+import { actionTracker } from '../automation/action-tracker.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -15,7 +16,8 @@ const log = logger.for(import.meta.url);
  *   onHit({
  *     id : "divine-fury", feature : "divine-fury",          the button's key; the item (identifier) it needs
  *     when : hit => hit.weapon || hit.unarmed,               does this hit qualify
- *     formula : hit => "1d6 + 1",                            the damage
+ *     formula : hit => "1d6 + 1",                            the damage; left out : no damage, the click only runs
+ *                                                            `after` (a shield bash's save), once per attack
  *     types : hit => ["necrotic", "radiant"],                its type (several : a button each); the weapon's if left out
  *     once : "turn",                                         "turn" (once a turn), "target" (each creature once a turn)
  *     counted : "apply",                                     once counts when its damage is applied to a creature, not
@@ -23,13 +25,17 @@ const log = logger.for(import.meta.url);
  *     again : actor => false,                                its damage applied again in the turn : go ahead? (Rule Limits)
  *     noHit : actor => "...",                                the warning when used from the sheet with no hit for it
  *     ownTurn : true,                                        only on the attacker's own turn
+ *     critical : true,                                       only on a critical hit
+ *     attackAction : true,                                   only an attack that's part of the Attack action, on the
+ *                                                            attacker's own turn
  *     cost : hit => ({ item, amount : 1 }),                  spent on the click (none left : no button); { activity } :
  *                                                            that activity's own uses (Dreadful Strike's)
  *     after : (hit, card) => {},                             once it's on the card (a save, a mark)
  *   })
  *
  * hit : { message, ray, actor, token, item, activity, roll, critical, advantage, disadvantage, target, targets, weapon,
- *         finesse, unarmed, spell, cantrip, melee, ranged, ability, damageType, feature }
+ *         finesse, unarmed, spell, cantrip, melee, ranged, ability, damageType, damageTypes (a Set : every type the
+ *         attack's damage has, its added boxes too), attackAction, feature }
  *
  * useOnLatestHit(id, actor) : the rule used from the sheet : the latest of the actor's attack cards (among the last
  * messages) with a hit it qualifies for.
@@ -71,6 +77,8 @@ export function hitOf(message, ray = null){
   const targets = (card.hitTargets?.(ray) ?? []).map(t => tokenOf(t)).filter(Boolean);
   const base = (Number.isInteger(ray) ? card.rayDamage?.(ray) : card.damageRolls) ?? [];
   const classification = activity?.attack?.type?.classification;
+  const damageTypes = new Set([...base, ...(card.extraRolls?.(ray) ?? [])].map(r => r?.options?.type).filter(Boolean));
+  if(!damageTypes.size) for(const t of item.system?.damage?.base?.types ?? []) damageTypes.add(t);
   return {
     message, ray, actor, token : tokenOf(message.getAssociatedToken?.() ?? actor), item, activity, roll,
     critical : !!roll?.isCritical, advantage : !!roll?.hasAdvantage, disadvantage : !!roll?.hasDisadvantage, target : targets[0] ?? null, targets,
@@ -79,7 +87,23 @@ export function hitOf(message, ray = null){
     melee : action.startsWith("m"), ranged : action.startsWith("r"),
     ability : roll?.options?.ability ?? activity?.ability ?? null,
     damageType : base[0]?.options?.type ?? [...(item.system?.damage?.base?.types ?? [])][0] ?? null,
+    damageTypes,
+    attackAction : isAttackAction(actor, activity),
   };
+}
+
+/**
+ * Is it an attack made as part of the Attack action, on its creature's own turn : a weapon's (or a Multiattack
+ * creature's) attack paid with the Action (Action Tracker; off : any such attack on its turn).
+ * @param {Actor} actor
+ * @param {Activity} activity
+ * @returns {boolean}
+ */
+export function isAttackAction(actor, activity){
+  if(!actionTracker.isAttack(activity) || !ownTurn(actor)) return false;
+  if(!actionTracker.enabled() || !game.combat?.started) return true;
+  const paid = String(actionTracker.paidBy(actor) ?? "");
+  return !paid || paid.startsWith("action");
 }
 
 /* Is it the attacker's own turn (out of combat : yes) */
@@ -109,6 +133,8 @@ function problem(rule, hit){
   if(!feature) return "off";
   hit.feature = (feature === true) ? null : feature;
   if(rule.ownTurn && !ownTurn(hit.actor)) return "turn";
+  if(rule.critical && !hit.critical) return "off";
+  if(rule.attackAction && !hit.attackAction) return "off";
   if(rule.once && usedThisTurn(hit.actor, onceKey(rule, hit))) return "once";
   if(rule.within && hit.target && hit.token && (distanceBetween(hit.token, hit.target) > rule.within)) return "range";
   if(rule.when && !rule.when(hit)) return "off";
@@ -127,7 +153,16 @@ async function pay(cost){
   return true;
 }
 
+const rayKey = ray => Number.isInteger(ray) ? String(ray) : "single";
+
+/* Used on this attack : its damage box, or (no damage) the card's mark */
+function usedOn(rule, message, ray){
+  if(!rule.formula) return !!message.getFlag?.(module.id, `hitUsed.${rule.id}.${rayKey(ray)}`);
+  return !!message.system.extraRolls?.(ray, rule.id)?.length;
+}
+
 function typesOf(rule, hit){
+  if(!rule.formula) return [""];
   const types = rule.types?.(hit) ?? [hit.damageType ?? "bludgeoning"];
   return (Array.isArray(types) ? types : [types]).filter(Boolean);
 }
@@ -142,12 +177,12 @@ function cardButtons(message, buttons, ray){
   for(const rule of rules){
     hit ??= hitOf(message, ray);
     if(!hit) return;
-    if(!hit.actor.isOwner || message.system.extraRolls?.(ray, rule.id)?.length) continue;
+    if(!hit.actor.isOwner || usedOn(rule, message, ray)) continue;
     if(problem(rule, hit)) continue;
     const types = typesOf(rule, hit);
     const label = labelOf(rule, hit);
     for(const type of types){
-      const typeLabel = CONFIG.DND5E.damageTypes?.[type]?.label ?? type;
+      const typeLabel = type ? (CONFIG.DND5E.damageTypes?.[type]?.label ?? type) : "";
       buttons.push({ id : `onHit|${rule.id}|${type}`, icon : rule.icon ?? "fa-burst",
         label : (types.length > 1) ? `${label} (${typeLabel})` : label });
     }
@@ -158,12 +193,19 @@ async function clicked(message, id, ray){
   const [, ruleId, type] = id.split("|");
   const rule = rules.find(r => r.id === ruleId);
   const hit = hitOf(message, ray);
-  if(!rule || !hit?.actor?.isOwner || message.system.extraRolls?.(ray, rule.id)?.length) return;
+  if(!rule || !hit?.actor?.isOwner || usedOn(rule, message, ray)) return;
   const why = problem(rule, hit);
   if(why) return ui.notifications.warn(module.format("hitBonus.notNow", { name : labelOf(rule, hit) }));
   const cost = rule.cost?.(hit);
   if(cost && !await pay(cost)) return;
   if(rule.once && (rule.counted !== "apply")) await markUsedThisTurn(hit.actor, onceKey(rule, hit));
+  if(!rule.formula){
+    if(message.isOwner) await message.setFlag(module.id, `hitUsed.${rule.id}.${rayKey(ray)}`, true);
+    log.debug("On-hit use", rule.id, hit.actor.name);
+    try { await rule.after?.(hit, message); }
+    catch(error){ log.error(error); }
+    return;
+  }
   const formula = String(rule.formula(hit));
   await message.system.extraDamage(formula, { key : rule.id, type : type || null, ray, label : labelOf(rule, hit),
     rollData : hit.actor.getRollData?.() ?? {}, magical : !!rule.magical });
@@ -198,7 +240,7 @@ export async function useOnLatestHit(id, actor){
     const rays = message.system.isMulti ? message.system.rays.map((_, i) => i) : [null];
     for(const ray of rays){
       const hit = hitOf(message, ray);
-      if(!hit || message.system.extraRolls?.(ray, rule.id)?.length || problem(rule, hit)) continue;
+      if(!hit || usedOn(rule, message, ray) || problem(rule, hit)) continue;
       await clicked(message, `onHit|${rule.id}|${typesOf(rule, hit)[0] ?? ""}`, ray);
       return message;
     }

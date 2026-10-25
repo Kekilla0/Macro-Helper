@@ -16,6 +16,9 @@ import { willingSave, willingOn } from './automation/willing.js';
 import { changeSize } from './automation/size.js';
 import { lendItem, lends } from './automation/lend-item.js';
 import { ignoresDisadvantage, ignoresCover, ignoresProperty, ignoresResistance } from './automation/ignores.js';
+import { saveDamage } from './automation/save-damage.js';
+import { reducesDamage } from './automation/damage-reduction.js';
+import { onHitMove } from './roll-item/card-moves.js';
 import { addRange } from './automation/ranges.js';
 import { itemChoice, choiceOf, askChoice } from './automation/item-choices.js';
 import { zone, zones } from './automation/zones.js';
@@ -33,7 +36,7 @@ import { addSense } from './automation/creature-traits.js';
 import { onDamage } from './roll-item/damage.js';
 import { onMiss } from './roll-item/miss-damage.js';
 import { addRow, removeRow } from './roll-item/card-rows.js';
-import { onAttacked } from './roll-item/attacked.js';
+import { onAttacked, raiseCardAC, raisedCardAC } from './roll-item/attacked.js';
 import { cardSave } from './roll-item/card-save.js';
 import { damageTypeChoice } from './roll-item/damage-type-choice.js';
 import { bonusOnlyWhen } from './automation/bonus-only-when.js';
@@ -45,7 +48,7 @@ import { pickFromCompendium } from './automation/compendiums.js';
 import { onTurnStart } from './gm.js';
 import { rollRequests } from './requests/requests.js';
 import { damageRoll, eachAttack } from './roll-item/extra-damage.js';
-import { onHit, hitOf, useOnLatestHit } from './roll-item/hit-bonus.js';
+import { onHit, hitOf, useOnLatestHit, isAttackAction } from './roll-item/hit-bonus.js';
 import { onFailedTest } from './roll-item/rerolls.js';
 import { markSpell, markOf } from './automation/marks.js';
 import { weaponUses } from './automation/weapon-uses.js';
@@ -87,7 +90,7 @@ export class api{
       lendItem, lends,
       /* Attacks or damage that skip a rule : disadvantage (threatened, long range), cover, a weapon property's limit,
          Resistance (Sharpshooter, Elemental Adept); a longer range or reach (Spell Sniper) */
-      ignoresDisadvantage, ignoresCover, ignoresProperty, ignoresResistance, addRange,
+      ignoresDisadvantage, ignoresCover, ignoresProperty, ignoresResistance, addRange, saveDamage, reducesDamage, onHitMove, raiseCardAC, raisedCardAC, isAttackAction,
       /* A choice made once for an item, kept on it (Elemental Adept's damage type) */
       itemChoice, choiceOf, askChoice,
       /* An area that acts on whoever enters it or starts / ends a turn in it (Cloud of Daggers, Moonbeam); moving one */

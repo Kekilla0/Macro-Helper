@@ -51,7 +51,11 @@ The main pieces, as methods on tokens, actors and items. Most also exist as `Mac
 | `item.pickTargets({ count, within, numberAllowed })`, `token.getTokensWithin(feet)` | Pick creatures on the map, or find them near a token. |
 | `card.append(part)`, `card.remove("prone")` | Add a part to a card, or take one of the item's own effects off. |
 | `applyCondition`, `applyEffect`, `push`, `extraDamage`, `followUp` | Card parts. Each is shown on a target's row, `when` its result calls for it (`"hit"`, `"fail"`, or a check per target). |
-| `MacroHelper.onHit({ feature, when, formula, once, cost })` | A button after a qualifying hit that adds damage in its own box (Divine Fury, Hand of Harm, a Battle Master maneuver). |
+| `MacroHelper.onHit({ feature, when, formula, once, critical, attackAction, cost })` | A button after a qualifying hit that adds damage in its own box, or only runs `after` (Divine Fury, Hand of Harm, a Battle Master maneuver, Charger, Shield Bash). |
+| `MacroHelper.onHitMove({ feet, when, once, larger })` | A push or pull a hit brings, the GM's button on the card (Crusher, Charger). |
+| `MacroHelper.raiseCardAC(card, token, amount, { id })` | A creature's AC raised on an attack card that's out, its hit judged again (Defensive Duelist's Parry). |
+| `MacroHelper.reducesDamage(match, { amount, types, attacks, when })` | Less damage of some types, from attacks or anything (Heavy Armor Master). |
+| `MacroHelper.saveDamage(match, { abilities, success, fail, reaction })` | A different share of a save's damage, at once or for a Reaction (Interpose Shield; Evasion). |
 | `card.system.addHealing(activity, tokens)` | A second activity's healing on a save card, under the saves, with its own row and Apply (Land's Aid). |
 | `MacroHelper.cutDamage(card, token, { amount, label })` | A card's damage to one creature made lower when applied (Interception, Deflect Attacks, Protective Field). |
 | `token.actor.save("con", 13, { from : item })` | The save lego: one save, rolled the way every rule rolls it. |
@@ -71,7 +75,7 @@ The main pieces, as methods on tokens, actors and items. Most also exist as `Mac
 | `MacroHelper.itemChoice(match, { id, options, unique })`, `choiceOf(item, id)` | A choice made once for an item and kept on it, asked when it's added (Elemental Adept's damage type). |
 | `MacroHelper.moveZone(actor, region?)` | Move a creature's movable area (Moonbeam's 60 ft): pick a space on the map, its cost spent. |
 | `MacroHelper.giveEffect(target, data, { save, dc, from, until })` | An effect on a creature, after its save; the GM's button when it isn't yours (Goaded, Seared). |
-| `MacroHelper.onMiss({ formula })`, `MacroHelper.addRow({ run, withDamage })` | Damage on a miss (Graze), and a GM button on a hit creature's card row (Topple, Sap). |
+| `MacroHelper.onMiss({ formula })`, `MacroHelper.addRow({ run, withDamage, once })` | Damage on a miss (Graze), and a GM button on a hit creature's card row (Topple, Sap, Slasher's Hamstring). |
 | `MacroHelper.onAttacked({ when, within, run })`, `MacroHelper.onTurnStart({ run })` | A creature's Reaction button when one near it is attacked or hit (Interception, Protection), and something at the start of its turns. |
 | `MacroHelper.bonusOnlyWhen(match, key, test)` | An effect's bonus only where a check holds (Rage's Strength attacks, Dueling, Defense in armor). |
 | `MacroHelper.cantUseWhile(id, rule)`, `MacroHelper.freeUseWhile(id, rule)` | What can't be used, or is free, while something holds (no spells while raging; Rage extended). |

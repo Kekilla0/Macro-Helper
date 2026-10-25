@@ -63,6 +63,17 @@ export function isUnarmored(thing, { shield = true } = {}){
   return !armor && !(shield && hasShieldEquipped(actor));
 }
 
+/**
+ * Is a creature wearing armor of that kind (Heavy Armor Master : "heavy"; a monster's "while it wears no armor")
+ * @param {Actor|Token|Item} thing
+ * @param {string|string[]} [types]  "light", "medium", "heavy" (default : any of them)
+ * @returns {boolean}
+ */
+export function wearsArmor(thing, types = ["light", "medium", "heavy"]){
+  const kinds = [types].flat();
+  return !!actorOf(thing)?.items?.some?.(i => (i.type === "equipment") && kinds.includes(i.system.type?.value) && i.system.equipped);
+}
+
 /* Metal or not, by base item (or identifier) : weapons are, but for these; armor : Heavy all, Medium only these */
 const NOT_METAL_WEAPONS = ["club", "greatclub", "quarterstaff", "sling", "blowgun", "shortbow", "longbow", "whip", "net",
   "handcrossbow", "lightcrossbow", "heavycrossbow", "unarmedstrike"];

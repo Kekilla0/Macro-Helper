@@ -4,6 +4,7 @@ import { idOf } from '../helpers/utils.js';
 import { tokenOf } from '../helpers/tokens.js';
 import { hitOf } from './hit-bonus.js';
 import { gm } from '../gm.js';
+import { usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -22,6 +23,8 @@ const log = logger.for(import.meta.url);
  *                                                           (it isn't optional : Sap, Slow, Vex)
  *     mayRun : row => gm.mine(row.target),                  who else may run it with the damage (the GM always may;
  *                                                           default : the user's own creature, gm.mine)
+ *     once : "turn",                                        the attacker does it once a turn (in combat), whichever
+ *                                                           creature : the other rows lose the button once it's done
  *   })
  *
  * row : the hit (hitOf : actor, token, item, activity, roll, critical, ability...) at this creature : target (its token),
@@ -73,6 +76,7 @@ function rowOf(rule, message, ray, uuid){
   if(!target) return null;
   const feature = featureOf(rule, hit.actor);
   if(!feature) return null;
+  if((rule.once === "turn") && !rowDone(message, rule.id, ray, uuid) && usedThisTurn(hit.actor, `row-${rule.id}`)) return null;
   const row = { ...hit, target, targets : [target], mastery : message.system.masteryOf?.(ray) ?? null, feature : (feature === true) ? null : feature };
   return (!rule.when || rule.when(row)) ? row : null;
 }
@@ -101,6 +105,7 @@ function rowButtons(message, uuid, buttons, { result, ray = null } = {}){
 async function run(rule, message, ray, uuid, row){
   if(rowDone(message, rule.id, ray, uuid)) return;
   await message.setFlag(module.id, flagKey(rule, ray, uuid), true);
+  if(rule.once === "turn") await markUsedThisTurn(row.actor, `row-${rule.id}`);
   const result = await rule.run(row);
   if(result && (typeof result === "object")) await message.setFlag(module.id, flagKey(rule, ray, uuid), { total : result.total ?? null, success : result.success ?? null });
   log.debug("Row", rule.id, "on", row.target?.name);

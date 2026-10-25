@@ -4,6 +4,7 @@ import { idOf } from '../helpers/utils.js';
 import { tokenOf, distanceBetween, canSee } from '../helpers/tokens.js';
 import { limits } from '../automation/limits.js';
 import { actionTracker } from '../automation/action-tracker.js';
+import { gm } from '../gm.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -34,6 +35,7 @@ let hooked = false;
 
 export function onAttacked(rule){
   if(!rule?.id) return;
+  registerRaise();
   const old = rules.findIndex(r => r.id === rule.id);
   if(old >= 0) rules[old] = rule;
   else rules.push(rule);
@@ -123,4 +125,40 @@ async function clicked(message, id, ray){
     log.error("When attacked", rule.id, error);
     ui.notifications.warn(error.message);
   }
+}
+
+/**
+ * A creature's AC raised on an attack card that's out, once for each id (a Parry, Shield) : its hits and misses there
+ * follow. The GM's client changes the card; the creature's owner may ask.
+ * @param {ChatMessage} message  the attack card
+ * @param {Token|TokenDocument|string} token   the creature (or its token uuid)
+ * @param {number} amount
+ * @param {object} [options]
+ * @param {string} [options.id]  what raised it (once a card for each)
+ * @returns {Promise<boolean>}  false : not raised (already, or not allowed)
+ */
+export async function raiseCardAC(message, token, amount, { id = "ac" } = {}){
+  registerRaise();
+  const uuid = (typeof token === "string") ? token : (token?.document ?? token)?.uuid;
+  if(!message?.system?.raiseAC || !uuid) return false;
+  return !!await gm.run("raiseCardAC", { message : message.id, uuid, amount : Number(amount) || 0, id });
+}
+
+/* Was the AC on that card raised by that id */
+export function raisedCardAC(message, token, id = "ac"){
+  const uuid = (typeof token === "string") ? token : (token?.document ?? token)?.uuid;
+  return !!message?.getFlag?.(module.id, `raisedAC.${id}.${String(uuid).replaceAll(".", "-")}`);
+}
+
+let raiseRegistered = false;
+function registerRaise(){
+  if(raiseRegistered) return;
+  raiseRegistered = true;
+  gm.handle("raiseCardAC", async ({ message : id, uuid, amount, id : key } = {}, user) => {
+    const message = game.messages.get(id);
+    const token = fromUuidSync(uuid ?? "", { strict : false });
+    if(!message || !token?.actor || !(user?.isGM || token.actor.testUserPermission(user, "OWNER")) || raisedCardAC(message, uuid, key)) return false;
+    await message.setFlag(module.id, `raisedAC.${key}.${String(uuid).replaceAll(".", "-")}`, true);
+    return message.system.raiseAC(uuid, amount);
+  });
 }

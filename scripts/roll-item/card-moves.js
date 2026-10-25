@@ -1,6 +1,10 @@
 import { module } from '../module.js';
 import { logger } from '../log.js';
 import { tokenOf, forcedMove } from '../helpers/tokens.js';
+import { idOf } from '../helpers/utils.js';
+import { getSize, usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
+import { limits } from '../automation/limits.js';
+import { hitOf } from './hit-bonus.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -116,4 +120,65 @@ export class cardMoves {
     if(from) return tokenOf(from);
     return message.getAssociatedToken?.()?.object ?? tokenOf(message.getAssociatedActor?.());
   }
+}
+
+/**
+ * The on-hit move lego : a push (or pull) a hit can bring, the card's button at the bottom (the GM's) : Crusher,
+ * Charger; a monster's "on a hit, the target is pushed 10 ft"; a homebrew shove on a critical hit.
+ *
+ *   onHitMove({
+ *     id : "crusher", feature : "crusher",     the rule's key; the item (identifier) the attacker needs, or (actor) => item
+ *     feet : 5, direction : "away",            how far ("toward" : a pull)
+ *     when : hit => hit.damageTypes.has("bludgeoning"),   this hit qualifies (onHit's hit, at that creature : target)
+ *     once : "turn",                           the attacker does it once a turn (in combat); its key is "move-<id>"
+ *     larger : 1,                              the target at most this many sizes larger than the attacker (more : Rule
+ *                                              Limits on the click)
+ *     label : hit => "...",                    the button's words (default : "Push 5 ft")
+ *     enabled : () => true,
+ *   })
+ */
+const moveRules = new Map();
+let movesHooked = false;
+
+export function onHitMove(rule){
+  if(!rule?.id) return;
+  moveRules.set(rule.id, rule);
+  if(movesHooked) return;
+  movesHooked = true;
+  Hooks.on(`${module.id}.cardMoves`, (message, uuid, moves, { result, ray = null } = {}) => {
+    if(!result?.hit) return;
+    for(const rule of moveRules.values()){
+      try { hitMove(rule, message, uuid, moves, ray); }
+      catch(error){ log.error("On-hit move", rule.id, error); }
+    }
+  });
+}
+
+function hitMove(rule, message, uuid, moves, ray){
+  if(rule.enabled && !rule.enabled()) return;
+  const hit = hitOf(message, ray);
+  const target = hit?.targets.find(t => t.document?.uuid === uuid);
+  if(!target) return;
+  const feature = (typeof rule.feature === "function") ? rule.feature(hit.actor) : (rule.feature ? hit.actor.items.find(i => idOf(i) === rule.feature) : true);
+  if(!feature) return;
+  const key = `onHitMove.${rule.id}.${Number.isInteger(ray) ? ray : "x"}.${String(uuid).replace(/[.|]/g, "-")}`;
+  const done = !!message.getFlag(module.id, key);
+  const once = rule.once === "turn";
+  if(!done && once && usedThisTurn(hit.actor, `move-${rule.id}`)) return;
+  const row = { ...hit, target, targets : [target], feature : (feature === true) ? null : feature };
+  if(rule.when && !rule.when(row)) return;
+  moves.push({ id : `onHitMove-${rule.id}`, feet : Number(rule.feet) || 5, direction : rule.direction ?? "away", done,
+    name : row.feature?.name ?? rule.id, label : rule.label?.(row) ?? null,
+    allow : () => {
+      if(!Number.isFinite(rule.larger)) return true;
+      if((getSize(target)?.value ?? 2) <= ((getSize(hit.actor)?.value ?? 2) + rule.larger)) return true;
+      const notes = [];
+      const ok = limits.allow(module.format("rollItem.mastery.tooBig", { name : target.name }), { notes, who : hit.actor.name, what : `${row.feature?.name ?? rule.id}: ${target.name}` });
+      for(const note of notes) ui.notifications.info(note);
+      return ok;
+    },
+    after : async () => {
+      if(once) await markUsedThisTurn(hit.actor, `move-${rule.id}`);
+      await message.setFlag(module.id, key, true);
+    } });
 }

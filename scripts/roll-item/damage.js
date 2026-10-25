@@ -164,6 +164,24 @@ export class DamageParts{
     return this;
   }
 
+  /**
+   * More dice on a critical hit : n more of each roll's first die, on top of dnd5e's doubling (Piercer : one more of
+   * its Piercing dice). Nothing on a roll that isn't a critical.
+   * @param {number} [n=1]
+   * @param {object} [options]
+   * @param {string[]} [options.types]  only the rolls of these damage types
+   */
+  critDice(n = 1, { types = null } = {}){
+    for(const roll of this.rolls){
+      if(types && !types.includes(roll.options?.type)) continue;
+      if(!/\d*d\d+/i.test((roll.parts ?? []).join(" "))) continue;
+      roll.options ??= {};
+      roll.options.critical ??= {};
+      roll.options.critical.bonusDice = (Number(roll.options.critical.bonusDice) || 0) + n;
+    }
+    return this;
+  }
+
   /* Dice showing this or lower are rolled again, once (the Healer feat : 1s) */
   reroll(n = 1){
     for(const roll of this.rolls){
