@@ -19,6 +19,23 @@ const log = logger.for(import.meta.url);
  *  heal   : healing rolled up front with its apply tray (same card as save, dnd5e's usage card + the roll)
  */
 export class rollItem{
+  /* Tags a use's attack rolls get (tagUse), by activity uuid */
+  static #useTags = new Map();
+
+  /**
+   * Tags on this activity's attack rolls until the undo (the Action Tracker : an Opportunity Attack, a rule's bonus
+   * attack), merged with any a rule passes. Kept on rerolls and handed to the damage, like `tags`.
+   * @param {Activity} activity
+   * @param {object} tags
+   * @returns {Function}  the undo
+   */
+  static tagUse(activity, tags){
+    const key = activity?.uuid;
+    if(!key) return () => {};
+    this.#useTags.set(key, { ...(this.#useTags.get(key) ?? {}), ...tags });
+    return () => this.#useTags.delete(key);
+  }
+
 
   /**
    * @param {Item5e} item
@@ -147,6 +164,8 @@ export class rollItem{
     }
     const roll = await this.rollAttack(activity, event, config, mode);
     if(!roll) return null;
+    const used = this.#useTags.get(activity?.uuid);
+    if(used) tags = { ...used, ...(tags ?? {}) };
     if(tags) roll.options[module.id] = { ...(roll.options[module.id] ?? {}), tags };
     if(Number.isInteger(ray)) roll.options[module.id] = { ...(roll.options[module.id] ?? {}), ray };
     return roll;

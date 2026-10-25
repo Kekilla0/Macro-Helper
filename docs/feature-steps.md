@@ -95,7 +95,6 @@ Parts still written inside one feature's code. Each one becomes a generic lego (
 |---|---|---|---|
 | Rage keeps going | barbarian.js `keep`, `onTurnEnd` | ends at the end of a turn unless it made an attack roll or forced a save | other "lasts while you keep attacking" effects |
 | Pact weapon one at a time | warlock-pacts.js `onPactFormed` | forming a pact weapon ends the last (a bonded weapon's enchantment, a conjured one) | `conjureItem`'s `key` covers conjured ones only |
-| Bonus Unarmed Strike | monk.js (the action tracker) | a Bonus Action attack after the Attack action | Two-Weapon Fighting's extra attack |
 | Pool conversion window | sorcerer.js `font` | one resource turned into another at set rates (spell slots and Sorcery Points, both ways) | homebrew pools traded for slots or uses |
 | Cast-time damage type | sorcerer.js `chooseFor` / `transmute` | a damage type chosen as it's cast, used for its damage (and a reroll within the minute) | `damageTypeChoice` with a type chosen before the roll |
 | Level 1+ spells this turn | sorcerer.js (`leveledSpell` on `dnd5e.postUseActivity`) | marks a level 1+ spell cast this turn, slot or not | casting.js's one-slot-a-turn mark (slots only) |

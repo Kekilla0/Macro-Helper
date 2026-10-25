@@ -26,6 +26,8 @@ import { giveAura } from './automation/auras.js';
 import { addSpellPool, openSpellPool, spellPools } from './automation/spell-pools.js';
 import { rerollButton, rerolled } from './roll-item/reroll-buttons.js';
 import { actionTracker } from './automation/action-tracker.js';
+import { bonusAttackAfter } from './automation/bonus-attacks.js';
+import { reactionAttackOn, opportunityInstead } from './automation/action-ready.js';
 import { actions } from './automation/actions.js';
 import { gm } from './gm.js';
 import { emanation } from './automation/emanation.js';
@@ -91,6 +93,10 @@ export class api{
       /* Attacks or damage that skip a rule : disadvantage (threatened, long range), cover, a weapon property's limit,
          Resistance (Sharpshooter, Elemental Adept); a longer range or reach (Spell Sniper) */
       ignoresDisadvantage, ignoresCover, ignoresProperty, ignoresResistance, addRange, saveDamage, reducesDamage, onHitMove, raiseCardAC, raisedCardAC, isAttackAction,
+      /* An attack as the Bonus Action after something this turn (Light, Martial Arts, Pole Strike, Hew); more moments
+         for a Reaction attack (Reactive Strike, Sentinel) and something to do instead of an Opportunity Attack (War
+         Caster); two weapons drawn as one (Quick Draw) */
+      bonusAttackAfter, reactionAttackOn, opportunityInstead, drawsTwo : (match, options) => actionTracker.drawsTwo(match, options),
       /* A choice made once for an item, kept on it (Elemental Adept's damage type) */
       itemChoice, choiceOf, askChoice,
       /* An area that acts on whoever enters it or starts / ends a turn in it (Cloud of Daggers, Moonbeam); moving one */

@@ -52,6 +52,9 @@ The main pieces, as methods on tokens, actors and items. Most also exist as `Mac
 | `card.append(part)`, `card.remove("prone")` | Add a part to a card, or take one of the item's own effects off. |
 | `applyCondition`, `applyEffect`, `push`, `extraDamage`, `followUp` | Card parts. Each is shown on a target's row, `when` its result calls for it (`"hit"`, `"fail"`, or a check per target). |
 | `MacroHelper.onHit({ feature, when, formula, once, critical, attackAction, cost })` | A button after a qualifying hit that adds damage in its own box, or only runs `after` (Divine Fury, Hand of Harm, a Battle Master maneuver, Charger, Shield Bash). |
+| `MacroHelper.bonusAttackAfter(match, { after, when, trigger, damage })` | An attack that's the Bonus Action after something this turn: the Attack action, nothing, a critical hit, a creature brought to 0 HP (Light, Martial Arts, Pole Strike, Dual Wielder, Hew). |
+| `MacroHelper.reactionAttackOn(match, { on, within, weapon, opportunity })`, `MacroHelper.opportunityInstead(match, { choices, run })` | A Reaction attack when a creature enters its reach, Disengages next to it, or hits someone else (Reactive Strike, Sentinel); something to do instead of an Opportunity Attack (War Caster). |
+| `MacroHelper.drawsTwo(match, { when })` | Two weapons go in hand for the price of one draw (Quick Draw). |
 | `MacroHelper.onHitMove({ feet, when, once, larger })` | A push or pull a hit brings, the GM's button on the card (Crusher, Charger). |
 | `MacroHelper.raiseCardAC(card, token, amount, { id })` | A creature's AC raised on an attack card that's out, its hit judged again (Defensive Duelist's Parry). |
 | `MacroHelper.reducesDamage(match, { amount, types, attacks, when })` | Less damage of some types, from attacks or anything (Heavy Armor Master). |

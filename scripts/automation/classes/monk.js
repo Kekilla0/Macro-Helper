@@ -15,6 +15,7 @@ import { cutDamage, cutsOf } from '../../roll-item/damage-cuts.js';
 import { cardBuilder } from '../../roll-item/card-builder.js';
 import { actionTracker } from '../action-tracker.js';
 import { TYPES } from '../../roll-item/message.js';
+import { bonusAttackAfter } from '../bonus-attacks.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -25,8 +26,9 @@ const log = logger.for(import.meta.url);
  *   Martial Arts       : while wearing no armor and holding no shield, an Unarmed Strike or Monk weapon (Simple melee,
  *                        Martial melee with Light) uses the better of STR and DEX, and the Martial Arts die instead of
  *                        its own when that's bigger. Done as dnd5e prepares the weapon, so the sheet, the card and the
- *                        rolls all show it (Plutonium's enchantment would force the die, and stay on in armor). The
- *                        bonus Unarmed Strike waits for the action tracker.
+ *                        rolls all show it (Plutonium's enchantment would force the die, and stay on in armor). Its
+ *                        Unarmed Strike as a Bonus Action : the bonus attack lego (after : "any" : with or without the
+ *                        Attack action; the Action Tracker spends it once the Action's attacks are made or gone).
  *   Flurry of Blows    : a Focus Point, then the character's own Unarmed Strike twice (three times from level 10), each
  *                        its own use : Attack, Grapple or Shove (multiattack, economy "bonus", tag "flurry").
  *   Patient Defense    : the free use : Disengage; with a Focus Point : Disengage and Dodge (the Default Actions, free).
@@ -61,6 +63,8 @@ export class monk{
   static register(){
     if(game.system.id !== "dnd5e") return;
     Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.onUse(activity, usage, results));
+    /* Martial Arts : an Unarmed Strike as a Bonus Action */
+    bonusAttackAfter("martial-arts", { id : "martial-arts", after : "any", when : ({ item }) => idOf(item) === this.UNARMED });
     /* Patient Defense / Step of the Wind : the Default Actions' marks are put on instead of the item's own effects
        (dnd5e's Monk's Focus carries a Dodging effect that never ends) */
     Hooks.on(`${module.id}.selfEffects`, activity => !(this.enabled() && [...this.FOCUS, this.PATIENT, this.STEP].includes(idOf(activity?.item))));

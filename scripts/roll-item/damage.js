@@ -144,6 +144,24 @@ export class DamageParts{
     return false;
   }
 
+  /**
+   * The item's own damage die changed, its number of dice kept (Polearm Master's Pole Strike : a d4; a two-handed or
+   * versatile die included) : the first die of the first roll.
+   * @param {number} faces
+   * @param {object} [options]
+   * @param {string} [options.type]  that roll's damage type too
+   * @returns {boolean}  false when there's no die to change
+   */
+  setDie(faces, { type } = {}){
+    const roll = this.rolls[0];
+    const parts = roll?.parts ?? [];
+    const i = parts.findIndex(p => /\d*d\d+/i.test(String(p)));
+    if(i < 0) return false;
+    parts[i] = String(parts[i]).replace(/(\d*)d\d+/i, `$1d${faces}`);
+    if(type){ roll.options ??= {}; roll.options.type = type; roll.options.types = [type]; }
+    return true;
+  }
+
   /* A part already in the roll ("@mod" : the modifier is added) */
   has(part){
     const target = flat(part);

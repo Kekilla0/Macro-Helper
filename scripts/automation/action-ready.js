@@ -1,7 +1,7 @@
 import { module } from '../module.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
-import { idOf, esc, chooseOption } from '../helpers/utils.js';
+import { idOf, esc, chooseOption, waitFor } from '../helpers/utils.js';
 import { cells, gridSteps, canSee } from '../helpers/tokens.js';
 import { pickTargets } from '../helpers/targets.js';
 import { actionTracker } from './action-tracker.js';
@@ -22,8 +22,74 @@ const log = logger.for(import.meta.url);
  *   Opportunity   : a token dragged out of the reach of a creature that can see it, has its Reaction and a melee
  *   Attacks         attack (not Disengaged; teleports and forced moves never) stops on the last square in reach. A
  *                   card : a row per such creature, Opportunity Attack or Pass (its owners, the GM); once all have
- *                   answered, the GM's client finishes the move (the GM may Continue or Stop here at any time).
+ *                   answered, the GM's client finishes the move (the GM may Continue or Stop here at any time). An
+ *                   attack that hit waits for its damage first (brought to 0 HP, or its Speed now 0 : the move ends).
+ *
+ * The reaction attack lego : more moments for that card (Polearm Master's Reactive Strike, Sentinel's Guardian; a
+ * monster's "when a creature enters its reach, it can bite as a Reaction"), and something to do instead of an
+ * Opportunity Attack (War Caster's spell; a monster that breathes instead) :
+ *
+ *   reactionAttackOn(match, {
+ *     on : "enters",                  "enters" (a creature's own move takes it into its reach : stopped there; not
+ *                                     Disengage's, it isn't an Opportunity Attack), "disengages" (a creature within
+ *                                     `within` ft takes the Disengage action), "hitsOther" (a creature within `within`
+ *                                     ft hits someone else with an attack)
+ *     within : 5,                     "disengages" / "hitsOther" : how close
+ *     weapon : item => boolean,       what it may attack with (held, or part of its body); "enters" : their reach
+ *     opportunity : true,             it's an Opportunity Attack (Sentinel's Halt reads that); false : a Reaction attack
+ *     sees : false,                   only a creature it can see
+ *     when : info => boolean,         info { actor, token (its), other (the creature's token), source }
+ *     label : source => string,       the row's button (default : Opportunity Attack)
+ *     enabled, id
+ *   })
+ *   opportunityInstead(match, {
+ *     label : source => string, icon,
+ *     choices : (actor, mover) => [{ value, label }],   what it can do (none : no button)
+ *     run : (token, mover, value) => results,          does it at the mover (a use's results; null : nothing done)
+ *     enabled, id
+ *   })
+ *   match : an item identifier the creature has (or several), or (actor) => the item (or anything truthy) that gives it
  */
+const attackRules = new Map();
+const insteadRules = new Map();
+
+const keyOf = (match, id) => id ?? ((typeof match === "function") ? foundry.utils.randomID() : [match].flat().map(String).join(","));
+
+function sourceOf(actor, match){
+  if(!actor) return null;
+  if(typeof match === "function"){
+    try { return match(actor) || null; } catch(error){ log.error("Reaction attack match", error); return null; }
+  }
+  const ids = [match].flat();
+  return actor.items?.find?.(i => (i.type !== "spell") && ids.includes(idOf(i))) ?? null;
+}
+
+/**
+ * Another moment a creature may attack with its Reaction (see above).
+ * @param {string|string[]|Function} match
+ * @param {object} options
+ * @returns {string}  the rule's id
+ */
+export function reactionAttackOn(match, { on, within = 5, weapon = null, opportunity = true, sees = false, when = null, label = null, enabled = null, id = null } = {}){
+  const key = keyOf(match, id);
+  attackRules.set(key, { id : key, match, on, within, weapon, opportunity, sees, when, label, enabled });
+  return key;
+}
+
+/**
+ * Something a creature may do instead of an Opportunity Attack (see above).
+ * @param {string|string[]|Function} match
+ * @param {object} options
+ * @returns {string}  the rule's id
+ */
+export function opportunityInstead(match, { label = null, icon = "fa-wand-sparkles", choices, run, enabled = null, id = null } = {}){
+  const key = keyOf(match, id);
+  insteadRules.set(key, { id : key, match, label, icon, choices, run, enabled });
+  return key;
+}
+
+const isOn = rule => !rule.enabled || rule.enabled();
+
 export class actionReady{
   static TRIGGERS = ["enemyAttacks", "enemyComes", "enemyMoves", "enemyLeaves", "enemyHeals", "enemyStands", "allyAttacks", "allyMoves", "allyHeals", "turnStarts"];
   static DEFAULT_REACH = 5;
@@ -32,6 +98,13 @@ export class actionReady{
     if(game.system.id !== "dnd5e") return;
     gm.handle("readyAnswer", (data, user) => this.readyAnswerAsGM(data, user));
     gm.handle("oaAnswer", (data, user) => this.oaAnswerAsGM(data, user));
+    gm.handle("oaDamaged", (data, user) => this.oaDamagedAsGM(data, user));
+    /* An Opportunity Attack's damage landed : the move may go on */
+    Hooks.on("dnd5e.applyDamage", (actor, amount, options) => this.onOADamage(actor, options));
+    /* The reaction attack lego's moments : the Disengage action, a hit on someone else (the active GM) */
+    Hooks.on("createActiveEffect", effect => this.onDisengage(effect));
+    Hooks.on("createChatMessage", message => this.onHitOther(message));
+    Hooks.on("updateChatMessage", message => this.onHitOther(message));
     Hooks.on("renderChatMessageHTML", (message, html) => { this.drawReadyCard(message, html); this.drawOACard(message, html); });
     /* Its readied action changed : its cards show it */
     Hooks.on("updateActor", (actor, changes) => {
@@ -419,64 +492,151 @@ export class actionReady{
     return out.filter((p, i, all) => !i || (p.x !== all[i - 1].x) || (p.y !== all[i - 1].y));
   }
 
-  /* Before a drag : the first square where it leaves someone's reach : stop there, ask them */
+  /* Its own movement provokes Opportunity Attacks (not Disengaged, not a Reaction move that doesn't, not Flyby, not a
+     hook macro's suppressOA) : { spared (tokens it doesn't provoke) } or null */
+  static provokes(token, movement){
+    const actor = token.actor;
+    const disengaged = actor?.statuses?.has?.("disengaged") || actor?.effects?.some?.(e => !e.disabled && (e.getFlag(module.id, "disengaged") || e.getFlag(module.id, "disengage")));
+    if(!actor || disengaged) return null;
+    /* A Reaction move (Mantle of Inspiration : none provoked; Maneuvering Attack : none from the creature hit) */
+    const reacting = reactionMoveOf(actor);
+    if(reacting?.noOA === true) return null;
+    /* Flyby (Animated Broom, owls) : flying out of an enemy's reach provokes nothing */
+    const action = movement.passed?.waypoints?.at?.(-1)?.action ?? movement.pending?.waypoints?.at?.(-1)?.action ?? token.movementAction;
+    if((action === "fly") && actor.items?.some?.(i => (idOf(i) === "flyby") || /^flyby$/i.test(i.name ?? ""))) return null;
+    /* "Before an Opportunity Attack" (hook macros) : suppressOA(args) : this move provokes none (Deer's Agile) */
+    const info = { movement, skip : false };
+    Hooks.callAll(`${module.id}.preOpportunityAttack`, token, info);
+    if(info.skip) return null;
+    return { spared : new Set(Array.isArray(reacting?.noOA) ? reacting.noOA : []) };
+  }
+
+  /* Could this creature react to `other` now : an enemy in the fight, its Reaction left, able to act */
+  static canReact(t, other){
+    return (t !== other) && !!t.actor && !t.hidden && (this.relation(t, other) === "enemy") && !!actionTracker.combatOf(t.actor)
+      && actionTracker.left(t.actor, "reaction") && !actionTracker.OUT_OF_ACTION.some(s => t.actor.statuses?.has?.(s));
+  }
+
+  /* Its reaction attack rules for a moment : [{ rule, source }] */
+  static rulesOf(t, kind, other){
+    const out = [];
+    for(const rule of attackRules.values()){
+      if((rule.on !== kind) || !isOn(rule)) continue;
+      const source = sourceOf(t.actor, rule.match);
+      if(!source) continue;
+      if(rule.sees && t.object && other.object && !canSee(t.object, other.object)) continue;
+      try { if(rule.when && !rule.when({ actor : t.actor, token : t, other, source })) continue; }
+      catch(error){ log.error("Reaction attack rule", error); continue; }
+      if(!this.ruleWeapons(t.actor, rule).length) continue;
+      out.push({ rule, source });
+    }
+    return out;
+  }
+
+  /* What a rule lets it attack with : its melee weapons in hand (or body weapons) that the rule takes */
+  static ruleWeapons(actor, rule){
+    const held = this.heldWeapons(actor);
+    return actor.items.filter(i => this.meleeAttackOf(i) && ((i.type !== "weapon") || hands.isBody(i) || held.has(i.id))
+      && (!rule?.weapon || rule.weapon(i)));
+  }
+
+  /* A rule's reach : its weapons' (Reach : 10 ft) */
+  static ruleReach(actor, rule){
+    let reach = 0;
+    for(const item of this.ruleWeapons(actor, rule)) reach = Math.max(reach, Number(item.system.range?.reach) || (item.system.properties?.has?.("rch") ? 10 : this.DEFAULT_REACH));
+    return reach;
+  }
+
+  /* Before a drag : the first square where it leaves someone's reach (stopped there), or enters the reach of someone
+     with a rule for that (stopped inside) : ask them */
   static preMove(token, movement, options = {}){
     if(!this.enabled()) return;
     const own = options?.[module.id] ?? {};
     /* Its own movement : a drag, the keyboard, or a macro's leap (oaCheck); not a teleport or a forced move (a push) */
     if(own.oaSkip || !(["dragging", "keyboard"].includes(movement?.method) || own.oaResume || own.oaCheck)) return;
     const actor = token.actor;
-    const disengaged = actor?.statuses?.has?.("disengaged") || actor?.effects?.some?.(e => !e.disabled && (e.getFlag(module.id, "disengaged") || e.getFlag(module.id, "disengage")));
-    if(!actor || disengaged) return;
-    /* A Reaction move (Mantle of Inspiration : none provoked; Maneuvering Attack : none from the creature hit) */
-    const reacting = reactionMoveOf(actor);
-    if(reacting?.noOA === true) return;
-    const spared = new Set(Array.isArray(reacting?.noOA) ? reacting.noOA : []);
-    /* Flyby (Animated Broom, owls) : flying out of an enemy's reach provokes nothing */
-    const action = movement.passed?.waypoints?.at?.(-1)?.action ?? movement.pending?.waypoints?.at?.(-1)?.action ?? token.movementAction;
-    if((action === "fly") && actor.items?.some?.(i => (idOf(i) === "flyby") || /^flyby$/i.test(i.name ?? ""))) return;
-    if(!actionTracker.combatOf(actor)) return;
-    /* "Before an Opportunity Attack" (hook macros) : suppressOA(args) : this move provokes none (Deer's Agile) */
-    const info = { movement, skip : false };
-    Hooks.callAll(`${module.id}.preOpportunityAttack`, token, info);
-    if(info.skip) return;
+    if(!actor || !actionTracker.combatOf(actor)) return;
     const done = new Set(own.oaDone ?? []);
-    const threats = token.parent.tokens.filter(t => (t !== token) && t.actor && !t.hidden && !done.has(t.uuid) && !spared.has(t.uuid) && (this.relation(t, token) === "enemy")
-      && actionTracker.combatOf(t.actor) && actionTracker.left(t.actor, "reaction") && !actionTracker.OUT_OF_ACTION.some(s => t.actor.statuses?.has?.(s))
+    const provoked = this.provokes(token, movement);
+    const leavers = provoked ? token.parent.tokens.filter(t => this.canReact(t, token) && !done.has(t.uuid) && !provoked.spared.has(t.uuid)
       /* Can't make Opportunity Attacks (Open Hand Technique's Addle) */
       && !t.actor.appliedEffects?.some?.(e => e.getFlag(module.id, "rule")?.noOpportunity)
-      && (this.reachOf(t.actor) > 0) && (!t.object || !token.object || canSee(t.object, token.object)));
-    if(!threats.length) return;
+      && (this.reachOf(t.actor) > 0) && (!t.object || !token.object || canSee(t.object, token.object))) : [];
+    const enterers = attackRules.size ? token.parent.tokens.filter(t => this.canReact(t, token))
+      .flatMap(t => this.rulesOf(t, "enters", token).filter(({ rule }) => !done.has(`${t.uuid}|${rule.id}`))
+        .map(({ rule }) => ({ t, rule, reach : this.ruleReach(t.actor, rule) })).filter(e => e.reach > 0)) : [];
+    if(!leavers.length && !enterers.length) return;
     const path = this.pathOf(token, movement);
     const foot = p => ({ x : p.x, y : p.y, width : token.width, height : token.height, elevation : p.elevation });
-    let stop = -1, who = [];
-    for(let i = 0; (i < path.length - 1) && (stop < 0); i++){
-      const leaving = threats.filter(t => { const r = this.reachOf(t.actor); return (this.feet(foot(path[i]), t) <= r) && (this.feet(foot(path[i + 1]), t) > r); });
-      if(leaving.length){ stop = i; who = leaving; }
+    let stop = -1, rows = [];
+    for(let i = 0; i < path.length - 1; i++){
+      const leaving = leavers.filter(t => { const r = this.reachOf(t.actor); return (this.feet(foot(path[i]), t) <= r) && (this.feet(foot(path[i + 1]), t) > r); });
+      if(leaving.length){ stop = i; rows = leaving.map(t => ({ token : t.uuid, status : "pending" })); break; }
+      const entering = enterers.filter(e => (this.feet(foot(path[i]), e.t) > e.reach) && (this.feet(foot(path[i + 1]), e.t) <= e.reach));
+      if(entering.length){ stop = i + 1; rows = entering.map(e => ({ token : e.t.uuid, status : "pending", rule : e.rule.id })); break; }
     }
     if(stop < 0) return;
     const rest = path.slice(stop + 1).map(p => ({ x : p.x, y : p.y, elevation : p.elevation }));
     const until = path.slice(1, stop + 1).map(p => ({ x : p.x, y : p.y, elevation : p.elevation }));
-    this.stopForOA(token, until, rest, who, [...done]);
+    this.stopForOA(token, until, rest, rows, [...done]);
     return false;
   }
 
-  static async stopForOA(token, until, rest, threats, done){
+  /* rows : [{ token (uuid), status : "pending", rule (a reaction attack rule's id; none : an Opportunity Attack for
+     leaving its reach) }] */
+  static async stopForOA(token, until, rest, rows, done){
     /* The refused drag winds down first (a new move during it collides with it) */
     await new Promise(resolve => setTimeout(resolve, 250));
     await token.object?.movementAnimationPromise?.catch?.(() => null);
     if(until.length) await token.move(until, { [module.id] : { oaSkip : true } }).catch(error => log.debug(error));
-    const rows = threats.map(t => ({ token : t.uuid, status : "pending" }));
+    const entering = rows.every(r => r.rule);
+    const text = module.format(entering ? "actionTracker.oa.enters" : "actionTracker.oa.text", { name : token.name });
+    /* Not an Opportunity Attack (Reactive Strike) : a Reaction attack's card */
+    const title = rows.every(r => attackRules.get(r.rule)?.opportunity === false) ? module.i18n("actionTracker.oa.reactionTitle") : null;
+    await this.oaCard(token, rows, { rest, done : [...done, ...rows.map(r => r.rule ? `${r.token}|${r.rule}` : r.token)], text, title });
+  }
+
+  /* The card : a row per creature that may react; rest : the move's rest (none : nothing to finish) */
+  static async oaCard(token, rows, { rest = [], done = [], text = "", title = null } = {}){
     const users = new Set(game.users.filter(u => u.isGM).map(u => u.id));
-    for(const t of threats) for(const u of game.users) if(t.actor.testUserPermission(u, "OWNER")) users.add(u.id);
+    for(const row of rows){
+      const t = fromUuidSync(row.token, { strict : false });
+      for(const u of game.users) if(t?.actor?.testUserPermission(u, "OWNER")) users.add(u.id);
+    }
     for(const u of game.users) if(token.actor?.testUserPermission(u, "OWNER")) users.add(u.id);
     await ChatMessage.implementation.create({
       speaker : ChatMessage.implementation.getSpeaker({ token }),
       whisper : [...users],
-      content : `<div class="${module.id}-oa-card"><p><strong>${esc(module.i18n("actionTracker.oa.title"))}</strong> ${esc(module.format("actionTracker.oa.text", { name : token.name }))}</p>
+      content : `<div class="${module.id}-oa-card"><p><strong>${esc(title ?? module.i18n("actionTracker.oa.title"))}</strong> ${esc(text)}</p>
         <ul class="unlist macro-helper-rows ${module.id}-oa-rows"></ul><div class="${module.id}-oa-gm"></div></div>`,
-      flags : { [module.id] : { oaStop : { mover : token.uuid, rest, done : [...done, ...threats.map(t => t.uuid)], rows, status : "pending" } } },
+      flags : { [module.id] : { oaStop : { mover : token.uuid, rest, done, rows, status : "pending", noMove : !rest.length } } },
     });
+  }
+
+  /* The weapon a row's attack is made with : the rule's, else an Opportunity Attack's (two in hand : which) */
+  static async rowAttack(actor, row){
+    const rule = row.rule ? attackRules.get(row.rule) : null;
+    if(!rule?.weapon) return this.chooseOAAttack(actor);
+    const weapons = this.ruleWeapons(actor, rule);
+    if(weapons.length < 2) return weapons[0] ? this.meleeAttackOf(weapons[0]) : null;
+    const id = await chooseOption({ title : module.i18n("actionTracker.oa.attack"), icon : "fa-solid fa-hand-fist", prompt : module.i18n("actionTracker.oa.which"),
+      options : weapons.map(i => ({ value : i.id, label : i.name })) });
+    return id ? this.meleeAttackOf(actor.items.get(id)) : null;
+  }
+
+  /* Its "instead of an Opportunity Attack" rules (for leaving its reach only) : [{ rule, source, choices }] */
+  static insteadsOf(actor, mover, row){
+    if(row.rule || !actor) return [];
+    const out = [];
+    for(const rule of insteadRules.values()){
+      if(!isOn(rule)) continue;
+      const source = sourceOf(actor, rule.match);
+      if(!source) continue;
+      let choices = [];
+      try { choices = rule.choices?.(actor, mover) ?? []; } catch(error){ log.error("Instead of an Opportunity Attack", error); }
+      if(choices.length) out.push({ rule, source, choices });
+    }
+    return out;
   }
 
   static drawOACard(message, html){
@@ -489,30 +649,53 @@ export class actionReady{
       const li = document.createElement("li");
       li.className = "macro-helper-row";
       const may = (flag.status === "pending") && (row.status === "pending") && (game.user.isGM || t?.actor?.isOwner);
+      const rule = row.rule ? attackRules.get(row.rule) : null;
+      const source = rule ? sourceOf(t?.actor, rule.match) : null;
+      const attackLabel = (rule && source && rule.label?.(source)) || module.i18n("actionTracker.oa.attack");
+      const mover = fromUuidSync(flag.mover, { strict : false });
+      const insteads = may ? this.insteadsOf(t?.actor, mover, row) : [];
       li.innerHTML = `<img class="token" src="${esc(t?.texture?.src ?? t?.actor?.img ?? "")}" alt="" data-token="${esc(row.token ?? "")}"><span class="name">${esc(t?.name ?? "?")}</span>
         <span class="macro-helper-row-apply">${(row.status !== "pending") ? `<span class="applied">${esc(module.i18n(`actionTracker.oa.${row.status}`))}</span>`
-          : may ? `<button type="button" data-answer="attacked"><i class="fa-solid fa-hand-fist" inert></i> ${esc(module.i18n("actionTracker.oa.attack"))}</button>
+          : may ? `<button type="button" data-answer="attacked"><i class="fa-solid fa-hand-fist" inert></i> ${esc(attackLabel)}</button>
+                   ${insteads.map(x => `<button type="button" data-answer="instead" data-rule="${esc(x.rule.id)}"><i class="fa-solid ${esc(x.rule.icon)}" inert></i> ${esc(x.rule.label?.(x.source) ?? x.source.name ?? "")}</button>`).join("")}
                    <button type="button" data-answer="passed"><i class="fa-solid fa-forward" inert></i> ${esc(module.i18n("actionTracker.oa.pass"))}</button>` : ""}</span>`;
       for(const button of li.querySelectorAll("button")) button.addEventListener("click", async event => {
         event.preventDefault();
         const answer = event.currentTarget.dataset.answer;
+        const ruleId = event.currentTarget.dataset.rule;
+        const again = () => li.querySelectorAll("button").forEach(b => b.disabled = false);
         li.querySelectorAll("button").forEach(b => b.disabled = true);
+        let card = null;
         if(answer === "attacked"){
-          const attack = await this.chooseOAAttack(t.actor);
-          const mover = fromUuidSync(flag.mover, { strict : false });
-          if(!attack || !mover?.object){ li.querySelectorAll("button").forEach(b => b.disabled = false); return; }
+          const attack = await this.rowAttack(t.actor, row);
+          if(!attack || !mover?.object) return again();
           t.object?.control({ releaseOthers : true });
           canvas.tokens.setTargets([mover.id]);
-          const used = await attack.use({ [module.id] : { economy : "reaction", oa : true, skipPick : true, useTargets : true } });
-          if(!used || !(await uses.cardOf(used).catch(() => null))){ li.querySelectorAll("button").forEach(b => b.disabled = false); return; }
+          const used = await attack.use({ [module.id] : { economy : "reaction", oa : true, opportunity : rule ? (rule.opportunity !== false) : true, skipPick : true, useTargets : true } });
+          const made = used ? await uses.cardOf(used).catch(() => null) : null;
+          if(!made) return again();
+          /* Roll Item's card (a builder : its message), or dnd5e's message; its attack roll may land after it */
+          card = made.message ?? made;
+          await waitFor(() => !!game.messages.get(card.id)?.system?.attackOf?.(null), { timeout : 15000 });
         }
-        await gm.run("oaAnswer", { message : message.id, index, status : answer });
+        if(answer === "instead"){
+          const x = insteads.find(i => i.rule.id === ruleId);
+          const value = !x ? null : (x.choices.length === 1) ? x.choices[0].value
+            : await chooseOption({ title : x.source.name, icon : `fa-solid ${x.rule.icon}`, prompt : module.i18n("actionTracker.oa.insteadWhat"), options : x.choices });
+          if(!value || !mover?.object) return again();
+          t.object?.control({ releaseOthers : true });
+          const used = await x.rule.run(t, mover, value);
+          if(!used || !(await uses.cardOf(used).catch(() => null))) return again();
+        }
+        await gm.run("oaAnswer", { message : message.id, index, status : answer, card : card?.id ?? null });
       });
       list.append(li);
     });
     const gmBox = html.querySelector(`.${module.id}-oa-gm`);
-    if(gmBox && game.user.isGM && (flag.status === "pending")){
-      gmBox.innerHTML = `<div class="card-buttons"><button type="button" data-answer="continue"><i class="fa-solid fa-play" inert></i> ${esc(module.i18n("actionTracker.oa.continue"))}</button>
+    if(gmBox && flag.noMove) gmBox.innerHTML = "";
+    else if(gmBox && game.user.isGM && (flag.status === "pending")){
+      const waiting = flag.waiting ? `<p><em>${esc(module.i18n("actionTracker.oa.waiting"))}</em></p>` : "";
+      gmBox.innerHTML = `${waiting}<div class="card-buttons"><button type="button" data-answer="continue"><i class="fa-solid fa-play" inert></i> ${esc(module.i18n("actionTracker.oa.continue"))}</button>
         <button type="button" data-answer="stopped"><i class="fa-solid fa-hand" inert></i> ${esc(module.i18n("actionTracker.oa.stop"))}</button></div>`;
       for(const button of gmBox.querySelectorAll("button")) button.addEventListener("click", event => {
         event.preventDefault();
@@ -523,29 +706,113 @@ export class actionReady{
   }
 
   /* GM : a row answered (its owner) or the move decided (GM); once all are answered, the move goes on */
-  static async oaAnswerAsGM({ message : id, index = null, status } = {}, user){
+  static async oaAnswerAsGM({ message : id, index = null, status, card = null } = {}, user){
     const message = game.messages.get(id);
     const flag = foundry.utils.deepClone(message?.getFlag(module.id, "oaStop"));
     if(!flag || (flag.status !== "pending")) return false;
-    if(index !== null){
+    const forced = index === null;
+    if(!forced){
       const row = flag.rows[index];
       const t = row ? fromUuidSync(row.token, { strict : false }) : null;
-      if(!row || (row.status !== "pending") || !["attacked", "passed"].includes(status) || !(user.isGM || t?.actor?.testUserPermission(user, "OWNER"))) return false;
+      if(!row || (row.status !== "pending") || !["attacked", "passed", "instead"].includes(status) || !(user.isGM || t?.actor?.testUserPermission(user, "OWNER"))) return false;
       row.status = status;
+      /* A hit : the move waits for its damage */
+      const hit = (status === "attacked") && card ? game.messages.get(card) : null;
+      if(hit){
+        row.card = hit.id;
+        row.hit = !!hit.system?.hitTargets?.(null)?.some?.(t => (t?.document ?? t)?.uuid === flag.mover);
+      }
     }
     else {
       if(!user.isGM || !["continue", "stopped"].includes(status)) return false;
       flag.status = status;
     }
+    return this.oaSettle(message, flag, { forced });
+  }
+
+  /* All answered (and every hit's damage in) : the move goes on, unless it's down or its Speed is 0 now (Sentinel's Halt) */
+  static async oaSettle(message, flag, { forced = false } = {}){
     const allDone = flag.rows.every(r => r.status !== "pending");
-    if(allDone && (flag.status === "pending")) flag.status = "continue";
+    flag.waiting = allDone && flag.rows.some(r => r.hit && !r.damaged);
+    if(allDone && !flag.waiting && (flag.status === "pending")) flag.status = "continue";
+    const mover = fromUuidSync(flag.mover, { strict : false });
+    if((flag.status === "continue") && !forced && flag.rest?.length && mover?.actor && (this.speedOf(mover.actor) <= 0)) flag.status = "halted";
     await message.setFlag(module.id, "oaStop", flag);
     if(flag.status === "continue"){
-      const mover = fromUuidSync(flag.mover, { strict : false });
       const alive = mover?.actor && !(Number(mover.actor.system?.attributes?.hp?.value) <= 0);
       if(alive && flag.rest?.length) await mover.move(flag.rest, { [module.id] : { oaResume : true, oaDone : flag.done } }).catch(error => log.debug(error));
     }
     return true;
+  }
+
+  /* Its fastest Speed now (a jump's distance isn't a Speed) */
+  static speedOf(actor){
+    const movement = actor?.system?.attributes?.movement ?? {};
+    return Math.max(0, ...Object.keys(CONFIG.DND5E.movementTypes ?? { walk : {} }).filter(k => k !== "jump").map(k => Number(movement[k]) || 0));
+  }
+
+  /* A card's damage landed on a creature an Opportunity Attack card waits for */
+  static onOADamage(actor, options = {}){
+    if(!this.enabled()) return;
+    const origin = options?.origin ?? options?.originatingMessage;
+    if(!origin?.id) return;
+    const stop = game.messages.contents.slice(-30).find(m => {
+      const f = m.getFlag(module.id, "oaStop");
+      return f && (f.status === "pending") && f.rows?.some(r => (r.card === origin.id) && r.hit && !r.damaged) && (fromUuidSync(f.mover, { strict : false })?.actor === actor);
+    });
+    if(stop) gm.run("oaDamaged", { message : stop.id, card : origin.id });
+  }
+
+  static async oaDamagedAsGM({ message : id, card } = {}){
+    const message = game.messages.get(id);
+    const flag = foundry.utils.deepClone(message?.getFlag(module.id, "oaStop"));
+    if(!flag || (flag.status !== "pending")) return false;
+    const row = flag.rows.find(r => r.card === card);
+    if(!row || row.damaged) return false;
+    row.damaged = true;
+    return this.oaSettle(message, flag);
+  }
+
+  /* ---------- The reaction attack lego's moments without a move ---------- */
+
+  /* The rows for a moment : creatures within `within` ft of `other` with a rule for it ([{ token, status, rule }]) */
+  static momentRows(kind, other, { skip = [] } = {}){
+    const rows = [];
+    for(const t of other.parent?.tokens ?? []){
+      if(skip.includes(t.uuid) || !this.canReact(t, other)) continue;
+      const found = this.rulesOf(t, kind, other).find(({ rule }) => this.feet(other, t) <= (Number(rule.within) || 5));
+      if(found) rows.push({ token : t.uuid, status : "pending", rule : found.rule.id });
+    }
+    return rows;
+  }
+
+  /* It takes the Disengage action (its Disengaged mark lands) : the active GM's card */
+  static async onDisengage(effect){
+    if(!this.enabled() || !game.users.activeGM?.isSelf || !attackRules.size) return;
+    const actor = effect?.parent;
+    if((actor?.documentName !== "Actor") || !(effect.getFlag(module.id, "disengaged") || effect.getFlag(module.id, "disengage"))) return;
+    const token = actor.token ?? actor.getActiveTokens?.(false, true)?.[0] ?? null;
+    if(!token || !actionTracker.combatOf(actor)) return;
+    const rows = this.momentRows("disengages", token);
+    if(rows.length) await this.oaCard(token, rows, { text : module.format("actionTracker.oa.disengages", { name : token.name }) });
+  }
+
+  static #hitsSeen = new Set();
+
+  /* It hits someone else with an attack : the active GM's card, once per attack card */
+  static async onHitOther(message){
+    if(!this.enabled() || !game.users.activeGM?.isSelf || !attackRules.size || this.#hitsSeen.has(message?.id)) return;
+    const { hitOf } = await import('../roll-item/hit-bonus.js');
+    const system = message?.system;
+    const rays = system?.isMulti ? system.rays.map((_, i) => i) : [null];
+    const hits = rays.map(ray => hitOf(message, ray)).filter(Boolean);
+    if(!hits.length || this.#hitsSeen.has(message.id)) return;
+    this.#hitsSeen.add(message.id);
+    const attacker = hits[0].token?.document ?? hits[0].token;
+    if(!attacker || !actionTracker.combatOf(hits[0].actor)) return;
+    const struck = hits.flatMap(h => h.targets).map(t => (t.document ?? t).uuid);
+    const rows = this.momentRows("hitsOther", attacker, { skip : struck });
+    if(rows.length) await this.oaCard(attacker, rows, { text : module.format("actionTracker.oa.hitsOther", { name : attacker.name }) });
   }
 }
 

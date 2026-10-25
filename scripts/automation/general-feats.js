@@ -18,6 +18,10 @@ import { giveEffect, rollSave, usedThisTurn } from '../helpers/actors.js';
 import { hasShieldEquipped, heldItems, wearsArmor } from '../helpers/items.js';
 import { forcedMove } from '../helpers/tokens.js';
 import { chooseOne } from '../helpers/creatures.js';
+import { bonusAttackAfter } from './bonus-attacks.js';
+import { actionReady, reactionAttackOn, opportunityInstead } from './action-ready.js';
+import { actionTracker } from './action-tracker.js';
+import { fightingStyles } from './fighting-styles.js';
 
 /**
  * General feats (level 4+, Feats setting), each built from legos the way an Item Macro would be :
@@ -53,6 +57,21 @@ import { chooseOne } from '../helpers/creatures.js';
  *                      judged again.
  *   Heavy Armor Master : in Heavy armor, an attack's Bludgeoning, Piercing and Slashing damage to it is reduced by its
  *                      Proficiency Bonus (Plutonium's always-on effect is switched off).
+ *   Great Weapon Master's Hew : a critical hit with a Melee weapon, or bringing a creature to 0 HP with one, on its turn :
+ *                      one attack with that weapon as its Bonus Action (the bonus attack lego).
+ *   Polearm Master   : Pole Strike : after attacking with a Quarterstaff, a Spear or a Heavy Reach weapon on the Attack
+ *                      action, the same weapon's attack as the Bonus Action deals a d4 Bludgeoning. Reactive Strike :
+ *                      a creature entering that weapon's reach (its own move) is stopped there : a Reaction attack
+ *                      with it (Disengage doesn't stop it). Plutonium's two by-hand activities are hidden.
+ *   Sentinel         : Guardian : a creature within 5 ft takes the Disengage action, or hits someone else with an
+ *                      attack : an Opportunity Attack card. Halt : an Opportunity Attack that hits : its Speed is 0 for
+ *                      the rest of the turn (with the damage; a stopped move doesn't go on).
+ *   War Caster       : leaving its reach (an Opportunity Attack) : Cast a Spell instead, a Reaction : a spell of one
+ *                      Action at that creature only. Concentration's advantage is Plutonium's effect; Somatic with
+ *                      full hands is in components.js.
+ *   Dual Wielder     : after attacking with a Light weapon on the Attack action, one attack as the Bonus Action with a
+ *                      different Melee weapon without Two-Handed (no positive modifier to its damage, unless Two-Weapon
+ *                      Fighting); Quick Draw : two weapons without Two-Handed go in hand for the price of one.
  */
 export class generalFeats{
   static SHARPSHOOTER = "sharpshooter";
@@ -70,6 +89,18 @@ export class generalFeats{
   static DUELIST = "defensive-duelist";
   static HAM = "heavy-armor-master";
   static BPS = ["bludgeoning", "piercing", "slashing"];
+  static POLEARM = "polearm-master";
+  static SENTINEL = "sentinel";
+  static WAR_CASTER = "war-caster";
+  static DUAL_WIELDER = "dual-wielder";
+
+  /* Polearm Master's weapons : a Quarterstaff, a Spear, or one with Heavy and Reach */
+  static polearm(item){
+    if(item?.type !== "weapon") return false;
+    const base = String(item.system?.type?.baseItem || idOf(item) || "").toLowerCase();
+    const props = item.system?.properties;
+    return ["quarterstaff", "spear"].includes(base) || (!!props?.has?.("hvy") && !!props?.has?.("rch"));
+  }
 
   static enabled(){
     return (game.system.id === "dnd5e") && settings.value("featRules");
@@ -110,6 +141,7 @@ export class generalFeats{
     if(game.system.id !== "dnd5e") return;
     const enabled = () => this.enabled();
     this.registerHitRiders(enabled);
+    this.registerExtraAttacks(enabled);
 
     /* Sharpshooter */
     ignoresCover(this.SHARPSHOOTER, { enabled, when : ({ item, message }) => this.rangedWeaponAttack(item, message) });
@@ -221,6 +253,61 @@ export class generalFeats{
     itemFixes.add({ name : "Hit rider feats' activities hidden", where : "owned", plan : item => this.riderActivitiesFix(item) });
   }
 
+  /* ---------- Extra attacks (Hew, Polearm Master, Sentinel, War Caster, Dual Wielder) ---------- */
+
+  static registerExtraAttacks(enabled){
+    /* Great Weapon Master : Hew */
+    bonusAttackAfter(this.GWM, { id : "hew", after : ["critical", "drop"], enabled, label : () => module.i18n("feats.gwm.hew"),
+      trigger : hit => this.meleeWeapon(hit.item) });
+
+    /* Polearm Master */
+    bonusAttackAfter(this.POLEARM, { id : "pole-strike", after : "attackAction", enabled, label : () => module.i18n("feats.polearm.poleStrike"),
+      when : ({ item, attacked }) => this.polearm(item) && attacked.includes(item.id),
+      damage : (attack, damage) => damage.setDie(4, { type : "bludgeoning" }) });
+    reactionAttackOn(this.POLEARM, { id : "reactive-strike", on : "enters", weapon : item => this.polearm(item), opportunity : false, enabled,
+      label : () => module.i18n("feats.polearm.reactiveStrike") });
+
+    /* Sentinel : Guardian, then Halt */
+    reactionAttackOn(this.SENTINEL, { id : "sentinel-disengage", on : "disengages", within : 5, enabled });
+    reactionAttackOn(this.SENTINEL, { id : "sentinel-hit", on : "hitsOther", within : 5, enabled });
+    addRow({ id : "sentinel-halt", feature : this.SENTINEL, enabled, withDamage : true, icon : "fa-hand",
+      when : row => row.opportunity,
+      label : row => module.format("feats.sentinel.halt", { name : row.feature?.name ?? "" }),
+      run : row => giveEffect(row.target, { name : module.format("feats.sentinel.halted", { name : row.feature?.name ?? "" }),
+        system : { changes : Object.keys(CONFIG.DND5E.movementTypes ?? { walk : {} }).filter(type => type !== "jump").map(type => ({ key : `system.attributes.movement.${type}`, type : "override", value : "0" })) } },
+        { from : row.feature, until : "turnEnd", of : game.combat?.started ? (game.combat.combatant?.actor ?? row.target.actor) : row.target.actor }) });
+
+    /* War Caster : a spell instead of the Opportunity Attack */
+    opportunityInstead(this.WAR_CASTER, { id : this.WAR_CASTER, enabled, icon : "fa-wand-sparkles",
+      label : () => module.i18n("feats.warCaster.cast"),
+      choices : actor => this.reactiveSpells(actor),
+      run : async (token, mover, value) => {
+        const [itemId, activityId] = String(value).split(".");
+        const activity = token.actor?.items.get(itemId)?.system.activities?.get(activityId);
+        if(!activity) return null;
+        canvas.tokens.setTargets([mover.id]);
+        return activity.use({ [module.id] : { economy : "reaction", oa : true, opportunity : false, skipPick : true, useTargets : true } });
+      } });
+
+    /* Dual Wielder */
+    bonusAttackAfter(this.DUAL_WIELDER, { id : this.DUAL_WIELDER, after : "attackAction", enabled,
+      when : ({ item, light }) => this.meleeWeapon(item) && !item.system.properties?.has?.("two") && light.some(id => id !== item.id),
+      damage : (attack, damage) => { if(!fightingStyles.styleOf(attack.actor, "two-weapon-fighting")) damage.noModifier(); } });
+    actionTracker.drawsTwo(this.DUAL_WIELDER, { enabled, when : item => !item.system?.properties?.has?.("two") });
+  }
+
+  /* War Caster's spells : what it could cast with an Action now (readyChoices), at one creature */
+  static reactiveSpells(actor){
+    return actionReady.readyChoices(actor).filter(({ value }) => {
+      const [itemId, activityId] = value.split(".");
+      const item = actor.items.get(itemId);
+      const activity = item?.system.activities?.get(activityId);
+      if((item?.type !== "spell") || !activity || activity.target?.template?.type) return false;
+      const affects = activity.target?.affects ?? {};
+      return !["self"].includes(affects.type) && ((Number(affects.count) || 1) === 1) && (activity.range?.units ?? item.system.range?.units) !== "self";
+    });
+  }
+
   /* Is the card's attack a melee attack (a thrown dagger isn't) */
   static meleeAttack(message){
     const activity = message?.getAssociatedActivity?.();
@@ -257,7 +344,7 @@ export class generalFeats{
 
   /* Plutonium's by-hand activities for what the cards do (GWM's +PB, Charge Attack, Shield Bash, Parry) : hidden, so
      they aren't used twice */
-  static RIDER_ACTIVITIES = ["great-weapon-master", "charger", "shield-master", "defensive-duelist"];
+  static RIDER_ACTIVITIES = ["great-weapon-master", "charger", "shield-master", "defensive-duelist", "polearm-master"];
   static riderActivitiesFix(item){
     if(!this.enabled() || !this.RIDER_ACTIVITIES.includes(idOf(item))) return null;
     const shown = [...(item.system.activities ?? [])].filter(a => a.visibility?.level?.max !== 0);

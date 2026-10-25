@@ -863,7 +863,7 @@ export class cardBuilder{
   /* The use an item macro is running for, by item uuid : item.roll() inside it is that use (an Opportunity Attack stays
      the Reaction, a readied use stays readied, its target stays its target) */
   static inherited = new Map();
-  static INHERIT = ["economy", "oa", "readied", "skipPick", "useTargets"];
+  static INHERIT = ["economy", "oa", "opportunity", "readied", "skipPick", "useTargets"];
 
   /* item.roll() : the item's normal use, its card as a CardBuilder (null : nothing was rolled).
      use : false : an attack that's part of something else (Cleave, a Multiattack) : no dnd5e use (no uses or slots

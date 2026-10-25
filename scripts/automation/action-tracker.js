@@ -10,6 +10,8 @@ import { idOf, esc } from '../helpers/utils.js';
 import { getTokensWithin, movedThisTurn } from '../helpers/tokens.js';
 import { masteries } from './masteries.js';
 import { controllerOf } from './summons.js';
+import { bonusAttackAfter, bonusAttackRule } from './bonus-attacks.js';
+import { rollItem } from '../roll-item/roll-item.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -71,6 +73,7 @@ export class actionTracker{
     });
     Hooks.on("updateActor", (actor, changes, options, userId) => this.deathChanged(actor, changes, options, userId));
     uses.onActivity("economy", (activity, ctx, next) => this.step(activity, ctx, next));
+    this.registerLight();
     uses.onActivity("economyApproval", (activity, ctx, next) => this.approvalStep(activity, ctx, next));
     gm.handle("economyAnswer", (data, user) => this.answerAsGM(data, user));
     gm.handle("wake", (data, user) => this.wakeAsGM(data, user));
@@ -257,7 +260,7 @@ export class actionTracker{
   /* Every key a turn's record can hold : save() merges into the flag, so a key left out would carry on from the last turn */
   static fresh(combat, round){
     return { combat : combat.id, round, used : { action : 0, bonus : 0, reaction : 0 }, extra : { action : 0, bonus : 0, reaction : 0 },
-      attack : null, light : false, nick : false, made : 0, swaps : 0, objects : 0, standing : 0, moreMove : 0, ready : null, log : [] };
+      attack : null, light : false, lightIds : [], attackIds : [], bonusGrants : [], nick : false, made : 0, swaps : 0, objects : 0, paired : 0, standing : 0, moreMove : 0, ready : null, log : [] };
   }
 
   /* The started combat it's in (the one being viewed first : a combat with no scene shows on every scene) */
@@ -550,12 +553,16 @@ export class actionTracker{
     return false;
   }
 
-  /* After the Attack action's attacks : the Bonus Action attack it allows */
-  static bonusAttack(activity, rec){
-    const item = activity.item;
-    /* The Light property's extra attack, unless Nick already made it part of the Attack action */
-    if(this.otherLight(rec, item) && !rec.nick) return true;
-    return (idOf(item) === "unarmed-strike") && !!activity.actor?.items?.some?.(i => idOf(i) === "martial-arts");
+  /* After the Attack action's attacks (or with none taken) : the Bonus Action attack a rule allows (the bonus attack
+     lego : the Light property's extra attack, Martial Arts, Dual Wielder, Pole Strike, Hew) */
+  static bonusAttack(activity, rec, options){
+    return bonusAttackRule(activity, rec, options);
+  }
+
+  /* The Light property's extra attack : a different Light weapon, unless Nick already made it part of the Attack action */
+  static registerLight(){
+    bonusAttackAfter(() => true, { id : "light", after : "attackAction", label : () => module.i18n("bonusAttack.light"),
+      when : ({ item, light }) => this.isLight(item) && !!light.length && light.some(id => id !== item.id) && !this.state(this.payerOf(item.actor))?.rec?.nick });
   }
 
   /* A use that's part of its Multiattack without being an attack : "uses Paralyzing Tentacles", or one that stands in
@@ -580,10 +587,14 @@ export class actionTracker{
         if((attack || swap) && this.takeAttack(pool, activity.item)) return { kind : null, attack : "more", pool };
         /* Nick (mastery) : the Light property's extra attack is part of the Attack action, once a turn */
         if(attack && this.otherLight(st.rec, activity.item) && !st.rec.nick && masteries.nick(activity)) return { kind : null, attack : "more", pool, nick : true };
-        if(attack && (this.remaining(st.rec, "bonus") > 0) && this.bonusAttack(activity, st.rec)) return { kind : "bonus", attack : "bonus" };
+        const bonus = (attack && (this.remaining(st.rec, "bonus") > 0)) ? this.bonusAttack(activity, st.rec) : null;
+        if(bonus) return { kind : "bonus", attack : "bonus", bonus };
         if(this.remaining(st.rec, "action") > 0) return { kind : "action", attack : "new" };
         return { kind : "action", attack : "over", pool };
       }
+      /* No Attack action taken : with its Action gone, an attack a rule allows any time (Martial Arts) or a grant (Hew) */
+      const bonus = (attack && (this.remaining(st.rec, "action") <= 0) && (this.remaining(st.rec, "bonus") > 0)) ? this.bonusAttack(activity, st.rec, { attackAction : false }) : null;
+      if(bonus) return { kind : "bonus", attack : "bonus", bonus };
       return { kind : "action", attack : "new" };
     }
     return { kind : cost };
@@ -625,8 +636,12 @@ export class actionTracker{
        its card never comes (an attack's target pick, made after the use, closed) */
     await this.spend(actor, plan, activity).catch(error => log.error(error));
     const spent = foundry.utils.deepClone(actor.getFlag(module.id, "economy"));
+    /* Its attack roll's tags : an Opportunity Attack (Sentinel's Halt), a rule's bonus attack (Pole Strike's damage) */
+    const tags = { ...((plan.oa && (own.opportunity !== false)) ? { opportunity : true } : {}), ...(plan.bonus ? { bonusAttack : plan.bonus.rule } : {}) };
+    const untag = Object.keys(tags).length ? rollItem.tagUse(activity, tags) : null;
     let result = null;
     try { result = await next(); }
+    catch(error){ untag?.(); throw error; }
     finally {
       /* Refused or cancelled (dnd5e : no uses left) : as it was, and the log says so */
       if(!result){
@@ -634,7 +649,8 @@ export class actionTracker{
         await combatLog.add(actor, module.i18n("combatLog.cancelled")).catch(error => log.debug(error));
       }
     }
-    if(result) uses.cardOf(result).then(card => card ? null : this.refund(actor, st.rec, spent)).catch(error => log.debug(error));
+    if(result) uses.cardOf(result).then(card => card ? null : this.refund(actor, st.rec, spent)).catch(error => log.debug(error)).finally(() => untag?.());
+    else untag?.();
     return result;
   }
 
@@ -687,12 +703,19 @@ export class actionTracker{
       if(this.isAttack(activity) || this.swapsIn(activity) || this.REPLACES_ATTACK.has(idOf(activity?.item))) this.takeAttack(rec.attack, activity.item);
       rec.light = this.isAttack(activity) && this.isLight(activity.item);
       rec.lightIds = rec.light ? [activity.item.id] : [];
+      rec.attackIds = this.isAttack(activity) ? [activity.item.id] : [];
     }
     else if(attack === "more"){
       rec.attack = plan.pool;
       if(plan.nick) rec.nick = true;
       rec.light = rec.light || this.isLight(activity?.item);
       if(this.isLight(activity?.item)) rec.lightIds = [...new Set([...(rec.lightIds ?? []), activity.item.id])];
+      if(this.isAttack(activity)) rec.attackIds = [...new Set([...(rec.attackIds ?? []), activity.item.id])];
+    }
+    /* A rule's bonus attack : a grant it came from is used up */
+    else if((attack === "bonus") && plan.bonus?.grant){
+      const g = plan.bonus.grant;
+      rec.bonusGrants = (rec.bonusGrants ?? []).filter(x => !((x.rule === g.rule) && (x.item === g.item)));
     }
     if(this.isAttack(activity)) rec.made = (Number(rec.made) || 0) + 1;
     const name = activity?.item?.name ?? activity?.name ?? plan.what ?? "";
@@ -702,6 +725,7 @@ export class actionTracker{
       : plan.oa ? module.format("actionTracker.log.oa", { what : name })
       : plan.offTurn ? module.format("actionTracker.log.offTurn", { what : name, kind : this.label(plan.offTurn) })
       : ((attack === "new") || (attack === "more")) && this.isAttack(activity) ? module.format(kind ? "actionTracker.log.attackOf" : "actionTracker.log.attackMore", { what : name, kind : kind ? this.label(kind) : "", nth })
+      : plan.bonus?.text ? module.format("actionTracker.log.bonusAttack", { what : name, by : plan.bonus.text })
       : kind ? module.format("actionTracker.log.used", { what : name, kind : this.label(kind) })
       : name;
     const isAttackLine = ((attack === "new") || (attack === "more")) && this.isAttack(activity) && !plan.readied && !plan.oa && !plan.offTurn;
@@ -976,6 +1000,28 @@ export class actionTracker{
     return (item?.type === "equipment") && (item.system?.type?.value === "shield");
   }
 
+  /* The draw-two lego (Dual Wielder's Quick Draw) : rules by id */
+  static DRAW_TWO = new Map();
+
+  /**
+   * Two weapons go in hand where one would (a draw with an attack, the free object interaction) : the second rides on
+   * the first.
+   * @param {string|string[]|Function} match   an item identifier the creature has, or (actor) => truthy
+   * @param {object} [options]  when (item => boolean : which weapons), enabled, id
+   */
+  static drawsTwo(match, { when = null, enabled = null, id = null } = {}){
+    this.DRAW_TWO.set(id ?? ((typeof match === "function") ? foundry.utils.randomID() : [match].flat().join(",")), { match, when, enabled });
+  }
+
+  static drawTwoFor(actor, item){
+    for(const rule of this.DRAW_TWO.values()){
+      if(rule.enabled && !rule.enabled()) continue;
+      const has = (typeof rule.match === "function") ? rule.match(actor) : actor.items.some(i => [rule.match].flat().includes(idOf(i)));
+      if(has && (!rule.when || rule.when(item))) return true;
+    }
+    return false;
+  }
+
   /* What goes into a hand on its turn : a weapon free with an attack, else the free interaction, else Utilize; a shield : Utilize */
   static preHands(actor, changes, options){
     const next = foundry.utils.getProperty(changes ?? {}, `flags.${module.id}.hands`);
@@ -991,19 +1037,22 @@ export class actionTracker{
       .filter(item => item && !((item.type === "weapon") && ((item.system.type?.value === "natural") || (idOf(item) === "unarmed-strike"))));
     if(!moved.length) return;
     const rec = st.rec;
-    let swaps = Number(rec.swaps) || 0, objects = Number(rec.objects) || 0, utilize = 0;
+    let swaps = Number(rec.swaps) || 0, objects = Number(rec.objects) || 0, utilize = 0, paired = Number(rec.paired) || 0;
     const entries = [];
     for(const item of moved){
       const into = after.has(item.id);
       if(this.isShield(item)){ utilize += 1; entries.push([item, "utilize", into]); continue; }
       if(!into){ entries.push([item, "free", into]); continue; }
-      if((item.type === "weapon") && (swaps < (Number(rec.made) || 0))){ swaps += 1; entries.push([item, "attack", into]); continue; }
-      if(objects < 1){ objects += 1; entries.push([item, "object", into]); continue; }
-      utilize += 1; entries.push([item, "utilize", into]);
+      const two = (item.type === "weapon") && this.drawTwoFor(actor, item);
+      /* Quick Draw : a weapon riding on the last draw */
+      if(two && (paired > 0)){ paired -= 1; entries.push([item, "pair", into]); continue; }
+      if((item.type === "weapon") && (swaps < (Number(rec.made) || 0))){ swaps += 1; if(two) paired += 1; entries.push([item, "attack", into]); continue; }
+      if(objects < 1){ objects += 1; if(two) paired += 1; entries.push([item, "object", into]); continue; }
+      utilize += 1; if(two) paired += 1; entries.push([item, "utilize", into]);
     }
     if(utilize && (this.remaining(rec, "action") < utilize)
       && !limits.allow(module.format("actionTracker.utilize", { name : actor.name, item : entries.filter(e => e[1] === "utilize").map(e => e[0].name).join(", ") }), { who : actor.name, what : module.i18n("actionTracker.objects") })) return false;
-    options[module.id] = { ...(options[module.id] ?? {}), economyHands : { swaps, objects, utilize, entries : entries.map(([item, how, into]) => ({ name : item.name, how, into })) } };
+    options[module.id] = { ...(options[module.id] ?? {}), economyHands : { swaps, objects, utilize, paired, entries : entries.map(([item, how, into]) => ({ name : item.name, how, into })) } };
   }
 
   static async onHands(actor, options, userId){
@@ -1014,6 +1063,7 @@ export class actionTracker{
     const rec = st.rec;
     rec.swaps = plan.swaps;
     rec.objects = plan.objects;
+    rec.paired = plan.paired ?? 0;
     if(plan.utilize) rec.used.action = (Number(rec.used.action) || 0) + plan.utilize;
     for(const e of plan.entries) this.note(rec, module.format(`actionTracker.log.${e.into ? "in" : "out"}`, { what : e.name, how : module.i18n(`actionTracker.how.${e.how}`) }));
     await this.save(actor, rec);

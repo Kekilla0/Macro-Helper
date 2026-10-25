@@ -35,7 +35,8 @@ const log = logger.for(import.meta.url);
  *
  * hit : { message, ray, actor, token, item, activity, roll, critical, advantage, disadvantage, target, targets, weapon,
  *         finesse, unarmed, spell, cantrip, melee, ranged, ability, damageType, damageTypes (a Set : every type the
- *         attack's damage has, its added boxes too), attackAction, feature }
+ *         attack's damage has, its added boxes too), attackAction, tags (the attack roll's : Cleave's noMod, a rule's
+ *         bonusAttack), opportunity (an Opportunity Attack), feature }
  *
  * useOnLatestHit(id, actor) : the rule used from the sheet : the latest of the actor's attack cards (among the last
  * messages) with a hit it qualifies for.
@@ -89,6 +90,8 @@ export function hitOf(message, ray = null){
     damageType : base[0]?.options?.type ?? [...(item.system?.damage?.base?.types ?? [])][0] ?? null,
     damageTypes,
     attackAction : isAttackAction(actor, activity),
+    tags : roll?.options?.[module.id]?.tags ?? {},
+    opportunity : !!roll?.options?.[module.id]?.tags?.opportunity,
   };
 }
 
