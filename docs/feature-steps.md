@@ -91,6 +91,16 @@ Legos are listed in [api.md](api.md). "Data" means the item's own dnd5e or Pluto
 | Keen Mind, Observant | Study / Search | a Bonus Action instead (its choice) | `actionAs` |
 | Charger (Improved Dash) | the Dash action | 10 ft more movement | `onDefaultAction`, `useMovement` |
 | Heavy Armor Master | an attack's B / P / S damage | in Heavy armor, PB less (Plutonium's always-on effect off) | `reducesDamage` (`attacks`), `wearsArmor`, `itemFixes` |
+| Chef | Replenishing Meal; a Hit Point Die spent | up to 4 + PB eaters get an effect: their first Hit Die before their rest ends heals 1d8 more | a use step, `pickTargets`, `giveEffect` (rule `hitDieBonus` + `hitDieBonusOnce`, dnd5e's `shortRest` expiry) |
+| Inspiring Leader | a Short or Long Rest | up to six allies within 30 ft gain level + WIS / CHA temp HP | `itemChoice` (ability), `addRestChoice`, `pickTargets`; Plutonium's activities |
+| Mage Slayer | its damage to a Concentrating creature; a failed INT / WIS / CHA save | that Concentration save at disadvantage; Guarded Mind: succeed instead, once a Short Rest | `concentrationModeFrom`, `onFailedTest` (`when`, `succeed`) |
+| Ritual Caster | adding it, the Proficiency Bonus growing; casting a Ritual | PB level 1 Rituals always prepared (its chosen ability); Quick Ritual: normal time, no slot, once a Long Rest | `itemChoice`, `addSpellPool`, `addRestChoice` (`classes: "any"`), `quickRitual` |
+| Skulker | always; the Hide action in combat | Blindsight 10 ft; advantage on Hide's Stealth (Plutonium's always-on advantage off) | `addSense`, `actionRollMode`, `itemFixes` |
+| Telekinetic | its Mage Hand; Telekinetic Shove's failed save | no V or S, 30 ft more range; a 5 ft push or pull (the GM picks) | `addRange`, `dropsComponents`, `onSaveMove` (two directions) |
+| Medium Armor Master | wearing Medium armor, DEX 16+ | AC adds up to +3 DEX (Plutonium's wrong-key effect off) | `acDexCap`, `itemFixes` |
+| Weapon Master | a Long Rest | one more weapon mastery, a kind it's proficient with | `extraMasteries` (Weapon Mastery's Rest Choices) |
+| Poisoner (Brew Poison) | Apply Poison; the weapon's damage; the rider save | a dose spent; the poison ends with the damage (or 1 minute); Poisoned until the end of its next turn | `itemFixes`, effect rule `endsOnDamage`, the card's effect flag `until` |
+| Durable | death saves; a Bonus Action | advantage; spend a Hit Die | Plutonium's data |
 
 ## Still to become legos
 

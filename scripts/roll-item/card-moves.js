@@ -5,6 +5,7 @@ import { idOf } from '../helpers/utils.js';
 import { getSize, usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
 import { limits } from '../automation/limits.js';
 import { hitOf } from './hit-bonus.js';
+import { TYPES } from './message.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -181,4 +182,65 @@ function hitMove(rule, message, uuid, moves, ray){
       if(once) await markUsedThisTurn(hit.actor, `move-${rule.id}`);
       await message.setFlag(module.id, key, true);
     } });
+}
+
+/**
+ * The failed-save move lego : a push or pull for a creature that failed the save on an item's card, at the bottom of
+ * the card (the GM's button) : Thunderwave's 10 ft push, Telekinetic's Shove (5 ft toward or away); a monster's "a
+ * failed save : pulled 15 ft toward it".
+ *
+ *   onSaveMove({
+ *     id : "thunderwave", item : "thunderwave",   the rule's key; the card's item (identifier, or several), or (item) => boolean
+ *     feet : 10,
+ *     direction : "away",                      "toward" : a pull; ["away", "toward"] : a button each, the GM picks one
+ *     when : row => true,                      this creature qualifies (row : { message, item, actor, token, target })
+ *     larger : null,                           the creature at most this many sizes larger than the card's creature
+ *                                              (more : Rule Limits on the click)
+ *     enabled : () => true,
+ *   })
+ */
+const saveRules = new Map();
+let savesHooked = false;
+
+export function onSaveMove(rule){
+  if(!rule?.id) return;
+  saveRules.set(rule.id, rule);
+  if(savesHooked) return;
+  savesHooked = true;
+  Hooks.on(`${module.id}.cardMoves`, (message, uuid, moves, { result, ray = null } = {}) => {
+    if((result?.success !== false) || (message.type !== TYPES.save)) return;
+    for(const rule of saveRules.values()){
+      try { saveMove(rule, message, uuid, moves); }
+      catch(error){ log.error("Failed-save move", rule.id, error); }
+    }
+  });
+}
+
+function saveMove(rule, message, uuid, moves){
+  if(rule.enabled && !rule.enabled()) return;
+  const item = message.getAssociatedItem?.();
+  if(!item || !((typeof rule.item === "function") ? rule.item(item) : [rule.item].flat().includes(idOf(item)))) return;
+  const target = fromUuidSync(uuid, { strict : false });
+  const actor = message.getAssociatedActor?.() ?? item.actor;
+  const token = message.getAssociatedToken?.() ?? tokenOf(actor)?.document ?? null;
+  if(!target) return;
+  if(rule.when && !rule.when({ message, item, actor, token, target })) return;
+  const directions = [rule.direction ?? "away"].flat();
+  const flagOf = direction => cardMoves.flagOf(`saveMove-${rule.id}-${direction}|x|${uuid}`);
+  const chosen = directions.find(d => message.getFlag(module.id, flagOf(d)));
+  for(const direction of directions){
+    const other = !!chosen && (chosen !== direction);
+    const feet = Number(rule.feet) || 5;
+    moves.push({ id : `saveMove-${rule.id}-${direction}`, feet, direction, name : item.name, done : other,
+      /* The one not chosen keeps its words ("Pull 5 ft"), greyed */
+      label : other ? module.format((direction === "toward") ? "tokens.pull" : "tokens.push", { feet }) : null,
+      allow : () => {
+        if(!Number.isFinite(rule.larger) || !actor) return true;
+        if((getSize(target)?.value ?? 2) <= ((getSize(actor)?.value ?? 2) + rule.larger)) return true;
+        const notes = [];
+        const ok = limits.allow(module.format("rollItem.mastery.tooBig", { name : target.name }), { notes, who : actor.name, what : `${item.name}: ${target.name}` });
+        for(const note of notes) ui.notifications.info(note);
+        return ok;
+      } });
+  }
 }

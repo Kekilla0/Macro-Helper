@@ -29,6 +29,18 @@ const log = logger.for(import.meta.url);
  * NPCs are only checked for V (2024 monster spellcasting needs no Material components). Characters with Hands off
  * aren't checked for hands, only for a focus or pouch.
  */
+/**
+ * The dropped-components lego : a creature's spells cast without some of their components (Improved Illusions : no V;
+ * Telekinetic's Mage Hand : no V or S; a monster's "casts without components").
+ *   dropsComponents(match, ["v", "s"], { when : ({ actor, item, activity, source }) => true, enabled, id })
+ *   match   an item identifier the creature has (or several), or (actor) => the source
+ */
+const drops = new Map();
+
+export function dropsComponents(match, drop, { when = null, enabled = null, id = null } = {}){
+  drops.set(id ?? ((typeof match === "function") ? foundry.utils.randomID() : [match].flat().join(",")), { match, drop : [drop].flat().map(c => String(c).toLowerCase()[0]), when, enabled });
+}
+
 export class components{
   static WAR_CASTER = "war-caster";
   static POUCH = "component-pouch";
@@ -68,7 +80,17 @@ export class components{
     /* Components a rule left out of this use (Subtle Spell) : config["macro-helper"].components = { v : false, s : false } */
     const drop = config?.[module.id]?.components ?? {};
     const need = { v : has("vocal") && (drop.v !== false), s : has("somatic") && (drop.s !== false), m : has("material") && (drop.m !== false) };
-    /* Rules that drop some (Improved Illusions : no V; Psychic Spells : no V or S) : Hooks "macro-helper.components" (activity, need) */
+    /* Rules that drop some (dropsComponents : Improved Illusions no V; Psychic Spells no V or S), and Hooks
+       "macro-helper.components" (activity, need) */
+    for(const rule of drops.values()){
+      if(rule.enabled && !rule.enabled()) continue;
+      try {
+        const actor = activity?.actor;
+        const source = actor && ((typeof rule.match === "function") ? rule.match(actor) : actor.items?.find?.(i => [rule.match].flat().includes(idOf(i))));
+        if(!source || (rule.when && !rule.when({ actor, item : activity.item, activity, source }))) continue;
+        for(const c of rule.drop) need[c] = false;
+      } catch(error){ log.error("Drops components", error); }
+    }
     Hooks.callAll(`${module.id}.components`, activity, need);
     return need;
   }

@@ -2,6 +2,7 @@ import { module } from '../module.js';
 import { logger } from '../log.js';
 import { actorOf } from '../helpers/tokens.js';
 import { rollModes, giveRollMode } from './roll-modes.js';
+import { uses } from '../uses.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -14,6 +15,11 @@ const log = logger.for(import.meta.url);
  * `max` seconds, and with `concentration` its Concentration saves get that mode. Effects from the item that land on
  * other creatures afterwards (its card's Apply) last as long too, while that Concentration lasts (no Concentration :
  * until the item is used again). Those changes are made as dnd5e makes the effects, by whoever makes them.
+ *
+ * Ends on damage : an effect on an item with the rule endsOnDamage (flags["macro-helper"].rule) ends once that item's
+ * card deals damage to a creature (Poisoner's poison on a weapon; a homebrew oil that burns off on the first hit). It's
+ * switched off then (that card's rider rows still work : an enchantment's riders stay while it's off), and removed when
+ * the item is next used.
  */
 export class durations{
   static register(){
@@ -25,6 +31,23 @@ export class durations{
       if(actor?.isOwner && actor.getFlag(module.id, `extended.${item.id}`)) actor.unsetFlag(module.id, `extended.${item.id}`).catch(() => {});
     });
     rollModes.add("extended", config => this.concentrationMode(config), { rolls : "concentration" });
+    Hooks.on("dnd5e.applyDamage", (actor, amount, options) => this.onDamage(amount, options));
+    uses.onActivity("endedOnDamage", async (activity, ctx, next) => {
+      const item = activity?.item;
+      const spent = item?.effects?.filter?.(e => e.disabled && e.getFlag(module.id, "rule")?.endsOnDamage) ?? [];
+      if(spent.length && item.isOwner) await item.deleteEmbeddedDocuments("ActiveEffect", spent.map(e => e.id)).catch(error => log.debug(error));
+      return next();
+    });
+  }
+
+  /* An item's card dealt damage : its effects that end on damage are switched off (the item's owner, or the GM) */
+  static async onDamage(amount, options = {}){
+    if(!(amount > 0)) return;
+    const item = options.origin?.getAssociatedItem?.() ?? options.originatingMessage?.getAssociatedItem?.();
+    const ended = item?.effects?.filter?.(e => !e.disabled && e.getFlag(module.id, "rule")?.endsOnDamage) ?? [];
+    if(!ended.length || !item.isOwner) return;
+    log.debug("Ends on damage", item.name, ended.map(e => e.name));
+    await item.updateEmbeddedDocuments("ActiveEffect", ended.map(e => ({ _id : e.id, disabled : true }))).catch(error => log.debug(error));
   }
 
   /* `multiplier` times a duration, as dnd5e stores it (value in its units), at most `max` seconds */

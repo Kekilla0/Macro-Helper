@@ -21,6 +21,7 @@ const log = logger.for(import.meta.url);
  * A choice : {
  *   id, label (i18n key), rest : "long" | "short" | "level",
  *   classes         : for "level", the class identifiers whose level-up allows it (["fighter", "paladin", "ranger"]),
+ *                     or "any" (any class : a feat that grows with the Proficiency Bonus),
  *   applies(actor)  : does the character have it,
  *   grant(actor, { levels }) : the rest / level happened : allow its change (a swap...), may be async; levels : how
  *                     many levels the class gained,
@@ -229,7 +230,7 @@ export class restChoices{
     const choices = [];
     for(const choice of this.#choices.values()){
       if(choice.rest !== "level") continue;
-      const n = gained.filter(([cls]) => (choice.classes ?? []).includes(cls)).reduce((sum, [, n]) => sum + n, 0);
+      const n = gained.filter(([cls]) => (choice.classes === "any") || (choice.classes ?? []).includes(cls)).reduce((sum, [, n]) => sum + n, 0);
       if((n > 0) && choice.applies(actor)){ choices.push(choice); levels.set(choice.id, n); }
     }
     log.debug("Level gained", actor.name, entry.before, "->", after, gained);

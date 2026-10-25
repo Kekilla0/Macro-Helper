@@ -11,6 +11,7 @@ import { spellEffects } from '../spell-effects.js';
 import { subclasses } from './common.js';
 import { itemFixes } from '../item-fixes.js';
 import { isClassSpell } from '../../helpers/items.js';
+import { dropsComponents } from '../components.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -56,10 +57,8 @@ export class warlockPatrons{
     Hooks.on(`${module.id}.cardButtons`, (message, buttons, { ray } = {}) => this.psychicButton(message, buttons, ray ?? null));
     Hooks.on(`${module.id}.saveCardButtons`, (message, buttons) => this.psychicButton(message, buttons, null, { save : true }));
     Hooks.on(`${module.id}.cardButton`, (message, id, { ray } = {}) => { if(id === "psychicSpells") message.system.setDamageType?.("psychic", ray ?? null); });
-    Hooks.on(`${module.id}.components`, (activity, need) => {
-      const item = activity?.item;
-      if(this.enabled() && this.isWarlockSpell(item) && ["enc", "ill"].includes(item.system.school) && subclasses.has(activity.actor, this.PSYCHIC)){ need.v = false; need.s = false; }
-    });
+    dropsComponents(actor => subclasses.has(actor, this.PSYCHIC), ["v", "s"], { id : this.PSYCHIC, enabled : () => this.enabled(),
+      when : ({ item }) => this.isWarlockSpell(item) && ["enc", "ill"].includes(item.system.school) });
   }
 
   static isWarlockSpell(item){

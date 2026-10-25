@@ -1,5 +1,5 @@
 import { module } from '../module.js';
-import { rollModes } from './roll-modes.js';
+import { rollModes, giveRollMode } from './roll-modes.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
@@ -20,11 +20,13 @@ const log = logger.for(import.meta.url);
  *                                     (its own item, Cunning Action's, Step of the Wind's) : Charger's 10 ft more
  *   actionAs(match, { action : "study", as : "bonus" })   that Default Action may cost a Bonus Action instead (on its
  *                                     turn, both left : it chooses; only the Bonus Action left : that one)
+ *   actionRollMode(match, { action : "hide", mode : "advantage", when })   the check made as part of that Default
+ *                                     Action (Hide's Stealth, Help's Stabilize) has that mode : Skulker's Fog of War
  *
  *   match  an item identifier the creature has (or several), or (actor) => the item (or anything truthy) that gives it
  *   action a Default Action's identifier (or several); enabled () => boolean, id (default : the match and the action)
  */
-const defaultRules = { after : new Map(), as : new Map() };
+const defaultRules = { after : new Map(), as : new Map(), roll : new Map() };
 
 function sourceOf(actor, match){
   if(!actor) return null;
@@ -45,6 +47,22 @@ export function onDefaultAction(match, { action, run, enabled = null, id = null 
 export function actionAs(match, { action, as = "bonus", enabled = null, id = null } = {}){
   if(!action) return;
   defaultRules.as.set(ruleKey(match, action, id), { match, actions : [action].flat(), as, enabled });
+}
+
+/* The check made as part of a Default Action (Hide's Stealth, Help's Stabilize) has a mode : Skulker's Fog of War
+   (advantage on Hide's check in combat). when({ actor, source }); reason : a string or ({ actor, source }) => string */
+export function actionRollMode(match, { action, mode = "advantage", when = null, reason = null, enabled = null, id = null } = {}){
+  if(!action) return;
+  defaultRules.roll.set(ruleKey(match, action, id), { match, actions : [action].flat(), mode, when, reason, enabled });
+  rollModes.add("actionChecks", config => {
+    const action = config?.[module.id]?.action;
+    if(!action || !config.subject) return;
+    for(const { rule, source } of defaultRulesFor("roll", config.subject, action)){
+      const info = { actor : config.subject, source };
+      if(rule.when && !rule.when(info)) continue;
+      giveRollMode(config, rule.mode, (typeof rule.reason === "function") ? rule.reason(info) : (rule.reason ?? source.name ?? ""));
+    }
+  }, { rolls : "check" });
 }
 
 /* The rules of a kind holding for this creature and Default Action : [{ rule, source }] */
@@ -324,7 +342,7 @@ export class actions{
 
   /* DEX (Stealth) against DC 15; a success : Invisible, until the GM ends it (found, attacked, made noise) */
   static async rollHide(actor){
-    const [roll] = await actor.rollSkill({ skill : "ste", target : this.HIDE_DC }, { configure : false },
+    const [roll] = await actor.rollSkill({ skill : "ste", target : this.HIDE_DC, [module.id] : { action : this.HIDE } }, { configure : false },
       { data : { flags : { [module.id] : { hideRoll : actor.uuid } } } }) ?? [];
     if(roll) await this.hidden(actor, roll.total);
   }
@@ -462,7 +480,7 @@ export class actions{
   static async stabilizeAction(activity, help){
     const token = fromUuidSync(help.target, { strict : false });
     if(!token?.actor) return;
-    const [roll] = await activity.actor.rollSkill({ skill : "med", target : 10 }, { configure : false },
+    const [roll] = await activity.actor.rollSkill({ skill : "med", target : 10, [module.id] : { action : this.HELP } }, { configure : false },
       { data : { flags : { [module.id] : { stabilize : token.uuid } } } }) ?? [];
     if(!roll) return;
     if(roll.total >= 10) await stabilize(token.actor);

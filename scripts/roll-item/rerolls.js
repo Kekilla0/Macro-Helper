@@ -1,5 +1,5 @@
 import { module } from '../module.js';
-import { buttonRow, addButton, makeButton } from '../helpers/utils.js';
+import { buttonRow, addButton, makeButton, esc } from '../helpers/utils.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { spendUses } from '../helpers/items.js';
@@ -241,6 +241,9 @@ let failHooked = false;
  *     pay : "use" | "success",                when `cost` is spent : on the button (default), or only if the roll
  *                                             then succeeds (Tactical Mind); a save or check with no DC known : the
  *                                             GM's Spend button on its message
+ *     when : ({ actor, message, roll, ability }) => true,   which failed saves or checks (Guarded Mind : INT, WIS, CHA saves)
+ *     succeed : true,                         no die : the save or check succeeds instead (what it was short of its DC is
+ *                                             added; with no DC known, it's said in chat)
  *   })
  * A roll with no DC or AC known counts as failed (its owner judges).
  */
@@ -280,12 +283,23 @@ function failTestButtons(message, buttons, actor, roll){
       } });
     }
     if(!failedRoll(roll) || !testsOf(rule).includes(message.type) || done) continue;
+    const ability = message.system?.ability ?? roll?.options?.ability ?? message.flags?.dnd5e?.roll?.ability ?? null;
+    try { if(rule.when && !rule.when({ actor, message, roll, ability })) continue; } catch(error){ log.error("Failed test rule", rule.id, error); continue; }
     const source = rule.source(actor);
     if(!source) continue;
     buttons.push({ id : rule.id, icon : rule.icon ?? "fa-dice", label : rule.label(source), run : async () => {
       const now = rule.source(actor);
       if(!now || !message.isOwner || message.getFlag?.(module.id, rule.id)) return;
-      const { updated, extra } = await addDie(message.rolls[0], rule.formula(now));
+      const dc = message.rolls[0]?.options?.target;
+      if(rule.succeed && !Number.isFinite(dc)){
+        await ChatMessage.implementation.create({ speaker : ChatMessage.implementation.getSpeaker({ actor }),
+          content : `<p>${esc(module.format("rerolls.succeeds", { name : actor.name, source : rule.label(now) }))}</p>` });
+        await message.setFlag(module.id, rule.id, { pay : await payFor(rule, actor, now, true) });
+        await rule.after?.(actor, now, message);
+        return;
+      }
+      const formula = rule.succeed ? String(Math.max(0, dc - message.rolls[0].total)) : rule.formula(now);
+      const { updated, extra } = await addDie(message.rolls[0], formula);
       await rerolls.replace(message, updated, [extra]);
       const target = updated.options?.target;
       const pay = await payFor(rule, actor, now, Number.isFinite(target) ? (updated.total >= target) : null);

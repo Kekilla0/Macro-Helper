@@ -1476,5 +1476,21 @@
   "feats.warCaster.cast" : "Cast a Spell",
   "feats.speedy.agile" : "Speedy : an Opportunity Attack",
   "feats.grappler.advantage" : "Grappler : it holds the target",
-  "feats.grappler.grab" : "{name} : Punch and Grab (Grapple too)"
+  "feats.grappler.grab" : "{name} : Punch and Grab (Grapple too)",
+  "feats.ability.title" : "Ability",
+  "feats.ability.prompt" : "Which ability did this feat increase ?",
+  "feats.chef.pick" : "Who eats the meal (up to {n}; Enter when done)",
+  "feats.chef.cooked" : "{name} cooks a {meal} : {eaters}. The first Hit Point Die each spends before its rest ends heals 1d8 more.",
+  "feats.inspiring.summary" : "Temporary Hit Points for up to six allies within 30 ft",
+  "feats.inspiring.pick" : "Up to six allies within 30 ft (yourself too; Enter when done)",
+  "feats.mageSlayer.guarded" : "{name} : Guarded Mind (succeed instead)",
+  "feats.ritualCaster.title" : "Ritual Caster",
+  "feats.ritualCaster.pick" : "Choose a level 1 Ritual spell",
+  "feats.ritualCaster.full" : "{name} has all of its Ritual Caster spells.",
+  "feats.ritualCaster.quick" : "{name} : Quick Ritual",
+  "restChoices.bolsteringPerformance" : "Bolstering Performance",
+  "restChoices.ritualCaster" : "Ritual Caster",
+  "spells.ritual.quick" : "{source} : {time}, no slot (once a Long Rest)",
+  "spells.ritual.quickNote" : "{source} : its normal casting time, no spell slot",
+  "rerolls.succeeds" : "{name} succeeds instead ({source})."
 }

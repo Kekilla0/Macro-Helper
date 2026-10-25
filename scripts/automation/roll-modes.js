@@ -176,3 +176,55 @@ Hooks.on(`${module.id}.saveHint`, (card, actor, ability, { adv, dis } = {}) => {
     if(source) ((rule.mode === "disadvantage") ? dis : adv)?.push(source);
   }
 });
+
+/* ---------- Concentration saves by who dealt the damage ---------- */
+
+/**
+ * A creature's damage gives the Concentration save it causes a mode (Mage Slayer : disadvantage; a monster's "its
+ * hits make spells hard to hold"). The damage's card says who dealt it; the save is Roll Item's Concentration card.
+ *
+ *   concentrationModeFrom("mage-slayer", { mode : "disadvantage", when : ({ attacker, target, message }) => true,
+ *     reason : ({ attacker, source }) => source.name });
+ *
+ * match : an item identifier the damage dealer has (or several), or (actor) => the source (anything truthy).
+ */
+const concentrationRules = new Map();
+/* target actor uuid -> { message (the damage's card id), at } : stamped as the damage is applied */
+const damagedBy = new Map();
+
+export function concentrationModeFrom(match, { mode = "disadvantage", when = null, reason = null, enabled = null, id = null } = {}){
+  concentrationRules.set(id ?? ((typeof match === "function") ? foundry.utils.randomID() : [match].flat().join(",")), { match, mode, when, reason, enabled });
+}
+
+/* The mode the damage just applied to this creature gives its Concentration save : { mode, reason } or null */
+export function concentrationModeFor(actor){
+  const last = damagedBy.get(actor?.uuid);
+  if(!last || ((Date.now() - last.at) > 5000)) return null;
+  const message = game.messages.get(last.message);
+  const attacker = message?.getAssociatedActor?.();
+  if(!attacker) return null;
+  for(const rule of concentrationRules.values()){
+    if(rule.enabled && !rule.enabled()) continue;
+    try {
+      const source = (typeof rule.match === "function") ? rule.match(attacker) : attacker.items?.find?.(i => [rule.match].flat().includes(idOf(i)));
+      if(!source) continue;
+      const info = { attacker, target : actor, message, source };
+      if(rule.when && !rule.when(info)) continue;
+      return { mode : rule.mode, reason : (typeof rule.reason === "function") ? rule.reason(info) : (rule.reason ?? source.name ?? attacker.name) };
+    } catch(error){ log.error("Concentration mode", error); }
+  }
+  return null;
+}
+
+Hooks.on("dnd5e.preApplyDamage", (actor, amount, updates, options) => {
+  if(!concentrationRules.size || !(amount > 0)) return;
+  const message = options?.origin?.id ?? options?.originatingMessage?.id ?? null;
+  if(message) damagedBy.set(actor.uuid, { message, at : Date.now() });
+  else damagedBy.delete(actor.uuid);
+});
+
+/* A save or check asked for with a mode (a Concentration card's row) : config["macro-helper"].rollMode { mode, reason } */
+rollModes.add("requested", config => {
+  const asked = config?.[module.id]?.rollMode;
+  if(asked?.mode) giveRollMode(config, asked.mode, asked.reason ?? "");
+}, { rolls : ["save", "check"] });

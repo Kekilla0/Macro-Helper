@@ -17,6 +17,7 @@ import { stabilize, addTimedEffect, spendHitDice, heal, rollSave, giveEffect } f
 import { itemFixes } from './item-fixes.js';
 import { conjureItem, isMetal, dropHeld, heldItems } from '../helpers/items.js';
 import { endCondition, moveFirst } from '../roll-item/card-builder.js';
+import { onSaveMove } from '../roll-item/card-moves.js';
 import { saveModeAgainst } from './roll-modes.js';
 import { pickTargets, pickSpace } from '../helpers/targets.js';
 import { tokenOf, getRange, addLight, removeLight, getTokensInArea, distanceBetween, canSee } from '../helpers/tokens.js';
@@ -168,7 +169,8 @@ export class spellActions{
   static register(){
     if(game.system.id !== "dnd5e") return;
     Hooks.on(`${module.id}.cardMoves`, (message, uuid, moves, { result } = {}) => this.pullMove(message, uuid, moves, result));
-    Hooks.on(`${module.id}.cardMoves`, (message, uuid, moves, { result } = {}) => this.pushMove(message, uuid, moves, result));
+    /* A failed save pushes : the failed-save move lego */
+    for(const [id, push] of Object.entries(this.PUSHES)) onSaveMove({ id : `spellPush-${id}`, item : id, feet : push.feet, enabled : () => this.enabled() });
     uses.onItem("byHealth", (item, ctx, next) => this.byHealthStep(item, ctx, next));
     uses.onActivity("spareTheDying", (activity, ctx, next) => this.stabilizeStep(activity, ctx, next));
     Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.afterEnchant(activity, usage, results));
@@ -304,15 +306,6 @@ export class spellActions{
     const size = token.actor?.system?.traits?.size ?? "med";
     if(this.SIZES.indexOf(size) > this.SIZES.indexOf(pull.maxSize)) return;
     moves.push({ id : "spellPull", direction : "toward", feet : pull.feet });
-  }
-
-  /* ========== Push (Thunderwave) ========== */
-
-  /* A creature that failed its save : the GM's push (card moves) */
-  static pushMove(message, uuid, moves, result){
-    if(!this.enabled() || (message.type !== TYPES.save) || !result || result.success) return;
-    const push = this.PUSHES[idOf(message.getAssociatedItem?.())];
-    if(push) moves.push({ id : "spellPush", feet : push.feet });
   }
 
   /* ========== By health (Toll the Dead) ========== */

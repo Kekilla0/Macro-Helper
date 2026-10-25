@@ -7,6 +7,7 @@ import { rollItem } from './roll-item.js';
 import { extraD20, rerolls, addDie } from './rerolls.js';
 import { originOf, addNote, plainText } from '../helpers/utils.js';
 import { rollSave } from '../helpers/actors.js';
+import { gm } from '../gm.js';
 
 /* Dice So Nice still rolling a save's dice (on this client) : its result waits for them, then its card is drawn again;
    a card's own dice (healing, damage) are waited for before anything is applied from it */
@@ -515,6 +516,11 @@ export function registerMessages(){
         start : CONFIG.ActiveEffect.documentClass.getEffectStart?.() ?? { time : game.time.worldTime },
         flags : { [module.id] : { fromCard : message.id } } });
       if(duration && !(doc.duration?.seconds || doc.duration?.rounds || doc.duration?.turns || doc.duration?.value)) d.duration = duration;
+      /* An enchantment's rider copied onto the weapon : on the creature it isn't anyone's rider */
+      if(d.flags?.dnd5e?.dependentOn) delete d.flags.dnd5e.dependentOn;
+      /* Until the start or end of the card's creature's next turn (flags["macro-helper"].until : "turnStart" | "turnEnd") */
+      const until = doc.getFlag?.(module.id, "until");
+      if(["turnStart", "turnEnd"].includes(until) && activity.actor) foundry.utils.setProperty(d, `flags.${module.id}.expires`, gm.timedStamp(activity.actor, until));
       /* A plain condition (one condition, no changes : Plutonium's Prone, Poisoned with the item's picture) : the
          condition's own icon and name, like every condition the module applies */
       const statuses = [...(d.statuses ?? [])];

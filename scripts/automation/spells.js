@@ -11,7 +11,7 @@ import { itemFixes } from './item-fixes.js';
 import { patch } from '../patch.js';
 import { chooseOption, plainText } from '../helpers/utils.js';
 import { TYPES } from '../roll-item/message.js';
-import { isClassSpell } from '../helpers/items.js';
+import { isClassSpell, spendUses } from '../helpers/items.js';
 import { originItem } from '../helpers/utils.js';
 import { rollModeFrom } from './roll-modes.js';
 import { onMiss } from '../roll-item/miss-damage.js';
@@ -55,6 +55,8 @@ const log = logger.for(import.meta.url);
  *   Rituals         : a spell with the Ritual tag you have prepared : cast normally (a slot, a higher level allowed) or
  *                     as a Ritual (10 minutes longer, no slot, its own level), asked only when it's a real choice : a
  *                     spell that takes 1 minute or more (Find Familiar), or with no slot left, is just cast as a Ritual.
+ *                     A quickRitual source with a use left (Ritual Caster's Quick Ritual) adds a third way : its
+ *                     normal time, no slot, the source's use spent.
  *   Material cost   : a spell whose material says "worth 10+ GP" but has no cost in its data (Find Familiar) gets it. A Wizard with Ritual Adept casts the
  *                     rituals in its spellbook (its Wizard spells) without preparing them : as a Ritual only. The card
  *                     notes it (flags.ritual for the action tracker).
@@ -561,6 +563,35 @@ export class spells{
     return (wizard && item.actor?.items?.some?.(i => idOf(i) === "ritual-adept")) ? "only" : null;
   }
 
+  /* ---------- Quick Ritual (a lego) ---------- */
+
+  static #quick = new Map();
+
+  /**
+   * A Ritual spell it has prepared cast at its normal casting time with no spell slot, paid with a use of the source
+   * (Ritual Caster's Quick Ritual; a homebrew "once a day, a ritual in an instant"). The ritual choice offers it while
+   * the source has a use left.
+   *   quickRitual(match, { cost : (actor, source) => item, label : source => "...", enabled, id })
+   *   match   an item identifier the creature has (or several), or (actor) => the source; cost : the item whose use is
+   *           spent (default : the source)
+   */
+  static quickRitual(match, { cost = null, label = null, enabled = null, id = null } = {}){
+    this.#quick.set(id ?? ((typeof match === "function") ? foundry.utils.randomID() : [match].flat().join(",")), { match, cost, label, enabled });
+  }
+
+  /* The first quick ritual source with a use left : { item (what pays), label } or null */
+  static quickRitualFor(actor){
+    for(const rule of this.#quick.values()){
+      if(rule.enabled && !rule.enabled()) continue;
+      const source = (typeof rule.match === "function") ? rule.match(actor) : actor?.items?.find?.(i => [rule.match].flat().includes(idOf(i)));
+      if(!source) continue;
+      const item = rule.cost?.(actor, source) ?? ((source instanceof Item) ? source : null);
+      if(item && !(Number(item.system?.uses?.value) > 0)) continue;
+      return { item, label : rule.label?.(source) ?? source.name ?? "" };
+    }
+    return null;
+  }
+
   static async ritualStep(activity, ctx, next){
     const mode = this.enabled() ? this.ritualMode(activity?.item) : null;
     if(!mode || ctx.config?.[module.id]?.ritual !== undefined) return next();
@@ -570,13 +601,18 @@ export class spells{
     const seconds = (Number(activation.value) || 1) * ({ minute : 60, hour : 3600, day : 86400 }[activation.type] ?? 0);
     const level = Number(activity.item.system?.level) || 1;
     const slotLeft = Object.values(activity.actor?.system?.spells ?? {}).some(s => (Number(s?.value) > 0) && (Number(s?.level) >= level));
-    if((mode === "choice") && ((seconds >= 60) || !slotLeft)) ritual = true;
+    const quick = (mode === "choice") ? this.quickRitualFor(activity.actor) : null;
+    const time = s => s ? this.timeText(s) : (CONFIG.DND5E.activityActivationTypes?.[activation.type]?.label ?? activation.type ?? "");
+    if((mode === "choice") && !quick && ((seconds >= 60) || !slotLeft)) ritual = true;
     else if(mode === "choice"){
-      const time = s => s ? this.timeText(s) : (CONFIG.DND5E.activityActivationTypes?.[activation.type]?.label ?? activation.type ?? "");
-      const value = await chooseOption({ title : activity.item.name, icon : "fa-solid fa-book-open", prompt : module.i18n("spells.ritual.prompt"),
-        options : [{ value : "normal", label : module.format("spells.ritual.normal", { time : time(seconds) }) },
-          { value : "ritual", label : module.format("spells.ritual.ritual", { time : this.timeText(seconds + 600) }) }] });
+      const options = [
+        ...(slotLeft ? [{ value : "normal", label : module.format("spells.ritual.normal", { time : time(seconds) }) }] : []),
+        { value : "ritual", label : module.format("spells.ritual.ritual", { time : this.timeText(seconds + 600) }) },
+        ...(quick ? [{ value : "quick", label : module.format("spells.ritual.quick", { time : time(seconds), source : quick.label }) }] : []),
+      ];
+      const value = await chooseOption({ title : activity.item.name, icon : "fa-solid fa-book-open", prompt : module.i18n("spells.ritual.prompt"), options });
       if(!value) return;
+      if(value === "quick") return this.quickCast(ctx, next, quick);
       ritual = (value === "ritual");
     }
     if(!ritual) return next();
@@ -586,6 +622,17 @@ export class spells{
     uses.mark(ctx, { ritual : true, note, cardFlags : { ritual : true } });
     uses.flag(ctx, { ritual : true, note });
     return next();
+  }
+
+  /* Quick Ritual : its normal time, no slot, its own level; the source's use spent once it's cast */
+  static async quickCast(ctx, next, quick){
+    ctx.config = { ...ctx.config, consume : { ...((typeof ctx.config?.consume === "object") ? ctx.config.consume : {}), spellSlot : false }, scaling : false };
+    const note = module.format("spells.ritual.quickNote", { source : quick.label });
+    uses.mark(ctx, { note });
+    uses.flag(ctx, { note });
+    const result = await next();
+    if(result && quick.item) await spendUses(quick.item, 1, { warn : true });
+    return result;
   }
 
   /* 4200 -> "1 hour 10 minutes" */

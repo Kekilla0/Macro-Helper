@@ -45,6 +45,7 @@ export class uses{
       "fastForward",   // Roll Item : one attack with its riders skips dnd5e's choice of activity
     ],
     activity : [
+      "endedOnDamage", // Durations : an item's effect switched off by its damage (a poison) goes before the item is used again
       "shellToggle",   // Species : a Tortle's Shell Defense used while in its shell : it emerges instead (a Bonus Action)
       "castingBusy",   // Casting : a long cast under way : using anything else asks, then fails the cast
       "cunningAction", // Rogue : Cunning Action's Dash / Disengage / Hide uses that Default Action, as a Bonus Action
@@ -74,6 +75,7 @@ export class uses{
       "layOnHands",    // Paladin : Remove Poison picks the creature it touches
       "hide",          // Default Actions : Hide asks the GM first (gm.askToUse); used only once allowed
       "healersKit",    // Default Actions : the Healer's Kit's Stabilize picks a creature at 0 HP first
+      "featUse",       // General feats : a feat's activity that does something else (Chef's Replenishing Meal : its eaters get the effect)
       "dancingLights", // Spells : Dancing Lights : four lights or one form, where each goes
       "spellMessage",  // Spell actions : Message : who hears it and what, from a list (no pick)
       "placedSummon",  // Spell actions : Mage Hand : its caster picks the space, the GM makes it

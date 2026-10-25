@@ -4,7 +4,22 @@ import { logger } from '../log.js';
 import { chooseSet } from '../helpers/creatures.js';
 import { restChoices } from './rest-choices.js';
 import { limits } from './limits.js';
+import { idOf } from '../helpers/utils.js';
 const log = logger.for(import.meta.url);
+
+/* More masteries from a feature (extraMasteries) : id -> { match, count, pool, enabled } */
+const extras = new Map();
+
+/**
+ * More weapon masteries from a feature (Weapon Master; a homebrew "a second mastery"; a monster's) : `count` more kinds
+ * (a number, or (actor, source) => number) on top of its classes' count, from `pool` : "proficient" (the default : the
+ * kinds it's proficient with), "any" (Simple or Martial), "melee", "finesseLight". A creature with no class that gives
+ * Weapon Mastery gets these alone. Chosen and swapped in Rest Choices (one swap a Long Rest), as the classes' are.
+ *   match    an item identifier the creature has (or several), or (actor) => the source
+ */
+export function extraMasteries(match, { count = 1, pool = "proficient", enabled = null, id = null } = {}){
+  extras.set(id ?? ((typeof match === "function") ? foundry.utils.randomID() : [match].flat().join(",")), { match, count, pool, enabled });
+}
 
 /**
  * Weapon Mastery (Classes setting) : which kinds of weapon a character has mastered, kept where dnd5e keeps them (the
@@ -39,7 +54,7 @@ export class weaponMastery{
     Hooks.on("preUpdateActor", (actor, changes, options) => this.onSheetChange(actor, changes, options));
     restChoices.add({
       id : "weaponMastery", label : "restChoices.weaponMastery", rest : "long", count : 1,
-      applies : actor => this.enabled() && (this.limitOf(actor) > 0),
+      applies : actor => this.limitOf(actor) > 0,
       summary : actor => module.format("weaponMastery.summary", { known : this.knownOf(actor).length, max : this.limitOf(actor),
         swaps : Number(actor.getFlag(module.id, this.SWAPS)) || 0 }),
       open : actor => this.choose(actor),
@@ -51,8 +66,25 @@ export class weaponMastery{
     return Object.entries(actor?.classes ?? {}).filter(([id]) => this.CLASSES[id]).map(([id, item]) => ({ id, level : Number(item.system?.levels) || 0 }));
   }
 
-  /* How many kinds it may master : the highest of its classes */
+  /* The extraMasteries rules the creature has : [{ count, pool }] */
+  static extrasOf(actor){
+    const out = [];
+    for(const rule of extras.values()){
+      if(rule.enabled && !rule.enabled()) continue;
+      const source = (typeof rule.match === "function") ? rule.match(actor) : actor?.items?.find?.(i => [rule.match].flat().includes(idOf(i)));
+      if(!source) continue;
+      const count = Number((typeof rule.count === "function") ? rule.count(actor, source) : rule.count) || 0;
+      if(count > 0) out.push({ count, pool : rule.pool ?? "proficient" });
+    }
+    return out;
+  }
+
+  /* How many kinds it may master : the highest of its classes, and what its features add */
   static limitOf(actor){
+    return (this.enabled() ? this.classLimitOf(actor) : 0) + this.extrasOf(actor).reduce((n, e) => n + e.count, 0);
+  }
+
+  static classLimitOf(actor){
     return Math.max(0, ...this.classesOf(actor).map(({ id, level }) => {
       const scale = actor.system?.scale?.[id] ?? {};
       const value = Number(scale.mastery?.value ?? scale["weapon-mastery"]?.value);
@@ -90,10 +122,14 @@ export class weaponMastery{
     return kinds.sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  /* Does a weapon kind fit what one of the character's classes allows ? */
-  static allows(pool, kind){
+  /* Does a weapon kind fit what one of the character's classes (or features) allows ? */
+  static allows(pool, kind, actor = null){
     if(!["simpleM", "simpleR", "martialM", "martialR"].includes(kind.type)) return false;
     if(pool === "melee") return kind.type.endsWith("M");
+    if(pool === "proficient"){
+      const prof = actor?.system?.traits?.weaponProf?.value;
+      return !!(prof?.has?.(kind.type.startsWith("simple") ? "sim" : "mar") || prof?.has?.(kind.key));
+    }
     if(pool === "finesseLight") return kind.properties.has("fin") || kind.properties.has("lgt");
     return true;
   }
@@ -104,8 +140,8 @@ export class weaponMastery{
    * @returns {Promise<string[]|null>}
    */
   static async choose(actor){
-    const pools = this.classesOf(actor).map(({ id }) => this.CLASSES[id].pool);
-    const kinds = (await this.weaponKinds()).filter(k => pools.some(p => this.allows(p, k)));
+    const pools = [...this.classesOf(actor).map(({ id }) => this.CLASSES[id].pool), ...this.extrasOf(actor).map(e => e.pool)];
+    const kinds = (await this.weaponKinds()).filter(k => pools.some(p => this.allows(p, k, actor)));
     if(!kinds.length) return null;
     const known = this.knownOf(actor);
     const swaps = restChoices.swapsLeft(actor, "weaponMastery");

@@ -9,6 +9,7 @@ import { itemFixes } from '../item-fixes.js';
 import { casting } from '../casting.js';
 import { subclasses } from './common.js';
 import { addRange } from '../ranges.js';
+import { dropsComponents } from '../components.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -52,7 +53,7 @@ export class wizardSchools{
     itemFixes.add({ name : "Potent Cantrip", where : "owned", plan : item => this.potentFix(item) });
     Hooks.on("createItem", (item, options, userId) => { if((userId === game.user.id) && (idOf(item) === this.POTENT)) this.potentAll(item.actor); });
     /* Improved Illusions */
-    Hooks.on(`${module.id}.components`, (activity, need) => { if(this.illusionist(activity?.item)) need.v = false; });
+    dropsComponents(actor => subclasses.has(actor, this.IMPROVED), ["v"], { id : this.IMPROVED, enabled : () => this.enabled(), when : ({ item }) => this.illusionist(item) });
     addRange(this.IMPROVED, 60, { enabled : () => this.enabled(), when : ({ item }) => this.illusionist(item) && ((item.system.range?.units ?? "ft") === "ft") && (Number(item.system.range?.value) >= 10) });
   }
 

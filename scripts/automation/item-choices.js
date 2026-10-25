@@ -21,7 +21,9 @@ const rules = new Map();
 
 export function itemChoice(match, { id, label = "", prompt = "", options, unique = false, enabled = null } = {}){
   if(!id || (typeof options !== "function")) throw new Error("itemChoice needs an id and options : item => [{ value, label }]");
-  rules.set(id, { match, id, label, prompt, options, unique, enabled });
+  /* By item and choice : several items may each have an "ability" choice */
+  const key = `${(typeof match === "function") ? foundry.utils.randomID() : [match].flat().join(",")}|${id}`;
+  rules.set(key, { match, id, label, prompt, options, unique, enabled });
 }
 
 export function choiceOf(item, id){

@@ -10,6 +10,7 @@ import { fighter } from '../automation/classes/fighter.js';
 import { spendUses } from '../helpers/items.js';
 import { findItem } from '../helpers/actors.js';
 import { patch } from '../patch.js';
+import { concentrationModeFor } from '../automation/roll-modes.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -71,7 +72,7 @@ export class rollRequests{
         if(this.isOwner) await this.endConcentration().catch(() => null);
         return null;
       }
-      return rollRequests.concentrationCard(this, options);
+      return rollRequests.concentrationCard(this, { ...options, rollMode : options.rollMode ?? concentrationModeFor(this) });
     }));
     /* dnd5e's "end Concentration ?" prompt when it's Incapacitated : it just ends (the rules leave no choice) */
     Hooks.once("setup", () => patch.wrap("CONFIG.Actor.documentClass.prototype.promptConcentrationEnd", async function(wrapped, ...args){
@@ -82,9 +83,9 @@ export class rollRequests{
   }
 
   /* One row : the creature's Concentration save at that DC */
-  static async concentrationCard(actor, { dc = 10, ability = null } = {}){
+  static async concentrationCard(actor, { dc = 10, ability = null, rollMode = null } = {}){
     const token = actor.token ?? actor.getActiveTokens?.(false, true)?.[0]?.document ?? null;
-    const who = [{ actor : actor.uuid, token : token?.uuid ?? null, name : token?.name ?? actor.name, img : token?.texture?.src || actor.img }];
+    const who = [{ actor : actor.uuid, token : token?.uuid ?? null, name : token?.name ?? actor.name, img : token?.texture?.src || actor.img, ...(rollMode?.mode ? { rollMode } : {}) }];
     const key = (ability in CONFIG.DND5E.abilities) ? ability : "";
     return this.request({ who, what : `concentration:${key}`, dc, whisper : true, hideDC : false, speaker : actor });
   }
@@ -192,7 +193,7 @@ export class rollRequests{
    * @returns {Promise<ChatMessage>}
    */
   static async request({ who = [], what = "skill:prc", dc = null, mode = "each", whisper = false, hideDC = null, speaker = null, label = null, outcomes = null } = {}){
-    const rows = who.map(p => ({ key : String(p.token ?? p.actor).replaceAll(".", "-"), actor : p.actor, token : p.token ?? null, name : p.name, img : p.img }));
+    const rows = who.map(p => ({ key : String(p.token ?? p.actor).replaceAll(".", "-"), actor : p.actor, token : p.token ?? null, name : p.name, img : p.img, ...(p.rollMode ? { rollMode : p.rollMode } : {}) }));
     const request = {
       dc : Number.isFinite(dc) ? dc : null, hideDC : (hideDC ?? !!settings.value("requestsDmScreen")), mode : (mode === "group") ? "group" : "each", rows, results : {},
       rounds : { 1 : { ...this.checkFor(what, dc), ...(label ? { label } : {}) } }, round : 1, compact : this.compact(), whisper : !!whisper,
@@ -372,7 +373,8 @@ export class rollRequests{
     const actor = row && this.actorOf(row);
     if(!actor?.isOwner) return;
     const { kind, key } = this.checkOf(request);
-    const config = { event };
+    /* A mode the row was asked with (a Concentration save after a Mage Slayer's damage) */
+    const config = { event, ...(row.rollMode ? { [module.id] : { rollMode : row.rollMode } } : {}) };
     const dc = this.dcOf(request);
     if((dc !== null) && !request.hideDC) config.target = dc;
     const messageConfig = request.compact ? { create : false }

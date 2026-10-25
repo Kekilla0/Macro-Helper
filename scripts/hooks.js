@@ -66,6 +66,8 @@ import { gm } from './gm.js';
 import { feats } from './automation/feats.js';
 import { generalFeats } from './automation/general-feats.js';
 import { registerIgnores } from './automation/ignores.js';
+import { registerHitDice } from './automation/hit-dice.js';
+import { registerArmor } from './automation/armor.js';
 import { registerItemChoices } from './automation/item-choices.js';
 import { initiative } from './automation/initiative.js';
 import { uses } from './uses.js';
@@ -164,6 +166,8 @@ Hooks.once("init", ()=> {
   feats.register();
   generalFeats.register();
   registerIgnores();
+  registerHitDice();
+  registerArmor();
   registerItemChoices();
   speciesLevels.register();
   initiative.register();
