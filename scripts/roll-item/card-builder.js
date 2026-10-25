@@ -2,7 +2,7 @@ import { module } from '../module.js';
 import { gm } from '../gm.js';
 import { uses } from '../uses.js';
 import { logger } from '../log.js';
-import { cells, gridSteps, tokenOf, forcedMove, forcedMoveAsGM, pushAway, distanceBetween, movedThisTurn } from '../helpers/tokens.js';
+import { cells, gridSteps, tokenOf, forcedMove, forcedMoveAsGM, pushAway, movedThisTurn } from '../helpers/tokens.js';
 import { pickSpace, isEnemy } from '../helpers/targets.js';
 import { postTargetCard, registerTargetCards, targetActions } from '../helpers/target-card.js';
 import { rollOptions, rollOptionDamage, rollOptionD20, rollOptionDamageDice } from './roll-options.js';
@@ -56,7 +56,7 @@ const log = logger.for(import.meta.url);
  *     until : web({ name, ac, hp, vulnerable, immune, resist }) : it lasts until that object is destroyed : a token on
  *     the target's space with that AC and HP (Ettercap's Web Strand); 0 HP, the token goes and the condition ends.
  *     aura : { radius, type } : every other creature within radius of it has that condition while there (Flumph's
- *     Stench Spray). removal : ["rest"] : a Long Rest ends it. duration { hours : "1d4" } : rolled when applied.
+ *     Stench Spray; the aura lego, auras.js). removal : ["rest"] : a Long Rest ends it. duration { hours : "1d4" } : rolled when applied.
  *     randomMove : on its turn, a Random move button on its action bar (Euphoria Breath).
  *     expire : { status } : what happens if it runs its full time (not ended sooner) : that status (Gas Spore : dead).
  *     repeat : { at, damage, type, of : "source" } : the damage at the start / end of the turns of the one that did it.
@@ -1117,8 +1117,6 @@ export class cardBuilder{
       if(config.rolls?.[0]) noteReason(config.rolls[0], "disadvantage", card.getAssociatedItem?.()?.name ?? ""), (config.rolls[0].options.disadvantage = true);
       else config.disadvantage = true;
     });
-    for(const hook of ["createToken", "deleteToken", "createActiveEffect", "deleteActiveEffect", "canvasReady"]) Hooks.on(hook, () => this.syncAuras());
-    Hooks.on("updateToken", (doc, changes) => { if(("x" in changes) || ("y" in changes)) this.syncAuras(); });
     /* A Long Rest ends the conditions a rest ends (Flumph's stench : removal ["rest"]) */
     Hooks.on("dnd5e.restCompleted", (actor, result) => {
       if(!result?.longRest || !actor?.isOwner) return;
@@ -1374,7 +1372,6 @@ export class cardBuilder{
         ...(part.expire ? { expire : part.expire } : {}) } } }]);
     /* Until an object is destroyed (a web) : its token on the target's space */
     if(made && (part.until?.kind === "object")) await this.makeObject(made, part.until, { targetToken, item : origin ? fromUuidSync(origin, { strict : false }) : null });
-    if(made && part.aura) this.syncAuras();
     /* The doer's linked effect (the Rug's Smothering) : either ending ends the other */
     const doer = sourceToken?.actor ?? by;
     if(made && part.self && doer){
@@ -1497,47 +1494,6 @@ export class cardBuilder{
       const doc = obj ? fromUuidSync(obj, { strict : false }) : null;
       if(doc) doc.delete().catch(() => null);
     });
-  }
-
-  /* ---------- Auras (a stench) : the others within its radius have its condition while there ---------- */
-
-  static #auraTimer = null;
-  static syncAuras(){
-    if(!game.users.activeGM?.isSelf) return;
-    clearTimeout(this.#auraTimer);
-    this.#auraTimer = setTimeout(() => this.#syncAuras().catch(error => log.debug(error)), 300);
-  }
-
-  static async #syncAuras(){
-    const tokens = canvas.tokens?.placeables ?? [];
-    const wanted = new Map();   /* actor uuid -> [{ aura effect, type, bearer }] */
-    for(const bearer of tokens){
-      for(const effect of bearer.actor?.effects ?? []){
-        const aura = effect.getFlag(module.id, "aura");
-        if(!aura || effect.disabled) continue;
-        for(const t of tokens){
-          if((t === bearer) || !t.actor || (distanceBetween(t, bearer) > aura.radius)) continue;
-          const list = wanted.get(t.actor.uuid) ?? [];
-          list.push({ effect, type : aura.type, bearer });
-          wanted.set(t.actor.uuid, list);
-        }
-      }
-    }
-    for(const t of tokens){
-      const actor = t.actor;
-      if(!actor) continue;
-      const mine = actor.effects.filter(e => e.getFlag(module.id, "auraOf"));
-      const want = wanted.get(actor.uuid) ?? [];
-      const gone = mine.filter(e => !want.some(w => w.effect.uuid === e.getFlag(module.id, "auraOf"))).map(e => e.id);
-      if(gone.length) await actor.deleteEmbeddedDocuments("ActiveEffect", gone, { [module.id] : { reason : module.i18n("cardBuilder.auraLeft") } });
-      for(const w of want){
-        if(mine.some(e => e.getFlag(module.id, "auraOf") === w.effect.uuid)) continue;
-        const status = CONFIG.statusEffects.find(s => s.id === w.type);
-        await actor.createEmbeddedDocuments("ActiveEffect", [{ name : `${game.i18n.localize(status?.name ?? w.type)}: ${w.bearer.name}`,
-          img : status?.img ?? "icons/svg/aura.svg", statuses : [w.type], origin : w.effect.origin,
-          flags : { [module.id] : { auraOf : w.effect.uuid } } }]);
-      }
-    }
   }
 
   /* ---------- Random movement (Euphoria Breath) ---------- */

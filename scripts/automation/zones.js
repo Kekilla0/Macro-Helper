@@ -26,7 +26,9 @@ const log = logger.for(import.meta.url);
  *     oncePerTurn   one of them a turn, whichever comes first (Cloud of Daggers, Moonbeam : "only once per turn")
  *     terrain       the area is Difficult Terrain (dnd5e's own Region Behavior; magical for a spell)
  *     effect        a creature has this while inside it, gone when it leaves (Silence's Deafened) : true (the item's
- *                   effects), an effect id or name, or item => effect(s) (dnd5e's "Apply Active Effect" behavior)
+ *                   effects), an effect id or name, or item => effect(s)
+ *     who           whose side gets the effect : "any" (default), "ally", "enemy" or "nonAlly", from the side of the
+ *                   creature that made the area (Pass without Trace : "ally"; that creature itself counts as an ally)
  *     whileInside   what the item's uses put on a creature ends when it leaves the area (Web's Restrained)
  *     cast          false : using the item only makes the area, nothing happens to the creatures already in it then
  *                   (Web, Spike Growth : no card)
@@ -40,6 +42,9 @@ const log = logger.for(import.meta.url);
  * (macro-helper.zone), from the active GM; it goes with the area. A GM can also add that behavior to any Region by
  * hand : the item's uuid, the cast level, and the activity id for each moment. The active GM's client uses the
  * activity (whoever moved the token).
+ *
+ * An area stuck to a token (an emanation : Pass without Trace) goes where its creature goes : those it comes onto
+ * enter it, those it leaves behind leave it. A creature's aura (giveAura, auras.js) is such an area too.
  */
 const rules = new Map();
 let queue = Promise.resolve();
@@ -47,12 +52,12 @@ let queue = Promise.resolve();
 const times = new Map();
 
 export function zone(match, { enter = null, start = null, end = null, move = null, per = 5, firstOnTurn = false, oncePerTurn = false,
-  terrain = false, effect = null, whileInside = false, moves = null, cast = true, filter = null, enabled = null } = {}){
+  terrain = false, effect = null, who = "any", whileInside = false, moves = null, cast = true, filter = null, enabled = null } = {}){
   if(!match || !(enter || start || end || move || terrain || effect || whileInside || moves)) return;
   if(moves && (typeof moves !== "object")) moves = { feet : Number(moves) };
   moves = (Number(moves?.feet) > 0) ? { feet : Number(moves.feet), cost : (moves.cost === undefined) ? "action" : moves.cost, later : moves.later !== false } : null;
   rules.set(match, { match, enter, start, end, move, per : Number(per) || 5, firstOnTurn : !!firstOnTurn, oncePerTurn : !!oncePerTurn,
-    terrain : !!terrain, effect, whileInside : !!whileInside, moves, cast : cast !== false, filter, enabled });
+    terrain : !!terrain, effect, who, whileInside : !!whileInside, moves, cast : cast !== false, filter, enabled });
 }
 
 /* A shape moved by (dx, dy) : its x / y, its points, an emanation's base */
@@ -103,6 +108,8 @@ export const zones = {
     gm.handle("moveZone", (data, user) => this.shiftAsGM(data, user));
     (CONFIG.RegionBehavior.typeIcons ??= {})[this.TYPE] = "fa-solid fa-burst";
     Hooks.on("createRegion", (region, options, userId) => this.onArea(region));
+    Hooks.on("deleteRegion", region => this.gone(region));
+    Hooks.on("deleteRegionBehavior", behavior => (behavior.type === this.TYPE) && this.gone(behavior));
     /* Only the area made (cast : false) : Roll Item makes no card for the use itself */
     Hooks.on(`${module.id}.preRollItem`, (activity, usage) => usage?.[module.id]?.noCast || (zoneRuleOf(activity?.item)?.cast !== false));
     /* and dnd5e rolls nothing after it (a damage activity's damage) */
@@ -116,8 +123,8 @@ export const zones = {
     });
   },
 
-  /* A lasting area of an item with a zone rule : its behaviors (the active GM) : the Zone, and dnd5e's Difficult
-     Terrain and Apply Active Effect when the rule says so (and the activity doesn't already make them) */
+  /* A lasting area of an item with a zone rule : its behaviors (the active GM) : the Zone (its effects while inside
+     too), and dnd5e's Difficult Terrain when the rule says so (and the activity doesn't already make them) */
   async onArea(region){
     if(!game.users.activeGM?.isSelf || region.behaviors.some(b => b.type === this.TYPE)) return;
     const item = fromUuidSync(region.getFlag("dnd5e", "item") ?? "", { strict : false });
@@ -129,14 +136,13 @@ export const zones = {
     const own = new Set((activity?.applicableBehaviors ?? []).map(b => b.type));
     const level = Number(region.getFlag("dnd5e", "spellLevel")) || Number(activity?.item?.system?.level) || Number(item.system?.level) || 0;
     const ids = Object.fromEntries(["enter", "start", "end", "move"].map(k => [k, pickActivity(item, rule[k])?.id ?? ""]));
+    const effects = own.has("applyActiveEffect") ? [] : pickEffects(item, rule.effect).map(e => e.uuid);
     const behaviors = [];
-    if(ids.enter || ids.start || ids.end || ids.move || rule.whileInside) behaviors.push({ type : this.TYPE, name : module.i18n("zones.name"),
-      system : { item : item.uuid, level, ...ids, per : rule.per, firstOnTurn : rule.firstOnTurn, oncePerTurn : rule.oncePerTurn, whileInside : rule.whileInside } });
+    if(ids.enter || ids.start || ids.end || ids.move || rule.whileInside || effects.length) behaviors.push({ type : this.TYPE, name : module.i18n("zones.name"),
+      system : { item : item.uuid, level, ...ids, per : rule.per, firstOnTurn : rule.firstOnTurn, oncePerTurn : rule.oncePerTurn, whileInside : rule.whileInside,
+        effects, who : rule.who ?? "any" } });
     if(rule.terrain && !own.has("difficultTerrain")) behaviors.push({ type : "dnd5e.difficultTerrain", name : module.i18n("zones.terrain"),
       system : { magical : (item.type === "spell") || !!item.system?.properties?.has?.("mgc"), types : [], ignoredDispositions : [] } });
-    const effects = own.has("applyActiveEffect") ? [] : pickEffects(item, rule.effect);
-    if(effects.length) behaviors.push({ type : "dnd5e.applyActiveEffect", name : module.i18n("zones.effect"),
-      system : { effects : effects.map(e => e.uuid), dispositions : [], sizes : [], types : [] } });
     if(behaviors.length) await region.createEmbeddedDocuments("RegionBehavior", behaviors).catch(error => log.error(error));
   },
 
@@ -173,6 +179,65 @@ export const zones = {
     if(!item || !actor) return;
     const ids = actor.effects.filter(e => String(e.origin ?? "").startsWith(item.uuid)).map(e => e.id);
     if(ids.length) await actor.deleteEmbeddedDocuments("ActiveEffect", ids, { [module.id] : { reason : module.format("zones.left", { zone : item.name }) } }).catch(error => log.error(error));
+  },
+
+  /* The creature that made the area : the one it's stuck to, else the one that used the item */
+  makerOf(region){
+    return region?.attachment?.token ?? fromUuidSync(region?.getFlag?.("dnd5e", "origin") ?? "", { strict : false }) ?? null;
+  },
+
+  /* Is this creature one the area's effects are for : its side (who), not its own creature (others), the rule */
+  givesTo(behavior, token){
+    const system = behavior.system, region = behavior.parent;
+    if(!token?.actor || behavior.disabled || (token.disposition === CONST.TOKEN_DISPOSITIONS.SECRET)) return false;
+    const maker = this.makerOf(region);
+    const self = !!maker && (maker.id === token.id);
+    if(system.others && self) return false;
+    const sign = (maker?.disposition ?? 0) * token.disposition;
+    if(!self && (((system.who === "ally") && !(sign > 0)) || ((system.who === "enemy") && !(sign < 0))
+      || ((system.who === "nonAlly") && !(sign <= 0)))) return false;
+    const item = fromUuidSync(system.item ?? "", { strict : false });
+    const rule = (item instanceof Item) ? zoneRuleOf(item, { any : true }) : null;
+    return !(rule && ((rule.enabled && !rule.enabled()) || (rule.filter?.(token.object ?? token, item) === false)));
+  },
+
+  /* Into the area : its effects (a copy of each, lasting while inside) or its condition, by the active GM (a
+     consequence of the area, so at once) */
+  async give(behavior, token){
+    const actor = token?.actor, system = behavior.system;
+    if(!actor || !(system.effects?.size || system.status) || !this.givesTo(behavior, token)) return;
+    if(actor.effects.some(e => e.getFlag(module.id, "zoneOf") === behavior.uuid)) return;
+    const source = fromUuidSync(system.item ?? "", { strict : false });
+    const flags = { zoneOf : behavior.uuid, auraOf : system.item || behavior.uuid };
+    const data = [];
+    for(const uuid of system.effects ?? []){
+      const effect = await fromUuid(uuid).catch(() => null);
+      if(!effect) continue;
+      const copy = effect.toObject();
+      delete copy._id;
+      data.push(foundry.utils.mergeObject(copy, { transfer : false, disabled : false, duration : {}, origin : effect.parent?.uuid ?? source?.uuid ?? null,
+        flags : { [module.id] : flags } }));
+    }
+    if(system.status){
+      const status = CONFIG.statusEffects.find(s => s.id === system.status);
+      const maker = this.makerOf(behavior.parent);
+      data.push({ name : `${game.i18n.localize(status?.name ?? system.status)}${maker ? `: ${maker.name}` : ""}`, img : status?.img ?? "icons/svg/aura.svg",
+        statuses : [system.status], origin : source?.origin ?? source?.uuid ?? null, flags : { [module.id] : flags } });
+    }
+    if(data.length) await actor.createEmbeddedDocuments("ActiveEffect", data).catch(error => log.error(error));
+  },
+
+  /* Out of the area (or the area gone) : what it gave ends */
+  async take(behaviorUuid, actor, reason = null){
+    const ids = (actor?.effects ?? []).filter(e => String(e.getFlag(module.id, "zoneOf") ?? "").startsWith(behaviorUuid)).map(e => e.id);
+    if(ids.length) await actor.deleteEmbeddedDocuments("ActiveEffect", ids, { [module.id] : { reason : reason ?? module.i18n("cardBuilder.auraLeft") } }).catch(error => log.debug(error));
+  },
+
+  /* An area (or its behavior) deleted : what it gave goes, everywhere on its scene (the active GM) */
+  async gone(doc){
+    if(!game.users.activeGM?.isSelf) return;
+    const scene = (doc.documentName === "Region") ? doc.parent : doc.parent?.parent;
+    for(const token of scene?.tokens ?? []) await this.take(doc.uuid, token.actor);
   },
 
   /* The turn, as a key : the event's (a turn's end comes once the next has begun), else the current one; out of
@@ -294,7 +359,7 @@ export const zones = {
  */
 class ZoneBehavior extends foundry.data.regionBehaviors.RegionBehaviorType {
   static defineSchema(){
-    const { StringField, NumberField, BooleanField } = foundry.data.fields;
+    const { StringField, NumberField, BooleanField, SetField } = foundry.data.fields;
     return {
       item : new StringField({ required : true, blank : true, initial : "", label : "zones.fields.item" }),
       level : new NumberField({ required : true, integer : true, min : 0, initial : 0, label : "zones.fields.level" }),
@@ -306,14 +371,27 @@ class ZoneBehavior extends foundry.data.regionBehaviors.RegionBehaviorType {
       whileInside : new BooleanField({ initial : false, label : "zones.fields.whileInside" }),
       firstOnTurn : new BooleanField({ initial : false, label : "zones.fields.firstOnTurn" }),
       oncePerTurn : new BooleanField({ initial : false, label : "zones.fields.oncePerTurn" }),
+      effects : new SetField(new StringField({ blank : false }), { label : "zones.fields.effects" }),
+      status : new StringField({ required : true, blank : true, initial : "", label : "zones.fields.status" }),
+      who : new StringField({ required : true, blank : false, initial : "any", label : "zones.fields.who",
+        choices : { any : "zones.who.any", ally : "zones.who.ally", enemy : "zones.who.enemy", nonAlly : "zones.who.nonAlly" } }),
+      others : new BooleanField({ initial : false, label : "zones.fields.others" }),
     };
   }
 
   static async #onEnter(event){
+    if(!game.users.activeGM?.isSelf) return;
+    /* Inside it, however it came to be (the area made round it or moving onto it too) : its effects */
+    if(this.effects.size || this.status) queue = queue.then(() => zones.give(this.behavior, event.data.token)).catch(error => log.error(error));
     /* Moved in (walking through counts : core splits the move at the edge); appearing round it or the area coming
        onto it is the cast's own card, or the area's move */
-    if(!game.users.activeGM?.isSelf || !this.enter || !event.data?.movement) return;
-    zones.queue(this.behavior, event.data.token, "enter", event.data);
+    if(this.enter && event.data?.movement) zones.queue(this.behavior, event.data.token, "enter", event.data);
+  }
+
+  /* Made (or switched on) : the creatures already inside get its effects */
+  static async #onActivated(event){
+    if(!game.users.activeGM?.isSelf || !(this.effects.size || this.status)) return;
+    for(const token of this.region?.tokens ?? []) queue = queue.then(() => zones.give(this.behavior, token)).catch(error => log.error(error));
   }
 
   static async #onTurnStart(event){
@@ -336,11 +414,13 @@ class ZoneBehavior extends foundry.data.regionBehaviors.RegionBehaviorType {
 
   /* Out of it : what its uses put on the creature ends (whileInside) */
   static async #onExit(event){
-    if(!game.users.activeGM?.isSelf || !this.whileInside) return;
-    queue = queue.then(() => zones.left(this.behavior, event.data?.token)).catch(error => log.error(error));
+    if(!game.users.activeGM?.isSelf) return;
+    if(this.effects.size || this.status) queue = queue.then(() => zones.take(this.behavior.uuid, event.data?.token?.actor)).catch(error => log.error(error));
+    if(this.whileInside) queue = queue.then(() => zones.left(this.behavior, event.data?.token)).catch(error => log.error(error));
   }
 
   static events = {
+    [CONST.REGION_EVENTS.BEHAVIOR_ACTIVATED] : this.#onActivated,
     [CONST.REGION_EVENTS.TOKEN_ENTER] : this.#onEnter,
     [CONST.REGION_EVENTS.TOKEN_TURN_START] : this.#onTurnStart,
     [CONST.REGION_EVENTS.TOKEN_TURN_END] : this.#onTurnEnd,

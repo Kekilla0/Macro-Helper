@@ -101,6 +101,8 @@ export class spells{
     "web" : { enter : true, start : true, firstOnTurn : true, terrain : true, whileInside : true, cast : false,
       filter : (token, item) => !token.actor?.effects?.some?.(e => !e.disabled && String(e.origin ?? "").startsWith(item.uuid)) },
     "silence" : { effect : true, cast : false },
+    /* Round the caster wherever it goes : the caster and its side get the +10 while inside (user : allies, no pick) */
+    "pass-without-trace" : { effect : true, who : "ally", cast : false },
   };
   /* The effects the fixes add (16-character ids, so a fix can tell it's done) */
   static EFFECT_IDS = { "blade-ward" : "mhBladeWardWard1", "ray-of-sickness" : "mhRaySicknessPsn" };
@@ -136,6 +138,7 @@ export class spells{
     itemFixes.add({ name : "Web", where : "owned", plan : item => this.webFix(item) });
     itemFixes.add({ name : "Spike Growth", where : "owned", plan : item => this.spikeGrowthFix(item) });
     itemFixes.add({ name : "Mirror Image", where : "owned", plan : item => this.mirrorImageFix(item) });
+    itemFixes.add({ name : "Pass without Trace", where : "owned", plan : item => this.passWithoutTraceFix(item) });
     itemFixes.add({ name : "Material cost", where : "owned", plan : item => this.materialCostFix(item) });
     Hooks.on("dnd5e.rollSavingThrow", (rolls, data) => this.nextSaveUsed(data?.subject ?? rolls?.[0]?.data?.actor ?? null));
     Hooks.on("dnd5e.preApplyDamage", (actor, amount) => this.blockHealing(actor, amount));
@@ -384,6 +387,14 @@ export class spells{
     const parts = damage?.toObject?.().damage?.parts ?? [];
     if(!parts.some(p => p.scaling?.number)) return null;
     return { update : { [`system.activities.${damage.id}.damage.parts`] : parts.map(p => ({ ...p, scaling : { mode : "", number : null } })) } };
+  }
+
+  /* ---------- Pass without Trace : its 30-ft emanation (Plutonium gives it no area; the zone lego gives the effect) ---------- */
+
+  static passWithoutTraceFix(item){
+    if(!this.enabled() || this.is2014(item) || (item?.type !== "spell") || (idOf(item) !== "pass-without-trace")) return null;
+    if(item.system?.target?.template?.type) return null;
+    return { update : { "system.target.template" : { type : "radius", size : "30", units : "ft", count : "", contiguous : false, stationary : false } } };
   }
 
   /* ---------- Mirror Image : no roll on the cast (Plutonium's d6s read a flag nothing sets; hitBecomesMiss rolls them) ---------- */
