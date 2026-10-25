@@ -9,6 +9,7 @@ import { grapplesOn, reactionMoveOf } from '../roll-item/card-builder.js';
 import { idOf, esc } from '../helpers/utils.js';
 import { getTokensWithin, movedThisTurn } from '../helpers/tokens.js';
 import { masteries } from './masteries.js';
+import { controllerOf } from './summons.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -572,8 +573,13 @@ export class actionTracker{
 
   /* ---------- The use ---------- */
 
+  /* Whose actions a use spends : its creature's, or its summoner's (a controlled summon : Spiritual Weapon's force) */
+  static payerOf(actor){
+    return controllerOf(actor) ?? actor;
+  }
+
   static async step(activity, ctx, next){
-    const actor = activity?.actor;
+    const actor = this.payerOf(activity?.actor);
     if(!this.enabled() || !actor) return next();
     const special = await this.specialStep(activity, ctx);
     if(special === false) return null;
@@ -739,7 +745,7 @@ export class actionTracker{
     if(!this.enabled() || (userId !== game.user.id)) return;
     const used = message.getFlag?.(module.id, "actionUsed");
     if(!this.KINDS.includes(used?.type)) return;
-    const actor = message.getAssociatedActor?.() ?? ChatMessage.implementation.getSpeakerActor(message.speaker);
+    const actor = this.payerOf(message.getAssociatedActor?.() ?? ChatMessage.implementation.getSpeakerActor(message.speaker));
     const item = used.item ? fromUuidSync(used.item, { strict : false }) : null;
     if(actor) await this.spend(actor, { kind : used.type, what : item?.name ?? "" });
   }
@@ -758,7 +764,7 @@ export class actionTracker{
   static async approvalStep(activity, ctx, next){
     const ask = ctx.config?.[module.id]?.economyAsk;
     if(!ask || !this.enabled()) return next();
-    const actor = activity.actor;
+    const actor = this.payerOf(activity.actor);
     const combat = this.combatOf(actor);
     const targets = [...game.user.targets].map(t => t.name);
     const when = combat?.started ? module.format("actionTracker.request.when", { round : combat.round, name : combat.combatant?.name ?? "—" }) : "";

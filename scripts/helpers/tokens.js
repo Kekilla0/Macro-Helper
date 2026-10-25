@@ -40,6 +40,39 @@ export function tokenOf(thing){
 }
 
 /**
+ * The token a use acts from (its usage's `from`, set by actFrom : Invoke Duplicity's illusion), on the scene being
+ * viewed; null : its user's own token.
+ * @param {object} usage   an activity's use config
+ * @returns {Token|null}
+ */
+export function actingFrom(usage){
+  const uuid = usage?.[module.id]?.from;
+  const token = uuid ? fromUuidSync(uuid, { strict : false })?.object : null;
+  return (token?.document?.parent === canvas.scene) ? token : null;
+}
+
+/* While a use made from another token's space runs (actFrom), the picks inside it measure from there : creature uuid -> token */
+const actingNow = new Map();
+
+/**
+ * The token a creature's use under way acts from (actFrom), or null. Picks (pickTargets, pickSpace) measure from it.
+ * @param {Token|TokenDocument|Actor} thing   the user
+ * @returns {Token|null}
+ */
+export function actingNowFrom(thing){
+  const actor = actorOf(tokenOf(thing) ?? thing);
+  const token = actor ? actingNow.get(actor.uuid) : null;
+  return (token?.document?.parent === canvas.scene) && !token.document.isDeleted ? token : null;
+}
+
+/* Set (a token) or cleared (null) while its use runs : the actFrom step */
+export function setActingNow(actor, token){
+  if(!actor) return;
+  if(token) actingNow.set(actor.uuid, tokenOf(token));
+  else actingNow.delete(actor.uuid);
+}
+
+/**
  * The Actor for a token, token document, actor or item (an unlinked token's own actor).
  * @param {Token|TokenDocument|Actor|Item} thing
  * @returns {Actor|null}
@@ -111,8 +144,9 @@ export function getRange(thing, { long = false, thrown = false } = {}){
   const given = rollOptionRange(activity);
   if(given) return given;
 
-  /* Activities that set their own range override the item's */
-  const range = activity?.range?.override ? activity.range : (item.system.range ?? {});
+  /* Activities that set their own range override the item's; an item with no range of its own (a feature) : the activity's */
+  const own = item.system.range;
+  const range = (activity?.range?.override || (!own?.units && activity?.range?.units)) ? activity.range : (own ?? {});
   const units = range.units || "ft";
   const toScene = value => {
     const sceneUnits = canvas.scene?.grid.units || "ft";

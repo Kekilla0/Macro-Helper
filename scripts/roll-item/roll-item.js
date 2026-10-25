@@ -5,7 +5,7 @@ import { logger } from '../log.js';
 import { uses } from '../uses.js';
 import { patch } from '../patch.js';
 import { TYPES, registerMessages } from './message.js';
-import { tokenOf, getRange, getTokensInArea } from '../helpers/tokens.js';
+import { tokenOf, getRange, getTokensInArea, actingFrom } from '../helpers/tokens.js';
 import { pickTargets } from '../helpers/targets.js';
 import { pickAttack, attackModeFor } from '../helpers/items.js';
 import { rerolls } from './rerolls.js';
@@ -700,7 +700,7 @@ export class rollItem{
     }
     const n = this.countFor(activity, count);
     const rangeMultiplier = Number(usage?.[module.id]?.rangeMultiplier) || 1;
-    const picked = await pickAttack(activity.item, { activity, count : n, repeat : n > 1, clearTargets : pick === "always", used : true, rangeMultiplier, filter : rollOptionFilter(activity) ?? undefined });
+    const picked = await pickAttack(activity.item, { activity, count : n, repeat : n > 1, clearTargets : pick === "always", used : true, rangeMultiplier, filter : rollOptionFilter(activity) ?? undefined, from : actingFrom(usage) });
     if(!picked) return null;
     const targets = await this.checkTargets(activity, picked.targets);
     if(!targets?.length || !this.announceTargets(activity, targets)) return null;
@@ -734,7 +734,7 @@ export class rollItem{
     const attacker = tokenOf(activity.item);
     if(!settings.value("rollItem") || (pick === "off") || !canvas.ready || !attacker || (attacker.document.parent !== canvas.scene)) return null;
     const picked = await pickAttack(activity.item, { activity, count : this.countFor(activity), repeat : this.countFor(activity) > 1,
-      clearTargets : pick === "always", used : false, rangeMultiplier : Number(usage?.[module.id]?.rangeMultiplier) || 1, filter : rollOptionFilter(activity) ?? undefined });
+      clearTargets : pick === "always", used : false, rangeMultiplier : Number(usage?.[module.id]?.rangeMultiplier) || 1, filter : rollOptionFilter(activity) ?? undefined, from : actingFrom(usage) });
     if(!picked?.targets?.length) return false;
     return this.announceTargets(activity, picked.targets);
   }
@@ -1196,6 +1196,7 @@ export class rollItem{
       includeSelf : disposition === "ally" || disposition === "any",
       useTargets : pick !== "always",
       confirm : "auto",
+      from : actingFrom(usage),
     };
   }
 

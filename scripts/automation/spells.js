@@ -3,7 +3,7 @@ import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { uses } from '../uses.js';
 import { idOf } from '../helpers/utils.js';
-import { tokenOf, getRange, distanceBetween } from '../helpers/tokens.js';
+import { tokenOf, getRange, distanceBetween, actingFrom } from '../helpers/tokens.js';
 import { limits } from './limits.js';
 import { conditions } from './conditions.js';
 import { actions } from './actions.js';
@@ -642,10 +642,12 @@ export class spells{
     /* An area : its template finds who's in it */
     if(activity.target?.template?.type || activity.item.system?.target?.template?.type) return next();
     const caster = tokenOf(activity.actor);
-    const targets = [...(game.user.targets ?? [])].filter(t => t !== caster);
+    /* Measured from where it's cast (actFrom), or the caster */
+    const at = actingFrom(ctx.config) ?? caster;
+    const targets = [...(game.user.targets ?? [])].filter(t => (t !== caster) && (t !== at));
     const range = this.rangeOf(activity, Number(ctx.config?.[module.id]?.rangeMultiplier) || 1);
     if(!caster || !targets.length || (range === null)) return next();
-    const out = targets.filter(t => distanceBetween(caster, t) > range);
+    const out = targets.filter(t => distanceBetween(at, t) > range);
     if(out.length && !limits.allow(module.format("spells.outOfRange", { spell : activity.item.name, names : out.map(t => t.name).join(", "), range }),
       { who : activity.actor.name, what : activity.item.name })) return;
     /* More creatures than the level cast allows */

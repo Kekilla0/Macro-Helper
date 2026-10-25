@@ -1,4 +1,5 @@
 import { module } from '../module.js';
+import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
 import { tokenOf, getRange } from '../helpers/tokens.js';
@@ -19,6 +20,11 @@ const log = logger.for(import.meta.url);
  * unless the GM summons it, or `kind` names a kind registered with summonKind that allows it.
  * summonKind(id, { allowed(activity, creature), before(summoner, activity), after(created, summoner, activity) }) :
  * a feature's own rules around it, on the GM's client (one at a time, no attacks...).
+ *
+ * With `controlled`, the creature acts with its summoner's actions : its uses spend the summoner's Action / Bonus Action
+ * (Spiritual Weapon's force, Flaming Sphere : flags.macro-helper.controlledBy, the summoner's uuid; controllerOf(actor)).
+ * Any summon (dnd5e's own, this lego's, a placed one) from a spell with Concentration goes when that Concentration ends
+ * (Spell Rules setting).
  */
 const kinds = new Map();
 
@@ -28,6 +34,35 @@ export function summonKind(id, rule){
 
 export function registerSummons(){
   gm.handle("summon", (data, user) => summonAsGM(data, user));
+  Hooks.on("deleteActiveEffect", effect => endWithConcentration(effect));
+}
+
+/**
+ * Who a summoned creature acts for : its summoner, when it uses the summoner's actions (`controlled`), else null.
+ * @param {Actor} actor
+ * @returns {Actor|null}
+ */
+export function controllerOf(actor){
+  const uuid = actor?.getFlag?.(module.id, "controlledBy");
+  return uuid ? (fromUuidSync(uuid, { strict : false }) ?? null) : null;
+}
+
+/* A spell's Concentration ended : the creatures it summoned go (the active GM) */
+async function endWithConcentration(effect){
+  if(!game.users.activeGM?.isSelf || !settings.value("spellRules")) return;
+  if(!effect?.statuses?.has?.(CONFIG.specialStatusEffects?.CONCENTRATING ?? "concentrating")) return;
+  const item = effect.getFlag("dnd5e", "item")?.uuid;
+  if(!item) return;
+  for(const scene of game.scenes){
+    const ids = scene.tokens.filter(t => t.actor?.getFlag("dnd5e", "summon.origin") === item).map(t => t.id);
+    if(!ids.length) continue;
+    /* Out of the combat too (a token's combatant stays when only its token goes) */
+    for(const combat of game.combats){
+      const gone = combat.combatants.filter(c => (c.sceneId === scene.id) && ids.includes(c.tokenId)).map(c => c.id);
+      if(gone.length) await combat.deleteEmbeddedDocuments("Combatant", gone).catch(error => log.debug(error));
+    }
+    await scene.deleteEmbeddedDocuments("Token", ids).catch(error => log.debug(error));
+  }
 }
 
 /**
@@ -38,9 +73,10 @@ export function registerSummons(){
  * @param {number} [options.range]       feet (default : the activity's range)
  * @param {string} [options.profile]     the profile's id (default : the creature's own, else the first)
  * @param {string} [options.kind]        a summonKind
+ * @param {boolean} [options.controlled] it acts with its summoner's actions
  * @returns {Promise<boolean>}
  */
-export async function summon(activity, creature, { space = null, range = null, profile = null, kind = null } = {}){
+export async function summon(activity, creature, { space = null, range = null, profile = null, kind = null, controlled = false } = {}){
   const from = tokenOf(activity?.getUsageToken?.() ?? activity?.actor);
   if(!activity || !creature) return false;
   if(!from){
@@ -55,7 +91,7 @@ export async function summon(activity, creature, { space = null, range = null, p
   }
   const own = activity.profiles?.find?.(p => p.uuid === creature);
   return !!await gm.run("summon", { item : activity.item.uuid, activity : activity.id, creature, x : space.x, y : space.y,
-    scene : from.document.parent.id, elevation : from.document.elevation ?? 0, profile : profile ?? own?._id ?? null, kind,
+    scene : from.document.parent.id, elevation : from.document.elevation ?? 0, profile : profile ?? own?._id ?? null, kind, controlled,
     disposition : from.document.disposition ?? activity.actor.prototypeToken?.disposition ?? 1 });
 }
 
@@ -70,7 +106,7 @@ async function allowed(activity, creature, kind, user){
 }
 
 /* GM : the token, for the summoner's owner */
-export async function summonAsGM({ item : itemUuid, activity : activityId, creature, x, y, scene : sceneId, elevation = 0, profile : profileId, disposition = 1, kind = null } = {}, user){
+export async function summonAsGM({ item : itemUuid, activity : activityId, creature, x, y, scene : sceneId, elevation = 0, profile : profileId, disposition = 1, kind = null, controlled = false } = {}, user){
   const activity = fromUuidSync(itemUuid ?? "", { strict : false })?.system?.activities?.get(activityId);
   const summoner = activity?.actor;
   if(!summoner?.testUserPermission(user, "OWNER") || !await allowed(activity, creature, kind, user)) return false;
@@ -86,6 +122,7 @@ export async function summonAsGM({ item : itemUuid, activity : activityId, creat
   changes.tokenUpdates.disposition = disposition;
   const owners = Object.fromEntries(game.users.filter(u => !u.isGM && summoner.testUserPermission(u, "OWNER")).map(u => [u.id, CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER]));
   changes.actorUpdates.ownership = { ...(actor.ownership ?? {}), ...owners };
+  if(controlled) changes.actorUpdates[`flags.${module.id}.controlledBy`] = summoner.uuid;
   const config = { actor, placement : { x, y, elevation, rotation : 0 }, ...changes };
   if(Hooks.call("dnd5e.preSummonToken", activity, profile, config, options) === false) return false;
   const tokenData = await activity.getTokenData(config);

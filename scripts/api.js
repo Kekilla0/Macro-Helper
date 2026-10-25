@@ -32,7 +32,8 @@ import { damageTypeChoice } from './roll-item/damage-type-choice.js';
 import { bonusOnlyWhen } from './automation/bonus-only-when.js';
 import { cantUseWhile, freeUseWhile, isFreeUse } from './automation/use-rules.js';
 import { castingOptions, payCasting } from './automation/casting.js';
-import { summon, summonKind } from './automation/summons.js';
+import { summon, summonKind, controllerOf } from './automation/summons.js';
+import { actFrom, actFromPlace } from './automation/act-from.js';
 import { pickFromCompendium } from './automation/compendiums.js';
 import { onTurnStart } from './gm.js';
 import { rollRequests } from './requests/requests.js';
@@ -43,7 +44,7 @@ import { markSpell, markOf } from './automation/marks.js';
 import { weaponUses } from './automation/weapon-uses.js';
 import { conditions } from './automation/conditions.js';
 import { cutDamage, cutsOf } from './roll-item/damage-cuts.js';
-import { applyCondition, engulf, immunity, isType, isImmuneTo, web, affectedBy, pull, applyConditionNow, giveCondition, endCondition, grapple, escapeDC, isDifficultTerrain, applyDisease, suppressOA, passThrough, applyEffect, attach, attachedTo, trample, followUp, extraDamage, shareDamage, sharesDamage, chargedAt, isSmaller, grappling, teleport, leap, useMovement, useReaction, hasReaction, reactionMove, reactionMoveOf, reactionAttack, reactionMoveRows, reactionAttackRows, damageTypes, becameBloodied, push, cardBuilder } from './roll-item/card-builder.js';
+import { applyCondition, engulf, immunity, isType, isImmuneTo, web, affectedBy, pull, applyConditionNow, giveCondition, endCondition, grapple, escapeDC, isDifficultTerrain, applyDisease, suppressOA, passThrough, applyEffect, attach, attachedTo, trample, followUp, extraDamage, shareDamage, sharesDamage, chargedAt, isSmaller, grappling, teleport, leap, moveUpTo, moveFirst, useMovement, useReaction, hasReaction, reactionMove, reactionMoveOf, reactionAttack, reactionMoveRows, reactionAttackRows, damageTypes, becameBloodied, push, cardBuilder } from './roll-item/card-builder.js';
 
 /* Public functions for macros : MacroHelper.x(...) or game.modules.get("macro-helper").api.x(...) */
 export class api{
@@ -52,7 +53,7 @@ export class api{
       rollItem : (...args)=> rollItem.roll(...args),
       /* Card builder : the normal use's card to append to, and its parts */
       roll : (item, options) => cardBuilder.roll(item, options),
-      applyCondition, engulf, immunity, isType, isImmuneTo, web, affectedBy, pull, applyConditionNow, giveCondition, endCondition, grapple, escapeDC, isDifficultTerrain, applyDisease, suppressOA, passThrough, applyEffect, attach, attachedTo, trample, followUp, extraDamage, shareDamage, sharesDamage, chargedAt, isSmaller, grappling, teleport, leap, useMovement, useReaction, hasReaction, reactionMove, reactionMoveOf, reactionAttack, reactionMoveRows, reactionAttackRows, damageTypes, becameBloodied, push,
+      applyCondition, engulf, immunity, isType, isImmuneTo, web, affectedBy, pull, applyConditionNow, giveCondition, endCondition, grapple, escapeDC, isDifficultTerrain, applyDisease, suppressOA, passThrough, applyEffect, attach, attachedTo, trample, followUp, extraDamage, shareDamage, sharesDamage, chargedAt, isSmaller, grappling, teleport, leap, moveUpTo, moveFirst, useMovement, useReaction, hasReaction, reactionMove, reactionMoveOf, reactionAttack, reactionMoveRows, reactionAttackRows, damageTypes, becameBloodied, push,
 
       /* Extra damage : one roll (typed, doubled on a crit), and each attack on a card with its targets */
       damageRoll, eachAttack,
@@ -85,7 +86,9 @@ export class api{
       /* A spell cast outside dnd5e's use : how to pay; a save put on an attack card; a choice of damage types */
       castingOptions, payCasting, cardSave, damageTypeChoice,
       /* A summon activity's creature on the map; one entry chosen from the compendiums */
-      summon, summonKind, pickFromCompendium,
+      summon, summonKind, controllerOf, pickFromCompendium,
+      /* A use measured from another token's space (Invoke Duplicity's illusion), and the places a use can be made from */
+      actFrom, actFromPlace,
       /* Every matching creature round the user, no pick (Turn Undead); another creature's form taken and left (Wild Shape) */
       emanation, transform, revert,
       /* Spells cast onto a weapon hit's card (the smites); a button on the initiative roll; a sense on a creature's tokens */

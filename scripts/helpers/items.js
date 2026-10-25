@@ -150,9 +150,10 @@ export function isOtherHandFree(item){
  * @param {Token|TokenDocument} target
  * @param {object} [options]
  * @param {boolean} [options.long=true]  allow throws out to long range
+ * @param {Token|TokenDocument} [options.from]  measured from this token's space (actFrom), not the attacker's
  * @returns {string|null}
  */
-export function attackModeFor(item, target, { long = true } = {}){
+export function attackModeFor(item, target, { long = true, from : place = null } = {}){
   const modes = (item?.system?.attackModes ?? []).map(m => m.value).filter(Boolean);
   const versatile = !!item?.system?.properties?.has("ver") && modes.includes("oneHanded") && modes.includes("twoHanded");
   /* Dueling : a Versatile weapon is meant for one hand (its +2 needs it). With Hands : two-handed only when in both */
@@ -166,7 +167,7 @@ export function attackModeFor(item, target, { long = true } = {}){
   if(!modes.includes("thrown")) return (versatile || offhand) ? melee : null;
   const thrown = (offhand && modes.includes("thrown-offhand")) ? "thrown-offhand" : "thrown";
 
-  const from = tokenOf(item), to = tokenOf(target);
+  const from = (place && tokenOf(place)) || tokenOf(item), to = tokenOf(target);
   if(!from || !to) return melee ?? thrown;
 
   const distance = distanceBetween(from, to);
@@ -262,12 +263,15 @@ function attackFailed(item, message, error){
  * @param {number|Function} [options.numberAllowed]  how many the group may have, or (picks) => number (Massive Swing : by size)
  *                                                   Creatures behind a wall (total cover) are never offered.
  * @param {number} [options.rangeMultiplier=1]     a stretched range (Distant Spell : double, Touch becomes 30 ft)
+ * @param {Token|TokenDocument} [options.from]     range, long range and walls measured from this token's space (actFrom :
+ *                                                   Invoke Duplicity's illusion); the attacker's own conditions and
+ *                                                   threats stay its own
  * @returns {Promise<{ attack : Activity, targets : Token[], attackMode : Function, disadvantage : Function }|null>}
  *          null if cancelled or refused (with a notification saying why)
  */
 export async function pickAttack(item, { count = 1, disposition = "nonAlly", within = Infinity, long = true, confirm = "auto",
   clearTargets = true, strict = true, threatened : threatRule = true, repeat = false, activity, used = false, filter , rangeMultiplier = 1,
-  numberAllowed = Infinity } = {}){
+  numberAllowed = Infinity, from : place = null } = {}){
   const fail = (message, error) => attackFailed(item, message, error);
 
   try {
@@ -289,6 +293,9 @@ export async function pickAttack(item, { count = 1, disposition = "nonAlly", wit
     if(!attacker) return fail(module.format("helpers.attack.noToken", { name : actor.name }));
     if(!canvas.ready || (attacker.document.parent !== canvas.scene)) return fail(module.format("helpers.attack.otherScene", { name : actor.name }));
     if(isOutOfAction(attacker)) return fail(module.format("helpers.attack.down", { name : actor.name }));
+    /* Where it's measured from */
+    const at = (place && tokenOf(place)) || attacker;
+    const by = (at === attacker) ? {} : { from : at };
 
     /* Range : thrown weapons reach as far as they can be thrown */
     const thrown = canThrow(item);
@@ -317,25 +324,25 @@ export async function pickAttack(item, { count = 1, disposition = "nonAlly", wit
     ].filter(Boolean).join(" ");
 
     /* Pick : each candidate coloured by how the attack would roll against it */
-    const longOrThreat = t => isLongRange(item, t) || (threatened && isRangedAttack(item, t));
+    const longOrThreat = t => isLongRange(item, t, by) || (threatened && isRangedAttack(item, t, by));
     /* Behind a wall (total cover) : not a target. Unseen (darkness, Invisible) still is, at disadvantage */
-    const reachable = t => hasLineOfSight(attacker, t) && (!filter || filter(t));
+    const reachable = t => hasLineOfSight(at, t) && (!filter || filter(t));
     const targets = await pickTargets(item, {
       count : Math.max(1, Math.floor(count) || 1),
-      range, within, numberAllowed, disposition, confirm, notice, repeat, filter : reachable,
+      range, within, numberAllowed, disposition, confirm, notice, repeat, filter : reachable, ...by,
       normalRange : shownNormal,
       useTargets : !clearTargets,
       /* An attack can go at a creature you can't see (in fog, Invisible) : the roll gives the disadvantage, the colours show it */
       sight : false,
-      tokenColor : t => predictMode(attack, t, { attackMode : attackModeFor(item, t, { long }), disadvantage : longOrThreat(t) }),
+      tokenColor : t => predictMode(attack, t, { attackMode : attackModeFor(item, t, { long, ...by }), disadvantage : longOrThreat(t) }),
       /* Hovering a coloured candidate : why */
-      tokenWhy : t => predictModeWhy(attack, t, { attackMode : attackModeFor(item, t, { long }), disadvantage : longOrThreat(t),
-        disadvantageWhy : isLongRange(item, t) ? module.i18n("helpers.pick.whyLong") : module.i18n("helpers.pick.whyThreatened") }),
+      tokenWhy : t => predictModeWhy(attack, t, { attackMode : attackModeFor(item, t, { long, ...by }), disadvantage : longOrThreat(t),
+        disadvantageWhy : isLongRange(item, t, by) ? module.i18n("helpers.pick.whyLong") : module.i18n("helpers.pick.whyThreatened") }),
     });
     if(!targets.length) return null;   // cancelled, or nothing in range (pickTargets said which)
 
     /* Enough to throw / shoot */
-    const attackMode = target => attackModeFor(item, target, { long });
+    const attackMode = target => attackModeFor(item, target, { long, ...by });
     if(strict){
       const throws = targets.filter(t => attackMode(t) === "thrown").length;
       if(throws && !item.system.properties?.has("ret") && (throws > quantity)){
@@ -348,8 +355,8 @@ export async function pickAttack(item, { count = 1, disposition = "nonAlly", wit
     }
 
     /* Disadvantage at long range, or for a ranged / thrown attack while threatened */
-    const disadvantage = target => (isLongRange(item, target) && module.i18n("reasons.longRange"))
-      || ((threatened && isRangedAttack(item, target)) && module.i18n("reasons.threatened"));
+    const disadvantage = target => (isLongRange(item, target, by) && module.i18n("reasons.longRange"))
+      || ((threatened && isRangedAttack(item, target, by)) && module.i18n("reasons.threatened"));
     return { attack, targets, attackMode, disadvantage };
   }
   catch(error){
@@ -362,13 +369,15 @@ export async function pickAttack(item, { count = 1, disposition = "nonAlly", wit
  * 5e : attacks at long range have disadvantage. Melee attacks within reach never are.
  * @param {Item} item
  * @param {Token|TokenDocument} target
+ * @param {object} [options]
+ * @param {Token|TokenDocument} [options.from]  measured from this token's space (actFrom), not the attacker's
  * @returns {boolean}
  */
-export function isLongRange(item, target){
-  const from = tokenOf(item), to = tokenOf(target);
+export function isLongRange(item, target, { from : place = null } = {}){
+  const from = (place && tokenOf(place)) || tokenOf(item), to = tokenOf(target);
   if(!from || !to) return false;
 
-  const thrown = attackModeFor(item, target, { long : true }) === "thrown";
+  const thrown = attackModeFor(item, target, { long : true, from : place }) === "thrown";
   const ranged = thrown || (item.system.attackType === "ranged") || (item.type !== "weapon");
   if(!ranged) return false;
 
@@ -395,11 +404,13 @@ export function isRangedItem(item){
  * 5e : ranged attacks while threatened (an enemy within 5 ft) have disadvantage, melee attacks don't.
  * @param {Item} item
  * @param {Token|TokenDocument} [target]
+ * @param {object} [options]
+ * @param {Token|TokenDocument} [options.from]  measured from this token's space (actFrom)
  * @returns {boolean}
  */
-export function isRangedAttack(item, target){
+export function isRangedAttack(item, target, { from = null } = {}){
   if(isRangedItem(item)) return true;
-  return !!target && (attackModeFor(item, target)?.startsWith("thrown") ?? false);
+  return !!target && (attackModeFor(item, target, { from })?.startsWith("thrown") ?? false);
 }
 
 /**

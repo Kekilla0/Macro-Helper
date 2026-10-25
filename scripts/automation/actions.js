@@ -396,6 +396,8 @@ export class actions{
 
   static async giveBasics(actor){
     if(!this.enabled() || !game.users.activeGM?.isSelf || !["npc", "character"].includes(actor?.type)) return;
+    /* A controlled summon (Spiritual Weapon's force) acts only through its own items, with its summoner's actions */
+    if(actor.getFlag(module.id, "controlledBy")) return;
     const ours = i => !!i.getFlag?.(module.id, "basicAction");
     const missing = this.BASICS.filter(id => !actor.items.some(i => (idOf(i) === id) && ours(i)));
     if(!missing.length) return;

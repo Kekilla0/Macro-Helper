@@ -7,7 +7,7 @@ import { hands } from './hands.js';
 import { usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
 import { giveMode } from '../roll-item/reasons.js';
 import { uses } from '../uses.js';
-import { tokenOf, distanceBetween, getRange } from '../helpers/tokens.js';
+import { tokenOf, distanceBetween, getRange, actingFrom } from '../helpers/tokens.js';
 
 /**
  * Weapon properties, from the weapon's data and dnd5e's rules version (Modern 2024 / Legacy 2014) :
@@ -62,14 +62,15 @@ export class weapons{
     /* Targets a rule or macro set itself (item.roll({ targets }) after a Trample) : not held to reach, like the spells' */
     if(ctx?.config?.[module.id]?.useTargets) return next();
     const attacker = tokenOf(activity.actor);
-    const targets = [...(game.user.targets ?? [])].filter(t => t !== attacker);
+    const at = actingFrom(ctx.config) ?? attacker;
+    const targets = [...(game.user.targets ?? [])].filter(t => (t !== attacker) && (t !== at));
     if(!attacker || !targets.length) return next();
     const props = item.system.properties;
     const ranged = item.system.attackType === "ranged";
     const thrown = !ranged && !!props?.has?.("thr");
     const range = Math.max(getRange(item), (ranged || thrown) ? getRange(item, { long : true, thrown }) : 0);
     if(!(range > 0) || !Number.isFinite(range)) return next();
-    const out = targets.filter(t => distanceBetween(attacker, t) > range);
+    const out = targets.filter(t => distanceBetween(at, t) > range);
     if(out.length && !limits.allow(module.format("weapons.outOfRange", { weapon : item.name, names : out.map(t => t.name).join(", "), range }),
       { who : activity.actor.name, what : item.name })) return;
     return next();

@@ -218,6 +218,81 @@ export async function leap(thing, feet, { item = null } = {}){
   return card ?? space;
 }
 
+/**
+ * Move up to `feet` : pick a space (not through a wall that blocks movement) and move there, as part of something else
+ * (Spiritual Weapon's force : 20 ft, then its attack). With stopAt "creature" it can be aimed into a creature's space :
+ * the first creature in its way stops it in the last space before it, and is returned (Flaming Sphere's ram : that
+ * creature saves). Not counted as the token's own movement.
+ *   const moved = await token.moveUpTo(30, { stopAt : "creature" });   null : cancelled
+ *   moved.stoppedBy                                                    the creature in its way, or null
+ * @param {Token|TokenDocument|Actor} thing
+ * @param {number} feet
+ * @param {object} [options]
+ * @param {"creature"|null} [options.stopAt]
+ * @param {string} [options.action="walk"]   its movement action ("fly" : over creatures)
+ * @param {string} [options.notice]          a line in the banner (what it's for)
+ * @returns {Promise<{ space : { x, y }, stoppedBy : Token|null }|null>}
+ */
+export async function moveUpTo(thing, feet, { stopAt = null, action = "walk", notice = "" } = {}){
+  const from = tokenOf(thing);
+  if(!from) return null;
+  if(!from.document.isOwner){ ui.notifications.warn(module.format("cardBuilder.teleportOwner", { name : from.name })); return null; }
+  const size = Math.max(1, Math.round(from.document.width ?? 1));
+  const picked = await pickSpace(from, { range : feet, size, occupied : stopAt === "creature", notice,
+    banner : module.format("cardBuilder.moveBanner", { feet }) });
+  if(!picked) return null;
+  const { space, stoppedBy } = (stopAt === "creature") ? firstInWay(from, picked, size) : { space : picked, stoppedBy : null };
+  if((space.x !== from.document.x) || (space.y !== from.document.y)) await from.document.move({ x : space.x, y : space.y, action });
+  return { space, stoppedBy };
+}
+
+/* Along the straight line to `to` : the first creature whose space it would enter, and the last free space before it */
+function firstInWay(token, to, size){
+  const grid = canvas.grid.size;
+  const start = { x : token.document.x, y : token.document.y };
+  const steps = Math.max(Math.abs(to.x - start.x), Math.abs(to.y - start.y)) / grid;
+  let last = start;
+  for(let i = 1; i <= Math.ceil(steps); i++){
+    const t = Math.min(1, i / steps);
+    const at = { x : Math.round((start.x + ((to.x - start.x) * t)) / grid) * grid, y : Math.round((start.y + ((to.y - start.y) * t)) / grid) * grid };
+    const left = at.x / grid, top = at.y / grid;
+    const hit = canvas.tokens.placeables.find(o => (o !== token) && o.actor && !o.document.hidden && (() => {
+      const c = cells(o);
+      return (c.left < left + size) && (c.right > left) && (c.top < top + size) && (c.bottom > top);
+    })());
+    if(hit) return { space : last, stoppedBy : hit };
+    last = at;
+  }
+  return { space : last, stoppedBy : null };
+}
+
+/**
+ * Move first : a use whose creature moves before it (pick, move, then the use). moveFirst(match, spec) : match is
+ * (activity) => boolean; spec { feet, stopAt, action } as moveUpTo's. With stopAt "creature", the creature in its way
+ * becomes the use's only target (and none : the use goes on without one, the move made). An item can carry its own
+ * spec : flags.macro-helper.moveFirst. usage noMove : this use doesn't move (Spiritual Weapon's attack as it's cast).
+ */
+const movesFirst = [];
+let moveStep = false;
+
+export function moveFirst(match, spec){
+  if((typeof match !== "function") || !(Number(spec?.feet) > 0)) return;
+  movesFirst.push({ match, spec });
+  if(moveStep) return;
+  moveStep = true;
+  uses.onActivity("moveFirst", async (activity, ctx, next) => {
+    const spec = activity?.item?.getFlag?.(module.id, "moveFirst") ?? movesFirst.find(m => m.match(activity))?.spec;
+    if(!spec || ctx.config?.[module.id]?.noMove) return next();
+    const moved = await moveUpTo(activity.getUsageToken?.() ?? activity.actor, Number(spec.feet), { stopAt : spec.stopAt ?? null, action : spec.action ?? "walk", notice : activity.item?.name ?? "" });
+    if(!moved) return;
+    if(spec.stopAt === "creature"){
+      canvas.tokens.setTargets(moved.stoppedBy ? [moved.stoppedBy.id] : []);
+      uses.mark(ctx, { skipPick : true, useTargets : true });
+    }
+    return next();
+  });
+}
+
 /* Movement spent (negative feet) or given back (positive) this turn : token.useMovement(-10) */
 export async function useMovement(thing, feet){
   const { actionTracker } = await import('../automation/action-tracker.js');
@@ -880,7 +955,7 @@ export class cardBuilder{
   }
 
   /* Card macros' building blocks, on the documents whatever the Helpers → Methods switches say :
-     item.roll(), token.chargedAt(target, feet), token.teleport(feet, { item }), token.leap(feet, { item }), token.useMovement(feet), token.useReaction(what), token.reactionMove(opts), token.reactionAttack(opts), item.setDamage(formula), creature.isSmaller(size), creature.grappling() (never over an existing method) */
+     item.roll(), token.chargedAt(target, feet), token.teleport(feet, { item }), token.leap(feet, { item }), token.moveUpTo(feet, opts), token.useMovement(feet), token.useReaction(what), token.reactionMove(opts), token.reactionAttack(opts), item.setDamage(formula), creature.isSmaller(size), creature.grappling() (never over an existing method) */
   static addMethods(){
     const add = (cls, name, fn) => {
       const proto = cls?.prototype;
@@ -906,6 +981,7 @@ export class cardBuilder{
       add(cls, "chargedAt", function(target, feet, options){ return chargedAt(this, target, feet, options); });
       add(cls, "teleport", function(feet, options){ return teleport(this, feet, options); });
       add(cls, "leap", function(feet, options){ return leap(this, feet, options); });
+      add(cls, "moveUpTo", function(feet, options){ return moveUpTo(this, feet, options); });
       add(cls, "useMovement", function(feet){ return useMovement(this, feet); });
       add(cls, "movedThisTurn", function(){ return movedThisTurn(this); });
       add(cls, "useReaction", function(what){ return useReaction(this, what); });

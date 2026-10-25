@@ -59,6 +59,8 @@ export class uses{
       "castingChoice", // Casting choice : an option chosen as it's cast, paid once cast (Metamagic; Quickened : its economy)
       "economy",       // Action Tracker : its Action / Bonus Action / Reaction (Rule Limits for a second), spent once used
       "components",    // Components : V (not Silenced), S (a free hand), M (a focus, or a pouch and a free hand) : Rule Limits
+      "actFrom",       // Act from : a place the use can be made from (Invoke Duplicity's illusion) : themself or there, before any pick
+      "moveFirst",     // Move first : its creature moves up to N ft before the use (Spiritual Weapon's force, Flaming Sphere's ram)
       "spellCommand",  // Spell actions : Command : which command, before the targets
       "spellChoice",   // Spell effects : Guidance's skill, Resistance's damage type, asked before the targets
       "enchantProfile",// Spell actions : Shillelagh's enchantment by caster level, True Strike's by the weapon

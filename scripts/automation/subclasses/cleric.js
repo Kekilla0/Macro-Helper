@@ -16,6 +16,7 @@ import { rollModes } from '../roll-modes.js';
 import { conditions } from '../conditions.js';
 import { itemFixes } from '../item-fixes.js';
 import { actionTracker } from '../action-tracker.js';
+import { actFromPlace } from '../act-from.js';
 import { subclasses } from './common.js';
 const log = logger.for(import.meta.url);
 
@@ -39,7 +40,8 @@ const log = logger.for(import.meta.url);
  *                                 client makes it), for 1 minute, until you're Incapacitated or end it (its effect on
  *                                 you). Distract : Advantage on your attacks against a creature when you and the
  *                                 illusion are both within 5 ft of it and it can see the illusion. Move Duplicate : 30
- *                                 ft, within 120 ft of you.
+ *                                 ft, within 120 ft of you. Cast Spells : a spell that isn't Self asks where it's cast
+ *                                 from (you or the illusion : actFrom).
  *   War      Guided Strike        a missed attack roll, yours or a creature's within 30 ft : +10 (a Channel Divinity
  *                                 use; another's : your Reaction).
  *            War Priest           after using it : one attack with a weapon or an Unarmed Strike (chosen), part of it.
@@ -80,6 +82,7 @@ export class clericDomains{
     gm.handle("duplicity", (data, user) => this.duplicityAsGM(data, user));
     Hooks.on("deleteActiveEffect", effect => this.duplicityEnds(effect));
     rollModes.add("duplicity", config => this.distract(config));
+    actFromPlace(this.DUPLICITY, activity => this.castFrom(activity));
   }
 
   /* ---------- Life ---------- */
@@ -343,6 +346,12 @@ export class clericDomains{
     const flag = effect?.getFlag?.(module.id, "duplicity");
     if(!flag || !game.users.activeGM?.isSelf) return;
     await fromUuidSync(flag.token ?? "", { strict : false })?.delete?.();
+  }
+
+  /* Cast Spells : a spell (not Self) can be cast as though you were in the illusion's space */
+  static castFrom(activity){
+    if(!this.enabled() || (activity?.item?.type !== "spell") || (activity.range?.units === "self")) return null;
+    return this.duplicateOf(activity.getUsageToken?.()?.actor ?? activity.actor)?.token ?? null;
   }
 
   /* Distract : you and the illusion both within 5 ft of it, and it sees the illusion */

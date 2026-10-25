@@ -1,5 +1,5 @@
 import { module } from '../module.js';
-import { tokenOf, distanceBetween, getRange, getTokensWithin, highlightRange, isOutOfAction, canSee, canSeePoint, isSpaceFree, HIGHLIGHT } from './tokens.js';
+import { tokenOf, distanceBetween, getRange, getTokensWithin, highlightRange, isOutOfAction, canSee, canSeePoint, isSpaceFree, HIGHLIGHT, actingNowFrom } from './tokens.js';
 
 /* Opposite dispositions (hostile vs friendly) */
 export function isEnemy(a, b){
@@ -311,25 +311,33 @@ export function setTargets(tokens){
  * @param {Function} [options.tokenColor]          (token) => "advantage" | "normal5e" | "disadvantage" : a colour per candidate (attacks)
  * @param {Function} [options.tokenWhy]            (token) => { mode, advantage : [], disadvantage : [] } : shown hovering it
  * @param {boolean} [options.long] [options.thrown]  passed to getRange
+ * @param {Token|TokenDocument} [options.from]     range measured from this token's space instead (actFrom : Invoke
+ *                                                   Duplicity's illusion); sight stays the origin's own, and `from` itself
+ *                                                   is never a candidate
  * @returns {Promise<Token[]>}  the picks, empty if cancelled or nothing in range
  */
 export async function pickTargets(origin, { count = 1, range, disposition = "enemy", numberAllowed = Infinity, within = Infinity,
   confirm = "auto", setTargets : target = true, useTargets = true, repeat = false, long = false, thrown = false, normalRange, notice = "", filter : only, includeSelf = false,
-  sight = true, tokenColor, tokenWhy } = {}){
+  sight = true, tokenColor, tokenWhy, from : place = null } = {}){
   const from = tokenOf(origin);
   if(!from) return warn(module.i18n("helpers.pick.noToken"));
+  /* Where it's measured from : the origin's token, or the space it acts from (given, or its use's : actFrom) */
+  const at = (place && tokenOf(place)) || actingNowFrom(from) || from;
   if(!useTargets) canvas.tokens.setTargets([]);
   /* Only what the picker can see (Vision Rules) */
   const filter = sight ? (t => canSee(from, t) && (!only || only(t))) : only;
 
   const isItem = (origin?.documentName === "Item") || !!origin?.item;
   const feet = range ?? (isItem ? getRange(origin, { long, thrown }) : Infinity);
-  const candidates = getTokensWithin(from, feet, { disposition, filter, includeSelf });
+  /* Sides are the origin's; distance from where it acts */
+  const candidates = (at === from) ? getTokensWithin(from, feet, { disposition, filter, includeSelf })
+    : getTokensWithin(from, Infinity, { disposition, filter, includeSelf }).filter(t => (t !== at) && (distanceBetween(at, t) <= feet))
+      .sort((a, b) => distanceBetween(at, a) - distanceBetween(at, b));
   if(!candidates.length) return warn(module.i18n("helpers.pick.none"));
 
   /* Your own targets in range win, nothing to ask */
   const targeted = useTargets
-    ? [...game.user.targets].filter(t => ((t !== from) || includeSelf) && (distanceBetween(from, t) <= feet) && (!filter || filter(t)))
+    ? [...game.user.targets].filter(t => ((t !== from) || includeSelf) && ((t !== at) || (at === from)) && (distanceBetween(at, t) <= feet) && (!filter || filter(t)))
     : [];
   if(targeted.length){
     /* Your own targets follow the same group rules as a pick (how many, within how far of each other) : else you pick */
@@ -341,7 +349,7 @@ export async function pickTargets(origin, { count = 1, range, disposition = "ene
     else return Array.from({ length : count }, (_, i) => targeted[Math.floor(i * targeted.length / count)]);
   }
 
-  const picks = await pickOnMap(from, feet, candidates, { count, numberAllowed, within, confirm, repeat, normalRange, notice, includeSelf, tokenColor, tokenWhy });
+  const picks = await pickOnMap(at, feet, candidates, { count, numberAllowed, within, confirm, repeat, normalRange, notice, includeSelf, tokenColor, tokenWhy });
   if(target && picks.length) setTargets(picks);
   return picks;
 }
@@ -487,8 +495,10 @@ function pickOnMap(from, feet, candidates, { count, numberAllowed, within, confi
  * @returns {Promise<{x : number, y : number}|null>}  the space's top-left corner (canvas pixels), null if cancelled
  */
 export async function pickSpace(origin, { range = 5, size = 1, notice = "", occupied = false, check = null, banner : title = null, keys = null, seen = false } = {}){
-  const from = tokenOf(origin);
-  if(!from) return warn(module.i18n("helpers.pick.noToken")) && null;
+  const eyes = tokenOf(origin);
+  if(!eyes) return warn(module.i18n("helpers.pick.noToken")) && null;
+  /* Measured from the space its use acts from (actFrom), seen with its own eyes */
+  const from = actingNowFrom(eyes) || eyes;
   const highlight = highlightRange(from, range, { showSelf : false });
   const view = canvas.app.view;
   const grid = canvas.grid.size;
@@ -519,7 +529,7 @@ export async function pickSpace(origin, { range = 5, size = 1, notice = "", occu
     if(other) return other;
     const center = { x : x + (size * grid / 2), y : y + (size * grid / 2) };
     let blocked = false;
-    if(seen) return canSeePoint(from, center) ? "" : module.i18n("helpers.space.unseen");
+    if(seen) return canSeePoint(eyes, center) ? "" : module.i18n("helpers.space.unseen");
     try { blocked = !!CONFIG.Canvas.polygonBackends.move.testCollision(from.center, center, { type : "move", mode : "any" }); }
     catch { blocked = false; }
     return blocked ? module.i18n("helpers.space.wall") : "";

@@ -96,7 +96,8 @@ export class initiative{
     const shared = settings.value("summonInitiative") === "shared";
     for(const tokenUuid of tokens){
       const token = fromUuidSync(tokenUuid, { strict : false });
-      if(!token?.parent) continue;
+      /* A controlled summon (Spiritual Weapon's force) acts with its summoner's actions : no turn of its own */
+      if(!token?.parent || token.actor?.getFlag(module.id, "controlledBy")) continue;
       const combat = game.combats.find(c => ((c.scene?.id ?? c.scene) === token.parent.id) && this.summonerIn(c, summoner))
         ?? game.combats.find(c => !c.scene && this.summonerIn(c, summoner));
       if(!combat || combat.combatants.some(c => c.tokenId === token.id)) continue;

@@ -9,14 +9,14 @@ import { hands } from './hands.js';
 import { actions } from './actions.js';
 import { actionTracker } from './action-tracker.js';
 import { TYPES } from '../roll-item/message.js';
-import { idOf, chooseOption, buttonRow, addButton, makeButton, esc, ownerIds, originOf, originItem } from '../helpers/utils.js';
+import { idOf, chooseOption, buttonRow, addButton, makeButton, esc, ownerIds, originOf, originItem, waitFor } from '../helpers/utils.js';
 import { conditions } from './conditions.js';
 import { rollRequests } from '../requests/requests.js';
 import { heldLight } from './held-light.js';
 import { stabilize, addTimedEffect, spendHitDice, heal, rollSave, giveEffect } from '../helpers/actors.js';
 import { itemFixes } from './item-fixes.js';
 import { conjureItem, isMetal, dropHeld, heldItems } from '../helpers/items.js';
-import { endCondition } from '../roll-item/card-builder.js';
+import { endCondition, moveFirst } from '../roll-item/card-builder.js';
 import { saveModeAgainst } from './roll-modes.js';
 import { pickTargets, pickSpace } from '../helpers/targets.js';
 import { tokenOf, getRange, addLight, removeLight, getTokensInArea, distanceBetween, canSee } from '../helpers/tokens.js';
@@ -134,12 +134,18 @@ export class spellActions{
   static FLEE = ["dissonant-whispers"];
   static SHIELD = { spell : "shield", ac : 5, negates : ["magic-missile"] };
   static REBUKE = { spell : "hellish-rebuke", range : 60 };
-  /* Summons placed by their caster : the leash (feet from the caster) */
+  /* Summons placed by their caster : the leash (feet from the caster; null : none). controlled : it uses its caster's
+     actions; atOnce : its attack made as it's placed, free; moves : its creature's item (name) moves first (moveFirst);
+     hide : the spell's own activities of these types are hidden (its creature has them) */
   static PLACED = {
     "mage-hand" : { leash : 30, move : 30, action : "action" },
     "unseen-servant" : { leash : 60, move : 15, action : "bonus", invisible : true, sight : 60 },
     "tensers-floating-disk" : { leash : 100, follow : 20, carry : 500 },
+    "spiritual-weapon" : { leash : null, controlled : true, atOnce : true, moves : [{ item : /attack/i, feet : 20, action : "fly" }] },
+    "flaming-sphere" : { leash : null, controlled : true, moves : [{ item : /^roll$/i, feet : 30, stopAt : "creature" }], hide : ["save"] },
   };
+  /* Summons whose creature the import left out (Plutonium's Flaming Sphere) : dnd5e's own */
+  static SUMMON_CREATURE = { "flaming-sphere" : "Compendium.dnd5e.actors24.Actor.phbsplFlamingSph" };
   static MESSAGE = "message";
   static ALARM = "alarm";
   static FLAME = { id : "produce-flame", range : 60 };
@@ -265,6 +271,10 @@ export class spellActions{
     }));
     Hooks.on("updateToken", (token, changes) => this.placedMoved(token, changes));
     Hooks.on("updateWorldTime", () => this.placedExpire());
+    for(const [id, spec] of Object.entries(this.PLACED)) for(const move of spec.moves ?? []){
+      moveFirst(activity => this.enabled() && (this.placedSpellOf(activity?.actor) === id) && move.item.test(activity.item?.name ?? ""), move);
+    }
+    itemFixes.add({ name : "Placed summon", where : "owned", plan : item => this.placedFix(item) });
     /* Floating Disk : it follows the caster's steps, and carries up to 500 lb */
     Hooks.on("moveToken", (token, movement) => this.diskFollow(token, movement));
     Hooks.on("preCreateItem", item => this.diskWeight(item));
@@ -1461,13 +1471,41 @@ export class spellActions{
     const result = await next();
     if(!result) return result;
     try {
-      await gm.run("placedSummon", { item : activity.item.uuid, activity : activity.id, profile : profile._id, scene : from.document.parent.id,
+      const made = await gm.run("placedSummon", { item : activity.item.uuid, activity : activity.id, profile : profile._id, scene : from.document.parent.id,
         x : space.x, y : space.y, elevation : from.document.elevation ?? 0, caster : from.document.uuid });
+      if(made && spec.atOnce) await this.placedAttack(activity.item);
     } catch(error){
       log.error(error);
       ui.notifications.warn(error.message);
     }
     return result;
+  }
+
+  /* A placed summon's spell (its identifier), from the creature */
+  static placedSpellOf(actor){
+    const origin = actor?.getFlag?.("dnd5e", "summon.origin");
+    return origin ? idOf(fromUuidSync(origin, { strict : false })) : "";
+  }
+
+  /* Its summon with no creature : dnd5e's own. Its own activities its creature has : hidden */
+  static placedFix(item){
+    if(item.type !== "spell") return null;
+    const update = {};
+    const uuid = this.SUMMON_CREATURE[idOf(item)];
+    const summon = uuid ? item.system.activities?.find?.(a => a.type === "summon") : null;
+    if(summon && !summon.profiles?.length) update[`system.activities.${summon.id}.profiles`] = [{ _id : foundry.utils.randomID(), uuid, count : "", name : "", level : { min : null, max : null }, types : [] }];
+    for(const a of item.system.activities ?? []){
+      if((this.PLACED[idOf(item)]?.hide ?? []).includes(a.type) && (a.visibility?.level?.max !== 0)) update[`system.activities.${a.id}.visibility.level.max`] = 0;
+    }
+    return Object.keys(update).length ? { update } : null;
+  }
+
+  /* Its attack as it's placed (Spiritual Weapon) : free, no move */
+  static async placedAttack(item){
+    let token = null;
+    await waitFor(() => (token = this.placedOf(item.uuid).at(-1)?.object ?? null), { timeout : 5000 });
+    const attack = token?.actor?.items?.contents?.flatMap(i => [...(i.system.activities ?? [])]).find(a => a.type === "attack");
+    if(attack) await attack.use({ [module.id] : { economy : "free", noMove : true } });
   }
 
   static placedOf(itemUuid){
@@ -1499,6 +1537,7 @@ export class spellActions{
     /* Invisible : its owners see it through its own senses (a token without vision would be hidden from them too) */
     if(spec.sight) changes.tokenUpdates.sight = { enabled : true, range : spec.sight };
     for(const kind of ["walk", "fly", "climb", "swim", "burrow"]) changes.actorUpdates[`system.attributes.movement.speeds.${kind}`] = "0";
+    if(spec.controlled) changes.actorUpdates[`flags.${module.id}.controlledBy`] = item.actor.uuid;
     const owners = Object.fromEntries(game.users.filter(u => !u.isGM && item.actor.testUserPermission(u, "OWNER")).map(u => [u.id, CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER]));
     changes.actorUpdates.ownership = { ...(actor.ownership ?? {}), ...owners };
     const config = { actor, placement : { x, y, elevation, rotation : 0 }, ...changes };
@@ -1508,7 +1547,7 @@ export class spellActions{
     const seconds = (Number(value) || 0) * ({ minute : 60, hour : 3600, day : 86400, round : 6, turn : 6 }[units] ?? 0);
     const from = caster ? fromUuidSync(caster, { strict : false }) : null;
     foundry.utils.setProperty(tokenData, `flags.${module.id}.placedSummon`, { item : item.uuid, caster : caster ?? null,
-      leash : spec.follow ? spec.leash : (getRange(activity) || spec.leash), ends : seconds ? game.time.worldTime + seconds : null,
+      leash : (spec.leash === null) ? null : spec.follow ? spec.leash : (getRange(activity) || spec.leash), ends : seconds ? game.time.worldTime + seconds : null,
       ...(spec.follow ? { follow : spec.follow, carry : spec.carry ?? null, trail : from ? [{ x : from.x, y : from.y, elevation : from.elevation ?? 0 }] : [] } : {}) });
     /* Its art from a module that isn't on (dnd5e's Floating Disk : the Player's Handbook) : the creature's picture */
     const art = foundry.utils.getProperty(tokenData, "texture.src") ?? "";
@@ -1545,7 +1584,8 @@ export class spellActions{
     const casterOf = f => { const t = f?.caster ? fromUuidSync(f.caster, { strict : false }) : null; return (t?.parent === scene) ? t : null; };
     const pairs = flag ? [[token, casterOf(flag)]] : scene.tokens.filter(t => t.getFlag(module.id, "placedSummon")?.caster === token.uuid).map(t => [t, token]);
     const centre = t => ({ x : t.x + (t.width * scene.grid.size / 2), y : t.y + (t.height * scene.grid.size / 2) });
-    const far = pairs.filter(([s, c]) => c && (scene.grid.measurePath([centre(s), centre(c)]).distance > (Number(s.getFlag(module.id, "placedSummon")?.leash) || 30))).map(([s]) => s);
+    const leashOf = s => { const leash = s.getFlag(module.id, "placedSummon")?.leash; return (leash === null) ? Infinity : (Number(leash) || 30); };
+    const far = pairs.filter(([s, c]) => c && (scene.grid.measurePath([centre(s), centre(c)]).distance > leashOf(s))).map(([s]) => s);
     if(far.length) await this.endPlaced(far);
   }
 
