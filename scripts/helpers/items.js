@@ -858,10 +858,11 @@ export async function conjureItem(thing, source, { key = null, data = {}, hand =
   delete copy._id;
   foundry.utils.mergeObject(copy, { system : { equipped : true, quantity : 1 }, flags : { [module.id] : { conjured : key ?? true, ...(vanish ? { vanishes : true } : {}) } } });
   foundry.utils.mergeObject(copy, data);
+  /* dnd5e deletes an effect's dependents with it (the active GM); dependentOn reaches another creature's items too
+     (an effect's own dependents list only counts its own creature's) */
+  if(until && !until.isDeleted) foundry.utils.setProperty(copy, "flags.dnd5e.dependentOn", until.uuid);
   const [item] = await actor.createEmbeddedDocuments("Item", [copy]);
   if(item && hand && hands.manages(actor)) await hands.put(actor, actor.items.get(item.id) ?? item, hands.freeHand(actor, item) ?? "main");
-  /* dnd5e deletes an effect's dependents with it (the active GM) */
-  if(item && until && !until.isDeleted) await until.setFlag("dnd5e", "dependents", [...(until.getFlag("dnd5e", "dependents") ?? []), { uuid : item.uuid }]);
   return item ?? null;
 }
 

@@ -63,6 +63,7 @@ export class uses{
       "moveFirst",     // Move first : its creature moves up to N ft before the use (Spiritual Weapon's force, Flaming Sphere's ram)
       "spellCommand",  // Spell actions : Command : which command, before the targets
       "spellChoice",   // Spell effects : Guidance's skill, Resistance's damage type, asked before the targets
+      "lendChoice",    // Lend : Dragon's Breath's damage type, before the targets (anyone can be picked)
       "enchantProfile",// Spell actions : Shillelagh's enchantment by caster level, True Strike's by the weapon
       "flurry",        // Monk : Monk's Focus's Flurry of Blows uses the Unarmed Strike instead
       "presetTargets", // Emanation : every matching creature round the user is targeted (Turn Undead), no pick
@@ -86,6 +87,7 @@ export class uses{
       "spellRange",    // Spells : no pick, Rule Limits on : targets out of the spell's range follow Rule Limits
       "weaponRange",   // Weapons : no pick, Rule Limits on : targets beyond the weapon's reach / range follow Rule Limits
       "willing",       // Willing : the GM says which targets are willing (all : no save card), once they're settled
+      "lend",          // Lend : once cast, each target gets the lent item (Dragon's Breath's exhale), tied to the Concentration
       "economyApproval", // Action Tracker : a player's Action / Bonus Action off its turn : the GM approves (its targets picked)
     ],
   };

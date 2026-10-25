@@ -14,6 +14,7 @@ import { extendDurations } from './automation/durations.js';
 import { saveRowToggle, toggledOn } from './roll-item/row-toggles.js';
 import { willingSave, willingOn } from './automation/willing.js';
 import { changeSize } from './automation/size.js';
+import { lendItem, lends } from './automation/lend-item.js';
 import { rerollButton, rerolled } from './roll-item/reroll-buttons.js';
 import { actionTracker } from './automation/action-tracker.js';
 import { actions } from './automation/actions.js';
@@ -76,6 +77,8 @@ export class api{
       castingChoice, castingChoiceOf, extendDurations, saveRowToggle, toggledOn, rerollButton, rerolled,
       /* A save only an unwilling target makes, the GM saying who's willing (Enlarge/Reduce); a size larger or smaller */
       willingSave, willingOn, changeSize,
+      /* A use lent to a creature as an item of its own, with the lender's numbers (Dragon's Breath) */
+      lendItem, lends,
       /* More or fewer Actions, Bonus Actions, Reactions or attacks this turn (Action Surge) */
       actionTracker : { modify : (thing, kind, n, source) => actionTracker.modify(thing, kind, n, source) },
       onDamage : (fn, options) => onDamage(fn, options),
