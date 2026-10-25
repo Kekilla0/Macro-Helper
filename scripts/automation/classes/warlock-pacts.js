@@ -2,15 +2,14 @@ import { module } from '../../module.js';
 import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
 import { idOf, originItem, chooseOption, esc } from '../../helpers/utils.js';
-import { chooseOne } from '../../helpers/creatures.js';
 import { weaponUses } from '../weapon-uses.js';
 import { uses } from '../../uses.js';
 import { itemFixes } from '../item-fixes.js';
-import { compendiums, pickFromCompendium } from '../compendiums.js';
+import { pickFromCompendium } from '../compendiums.js';
 import { conjureItem, linkItems } from '../../helpers/items.js';
 import { damageTypeChoice } from '../../roll-item/damage-type-choice.js';
 import { restChoices } from '../rest-choices.js';
-import { limits } from '../limits.js';
+import { spellPools } from '../spell-pools.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -27,7 +26,7 @@ const log = logger.for(import.meta.url);
  *                       with no slot. The familiar itself is automation/familiars.js (the special forms, attacks kept).
  *   Pact of the Tome  : the Book of Shadows, an item on the Warlock : the spells Plutonium adds with the invocation go
  *                       into it, and leave with it (deleting the book deletes them; losing the invocation, the book).
- *                       Rest Choices' Book of Shadows row : empty places filled from the Item compendiums (cantrips and
+ *                       Rest Choices' Book of Shadows row (the spell pool lego) : empty places filled from the Item compendiums (cantrips and
  *                       level 1 Rituals, any class), a new book when it's gone, one spell replaced per Warlock level
  *                       gained. Book spells don't count against the Warlock's prepared spells.
  */
@@ -61,12 +60,23 @@ export class pacts{
     itemFixes.add({ name : "Pact of the Chain", where : "owned", plan : item => this.chainFix(item) });
     /* ---------- Tome ---------- */
     Hooks.on("createItem", (item, options, userId) => { if(userId === game.user.id) this.onItemAdded(item); });
+    /* Its spells : the spell pool lego (3 cantrips, 2 level 1 Rituals, any class), one replaced per Warlock level */
+    spellPools.add("bookOfShadows", {
+      title : actor => this.bookOf(actor)?.name ?? module.i18n("classes.warlock.book"),
+      places : () => [
+        { key : "cantrips", count : this.BOOK.cantrips, prompt : "classes.warlock.pickCantrip", filter : e => Number(e.system?.level) === 0 },
+        { key : "rituals", count : this.BOOK.rituals, prompt : "classes.warlock.pickRitual", filter : e => (Number(e.system?.level) === 1) && spellPools.hasProperty(e, "ritual") },
+      ],
+      members : actor => this.spellsIn(actor),
+      data : actor => ({ "system.method" : "pact", "system.prepared" : 2, "system.sourceItem" : "class:warlock", [`flags.${module.id}.inBook`] : this.bookOf(actor)?.id }),
+      added : (actor, spell) => linkItems(this.bookOf(actor), [spell]),
+      full : actor => module.format("classes.warlock.bookFull", { name : actor.name }),
+    });
     restChoices.add({
-      id : "bookOfShadows", label : "restChoices.bookOfShadows", rest : "level", classes : ["warlock"],
+      id : "bookOfShadows", label : "restChoices.bookOfShadows", rest : "level", classes : ["warlock"], count : (actor, { levels }) => levels || 1,
       applies : actor => this.enabled() && !!this.tomeOf(actor),
-      grant : actor => actor.setFlag(module.id, "bookSwaps", 1),
       summary : actor => this.bookSummary(actor),
-      open : actor => this.openBook(actor),
+      open : (actor, swap) => this.openBook(actor, swap),
     });
   }
 
@@ -197,16 +207,9 @@ export class pacts{
     return book ? actor.items.filter(i => (i.type === "spell") && (i.getFlag(module.id, "inBook") === book.id)) : [];
   }
 
-  static isRitual(spell){
-    const props = spell?.system?.properties;
-    return Array.isArray(props) ? props.includes("ritual") : !!props?.has?.("ritual");
-  }
-
   /* The book's empty places : cantrips, rituals */
   static room(actor){
-    const spells = this.spellsIn(actor);
-    return { cantrips : this.BOOK.cantrips - spells.filter(s => Number(s.system.level) === 0).length,
-      rituals : this.BOOK.rituals - spells.filter(s => Number(s.system.level) === 1).length };
+    return spellPools.room(actor, "bookOfShadows");
   }
 
   static #tomeAdded = new Map();
@@ -225,7 +228,7 @@ export class pacts{
     const book = this.bookOf(actor);
     const room = this.room(actor);
     const level = Number(item.system.level);
-    if(!book || !(((level === 0) && (room.cantrips > 0)) || ((level === 1) && (room.rituals > 0) && this.isRitual(item)))) return;
+    if(!book || !(((level === 0) && (room.cantrips > 0)) || ((level === 1) && (room.rituals > 0) && spellPools.hasProperty(item, "ritual")))) return;
     await item.setFlag(module.id, "inBook", book.id);
     await linkItems(book, [item]);
   }
@@ -247,69 +250,13 @@ export class pacts{
     const book = this.bookOf(actor);
     if(!book) return module.i18n("classes.warlock.noBook");
     return module.format("classes.warlock.bookSummary", { spells : this.spellsIn(actor, book).map(s => s.name).join(", ") || "—",
-      swaps : Number(actor.getFlag(module.id, "bookSwaps")) || 0 });
+      swaps : restChoices.swapsText(actor, "bookOfShadows") });
   }
 
-  /* The pool : cantrips or level 1 Rituals from any class (2024), not already the Warlock's */
-  static async pool(actor, level){
-    const have = new Set(actor.items.filter(i => i.type === "spell").map(i => idOf(i) || i.name));
-    const ritual = e => { const p = e.system?.properties; return Array.isArray(p) ? p.includes("ritual") : !!p?.ritual; };
-    return compendiums.search(e => (e.type === "spell") && (Number(e.system?.level) === level) && ((level === 0) || ritual(e)) && !have.has(e.system?.identifier || e.name),
-      { fields : ["system.level", "system.properties"], notice : module.i18n("classes.warlock.lookingSpells") });
-  }
-
-  static async addToBook(actor, uuid, book){
-    const source = await fromUuid(uuid);
-    if(!source) return null;
-    const data = source.toObject();
-    delete data._id;
-    foundry.utils.mergeObject(data, { "system.method" : "pact", "system.prepared" : 2, "system.sourceItem" : "class:warlock", [`flags.${module.id}.inBook`] : book.id });
-    const [spell] = await actor.createEmbeddedDocuments("Item", [data]);
-    if(spell) await linkItems(book, [spell]);
-    return spell;
-  }
-
-  /**
-   * The Book of Shadows row : a new book when it's gone, its empty places filled (free), one spell replaced per
-   * Warlock level gained, the GM's changes counted too (past that, Rule Limits Off / Warn ask and tell the GM).
-   */
-  static async openBook(actor){
-    const book = this.bookOf(actor) ?? await this.makeBook(actor);
-    let room = this.room(actor);
-    for(const [kind, level] of [["cantrips", 0], ["rituals", 1]]){
-      while(room[kind] > 0){
-        const options = await this.pool(actor, level);
-        const chosen = await chooseOne(options.map(o => ({ value : o.uuid, label : o.name, img : o.img })), { title : book.name, icon : "fa-solid fa-book",
-          columns : 4, prompt : module.format(level ? "classes.warlock.pickRitual" : "classes.warlock.pickCantrip", { n : room[kind] }) });
-        if(!chosen) return;
-        await this.addToBook(actor, chosen, book);
-        room = this.room(actor);
-      }
-    }
-    /* Full : replace one (a level gained) */
-    const spells = this.spellsIn(actor, book);
-    if(!spells.length) return;
-    const swaps = Number(actor.getFlag(module.id, "bookSwaps")) || 0;
-    let past = false;
-    if(!(swaps > 0)){
-      /* The GM may still go past, after the same question */
-      if(!limits.canGoPast() && !game.user.isGM) return ui.notifications.info(module.format("classes.warlock.bookFull", { name : actor.name }));
-      past = await foundry.applications.api.DialogV2.confirm({ window : { title : book.name },
-        content : `<p>${esc(module.format("classes.warlock.bookPast", { name : actor.name }))}</p>`, rejectClose : false });
-      if(!past) return;
-    }
-    const out = await chooseOne(spells.map(s => ({ value : s.id, label : s.name, img : s.img })), { title : book.name, icon : "fa-solid fa-book", columns : 3,
-      prompt : module.i18n("classes.warlock.bookOut") });
-    const old = out ? actor.items.get(out) : null;
-    if(!old) return;
-    const level = Number(old.system.level);
-    const options = await this.pool(actor, level);
-    const chosen = await chooseOne(options.map(o => ({ value : o.uuid, label : o.name, img : o.img })), { title : book.name, icon : "fa-solid fa-book", columns : 4,
-      prompt : module.format("classes.warlock.bookIn", { name : old.name }) });
-    if(!chosen) return;
-    await old.delete();
-    const added = await this.addToBook(actor, chosen, book);
-    await actor.setFlag(module.id, "bookSwaps", Math.max(0, swaps - 1));
-    if(past && !game.user.isGM) await limits.tellGM({ who : actor.name, what : module.format("classes.warlock.bookSwapped", { from : old.name, to : added?.name ?? "" }), rule : module.i18n("classes.warlock.bookRule") });
+  /* The Book of Shadows row : a new book when it's gone, then the spell pool (empty places filled free; full, one
+     spell replaced per Warlock level gained, past that Rule Limits; the GM freely) */
+  static async openBook(actor, swap){
+    await this.makeBook(actor);
+    return spellPools.open(actor, "bookOfShadows", swap);
   }
 }

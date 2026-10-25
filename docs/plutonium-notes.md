@@ -66,7 +66,7 @@ whether the module covers it or you need to edit the item.
 | **Warlock levels** | Each level's new prepared spell isn't asked for. | Prepared Spells' Add a Spell offers the class's list from your compendiums. |
 | **Arcane Recovery** (Wizard 1) | Its use comes back on a Short Rest; 2024: once a Long Rest. | Changed when added (and on load): back on a Long Rest. |
 | **Sleep** (spell) | Incapacitated for the minute, no second save. 2024: the save again at the end of its next turn, Unconscious on a failure; damage wakes it. | Changed when added (and on load): a repeating save (end of its turn); a failure makes it Unconscious; it ends on damage. |
-| **Wizard** (class import) | Plutonium asks for the cantrips but not the 6 spellbook spells. | Prepared Spells' Add a Spell adds them. |
+| **Wizard** (class import) | Plutonium asks for the cantrips but not the 6 spellbook spells. | Rest Choices' Spellbook row (on a Wizard level) and Prepared Spells' Add a Spell fill the book's free places (6, +2 a Wizard level). |
 | **Divine Order: Thaumaturge** (Cleric 1, class import) | Plutonium doesn't ask for its extra cantrip. | Import the cantrip yourself (Plutonium's Spells importer onto the actor). |
 | **Favored Enemy** (Ranger 1, class import) | Hunter's Mark arrives twice: one always prepared, and one marked as from Favored Enemy (not prepared). | Delete either copy. |
 | **Versatile** (Human, 2024) | The origin feat list shows the 2014 Alert as plain "Alert" above "Alert [PHB'24]". | Pick the one marked [PHB'24]. |

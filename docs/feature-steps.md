@@ -28,10 +28,11 @@ Legos are listed in [api.md](api.md). "Data" means the item's own dnd5e or Pluto
 | Warlock | Hex (a level 1 spell, handled with the class) | the spell's use | as Hunter's Mark, plus the ability whose checks get disadvantage | `markSpell` (`ask`) |
 | Warlock | Pact of the Blade | the weapon prepared; forming it | CHA beside the weapon's own; one at a time; conjure or bond; damage type buttons | `weaponUses`, `damageTypeChoice`, `pickFromCompendium` + `conjureItem`; one at a time is its own code |
 | Warlock | Pact of the Chain | its familiar | Find Familiar with no slot; the familiar's forms | `itemFixes`, familiars.js on `summon` |
-| Warlock | Pact of the Tome | the book | Book of Shadows item; its spells come and go with it; swaps | `linkItems`, `addRestChoice`; its pool and swaps are its own code |
+| Warlock | Pact of the Tome | the book | Book of Shadows item; its spells come and go with it; swaps | `linkItems`, `addRestChoice` (`count`), `addSpellPool` |
 | Warlock | Armor of Shadows, Eldritch Mind | - | - | data |
 | Wizard | Arcane Recovery | after a Short Rest, or its use | slots back up to half the level | `recoverSpellSlots`, `restChoices` |
 | Wizard | Ritual Adept | casting a ritual from the book | - | casting.js (rituals), `isClassSpell` |
+| Wizard | Spellbook | a Wizard level, Add a Spell | 6 + 2 a level free places (Savant school places), spell scrolls copied for 50 GP a level | `addSpellPool` (`extra`), `payCoins`, `addRestChoice`; reading a scroll's spell is its own |
 
 ## Level 2
 
@@ -76,7 +77,6 @@ Parts still written inside one feature's code. Each one becomes a generic lego (
 |---|---|---|---|
 | Rage keeps going | barbarian.js `keep`, `onTurnEnd` | ends at the end of a turn unless it made an attack roll or forced a save | other "lasts while you keep attacking" effects |
 | Pact weapon one at a time | warlock-pacts.js `onPactFormed` | forming a pact weapon ends the last (a bonded weapon's enchantment, a conjured one) | `conjureItem`'s `key` covers conjured ones only |
-| Book of Shadows pool | warlock-pacts.js `openBook` | fill empty places from the compendiums, one swap a level | Wizard's spellbook count (S4) |
 | Bonus Unarmed Strike | monk.js (the action tracker) | a Bonus Action attack after the Attack action | Two-Weapon Fighting's extra attack |
 | Pool conversion window | sorcerer.js `font` | one resource turned into another at set rates (spell slots and Sorcery Points, both ways) | homebrew pools traded for slots or uses |
 | Cast-time damage type | sorcerer.js `chooseFor` / `transmute` | a damage type chosen as it's cast, used for its damage (and a reroll within the minute) | `damageTypeChoice` with a type chosen before the roll |

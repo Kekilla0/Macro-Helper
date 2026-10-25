@@ -17,6 +17,7 @@ import { changeSize } from './automation/size.js';
 import { lendItem, lends } from './automation/lend-item.js';
 import { zone, zones } from './automation/zones.js';
 import { giveAura } from './automation/auras.js';
+import { addSpellPool, openSpellPool, spellPools } from './automation/spell-pools.js';
 import { rerollButton, rerolled } from './roll-item/reroll-buttons.js';
 import { actionTracker } from './automation/action-tracker.js';
 import { actions } from './automation/actions.js';
@@ -85,6 +86,9 @@ export class api{
       zone, moveZone : (thing, region) => zones.moveArea(thing?.actor ?? thing ?? canvas.tokens?.controlled?.[0]?.actor ?? game.user.character, region),
       /* An area round a creature, going where it goes, giving those inside a condition or effects (a stench) */
       giveAura,
+      /* Spells kept in something of the creature's own, with free places, swaps and paid extras (Book of Shadows, a
+         Wizard's spellbook) */
+      addSpellPool, openSpellPool, spellPoolRoom : (thing, id) => spellPools.room(thing?.actor ?? thing, id),
       /* More or fewer Actions, Bonus Actions, Reactions or attacks this turn (Action Surge) */
       actionTracker : { modify : (thing, kind, n, source) => actionTracker.modify(thing, kind, n, source) },
       onDamage : (fn, options) => onDamage(fn, options),
@@ -110,7 +114,7 @@ export class api{
       /* Helpers, see scripts/helpers */
       ...tokens,    // tokenOf, actorOf, cells, distanceBetween, getRange, getTokensWithin, highlightRange, forcedMove, pushDestination, pushAway, pullToward, addLight, removeLight, hasLight, registerPool, poolBar, removePoolBar, poolsOf
       ...targets,   // isEnemy, isAlly, alliesNear, excludeTargets, getFlanker, isFlanking, isThreatened, getThreats, getEnemiesWithinRange, pickTargets, isValidGroup, selectTargets, setTargets
-      ...actors,    // damage, heal, tempHP, spendHitDice, dropsToZero, isKilledOutright, preventDropToZero, findItem, rollSave, addTimedEffect, recoverSpellSlots, slotsLeft, spellSlots, addSpellSlot, usedThisTurn, markUsedThisTurn, countedUses, effectsFrom, itemEffectOn, itemEffectOff, giveEffect, getLastDamage, clearLastDamage, setStatus, setDefeated, getSize, stepSize, splitToken
+      ...actors,    // damage, heal, tempHP, spendHitDice, dropsToZero, isKilledOutright, preventDropToZero, findItem, rollSave, addTimedEffect, recoverSpellSlots, payCoins, slotsLeft, spellSlots, addSpellSlot, usedThisTurn, markUsedThisTurn, countedUses, effectsFrom, itemEffectOn, itemEffectOff, giveEffect, getLastDamage, clearLastDamage, setStatus, setDefeated, getSize, stepSize, splitToken
       ...items,     // pickAndAttack, pickAttack, attackModeFor, isLongRange, isRangedItem, isRangedAttack, canThrow, getAmmunition,
                   // getUses, hasUses, spendUses, useActivity, useAndApply, getAppliedConditions, multiattack, untilShown, getHealing, updateItem, setBaseDamage, setDamage, isClassSpell, isUnarmored, conjureItem, linkItems, linkedItems, pickOwned, enchant, replaceItem
       ...utils,     // wait, waitFor, originOf, chooseOption

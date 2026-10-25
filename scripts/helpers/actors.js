@@ -609,6 +609,47 @@ export async function addSpellSlot(thing, level, amount = 1){
 }
 
 /**
+ * Pay an amount of gold from the creature's coins : gold first, then the smaller coins, then the larger ones (change
+ * given back in the smaller coins).
+ * @param {Actor|Token|TokenDocument} thing
+ * @param {number} gp   the cost, in gold pieces
+ * @returns {Promise<boolean>}  paid (false : not enough, nothing taken)
+ */
+export async function payCoins(thing, gp){
+  const actor = actorOf(thing);
+  const currency = actor?.system?.currency;
+  if(!currency || !actor.isOwner) return false;
+  /* Copper pieces per coin (dnd5e's conversion : coins per gold piece) */
+  const coins = Object.entries(CONFIG.DND5E.currencies ?? {}).map(([key, c]) => ({ key, cp : Math.round(100 / (Number(c.conversion) || 1)) }))
+    .filter(c => c.cp > 0);
+  const gold = coins.find(c => c.key === "gp");
+  const order = [gold, ...coins.filter(c => (c !== gold) && (c.cp < 100)).sort((a, b) => b.cp - a.cp), ...coins.filter(c => c.cp > 100).sort((a, b) => a.cp - b.cp)].filter(Boolean);
+  let owed = Math.round(Number(gp) * 100);
+  const wealth = order.reduce((n, c) => n + ((Number(currency[c.key]) || 0) * c.cp), 0);
+  if(!(owed > 0)) return true;
+  if(wealth < owed) return false;
+  const next = Object.fromEntries(order.map(c => [c.key, Number(currency[c.key]) || 0]));
+  for(const c of order){
+    const n = Math.min(next[c.key], Math.floor(owed / c.cp));
+    next[c.key] -= n;
+    owed -= n * c.cp;
+  }
+  /* Still owed : one larger coin broken, the change in the largest coins that fit */
+  if(owed > 0){
+    const coin = order.filter(c => (next[c.key] > 0) && (c.cp >= owed)).sort((a, b) => a.cp - b.cp)[0];
+    next[coin.key]--;
+    let change = coin.cp - owed;
+    for(const c of [...order].sort((a, b) => b.cp - a.cp).filter(c => c.cp < coin.cp)){
+      const n = Math.floor(change / c.cp);
+      next[c.key] += n;
+      change -= n * c.cp;
+    }
+  }
+  await actor.update(Object.fromEntries(Object.entries(next).map(([k, v]) => [`system.currency.${k}`, v])));
+  return true;
+}
+
+/**
  * Choose expended spell slots to get back, up to a combined level (Arcane Recovery, Natural Recovery).
  * A dialog lists the spent slots up to `maxLevel` with the running total; the slots are restored on confirm.
  * With `item`, it needs a use left, and one is spent once something is recovered.

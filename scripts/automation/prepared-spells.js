@@ -19,7 +19,8 @@ const log = logger.for(import.meta.url);
  * (in the window or by ticking Prepared on the sheet) : Rule Limits decides.
  * Add a Spell (the window's button) : one from the class's spell list (dnd5e's spell lists) up to its highest slot level,
  * from the Item compendiums (a copy you imported before dnd5e's own; 2014 copies left out), added unprepared to tick :
- * Plutonium doesn't add the spells a new level lets you prepare.
+ * Plutonium doesn't add the spells a new level lets you prepare. A class with its own way (addVia : the Wizard's
+ * spellbook) uses that instead.
  */
 export class preparedSpells{
   static RULES = {
@@ -28,8 +29,15 @@ export class preparedSpells{
     bard : { rest : "level", swaps : 1 }, sorcerer : { rest : "level", swaps : 1 }, warlock : { rest : "level", swaps : 1 },
   };
 
+  static #adders = new Map();
+
   static enabled(){
     return (game.system.id === "dnd5e") && settings.value("classRules");
+  }
+
+  /* Add a Spell for a class : its own window (the Wizard's spellbook) */
+  static addVia(cls, open){
+    this.#adders.set(cls, open);
   }
 
   static register(){
@@ -239,6 +247,7 @@ export class preparedSpells{
 
   /* One of the class's spells (dnd5e's spell list) from the compendiums, added unprepared */
   static async addSpell(actor, cls){
+    if(this.#adders.has(cls)) return this.#adders.get(cls)(actor);
     const list = dnd5e.registry?.spellLists?.forType?.("class", cls);
     if(!list?.identifiers?.size) return ui.notifications.warn(module.format("preparedSpells.noList", { cls : actor.classes?.[cls]?.name ?? cls }));
     const top = this.maxLevel(actor, cls);
