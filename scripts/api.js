@@ -44,6 +44,7 @@ import { markSpell, markOf } from './automation/marks.js';
 import { weaponUses } from './automation/weapon-uses.js';
 import { conditions } from './automation/conditions.js';
 import { cutDamage, cutsOf } from './roll-item/damage-cuts.js';
+import { hitBecomesMiss } from './roll-item/hit-becomes-miss.js';
 import { applyCondition, engulf, immunity, isType, isImmuneTo, web, affectedBy, pull, applyConditionNow, giveCondition, endCondition, grapple, escapeDC, isDifficultTerrain, applyDisease, suppressOA, passThrough, applyEffect, attach, attachedTo, trample, followUp, extraDamage, shareDamage, sharesDamage, chargedAt, isSmaller, grappling, teleport, leap, moveUpTo, moveFirst, useMovement, useReaction, hasReaction, reactionMove, reactionMoveOf, reactionAttack, reactionMoveRows, reactionAttackRows, damageTypes, becameBloodied, push, cardBuilder } from './roll-item/card-builder.js';
 
 /* Public functions for macros : MacroHelper.x(...) or game.modules.get("macro-helper").api.x(...) */
@@ -53,7 +54,7 @@ export class api{
       rollItem : (...args)=> rollItem.roll(...args),
       /* Card builder : the normal use's card to append to, and its parts */
       roll : (item, options) => cardBuilder.roll(item, options),
-      applyCondition, engulf, immunity, isType, isImmuneTo, web, affectedBy, pull, applyConditionNow, giveCondition, endCondition, grapple, escapeDC, isDifficultTerrain, applyDisease, suppressOA, passThrough, applyEffect, attach, attachedTo, trample, followUp, extraDamage, shareDamage, sharesDamage, chargedAt, isSmaller, grappling, teleport, leap, moveUpTo, moveFirst, useMovement, useReaction, hasReaction, reactionMove, reactionMoveOf, reactionAttack, reactionMoveRows, reactionAttackRows, damageTypes, becameBloodied, push,
+      applyCondition, engulf, immunity, isType, isImmuneTo, web, affectedBy, pull, applyConditionNow, giveCondition, endCondition, grapple, escapeDC, isDifficultTerrain, applyDisease, suppressOA, passThrough, applyEffect, attach, attachedTo, trample, followUp, extraDamage, shareDamage, sharesDamage, hitBecomesMiss, chargedAt, isSmaller, grappling, teleport, leap, moveUpTo, moveFirst, useMovement, useReaction, hasReaction, reactionMove, reactionMoveOf, reactionAttack, reactionMoveRows, reactionAttackRows, damageTypes, becameBloodied, push,
 
       /* Extra damage : one roll (typed, doubled on a crit), and each attack on a card with its targets */
       damageRoll, eachAttack,

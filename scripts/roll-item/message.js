@@ -573,8 +573,10 @@ export function registerMessages(){
   };
 
   /* Does an attack roll hit this AC : crits always, fumbles never, no AC known counts as a hit */
-  const hitsAC = (roll, ac) => {
+  const hitsAC = (roll, ac, uuid = null) => {
     if(!roll) return false;
+    /* A rule turned its hit on that creature into a miss (Mirror Image's duplicate hit instead) */
+    if(rollItem.missedOn(roll, uuid)) return false;
     /* The GM counted it as a hit (Count as hit) */
     if(roll.options?.[module.id]?.forcedHit) return true;
     if(Number.isFinite(ac) && (ac >= rollItem.TOTAL_COVER_AC)) return false;
@@ -950,14 +952,14 @@ export function registerMessages(){
     /* Tokens the attack hit, from the card's targets */
     hitTargets(ray){
       const attack = this.attackOf(ray);
-      return this.targetsOf(ray).filter(t => hitsAC(attack, t.ac)).map(t => TargetsField.resolve(t).token).filter(Boolean);
+      return this.targetsOf(ray).filter(t => hitsAC(attack, t.ac, t.token)).map(t => TargetsField.resolve(t).token).filter(Boolean);
     }
 
     /* The targets of one attack, and those it hit (card descriptors) */
     targetHits(ray){
       const attack = this.attackOf(ray);
       const targets = this.targetsOf(ray);
-      return { targets, hits : targets.filter(t => hitsAC(attack, t.ac)) };
+      return { targets, hits : targets.filter(t => hitsAC(attack, t.ac, t.token)) };
     }
 
     /* Damage boxes for rolls, as the card draws them (for a rule's card section) */
@@ -984,7 +986,7 @@ export function registerMessages(){
     isHitOn(ray){
       const attack = this.attackOf(ray);
       const targets = this.targetsOf(ray);
-      return targets.length ? targets.some(t => hitsAC(attack, t.ac)) : rollItem.isHit(attack);
+      return targets.length ? targets.some(t => hitsAC(attack, t.ac, t.token)) : rollItem.isHit(attack);
     }
 
     /**
@@ -1003,7 +1005,7 @@ export function registerMessages(){
       }
       const targets = this.targets;
       if(!targets.length) return { hit : true, miss : true };
-      const hits = targets.filter(t => hitsAC(attack, t.ac)).length;
+      const hits = targets.filter(t => hitsAC(attack, t.ac, t.token)).length;
       return { hit : hits > 0, miss : hits < targets.length };
     }
 
@@ -1231,6 +1233,23 @@ export function registerMessages(){
       return true;
     }
 
+    /**
+     * One attack's hit on that creature turned into a miss (GM; hitBecomesMiss : Mirror Image's duplicate is hit
+     * instead) : its damage, Apply Hits and on-hit parts follow. The GM's Count as hit puts it back.
+     * @param {number|null} ray
+     * @param {string} uuid   the target's token uuid
+     * @returns {Promise<boolean>}
+     */
+    async turnToMiss(ray, uuid){
+      const old = this.attackOf(ray);
+      if(!game.user.isGM || !old || !uuid || rollItem.missedOn(old, uuid)) return false;
+      const updated = old.constructor.fromData(old.toJSON());
+      const own = updated.options[module.id] ?? {};
+      updated.options[module.id] = { ...own, forcedHit : false, forcedMiss : [...(own.forcedMiss ?? []), uuid] };
+      await replaceRolls(this.parent, { rolls : this.parent.rolls.map(r => (r === old) ? updated : r), shown : [] });
+      return true;
+    }
+
     /* The extra boxes for one attack, and the buttons item macros add to it (macro-helper.cardButtons) */
     extrasContext(ray){
       if(!this.parent.isContentVisible) return null;
@@ -1432,13 +1451,13 @@ export function registerMessages(){
       context.rolls = (hidden && this.attackRoll)
         ? [await this.attackRoll.render({ template : ROLL_TEMPLATE, isPrivate : true })]
         : rendered.filter((_, i) => !(rolls[i] instanceof DamageRoll));
-      if(context.targets) context.targets = context.targets.map(t => ({ ...maskTarget(t), ...(this.attackRoll ? { isMiss : !hitsAC(this.attackRoll, t.ac) } : {}),
+      if(context.targets) context.targets = context.targets.map(t => ({ ...maskTarget(t), ...(this.attackRoll ? { isMiss : !hitsAC(this.attackRoll, t.ac, t.token) } : {}),
         ...coverShown(t), applied : appliedOn(this.parent, t.token, ["hits", "tray"]) }));
       /* What rules let you do to a creature with no save (a mastery's Topple) : a row each, like a save card's */
       if(this.parent.isContentVisible && !this.isMulti){
         const attack = this.attackRoll;
         context.ruleRows = buildRows(this.parent, { targets : this.targets })
-          .map((row, i) => ({ ...row, ruleButtons : ruleButtonsOf(this.parent, row.uuid, { result : { hit : hitsAC(attack, this.targets[i]?.ac) }, owner : true }) }))
+          .map((row, i) => ({ ...row, ruleButtons : ruleButtonsOf(this.parent, row.uuid, { result : { hit : hitsAC(attack, this.targets[i]?.ac, this.targets[i]?.token) }, owner : true }) }))
           .filter(row => row.ruleButtons.length);
       }
       const damage = this.damageRolls;
@@ -1504,7 +1523,7 @@ export function registerMessages(){
       const attack = this.attackRoll;
       /* Its own creatures (Ice Knife's burst, hit or miss), else those the attack hit */
       const own = (this.rider?.targets ?? []).map(uuid => fromUuidSync(uuid, { strict : false })?.object).filter(Boolean);
-      const targets = own.length ? TargetsField.getDescriptors(own) : this.targets.filter(t => hitsAC(attack, t.ac));
+      const targets = own.length ? TargetsField.getDescriptors(own) : this.targets.filter(t => hitsAC(attack, t.ac, t.token));
       return buildRows(this.parent, {
         targets,
         hasSave : true,
@@ -1605,7 +1624,7 @@ export function registerMessages(){
       if(!old) return;
       target.disabled = true;
       const updated = old.constructor.fromData(old.toJSON());
-      updated.options[module.id] = { ...(updated.options[module.id] ?? {}), forcedHit : true };
+      updated.options[module.id] = { ...(updated.options[module.id] ?? {}), forcedHit : true, forcedMiss : [] };
       await replaceRolls(this.parent, { rolls : this.parent.rolls.map(r => (r === old) ? updated : r), shown : [] });
     }
 

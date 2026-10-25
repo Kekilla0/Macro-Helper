@@ -62,6 +62,7 @@ The main pieces, as methods on tokens, actors and items. Most also exist as `Mac
 | `MacroHelper.weaponUses(id, { applies, abilities, die })` | The abilities and damage die a weapon attacks with while a rule applies (Martial Arts, Pact of the Blade). |
 | `MacroHelper.endsWhen(match, { incapacitated, damaged, heavyArmor, combatEnd, attacks, casts, sourceZeroHP, apart, recast })` | What a rule's effects end on (Rage, Turned, Invisibility, Warding Bond). |
 | `MacroHelper.sharesDamage(match, { fraction, keep })` | While a creature has the effect, the creature it came from takes part of its damage too (Warding Bond: all of it). |
+| `MacroHelper.hitBecomesMiss(match, { formula, turns, onTurned })` | While a creature has the effect, a hit on it may miss instead, on the GM's roll (Mirror Image's duplicates). |
 | `MacroHelper.giveEffect(target, data, { save, dc, from, until })` | An effect on a creature, after its save; the GM's button when it isn't yours (Goaded, Seared). |
 | `MacroHelper.onMiss({ formula })`, `MacroHelper.addRow({ run, withDamage })` | Damage on a miss (Graze), and a GM button on a hit creature's card row (Topple, Sap). |
 | `MacroHelper.onAttacked({ when, within, run })`, `MacroHelper.onTurnStart({ run })` | A creature's Reaction button when one near it is attacked or hit (Interception, Protection), and something at the start of its turns. |

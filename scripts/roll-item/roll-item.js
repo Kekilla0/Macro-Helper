@@ -420,6 +420,8 @@ export class rollItem{
   /* A miss is below the target's AC or a fumble, a crit always hits, no AC known counts as a hit */
   static isHit(roll){
     if(!roll) return false;
+    /* A rule turned its hit into a miss (a ray's roll has one target) */
+    if(roll.options?.[module.id]?.forcedMiss?.length) return false;
     /* The GM counted it as a hit (Count as hit) */
     if(roll.options?.[module.id]?.forcedHit) return true;
     const ac = roll.options.target;
@@ -428,6 +430,11 @@ export class rollItem{
     if(roll.isCritical) return true;
     if(roll.isFumble) return false;
     return !Number.isFinite(ac) || roll.total >= ac;
+  }
+
+  /* Did a rule turn this attack's hit on that creature (token uuid) into a miss (hitBecomesMiss) */
+  static missedOn(roll, uuid){
+    return !!uuid && !!roll?.options?.[module.id]?.forcedMiss?.includes?.(uuid);
   }
 
   /* The AC a target behind total cover is given on a card : nothing reaches it */

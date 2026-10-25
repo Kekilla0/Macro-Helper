@@ -17,6 +17,7 @@ import { rollModeFrom } from './roll-modes.js';
 import { onMiss } from '../roll-item/miss-damage.js';
 import { willingSave } from './willing.js';
 import { sharesDamage } from '../roll-item/card-builder.js';
+import { hitBecomesMiss } from '../roll-item/hit-becomes-miss.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -57,6 +58,11 @@ const log = logger.for(import.meta.url);
  *                     notes it (flags.ritual for the action tracker).
  *   Blur            : attack rolls against the caster have disadvantage, unless the attacker has Blindsight or
  *                     Truesight reaching it (its Concentration is the effect).
+ *   Mirror Image    : each duplicate is one of its effects on the caster (Plutonium's Duplicate A-C; the cast's own
+ *                     roll, which reads a flag nothing sets, is taken off). An attack that
+ *                     hits the caster : the GM's d6 for each duplicate left, a 3 or higher turns it into a miss and
+ *                     destroys one (its effect deleted; the spell ends with the last). Not against an attacker that is
+ *                     Blinded or has Blindsight or Truesight. Cast again : three new duplicates.
  *   Invisibility    : ends just after its creature makes an attack roll or casts a spell.
  *   Melf's Acid Arrow : a miss deals half the attack's damage (no acid later); a hit's acid at the end of the target's
  *                     next turn is a repeating effect (automation/repeating.js).
@@ -74,6 +80,7 @@ export class spells{
   static ACID_ARROW = "melfs-acid-arrow";
   static ENLARGE_REDUCE = "enlarge-reduce";
   static WARDING_BOND = "warding-bond";
+  static MIRROR_IMAGE = "mirror-image";
   /* The effects the fixes add (16-character ids, so a fix can tell it's done) */
   static EFFECT_IDS = { "blade-ward" : "mhBladeWardWard1", "ray-of-sickness" : "mhRaySicknessPsn" };
 
@@ -105,6 +112,7 @@ export class spells{
     itemFixes.add({ name : "Produce Flame", where : "owned", plan : item => this.produceFlameFix(item) });
     itemFixes.add({ name : "Jump", where : "owned", plan : item => this.jumpFix(item) });
     itemFixes.add({ name : "Grease", where : "owned", plan : item => this.greaseFix(item) });
+    itemFixes.add({ name : "Mirror Image", where : "owned", plan : item => this.mirrorImageFix(item) });
     itemFixes.add({ name : "Material cost", where : "owned", plan : item => this.materialCostFix(item) });
     Hooks.on("dnd5e.rollSavingThrow", (rolls, data) => this.nextSaveUsed(data?.subject ?? rolls?.[0]?.data?.actor ?? null));
     Hooks.on("dnd5e.preApplyDamage", (actor, amount) => this.blockHealing(actor, amount));
@@ -137,6 +145,16 @@ export class spells{
     rollModeFrom(this.BLUR, { against : { mode : "disadvantage", when : (attack, target) => !this.sensesReach(attack.actor, target, ["blindsight", "truesight"]),
       reason : () => module.i18n("spells.blurred") }, enabled : () => this.enabled(), id : this.BLUR });
     conditions.endsWhen(effect => this.enabled() && (idOf(originItem(effect)) === this.INVISIBILITY), { attacks : true, casts : true });
+    /* Mirror Image : a d6 per duplicate, any 3+ and a duplicate is hit instead (and destroyed) */
+    hitBecomesMiss(this.MIRROR_IMAGE, { enabled : () => this.enabled(),
+      unaffected : ({ attacker }) => !!attacker?.statuses?.has?.("blinded") || ["blindsight", "truesight"].some(s => Number(attacker?.system?.attributes?.senses?.ranges?.[s]) > 0),
+      formula : ({ effects }) => `${effects.length}d6`,
+      turns : ({ roll }) => roll.dice[0].results.some(r => r.result >= 3),
+      flavor : ({ turned, target, effects }) => module.format(`spells.mirrorImage.${turned ? "turned" : "stands"}`, { name : target.name, left : effects.length - (turned ? 1 : 0) }),
+      /* An effect the item carries (Plutonium's, transferred) is turned off, not deleted : the next cast needs it */
+      onTurned : ({ effects }) => { const e = effects.at(-1); return (e.parent instanceof Item) ? e.update({ disabled : true }) : e.delete(); } });
+    /* Cast again : three new duplicates, the ones left go (Roll Item puts the new ones on a moment later) */
+    Hooks.on("dnd5e.postUseActivity", activity => this.mirrorImageRecast(activity));
     /* Warding Bond : its caster takes the same damage as the bonded creature; ends at 0 HP, beyond 60 ft, or cast again */
     sharesDamage(effect => this.enabled() && (idOf(originItem(effect)) === this.WARDING_BOND), { fraction : 1, keep : true });
     conditions.endsWhen(effect => this.enabled() && (idOf(originItem(effect)) === this.WARDING_BOND), { sourceZeroHP : true, apart : 60, recast : true });
@@ -308,6 +326,21 @@ export class spells{
         img : CONFIG.statusEffects.find(e => e.id === "prone")?.img ?? "icons/svg/falling.svg", statuses : ["prone"], transfer : false }] },
       update : { [`system.activities.${save.id}.effects`] : [...(save.toObject?.().effects ?? []), { _id : this.GREASE_PRONE, onSave : false }] },
     };
+  }
+
+  /* ---------- Mirror Image : no roll on the cast (Plutonium's d6s read a flag nothing sets; hitBecomesMiss rolls them) ---------- */
+
+  static mirrorImageFix(item){
+    if(!this.enabled() || this.is2014(item) || (item?.type !== "spell") || (idOf(item) !== this.MIRROR_IMAGE)) return null;
+    const use = [...(item.system?.activities ?? [])].find(a => (a.type === "utility") && a.roll?.formula);
+    return use ? { update : { [`system.activities.${use.id}.roll.formula`] : "" } } : null;
+  }
+
+  static async mirrorImageRecast(activity){
+    if(!this.enabled() || (idOf(activity?.item) !== this.MIRROR_IMAGE) || !activity.actor?.isOwner) return;
+    const actor = activity.getUsageToken?.()?.actor ?? activity.actor;
+    const old = actor.effects.filter(e => (e.parent === actor) && (idOf(originItem(e)) === this.MIRROR_IMAGE)).map(e => e.id);
+    if(old.length) await actor.deleteEmbeddedDocuments("ActiveEffect", old).catch(() => {});
   }
 
   /* ---------- Material cost : "worth 10+ GP" in the text, no cost in the data ---------- */
