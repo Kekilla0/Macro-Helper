@@ -229,8 +229,8 @@ export class weapons{
 
     if(props.has("lod") && this.#used(actor, this.loadingKey(actor, item)) && !propertyIgnored(actor, item, "lod")) problems.push(module.format("rules.weapon.loading", { item : item.name }));
     /* Ammunition : loading a one-handed weapon (a Hand Crossbow, a Sling) takes the other hand, unless a rule skips it
-       (Crossbow Expert : ignoresProperty "amm") */
-    if(hands.manages(actor) && props.has("amm") && !props.has("two") && !thrown && !propertyIgnored(actor, item, "amm")){
+       (Crossbow Expert : ignoresProperty "amm"; Homebrew's Loading Without a Free Hand) */
+    if(hands.manages(actor) && !settings.value("homebrewLoadHand") && props.has("amm") && !props.has("two") && !thrown && !propertyIgnored(actor, item, "amm")){
       const busy = hands.heldItems(actor).filter(i => (i.id !== item.id) && hands.canHold(i));
       if(busy.length){
         const names = busy.map(i => i.name).join(", ");

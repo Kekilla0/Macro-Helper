@@ -1167,6 +1167,8 @@
   "ammunition.broke" : "{item} from {name} hits {target} and breaks ({roll}).",
   "settings.homebrewAmmoSearch.title" : "Shared Search",
   "settings.homebrewAmmoSearch.hint" : "Everything shot and thrown in the fight (NPCs' too) is one pool : when the combat ends, each kind found has a Take button for everyone.",
+  "settings.homebrewLoadHand.title" : "Loading Without a Free Hand",
+  "settings.homebrewLoadHand.hint" : "A one-handed Ammunition weapon (Hand Crossbow, Sling) loads with the other hand full.",
   "ammunition.title" : "Ammunition Recovery",
   "ammunition.ownHint" : "half of the ammunition each used can be found, and thrown weapons picked up (a minute's search).",
   "ammunition.ownRow" : "{name} : {used} {item} used, {value} to find",

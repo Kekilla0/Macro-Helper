@@ -147,6 +147,7 @@ export const GROUPS = {
       homebrewAmmoRecovery : { scope : "world", default : "rules", type : String,
         choices : { rules : "settings.homebrewAmmoRecovery.rules", oddRoll : "settings.homebrewAmmoRecovery.oddRoll", hits : "settings.homebrewAmmoRecovery.hits" } },
       homebrewAmmoSearch : { scope : "world", default : false, type : Boolean },
+      homebrewLoadHand : { scope : "world", default : false, type : Boolean },
       homebrewFlanking : { scope : "world", default : "off", type : String,
         choices : { off : "settings.homebrewFlanking.off", advantage : "settings.homebrewFlanking.advantage", bonus : "settings.homebrewFlanking.bonus" } },
     },
@@ -232,7 +233,7 @@ const VIRTUAL = {
 const AUTOMATION_OFF = {
   conditions : "off", masteryRules : false, handsEnabled : false, handsLight : "off", ammoRecovery : "off", spellMaterials : "off",
   initiativeMethod : "player", initiativeMessages : "individual", summonInitiative : "roll", clearAreas : false,
-  homebrewPush : false, homebrewInitiative : false, homebrewAmmoSearch : false, homebrewAmmoRecovery : "rules", homebrewFlanking : "off",
+  homebrewPush : false, homebrewInitiative : false, homebrewAmmoSearch : false, homebrewAmmoRecovery : "rules", homebrewLoadHand : false, homebrewFlanking : "off",
 };
 
 /* The old Roll Item switches, hidden : read once by the carry-over */
