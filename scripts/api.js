@@ -15,7 +15,7 @@ import { saveRowToggle, toggledOn } from './roll-item/row-toggles.js';
 import { willingSave, willingOn } from './automation/willing.js';
 import { changeSize } from './automation/size.js';
 import { lendItem, lends } from './automation/lend-item.js';
-import { zone } from './automation/zones.js';
+import { zone, zones } from './automation/zones.js';
 import { rerollButton, rerolled } from './roll-item/reroll-buttons.js';
 import { actionTracker } from './automation/action-tracker.js';
 import { actions } from './automation/actions.js';
@@ -80,8 +80,8 @@ export class api{
       willingSave, willingOn, changeSize,
       /* A use lent to a creature as an item of its own, with the lender's numbers (Dragon's Breath) */
       lendItem, lends,
-      /* An area that acts on whoever enters it or starts / ends a turn in it (Cloud of Daggers, Moonbeam) */
-      zone,
+      /* An area that acts on whoever enters it or starts / ends a turn in it (Cloud of Daggers, Moonbeam); moving one */
+      zone, moveZone : (thing, region) => zones.moveArea(thing?.actor ?? thing ?? canvas.tokens?.controlled?.[0]?.actor ?? game.user.character, region),
       /* More or fewer Actions, Bonus Actions, Reactions or attacks this turn (Action Surge) */
       actionTracker : { modify : (thing, kind, n, source) => actionTracker.modify(thing, kind, n, source) },
       onDamage : (fn, options) => onDamage(fn, options),

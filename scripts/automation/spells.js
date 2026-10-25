@@ -94,7 +94,7 @@ export class spells{
      there; Difficult Terrain; an effect while inside */
   static ZONES = {
     "cloud-of-daggers" : { enter : true, end : true, oncePerTurn : true },
-    "moonbeam" : { enter : true, end : true, oncePerTurn : true },
+    "moonbeam" : { enter : true, end : true, oncePerTurn : true, moves : 60 },
     "grease" : { enter : true, end : true },
     "spike-growth" : { move : true, terrain : true, cast : false },
     /* Not again while the webs already hold it */

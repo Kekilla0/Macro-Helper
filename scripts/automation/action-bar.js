@@ -3,6 +3,7 @@ import { esc } from '../helpers/utils.js';
 import { distanceBetween } from '../helpers/tokens.js';
 import { actionTracker } from './action-tracker.js';
 import { actionReady } from './action-ready.js';
+import { zones } from './zones.js';
 import { cardBuilder, grapplesOn, grappling, attachedTo } from '../roll-item/card-builder.js';
 
 /**
@@ -22,7 +23,7 @@ export class actionBar{
     if(game.system.id !== "dnd5e") return;
     const later = () => this.schedule();
     for(const hook of ["canvasReady", "controlToken", "updateCombat", "combatStart", "deleteCombat", "createCombatant", "deleteCombatant", "updateCombatant",
-      "moveToken", "updateUser", "renderHotbar"]) Hooks.on(hook, later);
+      "moveToken", "updateUser", "renderHotbar", "createRegion", "updateRegion", "deleteRegion"]) Hooks.on(hook, later);
     Hooks.on("updateActor", (actor, changes) => {
       if(foundry.utils.hasProperty(changes ?? {}, `flags.${module.id}.economy`) || foundry.utils.hasProperty(changes ?? {}, "system.attributes.movement")) later();
     });
@@ -92,6 +93,8 @@ export class actionBar{
     })) : [];
     /* Moving at random (Euphoria Breath) : its turn, its whole movement */
     const random = !dying && st.mine && may && token && actor.effects?.some?.(e => !e.disabled && e.getFlag(module.id, "rule")?.randomMove);
+    /* Its areas it can move (Moonbeam) : its turn */
+    const areas = (!dying && st.mine && free && may) ? zones.movable(actor) : [];
     /* In its shell (Tortle) : Emerge, its Bonus Action */
     const shell = !dying && st.mine && may && actor.effects?.some?.(e => !e.disabled && e.getFlag(module.id, "rule")?.shell);
     const buttons = dying ? [`<button type="button" class="death-save"><i class="fa-solid fa-skull" inert></i> ${esc(module.i18n("actionTracker.bar.deathSave"))}</button>`]
@@ -100,6 +103,7 @@ export class actionBar{
          ...holds.map(t => { const attached = attachedTo(token)?.document === (t.document ?? t);
            return `<button type="button" class="release" data-target="${(t.document ?? t).uuid}"${attached ? ` data-attached="1"` : ""}><i class="fa-solid fa-hand" inert></i> ${esc(module.format(attached ? "actionTracker.bar.detach" : "actionTracker.bar.release", { name : t.name }))}</button>`; }),
          shell ? `<button type="button" class="emerge"><i class="fa-solid fa-shield-halved" inert></i> ${esc(module.i18n("species.emergeButton"))}</button>` : "",
+         ...areas.map(a => `<button type="button" class="move-zone" data-region="${a.region.id}"${(a.moves.cost && (actionTracker.remaining(rec, a.moves.cost) <= 0)) ? " disabled" : ""}><i class="fa-solid fa-up-down-left-right" inert></i> ${esc(module.format("zones.moveButton", { zone : a.item.name }))}</button>`),
          random ? `<button type="button" class="random-move"><i class="fa-solid fa-shuffle" inert></i> ${esc(module.i18n("actionTracker.bar.randomMove"))}</button>` : "",
          ...engulfed.map(t => `<button type="button" class="pull-out" data-target="${t.id}"><i class="fa-solid fa-hand-holding-hand" inert></i> ${esc(module.format("actionTracker.bar.pullOut", { name : t.name }))}</button>`),
          ...sleepers.map(t => `<button type="button" class="wake" data-target="${t.id}"><i class="fa-solid fa-bell" inert></i> ${esc(module.format("actionTracker.bar.wake", { name : t.name }))}</button>`)].filter(Boolean);
@@ -128,6 +132,10 @@ export class actionBar{
       cardBuilder.pullOut(actor, token, canvas.tokens.get(event.currentTarget.dataset.target)); }));
     el.querySelector(".emerge")?.addEventListener("click", async event => { event.currentTarget.disabled = true;
       const { feats } = await import('./feats.js'); feats.emerge(actor); });
+    el.querySelectorAll(".move-zone").forEach(b => b.addEventListener("click", async event => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      if(!await zones.moveArea(actor, canvas.scene.regions.get(button.dataset.region))) button.disabled = false; }));
     el.querySelector(".random-move")?.addEventListener("click", event => { event.currentTarget.disabled = true; cardBuilder.randomMove(token); });
     el.querySelectorAll(".wake").forEach(b => b.addEventListener("click", event => { event.currentTarget.disabled = true;
       actionTracker.wake(actor, token, canvas.tokens.get(event.currentTarget.dataset.target)); }));

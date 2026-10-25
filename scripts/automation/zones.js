@@ -2,6 +2,9 @@ import { module } from '../module.js';
 import { logger } from '../log.js';
 import { uses } from '../uses.js';
 import { idOf } from '../helpers/utils.js';
+import { pickSpace } from '../helpers/targets.js';
+import { gm } from '../gm.js';
+import { actionTracker } from './action-tracker.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -10,7 +13,7 @@ const log = logger.for(import.meta.url);
  * activity is used at that one creature, as it was cast (the slot level, the DC), with nothing spent : its card is the
  * usual card (the save, the damage, Apply).
  *
- *   zone(match, { enter, start, end, move, per, firstOnTurn, oncePerTurn, terrain, effect, whileInside, filter, enabled })
+ *   zone(match, { enter, start, end, move, per, firstOnTurn, oncePerTurn, terrain, effect, whileInside, moves, filter, enabled })
  *     match         an item identifier, or item => boolean
  *     enter         a creature moving into the area (walking through it counts)
  *     start / end   a creature starting / ending its turn in it (combat)
@@ -27,6 +30,10 @@ const log = logger.for(import.meta.url);
  *     whileInside   what the item's uses put on a creature ends when it leaves the area (Web's Restrained)
  *     cast          false : using the item only makes the area, nothing happens to the creatures already in it then
  *                   (Web, Spike Growth : no card)
+ *     moves         its user can move the area : feet (Moonbeam : 60), or { feet, cost, later } : cost "action" (default),
+ *                   "bonus" or null (free); later (default true) : not on the turn it was made. A "Move <item>" button
+ *                   on the user's action bar (its turn), or MacroHelper.moveZone(); the area slides up to that far, and
+ *                   creatures it comes onto haven't entered it (they didn't move)
  *     filter        (token, item) => boolean : who it acts on (default : every creature)
  *
  * The item's lasting area (a dnd5e area left on the map : Concentration, a duration) gets a Region Behavior, "Zone"
@@ -40,10 +47,23 @@ let queue = Promise.resolve();
 const times = new Map();
 
 export function zone(match, { enter = null, start = null, end = null, move = null, per = 5, firstOnTurn = false, oncePerTurn = false,
-  terrain = false, effect = null, whileInside = false, cast = true, filter = null, enabled = null } = {}){
-  if(!match || !(enter || start || end || move || terrain || effect || whileInside)) return;
+  terrain = false, effect = null, whileInside = false, moves = null, cast = true, filter = null, enabled = null } = {}){
+  if(!match || !(enter || start || end || move || terrain || effect || whileInside || moves)) return;
+  if(moves && (typeof moves !== "object")) moves = { feet : Number(moves) };
+  moves = (Number(moves?.feet) > 0) ? { feet : Number(moves.feet), cost : (moves.cost === undefined) ? "action" : moves.cost, later : moves.later !== false } : null;
   rules.set(match, { match, enter, start, end, move, per : Number(per) || 5, firstOnTurn : !!firstOnTurn, oncePerTurn : !!oncePerTurn,
-    terrain : !!terrain, effect, whileInside : !!whileInside, cast : cast !== false, filter, enabled });
+    terrain : !!terrain, effect, whileInside : !!whileInside, moves, cast : cast !== false, filter, enabled });
+}
+
+/* A shape moved by (dx, dy) : its x / y, its points, an emanation's base */
+function shifted(shape, dx, dy){
+  const data = foundry.utils.deepClone(shape);
+  if(Number.isFinite(data.x)) data.x += dx;
+  if(Number.isFinite(data.y)) data.y += dy;
+  if(Array.isArray(data.points)) data.points = data.points.map((n, i) => n + ((i % 2) ? dy : dx));
+  if(data.origin && Number.isFinite(data.origin.x)) data.origin = { x : data.origin.x + dx, y : data.origin.y + dy };
+  if(data.base) data.base = shifted(data.base, dx, dy);
+  return data;
 }
 
 /* The item's rule (switched off : none; { any : true } : switched off too) */
@@ -80,6 +100,7 @@ export const zones = {
 
   register(){
     CONFIG.RegionBehavior.dataModels[this.TYPE] = ZoneBehavior;
+    gm.handle("moveZone", (data, user) => this.shiftAsGM(data, user));
     (CONFIG.RegionBehavior.typeIcons ??= {})[this.TYPE] = "fa-solid fa-burst";
     Hooks.on("createRegion", (region, options, userId) => this.onArea(region));
     /* Only the area made (cast : false) : Roll Item makes no card for the use itself */
@@ -102,6 +123,8 @@ export const zones = {
     const item = fromUuidSync(region.getFlag("dnd5e", "item") ?? "", { strict : false });
     const rule = zoneRuleOf(item);
     if(!rule) return;
+    /* The turn it was made : a move only on later ones */
+    if(rule.moves) await region.setFlag(module.id, "madeOn", this.turnKey() ?? "").catch(error => log.error(error));
     const activity = fromUuidSync(region.getFlag("dnd5e", "activity") ?? "", { strict : false });
     const own = new Set((activity?.applicableBehaviors ?? []).map(b => b.type));
     const level = Number(region.getFlag("dnd5e", "spellLevel")) || Number(activity?.item?.system?.level) || Number(item.system?.level) || 0;
@@ -188,6 +211,74 @@ export const zones = {
       if(results) await uses.cardOf(results).catch(() => null);
       return results;
     } finally { times.delete(activity.uuid); }
+  },
+
+  /* The areas the creature can move now (their rule's moves; not one stuck to a token; not on the turn it was made) :
+     [{ region, item, moves }] */
+  movable(actor){
+    if(!actor || !canvas.scene) return [];
+    const now = this.turnKey() ?? "";
+    return canvas.scene.regions.contents.map(region => {
+      const item = fromUuidSync(region.getFlag("dnd5e", "item") ?? "", { strict : false });
+      const moves = (item?.actor?.uuid === actor.uuid) ? zoneRuleOf(item)?.moves : null;
+      if(!moves || region.attachment?.token) return null;
+      if(moves.later && now && (region.getFlag(module.id, "madeOn") === now)) return null;
+      return { region, item, moves };
+    }).filter(Boolean);
+  },
+
+  /* Where the area is : its middle */
+  centreOf(region){
+    const bounds = region.object?.bounds;
+    if(bounds?.width) return { x : bounds.x + (bounds.width / 2), y : bounds.y + (bounds.height / 2) };
+    const shape = region.shapes?.[0]?.base ?? region.shapes?.[0];
+    return { x : Number(shape?.x) || 0, y : Number(shape?.y) || 0 };
+  },
+
+  /**
+   * Move an area its creature can move (its rule's moves) : a space up to that far from its middle, picked on the map;
+   * its cost spent (Action Tracker). No region given : the first one the creature can move.
+   * @returns {Promise<boolean>}  moved
+   */
+  async moveArea(actor, region = null){
+    const found = this.movable(actor).find(m => !region || (m.region === region) || (m.region.id === region?.id) || (m.region.uuid === region));
+    if(!found) return ui.notifications.warn(module.i18n("zones.noMove")) && false;
+    const { item, moves } = found;
+    const st = actionTracker.enabled() ? actionTracker.state(actor) : null;
+    if(st && moves.cost && (actionTracker.remaining(st.rec, moves.cost) <= 0))
+      return ui.notifications.warn(module.format("zones.noCost", { kind : actionTracker.label(moves.cost) })) && false;
+    /* Picked from the square its middle is in, as if it were a Medium creature there */
+    const size = canvas.grid.size;
+    const centre = this.centreOf(found.region);
+    const cell = { x : Math.floor(centre.x / size) * size, y : Math.floor(centre.y / size) * size };
+    const stand = { name : item.name, center : { x : cell.x + (size / 2), y : cell.y + (size / 2) },
+      document : { documentName : "Token", x : cell.x, y : cell.y, width : 1, height : 1, elevation : 0 } };
+    const space = await pickSpace(stand, { range : moves.feet, occupied : true, banner : module.format("zones.moveBanner", { zone : item.name, feet : moves.feet }) });
+    if(!space) return false;
+    const dx = space.x - cell.x, dy = space.y - cell.y;
+    if(!dx && !dy) return false;
+    if(st && moves.cost) await actionTracker.spend(actor, { kind : moves.cost, what : module.format("zones.moved", { zone : item.name }) });
+    const data = { region : found.region.uuid, dx, dy };
+    if(found.region.canUserModify(game.user, "update")) await this.shift(data);
+    else await gm.run("moveZone", data);
+    return true;
+  },
+
+  /* The area moved by (dx, dy) */
+  async shift({ region : uuid, dx = 0, dy = 0 } = {}){
+    const region = fromUuidSync(uuid ?? "", { strict : false });
+    if(!region || (!dx && !dy)) return false;
+    log.debug("Zone moved", region.name, dx, dy);
+    await region.update({ shapes : region.shapes.map(s => shifted(s.toObject?.() ?? s, dx, dy)) });
+    return true;
+  },
+
+  /* A player's move (the area is theirs, not a creature : moved at once) */
+  async shiftAsGM(data = {}, user){
+    const region = fromUuidSync(data.region ?? "", { strict : false });
+    const item = fromUuidSync(region?.getFlag("dnd5e", "item") ?? "", { strict : false });
+    if(!item?.actor?.testUserPermission(user, "OWNER") || !zoneRuleOf(item)?.moves) return false;
+    return this.shift(data);
   },
 
   /* One at a time : a use is made, card and all, before the next starts */
