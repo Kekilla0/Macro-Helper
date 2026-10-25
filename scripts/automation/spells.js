@@ -19,6 +19,7 @@ import { willingSave } from './willing.js';
 import { sharesDamage } from '../roll-item/card-builder.js';
 import { hitBecomesMiss } from '../roll-item/hit-becomes-miss.js';
 import { lends } from './lend-item.js';
+import { zone } from './zones.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -73,6 +74,9 @@ const log = logger.for(import.meta.url);
  *   Dragon's Breath : cast, the caster picks the damage type, and the creature touched gets a feature of its own : the
  *                     exhale (a Magic action), with the caster's save DC, the slot level's dice and that type only,
  *                     gone with the Concentration (the lend lego). The spell's own exhale is hidden.
+ *   Zones           : Cloud of Daggers, Moonbeam, Grease : a creature entering the area or ending its turn there gets
+ *                     the spell's damage / save card again (no slot); Cloud of Daggers and Moonbeam once a turn (the
+ *                     zone lego, automation/zones.js).
  *   Range           : Rule Limits on and no target pick (Pick Targets off, or Roll Item off) : a spell aimed at
  *                     creatures out of its range (Distant Spell's doubled range, Touch 30 ft) follows Rule Limits.
  */
@@ -86,6 +90,12 @@ export class spells{
   static WARDING_BOND = "warding-bond";
   static MIRROR_IMAGE = "mirror-image";
   static DRAGONS_BREATH = "dragons-breath";
+  /* Zones : the spell's own activity again at a creature entering the area or ending its turn there */
+  static ZONES = {
+    "cloud-of-daggers" : { enter : true, end : true, oncePerTurn : true },
+    "moonbeam" : { enter : true, end : true, oncePerTurn : true },
+    "grease" : { enter : true, end : true },
+  };
   /* The effects the fixes add (16-character ids, so a fix can tell it's done) */
   static EFFECT_IDS = { "blade-ward" : "mhBladeWardWard1", "ray-of-sickness" : "mhRaySicknessPsn" };
 
@@ -165,6 +175,8 @@ export class spells{
     conditions.endsWhen(effect => this.enabled() && (idOf(originItem(effect)) === this.WARDING_BOND), { sourceZeroHP : true, apart : 60, recast : true });
     /* Dragon's Breath : the creature touched gets its exhale (the caster's DC, the slot's dice, the type chosen) */
     lends(this.DRAGONS_BREATH, { enabled : () => this.enabled(), activity : item => item.system.activities?.find?.(a => a.type === "save") ?? null });
+    /* Areas that act on whoever enters them or ends a turn in them (the zone lego) */
+    for(const [id, rule] of Object.entries(this.ZONES)) zone(id, { ...rule, enabled : () => this.enabled() });
     /* Melf's Acid Arrow : half the attack's damage on a miss */
     onMiss({ id : "melfsAcidArrow", enabled : () => this.enabled(), when : miss => idOf(miss.item) === this.ACID_ARROW,
       formula : miss => String(Math.floor(miss.damage.reduce((sum, roll) => sum + (Number(roll.total) || 0), 0) / 2)),

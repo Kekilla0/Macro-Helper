@@ -39,6 +39,9 @@
     "ChatMessage": {
       "rollItem": {},
       "save": {}
+    },
+    "RegionBehavior": {
+      "zone": {}
     }
   },
   "packs": [

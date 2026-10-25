@@ -77,6 +77,7 @@ import { components } from './automation/components.js';
 import { spellEffects } from './automation/spell-effects.js';
 import { spellActions } from './automation/spell-actions.js';
 import { sizes } from './automation/size.js';
+import { zones } from './automation/zones.js';
 const log = logger.for(import.meta.url);
 
 Hooks.once("init", ()=> {
@@ -143,6 +144,7 @@ Hooks.once("init", ()=> {
   spellEffects.register();
   spellActions.register();
   sizes.register();
+  zones.register();
   weaponMastery.register();
   fightingStyles.register();
   compendiums.register();

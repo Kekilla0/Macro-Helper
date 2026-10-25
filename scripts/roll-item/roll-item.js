@@ -605,7 +605,8 @@ export class rollItem{
       case "damage" :
       case "utility" : {
         /* The card is made after dnd5e's use returns : its promise goes on the results, for helpers that wait on it */
-        const card = rollItem.chooseInArea(activity, area).then(chosen => rollItem.usageCard(activity, results.message, { area : chosen, useTargets : !!usage?.[module.id]?.useTargets }));
+        const card = rollItem.chooseInArea(activity, area ?? rollItem.targetsByUuid(usage)).then(chosen => rollItem.usageCard(activity, results.message, { area : chosen, useTargets : !!usage?.[module.id]?.useTargets,
+          note : usage?.[module.id]?.note ?? null, cardFlags : usage?.[module.id]?.cardFlags ?? null, noCast : !!usage?.[module.id]?.noCast }));
         if(results) results[module.id] = { card };
         return;
       }
@@ -625,6 +626,7 @@ export class rollItem{
     const note = usage?.[module.id]?.note ?? null;
     const cardFlags = usage?.[module.id]?.cardFlags ?? null;
     /* An area already chose the targets; a rule set them (a leap, a sustained spell : usage useTargets) */
+    area ??= this.targetsByUuid(usage);
     if(area) return this.rollActivity(activity, { event, scaling, note, cardFlags, targets : area.length ? area : undefined });
     if(usage?.[module.id]?.useTargets && game.user.targets.size) return this.rollActivity(activity, { event, scaling, note, cardFlags, targets : [...game.user.targets] });
     const picked = await this.pickAttackFor(activity, usage);
@@ -1014,6 +1016,14 @@ export class rollItem{
     this.announceTargets(activity, inside, { keepEmpty : true });
     log.debug("Area targets", activity.item?.name, inside.map(t => t.name));
     return inside;
+  }
+
+  /* Targets a rule named by uuid (a zone's creature : usage targetUuids), on any scene : tokens where shown, else
+     their documents */
+  static targetsByUuid(usage){
+    const list = usage?.[module.id]?.targetUuids;
+    if(!Array.isArray(list)) return null;
+    return list.map(uuid => fromUuidSync(uuid, { strict : false })).filter(t => t?.actor).map(t => t.object ?? t);
   }
 
   /* Who is inside an activity's placed areas : the caster too, except for their own cone, line or Self cube, or an
@@ -1585,8 +1595,10 @@ export class rollItem{
    * Save / heal : dnd5e already built its usage card data (buttons, targets, effects, scaling, roll mode) but did not create it.
    * Roll the damage (or healing) onto it, swap its "roll damage/healing" button for a reroll, and create it as our type.
    */
-  static async usageCard(activity, data, { area = null, useTargets = false } = {}){
+  static async usageCard(activity, data, { area = null, useTargets = false, note = null, cardFlags = null, noCast = false } = {}){
     if(!data?.system) return;
+    /* What rules record about the use (usage cardFlags), and a note for the card, as on an attack card */
+    if(note || cardFlags) data.flags = foundry.utils.mergeObject(data.flags ?? {}, { [module.id] : { ...(cardFlags ?? {}), ...(note ? { note } : {}) } });
     const isHeal = activity.type === "heal";
     const { TargetsField } = dnd5e.dataModels.chatMessage.fields;
 
@@ -1628,7 +1640,9 @@ export class rollItem{
     data.type = TYPES.save;
     data.rolls = [...(data.rolls ?? []), ...damage, ...formula];
     data.system.onSave = activity.damage?.onSave ?? null;
-    data.system.buttons = (data.system.buttons ?? []).filter(b => !["rollDamage", "rollHealing", "rollFormula"].includes(b.action));
+    /* A later part of a cast (usage noCast : a zone, a sustained spell) : its area is placed and it's paid already */
+    const dropped = ["rollDamage", "rollHealing", "rollFormula", ...(noCast ? ["placeTemplate", "consumeResource"] : [])];
+    data.system.buttons = (data.system.buttons ?? []).filter(b => !dropped.includes(b.action));
     if(formula.length) data.system.buttons.push({
       action : "rerollFormula",
       icon : "fa-solid fa-dice",
