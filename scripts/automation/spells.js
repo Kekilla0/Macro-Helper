@@ -90,11 +90,17 @@ export class spells{
   static WARDING_BOND = "warding-bond";
   static MIRROR_IMAGE = "mirror-image";
   static DRAGONS_BREATH = "dragons-breath";
-  /* Zones : the spell's own activity again at a creature entering the area or ending its turn there */
+  /* Zones : the spell's own activity again at a creature entering the area, moving in it, or starting / ending its turn
+     there; Difficult Terrain; an effect while inside */
   static ZONES = {
     "cloud-of-daggers" : { enter : true, end : true, oncePerTurn : true },
     "moonbeam" : { enter : true, end : true, oncePerTurn : true },
     "grease" : { enter : true, end : true },
+    "spike-growth" : { move : true, terrain : true, cast : false },
+    /* Not again while the webs already hold it */
+    "web" : { enter : true, start : true, firstOnTurn : true, terrain : true, whileInside : true, cast : false,
+      filter : (token, item) => !token.actor?.effects?.some?.(e => !e.disabled && String(e.origin ?? "").startsWith(item.uuid)) },
+    "silence" : { effect : true, cast : false },
   };
   /* The effects the fixes add (16-character ids, so a fix can tell it's done) */
   static EFFECT_IDS = { "blade-ward" : "mhBladeWardWard1", "ray-of-sickness" : "mhRaySicknessPsn" };
@@ -127,6 +133,8 @@ export class spells{
     itemFixes.add({ name : "Produce Flame", where : "owned", plan : item => this.produceFlameFix(item) });
     itemFixes.add({ name : "Jump", where : "owned", plan : item => this.jumpFix(item) });
     itemFixes.add({ name : "Grease", where : "owned", plan : item => this.greaseFix(item) });
+    itemFixes.add({ name : "Web", where : "owned", plan : item => this.webFix(item) });
+    itemFixes.add({ name : "Spike Growth", where : "owned", plan : item => this.spikeGrowthFix(item) });
     itemFixes.add({ name : "Mirror Image", where : "owned", plan : item => this.mirrorImageFix(item) });
     itemFixes.add({ name : "Material cost", where : "owned", plan : item => this.materialCostFix(item) });
     Hooks.on("dnd5e.rollSavingThrow", (rolls, data) => this.nextSaveUsed(data?.subject ?? rolls?.[0]?.data?.actor ?? null));
@@ -345,6 +353,37 @@ export class spells{
         img : CONFIG.statusEffects.find(e => e.id === "prone")?.img ?? "icons/svg/falling.svg", statuses : ["prone"], transfer : false }] },
       update : { [`system.activities.${save.id}.effects`] : [...(save.toObject?.().effects ?? []), { _id : this.GREASE_PRONE, onSave : false }] },
     };
+  }
+
+  /* ---------- Web : a failed save is Restrained (broken free of with Athletics); Plutonium's save also deals the
+     burning webs' Fire (left to the GM : which webs burn) ---------- */
+
+  static WEB_RESTRAINED = "mhWebRestrained1";
+
+  static webFix(item){
+    if(!this.enabled() || this.is2014(item) || (item?.type !== "spell") || (idOf(item) !== "web")) return null;
+    const save = [...(item.system?.activities ?? [])].find(a => a.type === "save");
+    if(!save || item.effects?.get?.(this.WEB_RESTRAINED)) return null;
+    const status = CONFIG.statusEffects.find(e => e.id === "restrained");
+    return {
+      create : { effects : [{ _id : this.WEB_RESTRAINED, name : `${game.i18n.localize(status?.name ?? "Restrained")}: ${item.name}`,
+        img : status?.img ?? "icons/svg/net.svg", statuses : ["restrained"], transfer : false,
+        flags : { [module.id] : { grapple : { free : true, skill : "ath" } } } }] },
+      update : {
+        [`system.activities.${save.id}.effects`] : [...(save.toObject?.().effects ?? []), { _id : this.WEB_RESTRAINED, onSave : false }],
+        [`system.activities.${save.id}.damage.parts`] : [],
+      },
+    };
+  }
+
+  /* ---------- Spike Growth : its 2d4 doesn't grow with the slot (Plutonium scales it) ---------- */
+
+  static spikeGrowthFix(item){
+    if(!this.enabled() || this.is2014(item) || (item?.type !== "spell") || (idOf(item) !== "spike-growth")) return null;
+    const damage = [...(item.system?.activities ?? [])].find(a => a.type === "damage");
+    const parts = damage?.toObject?.().damage?.parts ?? [];
+    if(!parts.some(p => p.scaling?.number)) return null;
+    return { update : { [`system.activities.${damage.id}.damage.parts`] : parts.map(p => ({ ...p, scaling : { mode : "", number : null } })) } };
   }
 
   /* ---------- Mirror Image : no roll on the cast (Plutonium's d6s read a flag nothing sets; hitBecomesMiss rolls them) ---------- */

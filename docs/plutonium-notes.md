@@ -82,6 +82,8 @@ whether the module covers it or you need to edit the item.
 | **Ensnaring Strike / Hail of Thorns** (spells) | Cast as standalone saves; 2024 they follow a weapon hit (like the smites). | A Strike button on the hit's card; their saves ride on that card. |
 | **Witch Bolt** (spell) | Its later turns' 1d12 is rolled with the first hit. | The 1d12 isn't rolled on the first card; casting again at the same creature rolls it (no slot). |
 | **Grease** (spell) | Its save has no effect : a failure can't apply Prone. | An item fix adds a Prone effect to the save (a failure applies it). |
+| **Web** (spell) | Its save deals the burning webs' 2d4 Fire (scaling with the slot) and has no Restrained effect. | An item fix drops the Fire (the GM's call: which webs burn) and adds "Restrained: Web" (a failure applies it; Break free with Athletics). |
+| **Spike Growth** (spell) | Its 2d4 grows by 1d4 a slot level (the spell doesn't scale). | An item fix takes the scaling off. |
 | **Produce Flame** (cantrip) | Hurl Fire has the spell's Self range (0 ft), so a hurl is out of range. | An item fix gives Hurl Fire its 60 ft. |
 | **Jump** (spell) | Its effect changes nothing. | An item fix sets the creature's jump speed to 30 ft. |
 | **Create or Destroy Water** (spell) | Its gallons are a roll formula (a "10" on the card). | Not rolled; Fill / Rain asked instead. |

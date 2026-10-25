@@ -611,7 +611,7 @@ export async function grapple(grappler, target, { escape = null, ...options } = 
 
 /* The grapples on a creature : [{ effect, dc, by (the grappler : token or actor), byName }] */
 export function grapplesOn(actor){
-  return (actor?.effects?.contents ?? [...(actor?.effects ?? [])]).filter(e => !e.disabled && (e.statuses?.has?.("grappled") || e.getFlag(module.id, "grapple")?.attach)).map(effect => {
+  return (actor?.effects?.contents ?? [...(actor?.effects ?? [])]).filter(e => !e.disabled && (e.statuses?.has?.("grappled") || e.getFlag(module.id, "grapple")?.attach || e.getFlag(module.id, "grapple")?.free)).map(effect => {
     const f = effect.getFlag(module.id, "grapple") ?? {};
     let origin = null;
     try { origin = effect.origin ? fromUuidSync(effect.origin, { strict : false }) : null; } catch { origin = null; }
@@ -621,7 +621,7 @@ export function grapplesOn(actor){
     const save = [...(item?.system?.activities ?? [])].find(a => a.type === "save");
     const text = String(item?.system?.description?.value ?? "");
     const dc = Number(f.escape) || Number(save?.save?.dc?.value) || Number(text.match(/escape\s+DC\s+(\d+)/i)?.[1]) || escapeDC(grappler);
-    return { effect, dc, by, byName : by?.name ?? grappler?.name ?? "?", skill : f.skill ?? null, attach : !!f.attach };
+    return { effect, dc, by, byName : by?.name ?? grappler?.name ?? "?", skill : f.skill ?? null, attach : !!f.attach, free : !!f.free };
   });
 }
 
@@ -631,7 +631,7 @@ export function grappling(thing){
   const actor = thing?.actor ?? ((thing?.documentName === "Actor") ? thing : null);
   const scene = doc?.parent ?? canvas.scene;
   const mine = by => !!by && ((doc && (by.uuid === doc.uuid)) || (actor && ((by.uuid === actor.uuid) || (by.actor?.uuid === actor.uuid) || (by.id === actor.id))));
-  return (scene?.tokens?.contents ?? []).filter(t => t.actor && (t !== doc) && grapplesOn(t.actor).some(g => mine(g.by))).map(t => t.object ?? t);
+  return (scene?.tokens?.contents ?? []).filter(t => t.actor && (t !== doc) && grapplesOn(t.actor).some(g => !g.free && mine(g.by))).map(t => t.object ?? t);
 }
 
 /**
@@ -1254,7 +1254,7 @@ export class cardBuilder{
     const grappler = fromUuidSync(by ?? "", { strict : false });
     const owner = grappler?.actor ?? grappler;
     if(!token?.actor || !(user.isGM || (owner?.testUserPermission?.(user, "OWNER") && gm.mine(token, user)))) return false;
-    const mine = g => g.by && ((g.by.uuid === grappler?.uuid) || (g.by.actor?.uuid === owner?.uuid) || (g.by.uuid === owner?.uuid));
+    const mine = g => !g.free && g.by && ((g.by.uuid === grappler?.uuid) || (g.by.actor?.uuid === owner?.uuid) || (g.by.uuid === owner?.uuid));
     const ids = grapplesOn(token.actor).filter(mine).map(g => g.effect.id);
     if(ids.length) await token.actor.deleteEmbeddedDocuments("ActiveEffect", ids, { [module.id] : { reason : module.format("cardBuilder.released", { name : grappler?.name ?? "" }) } });
     return true;
@@ -1361,7 +1361,10 @@ export class cardBuilder{
     }
     if(existing.length) await actor.deleteEmbeddedDocuments("ActiveEffect", existing.map(e => e.id),
       { [module.id] : { reason : module.format("cardBuilder.replaced", { name }) } }).catch(() => null);
-    const grapple = (part.type === "grappled") ? { grapple : { by : sourceToken?.uuid ?? by?.uuid ?? null, escape : Number(part.escape) || null } } : {};
+    /* A grapple : its grappler and escape DC; another condition with an escape DC (a web's Restrained) : broken free of
+       (its Action, `check` : Athletics by default) */
+    const grapple = (part.type === "grappled") ? { grapple : { by : sourceToken?.uuid ?? by?.uuid ?? null, escape : Number(part.escape) || null } }
+      : part.escape ? { grapple : { escape : Number(part.escape) || null, skill : part.check ?? "ath", free : true } } : {};
     const [made] = await actor.createEmbeddedDocuments("ActiveEffect", [{ name, img : status?.img ?? "icons/svg/aura.svg",
       statuses : [part.type, ...(part.with ?? [])], origin, duration,
       flags : { [module.id] : { cardCondition : true, ...(repeat ? { repeat } : {}), ...grapple,
