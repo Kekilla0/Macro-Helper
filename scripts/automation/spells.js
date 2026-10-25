@@ -15,6 +15,7 @@ import { isClassSpell } from '../helpers/items.js';
 import { originItem } from '../helpers/utils.js';
 import { rollModeFrom } from './roll-modes.js';
 import { onMiss } from '../roll-item/miss-damage.js';
+import { willingSave } from './willing.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -67,6 +68,7 @@ export class spells{
   static BLUR = "blur";
   static INVISIBILITY = "invisibility";
   static ACID_ARROW = "melfs-acid-arrow";
+  static ENLARGE_REDUCE = "enlarge-reduce";
   /* The effects the fixes add (16-character ids, so a fix can tell it's done) */
   static EFFECT_IDS = { "blade-ward" : "mhBladeWardWard1", "ray-of-sickness" : "mhRaySicknessPsn" };
 
@@ -102,6 +104,9 @@ export class spells{
     Hooks.on("dnd5e.rollSavingThrow", (rolls, data) => this.nextSaveUsed(data?.subject ?? rolls?.[0]?.data?.actor ?? null));
     Hooks.on("dnd5e.preApplyDamage", (actor, amount) => this.blockHealing(actor, amount));
     itemFixes.add({ name : "Giant Insect", where : "owned", plan : item => this.giantInsectFix(item) });
+    itemFixes.add({ name : "Enlarge/Reduce", where : "owned", plan : item => this.enlargeReduceFix(item) });
+    /* Enlarge/Reduce : only an unwilling target saves (the GM says which) */
+    willingSave({ id : this.ENLARGE_REDUCE, enabled : () => this.enabled(), applies : activity => idOf(activity?.item) === this.ENLARGE_REDUCE });
     /* Blade Ward's die is the attacker's : Roll Item doesn't roll it on a card */
     Hooks.on(`${module.id}.preRollItem`, activity => !(this.enabled() && (idOf(activity?.item) === this.BLADE_WARD)));
     Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.onCast(activity, results));
@@ -404,6 +409,29 @@ export class spells{
     const summon = [...(item.system?.activities ?? [])].find(a => a.type === "summon");
     if(!summon || summon.match?.saves) return null;
     return { update : { [`system.activities.${summon.id}.match.saves`] : true } };
+  }
+
+  /* ---------- Enlarge/Reduce : a size larger or smaller, Strength checks and saves with advantage / disadvantage ---------- */
+
+  static enlargeReduceFix(item){
+    if(!this.enabled() || this.is2014(item) || (item?.type !== "spell") || (idOf(item) !== this.ENLARGE_REDUCE)) return null;
+    const MODES = ["system.abilities.str.check.roll.mode", "system.abilities.str.save.roll.mode"];
+    const updateEffects = [];
+    for(const effect of item.effects ?? []){
+      if(effect.transfer || effect.getFlag(module.id, "rule")?.size) continue;
+      const changes = [...(effect.system?.changes ?? effect.changes ?? [])].map(c => ({ ...c }));
+      /* Reduced : its damage is less (Plutonium's "- 1d4"), else by its name */
+      const smaller = changes.some(c => /^\s*-/.test(String(c.value)) && /damage$/.test(c.key)) || /reduc/i.test(effect.name);
+      const mode = smaller ? -1 : 1;
+      for(const key of MODES){
+        const change = changes.find(c => c.key === key);
+        if(change) change.value = mode;
+        else changes.push({ key, type : "add", value : mode });
+      }
+      updateEffects.push({ _id : effect.id, ...((effect.system?.changes !== undefined) ? { "system.changes" : changes } : { changes }),
+        [`flags.${module.id}.rule`] : { ...(effect.getFlag(module.id, "rule") ?? {}), size : mode } });
+    }
+    return updateEffects.length ? { updateEffects } : null;
   }
 
   /* ---------- Rituals ---------- */

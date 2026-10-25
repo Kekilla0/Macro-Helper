@@ -41,6 +41,11 @@ export const TYPES = {
  * @param {HTMLElement} target  the button
  * @returns {Activity|null}
  */
+/* Does the card's activity have its targets save ? Not a save card a rule took the save off (all its targets willing) */
+function hasSaves(message, activity){
+  return (activity?.type === "save") && !message?.getFlag?.(module.id, "noSave");
+}
+
 function rerollStart(card, target){
   const activity = card.parent.getAssociatedActivity({ scaled : true });
   if(!activity || !rerolls.mayReroll(card.parent.getAssociatedActor?.()?.name, activity.item?.name ?? card.parent.flavor)) return null;
@@ -485,7 +490,7 @@ export function registerMessages(){
     const uuid = button.dataset.target;
     const descriptor = targets.find(t => t.token === uuid) ?? { token : uuid };
     const { actor } = TargetsField.resolve(descriptor);
-    const hasSave = activity?.type === "save";
+    const hasSave = hasSaves(message, activity);
     const result = saveResultsOf(message).get(uuid);
     if(!actor || (hasSave && (!game.user.isGM || !result)) || (!hasSave && !(game.user.isGM || actor.isOwner))) return;
     const due = dueEffects(message, effectsOf(activity), { hasSave, result }).filter(e => !immuneTo(actor, e));
@@ -1885,7 +1890,7 @@ export function registerMessages(){
 
     targetRows(){
       const activity = this.parent.getAssociatedActivity({ scaled : true });
-      const hasSave = activity?.type === "save";
+      const hasSave = hasSaves(this.parent, activity);
       return buildRows(this.parent, {
         targets : this.targets,
         hasSave,
@@ -1903,7 +1908,7 @@ export function registerMessages(){
     /* The abilities this card's saves use (automatic failures) */
     get saveAbilities(){
       const activity = this.parent.getAssociatedActivity();
-      return (activity?.type === "save") ? [...(activity.save?.ability ?? [])] : [];
+      return hasSaves(this.parent, activity) ? [...(activity.save?.ability ?? [])] : [];
     }
 
     /* Save outcomes for dnd5e's trays (and Shove's buttons) : read fresh, automatic failures fail */
@@ -1914,7 +1919,7 @@ export function registerMessages(){
     async _prepareContext(options){
       const context = await super._prepareContext(options);
       if(context.content) return context;
-      context.cover = coverContext(this.parent, this.parent.getAssociatedActivity()?.type === "save" ? this.targets : []);
+      context.cover = coverContext(this.parent, hasSaves(this.parent, this.parent.getAssociatedActivity()) ? this.targets : []);
       context.note = this.parent.getFlag(module.id, "note") ?? null;
       /* A title a rule gave the card (Command : Halt) */
       const title = this.parent.getFlag(module.id, "title");

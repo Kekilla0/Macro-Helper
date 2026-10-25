@@ -79,9 +79,11 @@ export class uses{
       "heatMetal",     // Spell actions : Heat Metal : the creature and its metal object; Reheat : whoever holds or wears it now
       "subclassUse",   // Subclasses : a feature that picks or divides first (Preserve Life, Invoke Duplicity's space)
       "pactWeapon",    // Warlock : Forge Pact Weapon : bond a weapon or conjure one
+      "willingPick",   // Willing : a save only an unwilling target makes (Enlarge/Reduce) : its pick offers anyone
       "pickTargets",   // Roll Item : pick targets on the map (Pick Targets)
       "spellRange",    // Spells : no pick, Rule Limits on : targets out of the spell's range follow Rule Limits
       "weaponRange",   // Weapons : no pick, Rule Limits on : targets beyond the weapon's reach / range follow Rule Limits
+      "willing",       // Willing : the GM says which targets are willing (all : no save card), once they're settled
       "economyApproval", // Action Tracker : a player's Action / Bonus Action off its turn : the GM approves (its targets picked)
     ],
   };

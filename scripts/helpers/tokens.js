@@ -314,14 +314,17 @@ export function isSpaceFree(x, y, size = 1, { height, ignore } = {}){
  * @param {Token|TokenDocument|Actor} thing
  * @param {number} width   in squares
  * @param {number} height  in squares
+ * @param {object} [options]
+ * @param {{ width : number, height : number }} [options.from]  the space it covers now, when its token already shows
+ *                                                              the new size (dnd5e's token size sync)
  * @returns {{ x : number, y : number }|null}  the new top-left corner, null if it can't fit here
  */
-export function fitSpace(thing, width, height = width){
+export function fitSpace(thing, width, height = width, { from = null } = {}){
   const token = tokenOf(thing);
   if(!token) return null;
   const grid = canvas.grid.size;
   const { x, y } = token.document;
-  const w0 = Math.max(1, Math.round(token.document.width)), h0 = Math.max(1, Math.round(token.document.height));
+  const w0 = Math.max(1, Math.round(from?.width ?? token.document.width)), h0 = Math.max(1, Math.round(from?.height ?? token.document.height));
   const W = Math.max(1, Math.round(width)), H = Math.max(1, Math.round(height));
   if((W <= w0) && (H <= h0)) return { x, y };
   const offsets = [];

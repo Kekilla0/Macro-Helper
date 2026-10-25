@@ -66,6 +66,7 @@ export class spellEffects{
   static CHOICES = {
     "guidance" : { prompt : "spellEffects.choice.skill" },
     "resistance" : { prompt : "spellEffects.choice.damageType", rule : effect => ({ reduceDamage : { type : spellEffects.damageTypeOf(effect), dice : "1d4", oncePerTurn : true } }) },
+    "enlarge-reduce" : { prompt : "spellEffects.choice.enlargeReduce" },
   };
 
   static enabled(){

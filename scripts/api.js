@@ -12,6 +12,8 @@ import { sustain } from './automation/spell-actions.js';
 import { castingChoice, castingChoiceOf } from './automation/casting-choice.js';
 import { extendDurations } from './automation/durations.js';
 import { saveRowToggle, toggledOn } from './roll-item/row-toggles.js';
+import { willingSave, willingOn } from './automation/willing.js';
+import { changeSize } from './automation/size.js';
 import { rerollButton, rerolled } from './roll-item/reroll-buttons.js';
 import { actionTracker } from './automation/action-tracker.js';
 import { actions } from './automation/actions.js';
@@ -70,6 +72,8 @@ export class api{
       /* A choice made as a spell is cast, paid once it's cast (Metamagic); longer durations (Extended Spell); toggles on
          a save card's rows (Careful, Heightened); a reroll button on a card after the roll (Empowered, Seeking) */
       castingChoice, castingChoiceOf, extendDurations, saveRowToggle, toggledOn, rerollButton, rerolled,
+      /* A save only an unwilling target makes, the GM saying who's willing (Enlarge/Reduce); a size larger or smaller */
+      willingSave, willingOn, changeSize,
       /* More or fewer Actions, Bonus Actions, Reactions or attacks this turn (Action Surge) */
       actionTracker : { modify : (thing, kind, n, source) => actionTracker.modify(thing, kind, n, source) },
       onDamage : (fn, options) => onDamage(fn, options),

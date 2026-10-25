@@ -1183,8 +1183,9 @@ export class rollItem{
     if(multiplier > 1) range = (activity.range?.units === "touch") ? 30 : (range * multiplier);
     if(!(range > 0)) return null;
 
-    const disposition = ["ally", "willing"].includes(type) ? "ally"
-      : ((type === "enemy") || ["save", "damage"].includes(activity.type)) ? "nonAlly" : "any";
+    /* A rule can widen it (usage pickWho : a willing-or-not target, Enlarge/Reduce) */
+    const disposition = usage?.[module.id]?.pickWho ?? (["ally", "willing"].includes(type) ? "ally"
+      : ((type === "enemy") || ["save", "damage"].includes(activity.type)) ? "nonAlly" : "any");
     /* More creatures a rule allows : usage extraTargets (Twinned Spell); Hooks "macro-helper.targetCount" (activity,
        usage, { count }) adds to it (a spell's upcast targets) */
     const counted = { count : this.targetCount(activity, target) + (Number(usage?.[module.id]?.extraTargets) || 0) };
