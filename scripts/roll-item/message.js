@@ -340,7 +340,7 @@ export function registerMessages(){
         const ray = roll.options?.[module.id]?.ray;
         const aimed = (Number.isInteger(ray) && rays[ray]?.target) ? (rays[ray].target === uuid) : (targets.length === 1);
         if(!aimed) return roll;
-        const copy = roll.constructor.fromData(roll.toJSON());
+        const copy = roll.constructor.fromData(foundry.utils.deepClone(roll.toJSON()));
         if(Number.isFinite(ac)) copy.options.target = ac;
         else delete copy.options.target;
         changed = true;
@@ -673,7 +673,7 @@ export function registerMessages(){
     entries.sort((a, b) => a.value - b.value);
     const chosen = entries.slice(0, Math.max(0, n));
     if(!chosen.length) return 0;
-    const updated = rolls.map(r => r.constructor.fromData(r.toJSON()));
+    const updated = rolls.map(r => r.constructor.fromData(foundry.utils.deepClone(r.toJSON())));
     const shown = [];
     for(const e of chosen){
       const again = await new Roll(`1d${e.faces}`).evaluate();
@@ -691,6 +691,33 @@ export function registerMessages(){
   /* A flag key for one attack : its index on a multi card, "single" otherwise */
   const rayKey = ray => Number.isInteger(ray) ? String(ray) : "single";
   const tag = (rolls, data) => { for(const roll of rolls) roll.options[module.id] = { ...tagOf(roll), ...data }; return rolls; };
+
+  /* A critical hit's damage made normal again (Restore Balance) : each die keeps the old rolls' results (the same
+     faces, in order), the critical's extra dice dropped. Rolls paired one to one when both have as many, else pooled.
+     false : some die had no old result left (it keeps its new one) */
+  const keepResults = (from, to) => {
+    const poolOf = rolls => {
+      const pool = new Map();
+      for(const roll of rolls) for(const die of roll.dice ?? []){
+        if(!pool.has(die.faces)) pool.set(die.faces, []);
+        pool.get(die.faces).push(...die.results.filter(r => r.active).map(r => r.result));
+      }
+      return pool;
+    };
+    const paired = from.length === to.length;
+    const shared = paired ? null : poolOf(from);
+    let all = true;
+    to.forEach((roll, i) => {
+      const pool = shared ?? poolOf([from[i]]);
+      for(const die of roll.dice ?? []){
+        const left = pool.get(die.faces) ?? [];
+        if(left.length < die.number){ all = false; continue; }
+        die.results = left.splice(0, die.number).map(result => ({ result, active : true }));
+      }
+      roll._total = roll._evaluateTotal();
+    });
+    return all;
+  };
 
   /**
    * The ActiveEffects an activity applies, for dnd5e's <effect-application> tray (which wants full uuids).
@@ -792,6 +819,14 @@ export function registerMessages(){
       button.disabled = true;
       const label = button.querySelector("span");
       if(label) label.textContent = module.i18n("rollItem.apply.applied");
+    }
+
+    /* A ray's box lists only that ray's creature (dnd5e's lists every creature on the card) */
+    buildTargetListEntry(targetList, entry){
+      const ray = ("ray" in this.dataset) ? Number(this.dataset.ray) : null;
+      const target = (Number.isInteger(ray) && (targetList.targetingMode === "targeted")) ? this.#message?.system?.rayTarget?.(ray) : null;
+      if(target && (target.token !== entry.uuid)) return;
+      return super.buildTargetListEntry(targetList, entry);
     }
 
     getMergedOptions(uuid){
@@ -1093,7 +1128,7 @@ export function registerMessages(){
       if(!rolls.length) return;
       const all = this.parent.rolls.map(r => {
         if(!rolls.includes(r)) return r;
-        const copy = r.constructor.fromData(r.toJSON());
+        const copy = r.constructor.fromData(foundry.utils.deepClone(r.toJSON()));
         copy.options.type = type;
         if(copy.options.types) copy.options.types = [type];
         return copy;
@@ -1182,7 +1217,7 @@ export function registerMessages(){
     async forceD20(ray, value){
       const old = this.attackOf(ray);
       if(!old) return null;
-      const updated = Roll.fromData(old.toJSON());
+      const updated = Roll.fromData(foundry.utils.deepClone(old.toJSON()));
       const d20 = updated.dice?.[0];
       if(!d20) return null;
       d20.results = d20.results.map(r => ({ ...r, result : value }));
@@ -1199,9 +1234,11 @@ export function registerMessages(){
         const base = Number.isInteger(ray) ? this.rayDamage(ray) : this.damageRolls;
         const damage = activity ? await rollItem.rollDamage(activity, updated) : [];
         if(damage.length){
+          /* No longer a critical hit : the same dice, without the extra ones */
+          const kept = old.isCritical && keepResults(base, damage);
           tag(damage, Number.isInteger(ray) ? { ray, part : "base" } : { part : "base" });
           rolls = [...rolls.filter(r => !base.includes(r)), ...damage];
-          shown.push(...damage);
+          if(!kept) shown.push(...damage);
         }
       }
       /* Extra boxes rolled from a formula (Hunter's Mark, a smite) : again, doubled or not */
@@ -1212,7 +1249,7 @@ export function registerMessages(){
           if(!formula) continue;
           const again = await new DamageRoll(formula, {}, { ...roll.options, isCritical : updated.isCritical, configured : false }).evaluate();
           rolls = rolls.map(r => (r === roll) ? again : r);
-          shown.push(again);
+          if(!(old.isCritical && keepResults([roll], [again]))) shown.push(again);
         }
       }
       await replaceRolls(this.parent, { rolls, shown });
@@ -1257,7 +1294,7 @@ export function registerMessages(){
     async turnToMiss(ray, uuid){
       const old = this.attackOf(ray);
       if(!game.user.isGM || !old || !uuid || rollItem.missedOn(old, uuid)) return false;
-      const updated = old.constructor.fromData(old.toJSON());
+      const updated = old.constructor.fromData(foundry.utils.deepClone(old.toJSON()));
       const own = updated.options[module.id] ?? {};
       updated.options[module.id] = { ...own, forcedHit : false, forcedMiss : [...(own.forcedMiss ?? []), uuid] };
       await replaceRolls(this.parent, { rolls : this.parent.rolls.map(r => (r === old) ? updated : r), shown : [] });
@@ -1637,7 +1674,7 @@ export function registerMessages(){
       const old = this.attackOf(ray);
       if(!old) return;
       target.disabled = true;
-      const updated = old.constructor.fromData(old.toJSON());
+      const updated = old.constructor.fromData(foundry.utils.deepClone(old.toJSON()));
       updated.options[module.id] = { ...(updated.options[module.id] ?? {}), forcedHit : true, forcedMiss : [] };
       await replaceRolls(this.parent, { rolls : this.parent.rolls.map(r => (r === old) ? updated : r), shown : [] });
     }
@@ -1887,7 +1924,7 @@ export function registerMessages(){
       if(!rolls.length) return;
       const all = this.parent.rolls.map(r => {
         if(!rolls.includes(r)) return r;
-        const copy = r.constructor.fromData(r.toJSON());
+        const copy = r.constructor.fromData(foundry.utils.deepClone(r.toJSON()));
         copy.options.type = type;
         if(copy.options.types) copy.options.types = [type];
         return copy;

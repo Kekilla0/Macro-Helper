@@ -93,6 +93,9 @@ whether the module covers it or you need to edit the item.
 | **Gore / Claw / Repulsion Breath** (Boar, Brown Bear, Bronze Dragon Wyrmling) | Their Prone lands on any hit or failed save, whatever the size or charge; no push. | Card macros take it off and add Prone with the stat block's conditions (and the push). |
 | **Paralyzing Tentacles** (Carrion Crawler) | Range Self (the text: one creature within 10 feet), so Pick Targets finds no one; its effect is Poisoned only, with no save. | Fix the item (range 10 ft). Card macro: Poisoned with Paralyzed, CON 12 save at the end of its turns, 1 minute. |
 | **Bugbear Warrior's Grab / Light Hammer** | Grab's 10 ft reach is stored as its range (no reach field); Light Hammer's reach is 5 ft (the text: reach 10 ft). | Fix the items (reach 10 ft). |
+| **Bugbear Stalker's Javelin / Morningstar** | Reach 5 ft (the text: reach 10 ft). | Fix the items (reach 10 ft). |
+| **Quick Grapple** (Bugbear Stalker) | Range Self (the text: within 10 feet) and a save with no ability (the text: DEX); its effect is a plain Grappled with no grappler or escape DC. | Fix the item (range 10 ft, DEX save). Card macro: the grapple lego's Grappled (escape DC 13) on a failure. |
+| **Goblin Warrior / Goblin Boss Scimitar and Shortbow** | The "+1d4 if the attack roll had Advantage" is a second Damage activity, rolled by hand. | Card macro: the attack activity only, and `extraDamage("1d4")` when `card.hadAdvantage`. |
 | **Petrifying Bite** (Cockatrice) | One effect with Restrained and Petrified together. | Card macro: Restrained on a failed save, repeat save at the end of its turn, a second failure makes it Petrified for 24 hours. |
 | **Crush** (Darkmantle) | Its Blinded lands on any hit. | Card macro: attach on a hit; covered (Blinded) only on a Medium or smaller target hit with Advantage. |
 | **Cultist's Sickle** | A plain gear Sickle (Nick mastery) next to the stat block's Ritual Sickle; the Cultist has no masteries. | Nothing: it's never used as the Cultist's attack. |
@@ -128,6 +131,7 @@ whether the module covers it or you need to edit the item.
 | **Slasher** (feat) | A "Slashed" effect (-10 ft walking, 1 turn) to apply by hand. | Not used: the row button gives -10 ft to every Speed the creature has, until the start of the attacker's next turn. |
 | **Skulker** (feat) | Its Fog of War effect gives Stealth advantage always; no Blindsight. | Switched off when it lands: the Hide action's Stealth check has advantage in combat; its tokens get Blindsight 10 ft. |
 | **Medium Armor Master** (feat) | Its effect adds 1 to `system.attributes.bonus` (no such field). | Switched off when it lands: in Medium armor with DEX 16 or more, AC adds up to +3 DEX. |
+| **Dual Wielder** (feat) | A Bonus Action utility activity, *Use*, that does nothing. | Hidden when it lands: after an attack with a Light weapon on the Attack action, the extra attack is offered on the card. |
 | **Mage Slayer, Ritual Caster** (feats) | Guard Mind and Fast Ritual Cast: utility activities spending the feat's use, by hand. | Hidden when they land: a failed INT / WIS / CHA save gets a Guarded Mind button; Quick Ritual is a choice when a prepared Ritual is cast. |
 | **Ritual Caster** (feat) | No Ritual spells come with it. | Rest Choices (and the sheet's header button) fill PB level 1 Ritual spells from the compendiums, always prepared, with the ability chosen for the feat. |
 | **Weapon Master** (feat) | Text only. | One more weapon mastery in Weapon Mastery's Rest Choices. |

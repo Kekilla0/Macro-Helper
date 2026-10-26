@@ -16,7 +16,7 @@ const log = logger.for(import.meta.url);
  */
 export async function addDie(roll, formula, { subtract = false } = {}){
   const extra = await new Roll(String(formula)).evaluate();
-  const updated = roll.constructor.fromData(roll.toJSON());
+  const updated = roll.constructor.fromData(foundry.utils.deepClone(roll.toJSON()));
   const { RollTerm } = foundry.dice.terms;
   updated.terms.push(RollTerm.fromData({ class : "OperatorTerm", operator : subtract ? "-" : "+", evaluated : true }));
   for(const term of extra.terms) updated.terms.push(RollTerm.fromData(term.toJSON()));
@@ -41,7 +41,7 @@ export async function extraD20(roll, keep){
   const mode = Number(roll.options?.advantageMode ?? 0);
   if(mode === want) return { status : "same", updated : null, extra : null };
 
-  const updated = roll.constructor.fromData(roll.toJSON());
+  const updated = roll.constructor.fromData(foundry.utils.deepClone(roll.toJSON()));
   const d20 = updated.dice[0];
   let extra = null;
   if(mode === -want){
@@ -52,7 +52,9 @@ export async function extraD20(roll, keep){
   }
   else {
     extra = await new Roll("1d20").evaluate();
-    d20.number = (d20.number ?? 1) + 1;
+    /* Made straight before (advantage and disadvantage cancelled) : the d20 it kept and the new one */
+    d20.results = d20.results.filter(r => r.active);
+    d20.number = d20.results.length + 1;
     d20.modifiers = [...(d20.modifiers ?? []).filter(m => !/^(k[hl]|adv|dis)/i.test(m)), keep];
     d20.results.push({ result : extra.total, active : true });
     const active = d20.results.filter(r => r.active);
@@ -202,7 +204,7 @@ export class rerolls{
   static async force(message, value){
     const [roll] = message.rolls;
     if(!roll || !game.user.isGM) return;
-    const updated = Roll.fromData(roll.toJSON());
+    const updated = Roll.fromData(foundry.utils.deepClone(roll.toJSON()));
     const d20 = updated.dice?.[0];
     if(!d20) return;
     d20.results = d20.results.map(r => ({ ...r, result : value }));

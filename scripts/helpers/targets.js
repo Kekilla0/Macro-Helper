@@ -314,11 +314,13 @@ export function setTargets(tokens){
  * @param {Token|TokenDocument} [options.from]     range measured from this token's space instead (actFrom : Invoke
  *                                                   Duplicity's illusion); sight stays the origin's own, and `from` itself
  *                                                   is never a candidate
+ * @param {Token[]} [options.picked]                candidates picked already as it opens (click one to unpick it)
+ * @param {*} [options.cancelled=[]]                what Esc gives back (null : tell a cancel from no picks)
  * @returns {Promise<Token[]>}  the picks, empty if cancelled or nothing in range
  */
 export async function pickTargets(origin, { count = 1, range, disposition = "enemy", numberAllowed = Infinity, within = Infinity,
   confirm = "auto", setTargets : target = true, useTargets = true, repeat = false, long = false, thrown = false, normalRange, notice = "", filter : only, includeSelf = false,
-  sight = true, tokenColor, tokenWhy, from : place = null } = {}){
+  sight = true, tokenColor, tokenWhy, from : place = null, picked = [], cancelled = [] } = {}){
   const from = tokenOf(origin);
   if(!from) return warn(module.i18n("helpers.pick.noToken"));
   /* Where it's measured from : the origin's token, or the space it acts from (given, or its use's : actFrom) */
@@ -349,7 +351,9 @@ export async function pickTargets(origin, { count = 1, range, disposition = "ene
     else return Array.from({ length : count }, (_, i) => targeted[Math.floor(i * targeted.length / count)]);
   }
 
-  const picks = await pickOnMap(at, feet, candidates, { count, numberAllowed, within, confirm, repeat, normalRange, notice, includeSelf, tokenColor, tokenWhy });
+  const picks = await pickOnMap(at, feet, candidates, { count, numberAllowed, within, confirm, repeat, normalRange, notice, includeSelf, tokenColor, tokenWhy,
+    picked : picked.filter(t => candidates.includes(t)) });
+  if(picks === null) return cancelled;
   if(target && picks.length) setTargets(picks);
   return picks;
 }
@@ -360,12 +364,16 @@ function warn(message){
 }
 
 /* The clicking itself : overlay, banner, click + key listeners, all removed at the end */
-function pickOnMap(from, feet, candidates, { count, numberAllowed, within, confirm, repeat = false, normalRange, notice = "", includeSelf = false, tokenColor, tokenWhy }){
+function pickOnMap(from, feet, candidates, { count, numberAllowed, within, confirm, repeat = false, normalRange, notice = "", includeSelf = false, tokenColor, tokenWhy, picked = [] }){
   const allowed = picks => Math.min(count, typeof numberAllowed === "function" ? numberAllowed(picks) : numberAllowed);
   const highlight = highlightRange(from, feet, { tokens : candidates, normal : normalRange, showSelf : includeSelf, tokenColor });
   const hasLong = Number.isFinite(normalRange) && (normalRange < feet);
   const view = canvas.app.view;
-  const picks = [];
+  const picks = [...picked];
+  if(picks.length){
+    highlight.select(picks);
+    canvas.tokens.setTargets(picks.map(t => t.id));
+  }
 
   const banner = document.createElement("div");
   banner.className = `${module.id}-pick-banner`;
@@ -460,7 +468,7 @@ function pickOnMap(from, feet, candidates, { count, numberAllowed, within, confi
       else if(event.key === "Escape"){
         event.preventDefault(); event.stopPropagation();
         canvas.tokens.setTargets([]);
-        finish([]);
+        finish(null);
       }
     };
 

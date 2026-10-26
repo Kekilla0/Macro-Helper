@@ -5,7 +5,7 @@ import { logger } from '../log.js';
 import { patch } from '../patch.js';
 import { spellEffects } from './spell-effects.js';
 import { tokenOf, distanceBetween, canSee } from '../helpers/tokens.js';
-import { clearLastDamage, isKilledOutright } from '../helpers/actors.js';
+import { clearLastDamage, isKilledOutright, setStatus } from '../helpers/actors.js';
 import { giveMode, noteReason, conditionName, logReasons } from '../roll-item/reasons.js';
 import { idOf, originItem } from '../helpers/utils.js';
 const log = logger.for(import.meta.url);
@@ -67,6 +67,9 @@ export class conditions{
     Hooks.on("dnd5e.preApplyDamage", (actor, amount, updates, options) => this.onPreApplyDamage(actor, amount, updates, options));
     Hooks.on("dnd5e.preRollSavingThrowV2", (config, dialog, message) => this.onPreRollSave(config, message));
     Hooks.on("dnd5e.preRollDeathSaveV2", config => this.onPreRollDeathSave(config));
+    /* A third success : Stable (dnd5e only resets the counts) */
+    Hooks.on("dnd5e.rollDeathSaveV2", (rolls, details) => { if(details?.outcome === "stable") this.#stable.add(details.subject?.uuid); });
+    Hooks.on("dnd5e.postRollDeathSave", (rolls, { subject } = {}) => this.onDeathSaved(subject));
     Hooks.on("updateActor", (actor, changes) => this.onHPChange(actor, changes));
     /* A rest is well past any reaction to a hit : forget it */
     Hooks.on("dnd5e.restCompleted", actor => clearLastDamage(actor));
@@ -494,6 +497,15 @@ export class conditions{
     if(!actor?.statuses?.has("stable")) return;
     ui.notifications.info(module.format("actions.stabilize.noSave", { name : actor.name }));
     return false;
+  }
+
+  static #stable = new Set();
+
+  /* Three death save successes : the creature is Stable */
+  static async onDeathSaved(actor){
+    if(!this.#stable.delete(actor?.uuid) || !actor.isOwner || actor.statuses?.has("stable")) return;
+    if(Number(actor.system?.attributes?.hp?.value) > 0) return;
+    await setStatus(actor, "stable", true);
   }
 
   /* Stable ends when it regains HP or takes damage */

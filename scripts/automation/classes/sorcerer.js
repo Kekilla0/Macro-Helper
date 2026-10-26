@@ -18,6 +18,7 @@ import { rerollButton } from '../../roll-item/reroll-buttons.js';
 import { extendDurations } from '../durations.js';
 import { cantUseWhile } from '../use-rules.js';
 import { pickFromCompendium } from '../compendiums.js';
+import { spells } from '../spells.js';
 import { chooseOne } from '../../helpers/creatures.js';
 const log = logger.for(import.meta.url);
 
@@ -172,7 +173,8 @@ export class sorcerer{
       case "extended-spell" : return !["inst", ""].includes(duration.units ?? "") && (Number(duration.value) > 0 || duration.units === "perm");
       case "quickened-spell" : return (activity?.activation?.type ?? "action") === "action";
       case "transmuted-spell" : return [...this.damageTypes(item)].some(t => this.TRANSMUTABLE.includes(t));
-      case "twinned-spell" : return (Number(item?.system?.level) > 0) && !activity?.target?.template?.type && !item?.system?.target?.template?.type;
+      /* 2024 : a spell a higher slot lets target an additional creature; its effective level goes up by 1 */
+      case "twinned-spell" : return !!spells.upcastRule(item);
       default : return true;
     }
   }
@@ -182,7 +184,7 @@ export class sorcerer{
     switch(id){
       case "distant-spell" : return { rangeMultiplier : 2 };
       case "quickened-spell" : return { economy : "bonus" };
-      case "twinned-spell" : return { extraTargets : 1 };
+      case "twinned-spell" : return { extraTargets : spells.upcastRule(activity?.item)?.per ?? 1 };
       case "subtle-spell" : {
         /* 2024 : no Verbal, Somatic or Material components, but a Material one that's consumed or has a cost */
         const m = activity?.item?.system?.materials ?? {};

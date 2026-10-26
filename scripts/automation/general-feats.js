@@ -593,7 +593,7 @@ export class generalFeats{
 
   /* Plutonium's by-hand activities for what the cards do (GWM's +PB, Charge Attack, Shield Bash, Parry, Guard Mind, Fast
      Ritual Cast) : hidden, so they aren't used twice */
-  static RIDER_ACTIVITIES = ["great-weapon-master", "charger", "shield-master", "defensive-duelist", "polearm-master", "mage-slayer", "ritual-caster"];
+  static RIDER_ACTIVITIES = ["great-weapon-master", "charger", "shield-master", "defensive-duelist", "polearm-master", "mage-slayer", "ritual-caster", "dual-wielder"];
   static riderActivitiesFix(item){
     if(!this.enabled() || !this.RIDER_ACTIVITIES.includes(idOf(item))) return null;
     const shown = [...(item.system.activities ?? [])].filter(a => a.visibility?.level?.max !== 0);

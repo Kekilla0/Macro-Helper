@@ -219,7 +219,7 @@ export class spellActions{
     uses.onActivity("spellCommand", (activity, ctx, next) => this.commandStep(activity, ctx, next));
     Hooks.on("createChatMessage", message => this.commandOutcome(message));
     Hooks.on("updateChatMessage", message => this.commandOutcome(message));
-    Hooks.on("combatTurnChange", combat => this.commandTurn(combat));
+    Hooks.on(`${module.id}.turnStart`, combat => this.commandTurn(combat));
     /* Areas */
     Hooks.on("dnd5e.preCreateMeasuredTemplate", (activity, config) => this.areaColor(activity, config));
     Hooks.on("createRegion", region => { this.obscureArea(region); this.alarmStart(region); });

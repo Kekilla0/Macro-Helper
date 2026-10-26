@@ -745,15 +745,18 @@ export class spells{
 
   /* "You can target one additional creature for each spell slot level above 1" : how many more at the level cast */
   static upcastTargets(activity, usage = {}){
-    const item = activity?.item;
-    if((item?.type !== "spell") || !(Number(item.system.level) > 0)) return 0;
-    const level = Number(activity.actor?.system?.spells?.[usage?.spell?.slot]?.level) || 0;
-    if(!level) return 0;
+    const rule = this.upcastRule(activity?.item);
+    const level = Number(activity?.actor?.system?.spells?.[usage?.spell?.slot]?.level) || 0;
+    if(!rule || !level) return 0;
+    return Math.max(0, level - rule.above) * rule.per;
+  }
+  /* Does a higher slot let the spell target more creatures ? { per, above } (per slot level above `above`), or null */
+  static upcastRule(item){
+    if((item?.type !== "spell") || !(Number(item.system.level) > 0)) return null;
     const text = plainText(item.system.description?.value);
     const m = /\b(one|two|three|\d+) additional (?:[a-z]+ )?(?:creatures?|targets?|beasts?|humanoids?|undead|allies|ally)\b[^.]*?\bfor each (?:spell )?slot level above (\d+)/i.exec(text);
-    if(!m) return 0;
-    const per = { one : 1, two : 2, three : 3 }[m[1].toLowerCase()] ?? Number(m[1]);
-    return Math.max(0, level - Number(m[2])) * (per || 1);
+    if(!m) return null;
+    return { per : ({ one : 1, two : 2, three : 3 }[m[1].toLowerCase()] ?? Number(m[1])) || 1, above : Number(m[2]) };
   }
 
   /* How many creatures it may target at the level cast (its count, upcasting, Twinned Spell); null : no count */

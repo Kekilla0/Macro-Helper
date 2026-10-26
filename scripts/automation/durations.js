@@ -3,6 +3,7 @@ import { logger } from '../log.js';
 import { actorOf } from '../helpers/tokens.js';
 import { rollModes, giveRollMode } from './roll-modes.js';
 import { uses } from '../uses.js';
+import { gm } from '../gm.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -24,7 +25,7 @@ const log = logger.for(import.meta.url);
 export class durations{
   static register(){
     if(game.system.id !== "dnd5e") return;
-    Hooks.on("preCreateActiveEffect", (effect, data, options, userId) => { if(userId === game.user.id) this.onEffect(effect); });
+    Hooks.on("preCreateActiveEffect", (effect, data, options, userId) => { if(userId === game.user.id){ this.onEffect(effect); this.untilOwnTurn(effect); } });
     /* Used again : the last use's longer durations are over */
     Hooks.on("dnd5e.preUseActivity", activity => {
       const item = activity?.item, actor = item?.actor;
@@ -83,6 +84,23 @@ export class durations{
     if(mark.concentration && !fromUuidSync(mark.concentration, { strict : false })) return;
     if(!(Number(effect.duration?.value) > 0)) return;
     effect.updateSource({ "duration.value" : this.scaled(effect.duration, mark.multiplier ?? 2, mark.max ?? 86400), [`flags.${module.id}.extended`] : { mode : null } });
+  }
+
+  /* "Until the start (end) of your next turn", on yourself, made on someone else's turn (Shield as a Reaction) : core
+     counts the round from the turn it was made in, so it would last to that creature's turn a round later. It ends at
+     the start (end) of its own creature's next turn instead (gm.js timed effects) */
+  static untilOwnTurn(effect){
+    const actor = effect.parent;
+    const { expiry, value, units } = effect.duration ?? {};
+    if((actor?.documentName !== "Actor") || !["turnStart", "turnEnd"].includes(expiry) || effect.getFlag?.(module.id, "expires")) return;
+    const seconds = (Number(value) || 0) * ({ seconds : 1, rounds : 6, turns : 6 }[units] ?? Infinity);
+    if(!(seconds > 0) || (seconds > 6)) return;
+    const origin = effect.origin ? fromUuidSync(effect.origin, { strict : false }) : null;
+    const source = (origin?.documentName === "Actor") ? origin : (origin?.actor ?? origin?.item?.actor ?? null);
+    const combat = game.combat;
+    if((source !== actor) || !combat?.started || !combat.combatant || (combat.combatant.actor === actor)) return;
+    const expires = gm.stamp(actor, expiry);
+    if(expires) effect.updateSource({ [`flags.${module.id}.expires`] : expires });
   }
 
   /* Concentration saves while concentrating on an extended item with a mode */

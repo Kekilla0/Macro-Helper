@@ -115,7 +115,7 @@ export class actionReady{
     /* Triggers : the active GM's client watches */
     Hooks.on("createChatMessage", message => this.onCard(message));
     Hooks.on("moveToken", (token, movement, options) => this.onMove(token, movement, options));
-    Hooks.on("updateCombat", (combat, changes) => this.onTurn(combat, changes));
+    Hooks.on(`${module.id}.turnStart`, combat => this.onTurn(combat));
     /* Stands up : its Prone ends (an archer waiting until it's up, not at disadvantage) */
     Hooks.on("deleteActiveEffect", effect => this.onProneEnds(effect));
     /* Opportunity Attacks : the mover's client, before the move */
@@ -349,8 +349,8 @@ export class actionReady{
     if(token) this.check("stands", token);
   }
 
-  static onTurn(combat, changes){
-    if(!this.enabled() || !game.users.activeGM?.isSelf || !(("turn" in (changes ?? {})) || ("round" in (changes ?? {})))) return;
+  static onTurn(combat){
+    if(!this.enabled() || !game.users.activeGM?.isSelf) return;
     const token = combat.combatant?.token;
     if(token) this.check("turn", token);
     /* Its turn : a readied spell not released is lost */

@@ -49,6 +49,7 @@ export class uses{
       "shellToggle",   // Species : a Tortle's Shell Defense used while in its shell : it emerges instead (a Bonus Action)
       "castingBusy",   // Casting : a long cast under way : using anything else asks, then fails the cast
       "cunningAction", // Rogue : Cunning Action's Dash / Disengage / Hide uses that Default Action, as a Bonus Action
+      "nimbleEscape",  // Creature trait : Nimble Escape's Disengage or Hide, as a Bonus Action
       "noReactions",   // Spell effects : a Reaction while an effect forbids them (Arms of Hadar) : Rule Limits
       "offScene",      // Roll Item : no token on the scene being viewed : no targets (it can't see them)
       "itemMacro",     // Item Macro : a macro on the activity

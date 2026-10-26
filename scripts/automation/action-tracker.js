@@ -87,7 +87,8 @@ export class actionTracker{
       if(this.enabled() && foundry.utils.hasProperty(changes ?? {}, `flags.${module.id}.economy`)) ui.combat?.render();
     });
     Hooks.on("updateCombatant", () => { if(this.enabled()) ui.combat?.render(); });
-    Hooks.on("updateCombat", (combat, changes) => this.skipTurn(combat, changes));
+    /* Once a turn, when whose turn it is is settled (Initiative Each Round rerolls a new round first) */
+    Hooks.on(`${module.id}.turnStart`, (combat, combatant) => this.skipTurn(combat, combatant));
     Hooks.on("createChatMessage", (message, options, userId) => this.fromMessage(message, userId));
     Hooks.on("createActiveEffect", (effect, options, userId) => this.fromEffect(effect, userId));
     Hooks.on("preMoveToken", (token, movement) => this.preMove(token, movement));
@@ -129,12 +130,13 @@ export class actionTracker{
     return actor.statuses?.has?.("stable") || ((Number(death.failure) || 0) >= 3);
   }
 
-  static async skipTurn(combat, changes){
-    if(!this.enabled() || !game.users.activeGM?.isSelf || !combat?.started || !(("turn" in (changes ?? {})) || ("round" in (changes ?? {})))) return;
-    if(!this.cantAct(combat.combatant?.actor)) return;
+  static async skipTurn(combat, combatant){
+    if(!this.enabled() || !game.users.activeGM?.isSelf || !combat?.started || !combatant || (combat.combatant !== combatant)) return;
+    if(!this.cantAct(combatant.actor)) return;
     if(combat.combatants.every(c => this.cantAct(c.actor))) return;
     await new Promise(resolve => setTimeout(resolve, 300));
-    await combatLog.add(combat.combatant.actor, module.i18n("actionTracker.log.skipped"));
+    if(combat.combatant !== combatant) return;
+    await combatLog.add(combatant.actor, module.i18n("actionTracker.log.skipped"));
     await combat.nextTurn();
   }
 

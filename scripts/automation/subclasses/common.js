@@ -116,7 +116,7 @@ export class subclasses{
    * @returns {Roll}
    */
   static setD20(roll, value){
-    const updated = roll.constructor.fromData(roll.toJSON());
+    const updated = roll.constructor.fromData(foundry.utils.deepClone(roll.toJSON()));
     const d20 = updated.dice?.[0];
     if(!d20 || (d20.faces !== 20)) return null;
     if(value === null){

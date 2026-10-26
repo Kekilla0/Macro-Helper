@@ -141,6 +141,18 @@ export class initiative{
     if(updates.length) await combat.updateEmbeddedDocuments("Combatant", updates);
   }
 
+  /* Shared Initiative : every summon at its summoner's initiative, before the new order's first turn is set */
+  static async syncFollowers(combat){
+    const updates = [];
+    for(const c of combat.combatants){
+      const leader = combat.combatants.get(this.leaderOf(c) ?? "");
+      if(!leader) continue;
+      const initiative = (leader.initiative === null) ? null : (leader.initiative - this.SHARED_GAP);
+      if(c.initiative !== initiative) updates.push({ _id : c.id, initiative });
+    }
+    if(updates.length) await combat.updateEmbeddedDocuments("Combatant", updates);
+  }
+
   /* Shared Initiative : the summoner's initiative changes (rolled, rerolled, swapped), its summons follow (active GM) */
   static async followLeader(combatant, changes){
     if(!game.users.activeGM?.isSelf || !("initiative" in (changes ?? {}))) return;
@@ -156,6 +168,7 @@ export class initiative{
   static async roll(combat, ids, why){
     log.debug("Rolling initiative", why, ids.length);
     await combat.rollInitiative(ids, { updateTurn : false });
+    await this.syncFollowers(combat);
     await combat.update({ turn : 0 });
     if(why === "begin") await gm.expireStart(combat);
   }

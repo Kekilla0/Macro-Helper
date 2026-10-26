@@ -36,7 +36,9 @@ export class homebrew{
     if(!game.users.activeGM?.isSelf || !settings.value("homebrewInitiative")) return;
     const round = Number(changes.round) || 0;
     if((round <= 1) || (Number(options.direction ?? 1) <= 0)) return;
-    await initiative.roll(combat, combat.combatants.map(c => c.id), "round");
+    /* Summons sharing their summoner's initiative follow its new roll instead */
+    await initiative.linkSummons(combat);
+    await initiative.roll(combat, combat.combatants.filter(c => !initiative.leaderOf(c)).map(c => c.id), "round");
     /* Now the first turn of the round is known : its "until the start of your next turn" effects end */
     await gm.expireStart(combat);
   }

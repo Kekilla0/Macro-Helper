@@ -36,6 +36,7 @@ export class casting{
     /* ---------- One spell slot a turn ---------- */
     uses.onActivity("slotPerTurn", (activity, ctx, next) => this.slotStep(activity, ctx, next));
     Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.onCast(activity, usage, results));
+    Hooks.on(`${module.id}.useCancelled`, activity => this.onCancelled(activity));
     /* ---------- Long casts ---------- */
     uses.onItem("castingBusy", (item, ctx, next) => this.busyStep(item?.actor, ctx, next));
     uses.onActivity("castingBusy", (activity, ctx, next) => this.busyStep(activity?.actor, ctx, next));
@@ -62,6 +63,12 @@ export class casting{
     if(!this.enabled() || !this.spendsSlot(activity, ctx.config) || !usedThisTurn(activity.actor, "spellSlot")) return next();
     if(!limits.allow(module.format("casting.oneSlot", { name : activity.actor.name, spell : activity.item.name }), { who : activity.actor.name, what : activity.item.name })) return;
     return next();
+  }
+
+  /* A cast cancelled before its card (cancelUse) : its slot is back, so is the turn's one */
+  static async onCancelled(activity){
+    const actor = activity?.actor;
+    if(this.enabled() && actor?.isOwner && this.spendsSlot(activity) && usedThisTurn(actor, "spellSlot")) await actor.unsetFlag(module.id, "turn.spellSlot");
   }
 
   static async onCast(activity, usage, results){

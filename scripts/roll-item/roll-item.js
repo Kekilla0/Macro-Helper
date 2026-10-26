@@ -620,7 +620,7 @@ export class rollItem{
     switch(usage[module.id]?.mode){
       case "attack" : {
         /* The pick and card come after dnd5e's use returns : the promise goes on the results (Flurry of Blows waits) */
-        const card = rollItem.chooseInArea(activity, area).then(chosen => rollItem.attackAfterUse(activity, usage, chosen));
+        const card = rollItem.chooseInArea(activity, area).then(chosen => (chosen === false) ? rollItem.cancelUse(activity) : rollItem.attackAfterUse(activity, usage, chosen));
         if(results) results[module.id] = { card };
         return;
       }
@@ -629,7 +629,7 @@ export class rollItem{
       case "damage" :
       case "utility" : {
         /* The card is made after dnd5e's use returns : its promise goes on the results, for helpers that wait on it */
-        const card = rollItem.chooseInArea(activity, area ?? rollItem.targetsByUuid(usage)).then(chosen => rollItem.usageCard(activity, results.message, { area : chosen, useTargets : !!usage?.[module.id]?.useTargets,
+        const card = rollItem.chooseInArea(activity, area ?? rollItem.targetsByUuid(usage)).then(chosen => (chosen === false) ? rollItem.cancelUse(activity) : rollItem.usageCard(activity, results.message, { area : chosen, useTargets : !!usage?.[module.id]?.useTargets,
           note : usage?.[module.id]?.note ?? null, cardFlags : usage?.[module.id]?.cardFlags ?? null, noCast : !!usage?.[module.id]?.noCast }));
         if(results) results[module.id] = { card };
         return;
@@ -703,9 +703,10 @@ export class rollItem{
       const regions = await dnd5e.canvas.TemplatePlacement.fromActivity(activity) ?? [];
       if(!regions.length) return null;
       const inside = await this.chooseInArea(activity, this.areaTokens(activity, regions));
-      this.announceTargets(activity, inside, { keepEmpty : true });
       const duration = activity.duration ?? {};
-      if((duration.units === "inst") && !duration.concentration) await canvas.scene.deleteEmbeddedDocuments("Region", regions.map(r => r.id).filter(id => canvas.scene.regions.has(id)));
+      if((inside === false) || ((duration.units === "inst") && !duration.concentration)) await canvas.scene.deleteEmbeddedDocuments("Region", regions.map(r => r.id).filter(id => canvas.scene.regions.has(id)));
+      if(inside === false) return null;
+      this.announceTargets(activity, inside, { keepEmpty : true });
       return { targets : inside };
     }
     if(activity.type === "attack") return this.pickAttackFor(activity, usage);
@@ -791,6 +792,13 @@ export class rollItem{
       for(const scene of new Set(placed.map(t => t.parent))){
         await scene.deleteEmbeddedDocuments("Region", placed.filter(t => t.parent === scene).map(t => t.id));
       }
+      /* and the Concentration it began */
+      const item = activity.item;
+      const concentration = (activity.actor?.effects ?? []).filter(e => e.statuses?.has?.(CONFIG.specialStatusEffects.CONCENTRATING)
+        && [item?.uuid, item?.id].includes(e.getFlag("dnd5e", "item")?.uuid ?? e.getFlag("dnd5e", "item")?.id));
+      if(concentration.length) await activity.actor.deleteEmbeddedDocuments("ActiveEffect", concentration.map(e => e.id));
+      /* Hook : the rules that counted the use take it back (one spell slot a turn) */
+      Hooks.callAll(`${module.id}.useCancelled`, activity, last.results);
       ui.notifications.info(module.format("rollItem.cancelled", { name : activity.item?.name ?? "" }));
     } catch(error){
       log.error("Cancelling the use", error);
@@ -1084,11 +1092,12 @@ export class rollItem{
   }
 
   /**
-   * "Each creature of your choice" in an area (Word of Radiance), or the data's affects count with choice : the caster picks which of those inside, on the map
-   * (the area stays shown; any number, Enter to confirm). Anything else : everyone inside, as placed.
+   * "Each creature of your choice" in an area (Word of Radiance, Sleep), or the data's affects count with choice : the caster picks which of those inside, on the map
+   * (the area stays shown). Of your choice : everyone inside starts picked, a click leaves one out, Enter confirms. A count : click
+   * that many. Esc : the use is cancelled (cancelUse). Anything else : everyone inside, as placed.
    * @param {Activity} activity
    * @param {Token[]|null} inside   targetArea's tokens
-   * @returns {Promise<Token[]|null>}
+   * @returns {Promise<Token[]|null|false>}  false : cancelled
    */
   static async chooseInArea(activity, inside){
     if(!inside?.length) return inside;
@@ -1098,11 +1107,16 @@ export class rollItem{
     const limit = (affects.choice && (Number(affects.count) > 0)) ? Math.min(Number(affects.count), inside.length) : null;
     if(!(limit && (limit < inside.length)) && !/\b(?:creatures?|targets?|allies|enemies) of your choice\b/i.test(text)) return inside;
     const count = limit ?? inside.length;
-    const picks = await pickTargets(activity.item, { count, range : Infinity, disposition : "any", includeSelf : false, useTargets : false,
-      sight : false, confirm : "auto", filter : t => inside.includes(t), notice : limit ? module.format("rollItem.areaChoiceCount", { n : count }) : module.format("rollItem.areaChoice", { n : inside.length }) });
-    this.announceTargets(activity, picks ?? [], { keepEmpty : true });
-    log.debug("Area choice", activity.item?.name, (picks ?? []).map(t => t.name));
-    return picks ?? [];
+    const picks = await pickTargets(activity.item, { count, range : Infinity, disposition : "any", includeSelf : true, useTargets : false,
+      sight : false, confirm : limit ? "auto" : "enter", filter : t => inside.includes(t), picked : limit ? [] : inside.filter(t => t !== tokenOf(activity.item)), cancelled : null,
+      notice : limit ? module.format("rollItem.areaChoiceCount", { n : count }) : module.format("rollItem.areaChoice", { n : inside.length }) });
+    if(picks === null){
+      log.debug("Area choice cancelled", activity.item?.name);
+      return false;
+    }
+    this.announceTargets(activity, picks, { keepEmpty : true });
+    log.debug("Area choice", activity.item?.name, picks.map(t => t.name));
+    return picks;
   }
 
   /**

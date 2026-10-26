@@ -10,6 +10,11 @@ import { TYPES } from '../roll-item/message.js';
 import { rollModes } from './roll-modes.js';
 import { actionTracker } from './action-tracker.js';
 import { patch } from '../patch.js';
+import { uses } from '../uses.js';
+import { chooseOption } from '../helpers/utils.js';
+import { actions } from './actions.js';
+import { compendiums } from './compendiums.js';
+import { dragsFreely } from './movement.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -22,6 +27,9 @@ const log = logger.for(import.meta.url);
  *                  through objects and walls, and the damage for ending inside one, stay with the GM.
  *   Parry        : a melee attack roll hits it while it holds a weapon : a Parry button on the attack card (its owner,
  *                  the GM) : its Reaction, +2 AC against that attack (the hit judged again).
+ *   Abduct       : dragging a creature it grapples costs no extra movement (dragsFreely).
+ *   Nimble Escape : using it takes the Disengage or Hide action (asked), as its Bonus Action; a creature without that
+ *                  Default Action's item gets a copy from Macro Helper's Actions compendium first.
  * Flyby is with the Opportunity Attacks (action-ready.js).
  */
 export class creatureTraits{
@@ -34,11 +42,18 @@ export class creatureTraits{
 
   /* By identifier, or by name : case and anything in parentheses ignored ("Relentless Endurance (1/Day)") */
   static has(actor, name){
+    return !!this.itemOf(actor, name);
+  }
+
+  static isTrait(item, name){
     const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
     const plain = n => String(n ?? "").replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
-    const wanted = plain(name);
     /* A Battle Master's maneuver of the same name (Parry) isn't the creature trait */
-    return !!actor?.items?.some?.(i => (i.system?.type?.subtype !== "maneuver") && ((idOf(i) === slug) || (plain(i.name) === wanted)));
+    return !!item && (item.system?.type?.subtype !== "maneuver") && ((idOf(item) === slug) || (plain(item.name) === plain(name)));
+  }
+
+  static itemOf(actor, name){
+    return actor?.items?.find?.(i => this.isTrait(i, name)) ?? null;
   }
 
   static register(){
@@ -53,6 +68,33 @@ export class creatureTraits{
     Hooks.on(`${module.id}.cardButtons`, (message, buttons, context) => this.parryButtons(message, buttons, context));
     Hooks.on(`${module.id}.cardButton`, (message, id) => { if(String(id).startsWith("traitParry|")) this.parry(message, String(id).slice(11)); });
     gm.handle("traitParry", (data, user) => this.parryAsGM(data, user));
+    dragsFreely(actor => this.enabled() ? this.itemOf(actor, "Abduct") : null, { id : "abduct" });
+    uses.onActivity("nimbleEscape", (activity, ctx, next) => this.nimbleEscape(activity, ctx, next));
+  }
+
+  /* ---------- Nimble Escape ---------- */
+
+  static async nimbleEscape(activity, ctx, next){
+    if(!this.enabled() || !this.isTrait(activity?.item, "Nimble Escape") || !activity.actor?.isOwner) return next();
+    const actor = activity.getUsageToken?.()?.actor ?? activity.actor;
+    const id = await chooseOption({ title : activity.item.name, icon : "fa-solid fa-person-running", prompt : module.i18n("traits.nimbleEscape"),
+      options : [actions.DISENGAGE, actions.HIDE].map(value => ({ value, label : module.i18n(`traits.nimble.${value}`) })) });
+    if(!id) return null;
+    await this.defaultActionItem(actor, id);
+    return actions.useDefault(actor, id, { economy : "bonus" });
+  }
+
+  /* The creature's Default Action item, copied from the Actions compendium when it has none */
+  static async defaultActionItem(actor, id){
+    const had = actor.items.find(i => idOf(i) === id);
+    if(had) return had;
+    const pack = compendiums.pack(compendiums.ACTIONS);
+    const entry = pack ? [...await pack.getIndex({ fields : ["system.identifier"] })].find(e => e.system?.identifier === id) : null;
+    const source = entry ? await pack.getDocument(entry._id) : null;
+    if(!source) return null;
+    const [made] = await actor.createEmbeddedDocuments("Item", [source.toObject()]);
+    log.debug("Nimble Escape : gave", actor.name, made?.name);
+    return made ?? null;
   }
 
   /* ---------- Pack Tactics ---------- */

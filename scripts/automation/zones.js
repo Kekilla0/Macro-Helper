@@ -5,6 +5,7 @@ import { idOf } from '../helpers/utils.js';
 import { pickSpace } from '../helpers/targets.js';
 import { gm } from '../gm.js';
 import { actionTracker } from './action-tracker.js';
+import { auraOff } from './auras.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -110,6 +111,9 @@ export const zones = {
     Hooks.on("createRegion", (region, options, userId) => this.onArea(region));
     Hooks.on("deleteRegion", region => this.gone(region));
     Hooks.on("deleteRegionBehavior", behavior => (behavior.type === this.TYPE) && this.gone(behavior));
+    /* A turn starting inside one : once the turn's order is settled (core's region turn event, at a round Initiative
+       Each Round rerolls, names whoever was first before the roll) */
+    Hooks.on(`${module.id}.turnStart`, (combat, combatant) => this.turnStarted(combat, combatant));
     /* Only the area made (cast : false) : Roll Item makes no card for the use itself */
     Hooks.on(`${module.id}.preRollItem`, (activity, usage) => usage?.[module.id]?.noCast || (zoneRuleOf(activity?.item)?.cast !== false));
     /* and dnd5e rolls nothing after it (a damage activity's damage) */
@@ -191,6 +195,8 @@ export const zones = {
     const system = behavior.system, region = behavior.parent;
     if(!token?.actor || behavior.disabled || (token.disposition === CONST.TOKEN_DISPOSITIONS.SECRET)) return false;
     const maker = this.makerOf(region);
+    /* An aura its creature's condition switches off (auras.js unless) */
+    if(region?.getFlag?.(module.id, "auraUnless")?.length && auraOff(maker?.actor, region.getFlag(module.id, "auraUnless"))) return false;
     const self = !!maker && (maker.id === token.id);
     if(system.others && self) return false;
     const sign = (maker?.disposition ?? 0) * token.disposition;
@@ -205,7 +211,8 @@ export const zones = {
      consequence of the area, so at once) */
   async give(behavior, token){
     const actor = token?.actor, system = behavior.system;
-    if(!actor || !(system.effects?.size || system.status) || !this.givesTo(behavior, token)) return;
+    const extra = behavior.parent?.getFlag?.(module.id, "auraEffects") ?? [];
+    if(!actor || !(system.effects?.size || system.status || extra.length) || !this.givesTo(behavior, token)) return;
     if(actor.effects.some(e => e.getFlag(module.id, "zoneOf") === behavior.uuid)) return;
     const source = fromUuidSync(system.item ?? "", { strict : false });
     const flags = { zoneOf : behavior.uuid, auraOf : system.item || behavior.uuid };
@@ -217,6 +224,11 @@ export const zones = {
       delete copy._id;
       data.push(foundry.utils.mergeObject(copy, { transfer : false, disabled : false, duration : {}, origin : effect.parent?.uuid ?? source?.uuid ?? null,
         flags : { [module.id] : flags } }));
+    }
+    /* An aura's own effect data (auras.js) */
+    for(const effect of extra){
+      data.push(foundry.utils.mergeObject(foundry.utils.deepClone(effect), { transfer : false, disabled : false, duration : {},
+        origin : source?.uuid ?? effect.origin ?? null, flags : { [module.id] : flags } }));
     }
     if(system.status){
       const status = CONFIG.statusEffects.find(s => s.id === system.status);
@@ -242,6 +254,19 @@ export const zones = {
 
   /* The turn, as a key : the event's (a turn's end comes once the next has begun), else the current one; out of
      combat none (every time counts) */
+  /* Active GM : the zones the creature whose turn it is starts it in */
+  turnStarted(combat, combatant){
+    const token = combatant?.token;
+    if(!game.users.activeGM?.isSelf || !token?.parent) return;
+    const data = { token, combat, round : combat.round, turn : combat.turn };
+    for(const region of token.parent.regions){
+      if(!region.tokens?.has?.(token)) continue;
+      for(const behavior of region.behaviors){
+        if((behavior.type === this.TYPE) && !behavior.disabled && behavior.system.start) this.queue(behavior, token, "start", data);
+      }
+    }
+  },
+
   turnKey({ combat = game.combat, round, turn } = {}){
     if(!combat?.started) return null;
     return `${combat.id}.${round ?? combat.round}.${turn ?? combat.turn}`;
@@ -379,10 +404,15 @@ class ZoneBehavior extends foundry.data.regionBehaviors.RegionBehaviorType {
     };
   }
 
+  /* Effects or a condition to give inside it (an aura's own effect data too) */
+  get gives(){
+    return !!(this.effects.size || this.status || this.behavior?.parent?.getFlag?.(module.id, "auraEffects")?.length);
+  }
+
   static async #onEnter(event){
     if(!game.users.activeGM?.isSelf) return;
     /* Inside it, however it came to be (the area made round it or moving onto it too) : its effects */
-    if(this.effects.size || this.status) queue = queue.then(() => zones.give(this.behavior, event.data.token)).catch(error => log.error(error));
+    if(this.gives) queue = queue.then(() => zones.give(this.behavior, event.data.token)).catch(error => log.error(error));
     /* Moved in (walking through counts : core splits the move at the edge); appearing round it or the area coming
        onto it is the cast's own card, or the area's move */
     if(this.enter && event.data?.movement) zones.queue(this.behavior, event.data.token, "enter", event.data);
@@ -390,13 +420,8 @@ class ZoneBehavior extends foundry.data.regionBehaviors.RegionBehaviorType {
 
   /* Made (or switched on) : the creatures already inside get its effects */
   static async #onActivated(event){
-    if(!game.users.activeGM?.isSelf || !(this.effects.size || this.status)) return;
+    if(!game.users.activeGM?.isSelf || !this.gives) return;
     for(const token of this.region?.tokens ?? []) queue = queue.then(() => zones.give(this.behavior, token)).catch(error => log.error(error));
-  }
-
-  static async #onTurnStart(event){
-    if(!game.users.activeGM?.isSelf || !this.start) return;
-    zones.queue(this.behavior, event.data.token, "start", event.data);
   }
 
   static async #onTurnEnd(event){
@@ -415,14 +440,13 @@ class ZoneBehavior extends foundry.data.regionBehaviors.RegionBehaviorType {
   /* Out of it : what its uses put on the creature ends (whileInside) */
   static async #onExit(event){
     if(!game.users.activeGM?.isSelf) return;
-    if(this.effects.size || this.status) queue = queue.then(() => zones.take(this.behavior.uuid, event.data?.token?.actor)).catch(error => log.error(error));
+    if(this.gives) queue = queue.then(() => zones.take(this.behavior.uuid, event.data?.token?.actor)).catch(error => log.error(error));
     if(this.whileInside) queue = queue.then(() => zones.left(this.behavior, event.data?.token)).catch(error => log.error(error));
   }
 
   static events = {
     [CONST.REGION_EVENTS.BEHAVIOR_ACTIVATED] : this.#onActivated,
     [CONST.REGION_EVENTS.TOKEN_ENTER] : this.#onEnter,
-    [CONST.REGION_EVENTS.TOKEN_TURN_START] : this.#onTurnStart,
     [CONST.REGION_EVENTS.TOKEN_TURN_END] : this.#onTurnEnd,
     [CONST.REGION_EVENTS.TOKEN_MOVE_WITHIN] : this.#onMoveWithin,
     [CONST.REGION_EVENTS.TOKEN_EXIT] : this.#onExit,

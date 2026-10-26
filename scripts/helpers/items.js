@@ -682,6 +682,8 @@ export async function untilShown(fn){
       }
       if(game.dice3d && live.rolls?.length && !live.getFlag?.("dice-so-nice", "skip")) await waitFor(() => landed.has(message.id), { timeout : 10000 });
     }
+    /* An item macro's use returns nothing (Macro only) : the card it made is the use */
+    if(!result && made.length) return game.messages.get(made.at(-1).id) ?? made.at(-1);
     return result;
   }
   finally {
