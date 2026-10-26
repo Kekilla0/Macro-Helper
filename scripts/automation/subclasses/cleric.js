@@ -82,7 +82,7 @@ export class clericDomains{
     gm.handle("duplicity", (data, user) => this.duplicityAsGM(data, user));
     Hooks.on("deleteActiveEffect", effect => this.duplicityEnds(effect));
     rollModes.add("duplicity", config => this.distract(config));
-    actFromPlace(this.DUPLICITY, activity => this.castFrom(activity));
+    actFromPlace(this.DUPLICITY, activity => this.castFrom(activity), { inRange : true });
   }
 
   /* ---------- Life ---------- */

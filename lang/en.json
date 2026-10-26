@@ -640,6 +640,7 @@
   "actions.help.chooseCheck" : "Which of your proficiencies does your ally get advantage with ?",
   "actions.help.noProficiency" : "{name} has no skill or tool proficiency to help with.",
   "actions.stabilize.done" : "{name} is stable.",
+  "actions.section" : "Default Actions",
   "actions.stabilize.failed" : "{name} isn't stabilized (the Medicine check failed).",
   "actions.stabilize.noSave" : "{name} is stable : no death save.",
   "reasons.cantSeeTarget" : "can't see the target",

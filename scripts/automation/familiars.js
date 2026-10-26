@@ -7,7 +7,8 @@ import { patch } from '../patch.js';
 import { uses } from '../uses.js';
 import { initiative } from './initiative.js';
 import { limits } from './limits.js';
-import { tokenOf, getRange } from '../helpers/tokens.js';
+import { tokenOf, getRange, distanceBetween } from '../helpers/tokens.js';
+import { actFromPlace } from './act-from.js';
 import { pickSpace } from '../helpers/targets.js';
 import { fitsProfile, chooseCreature } from '../helpers/creatures.js';
 import { compendiums } from './compendiums.js';
@@ -24,6 +25,8 @@ const log = logger.for(import.meta.url);
  *                spell). One familiar at a time : a new one replaces the last.
  *   Can't attack : the familiar's items with an attack are removed when it's summoned.
  *   0 HP       : it disappears; only casting the spell again brings one back.
+ *   Touch spells : with the familiar within 100 ft, casting a touch spell asks where from (actFrom) : from the
+ *                familiar's space, its Reaction spent (offered only while it can take one, and when a target is within its touch).
  *   Already one : using the item again asks first. With a familiar out : Store it (kept as it is now : HP,
  *                conditions...), Summon New (casts again, replacing it) or Release it. With one stored : Bring It Back
  *                (an empty space within 30 ft, exactly as it was, nothing spent) or Summon New. Storing, releasing and
@@ -41,6 +44,8 @@ export class familiars{
   /* Find Familiar's range (Wild Companion casts it), and how far a dismissed familiar can reappear */
   static RANGE = 10;
   static RETURN_RANGE = 30;
+  /* How far from its summoner a familiar can deliver a touch spell */
+  static TOUCH_RANGE = 100;
 
   static register(){
     if(game.system.id !== "dnd5e") return;
@@ -68,6 +73,8 @@ export class familiars{
       before : async summoner => { await this.remove(this.tokensOf(summoner)); await this.forget(summoner); },
       after : (created, summoner) => this.disarm(created, summoner),
     });
+    /* A touch spell : delivered by the familiar (its Reaction, within 100 ft, a target within its touch), measured from its space */
+    actFromPlace("familiar", activity => this.deliverer(activity), { reaction : true, inRange : true });
     gm.handle("familiarStore", (data, user) => this.storeAsGM(data, user));
     gm.handle("familiarRelease", (data, user) => this.releaseAsGM(data, user));
     gm.handle("familiarReturn", (data, user) => this.returnAsGM(data, user));
@@ -117,6 +124,15 @@ export class familiars{
 
   static isWildShaped(actor){
     return !!actor?.isPolymorphed && (actor.getFlag("dnd5e", "transformOptions")?.preset === "wildshape");
+  }
+
+  /* The familiar that can deliver this touch spell for its caster (one of ours, within 100 ft), or null */
+  static deliverer(activity){
+    if((activity?.item?.type !== "spell") || (activity.range?.units !== "touch")) return null;
+    const me = tokenOf(activity.getUsageToken?.() ?? activity.actor);
+    if(!me) return null;
+    return this.tokensOf(activity.actor).map(t => tokenOf(t))
+      .find(t => t && this.enabledFor(idOf(this.originOf(t.actor))) && (distanceBetween(me, t) <= this.TOUCH_RANGE)) ?? null;
   }
 
   /* The item that summoned a creature, if it's a familiar of ours */

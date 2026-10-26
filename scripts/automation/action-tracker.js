@@ -302,6 +302,8 @@ export class actionTracker{
   static left(actor, kind){
     /* It can't take Reactions (Arms of Hadar, Slowing Breath : flags.macro-helper.rule.noReactions) : none to offer */
     if((kind === "reaction") && actor?.effects?.some?.(e => !e.disabled && !e.isSuppressed && e.getFlag(module.id, "rule")?.noReactions)) return false;
+    /* Incapacitated (or a condition that brings it) : no Reactions, in combat or not */
+    if((kind === "reaction") && this.OUT_OF_ACTION.some(s => actor?.statuses?.has?.(s))) return false;
     const st = this.state(actor);
     return !st || (this.remaining(st.rec, kind) > 0);
   }

@@ -10,6 +10,7 @@ import { giveMode } from '../roll-item/reasons.js';
 import { chooseOption, idOf } from '../helpers/utils.js';
 import { uses } from '../uses.js';
 import { actionTracker } from './action-tracker.js';
+import { patch } from '../patch.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -134,6 +135,7 @@ export class actions{
     Hooks.once("ready", () => setTimeout(async () => {
       for(const a of game.actors.filter(a => a.type === "character")) await this.giveBasics(a).catch(error => log.debug(error));
     }, 5000));
+    this.registerSection();
     /* Dodge, Dash and Disengage mark the creature here, not through Roll Item */
     Hooks.on(`${module.id}.selfEffects`, activity => !(this.enabled() && [this.DODGE, this.DASH, this.DISENGAGE, this.HELP, this.HIDE].includes(idOf(activity?.item))));
     /* Hide : nothing is used until the GM allows it (a declined Hide costs nothing) */
@@ -502,11 +504,28 @@ export class actions{
 
   static BASICS = ["dash", "disengage", "dodge", "help", "hide", "search", "study", "unarmed-strike"];
 
+  static #giving = new Map();  // actor uuid -> the run under way
+
+  /* One run at a time per creature (a token placed as its combat starts : two runs added two of each) */
   static async giveBasics(actor){
+    if(!actor?.uuid) return;
+    const before = this.#giving.get(actor.uuid) ?? Promise.resolve();
+    const run = before.then(() => this.#giveBasics(actor)).catch(error => log.debug("Default actions", error));
+    this.#giving.set(actor.uuid, run);
+    await run;
+    if(this.#giving.get(actor.uuid) === run) this.#giving.delete(actor.uuid);
+  }
+
+  static async #giveBasics(actor){
     if(!this.enabled() || !game.users.activeGM?.isSelf || !["npc", "character"].includes(actor?.type)) return;
     /* A controlled summon (Spiritual Weapon's force) acts only through its own items, with its summoner's actions */
     if(actor.getFlag(module.id, "controlledBy")) return;
     const ours = i => !!i.getFlag?.(module.id, "basicAction");
+    /* Extra copies of the ones it already has go : another's (a world macro's, added as ours were), a second of ours */
+    const first = new Map();
+    for(const i of actor.items) if(ours(i) && this.BASICS.includes(idOf(i)) && !first.has(idOf(i))) first.set(idOf(i), i);
+    const extra = actor.items.filter(i => this.BASICS.includes(idOf(i)) && first.has(idOf(i)) && (first.get(idOf(i)) !== i));
+    if(extra.length) await actor.deleteEmbeddedDocuments("Item", extra.map(i => i.id)).catch(error => log.debug("Default actions", error));
     const missing = this.BASICS.filter(id => !actor.items.some(i => (idOf(i) === id) && ours(i)));
     if(!missing.length) return;
     const pack = game.packs.get(`${module.id}.actions`);
@@ -527,6 +546,53 @@ export class actions{
     if(others.length) await actor.deleteEmbeddedDocuments("Item", others.map(i => i.id)).catch(error => log.debug("Default actions", error));
   }
 
+
+  /* ---------- Sheets : their own section ---------- */
+
+  static SECTION = "defaultActions";
+
+  /* Character sheets (Features tab) and NPC sheets : the Default Actions in a section of their own, after the others */
+  static registerSection(){
+
+    const section = columns => ({ id : this.SECTION, label : module.i18n("actions.section"), order : 5000, items : [], columns,
+      groups : { origin : this.SECTION } });
+    const sheets = "dnd5e.applications.actor";
+    /* Once every item is prepared : ours grouped there (characters group by origin, NPCs by ctx.group); the
+       Unarmed Strike too, a weapon */
+    patch.wrap(`${sheets}.BaseActorSheet.prototype._prepareItems`, async function(wrapped, context, ...args){
+      const result = await wrapped(context, ...args);
+      if(!actions.enabled()) return result;
+      for(const item of context.items ?? []){
+        const ctx = context.itemContext?.[item.id];
+        if(!ctx || !item.getFlag?.(module.id, "basicAction")) continue;
+        ctx.groups = { ...(ctx.groups ?? {}), origin : actions.SECTION };
+        ctx.group = actions.SECTION;
+        ctx.dataset = { ...(ctx.dataset ?? {}), "group-origin" : actions.SECTION };
+      }
+      return result;
+    });
+    /* A character's Unarmed Strike (a weapon) : in its inventory, and here too */
+    patch.wrap(`${sheets}.CharacterActorSheet.prototype._assignItemCategories`, function(wrapped, item, ...args){
+      const categories = wrapped(item, ...args);
+      if(actions.enabled() && item?.getFlag?.(module.id, "basicAction") && (categories instanceof Set)) categories.add("features");
+      return categories;
+    });
+    for(const sheet of ["CharacterActorSheet", "NPCActorSheet"]){
+      patch.wrap(`${sheets}.${sheet}.prototype._prepareFeaturesContext`, async function(wrapped, context, options){
+        const result = await wrapped(context, options);
+        const sections = result?.sections;
+        if(!actions.enabled() || !Array.isArray(sections) || sections.some(s => s.id === actions.SECTION)) return result;
+        const items = (result.itemCategories?.features ?? []).filter(i => i.getFlag?.(module.id, "basicAction"));
+        if(!items.length) return result;
+        /* NPC sections hold their items (by ctx.group, which ours have no section for); Character ones group by origin */
+        const added = section(sections[0]?.columns);
+        if(sheet === "NPCActorSheet") added.items = items;
+        const Inventory = customElements.get(this.options.elements.inventory);
+        result.sections = Inventory.prepareSections([...sections, added]);
+        return result;
+      });
+    }
+  }
 
   static async healersKitStep(activity, ctx, next){
     if(!this.enabled() || !this.isKitStabilize(activity) || !activity.actor?.isOwner) return next();
