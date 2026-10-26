@@ -33,6 +33,9 @@ import { zone, zones } from './automation/zones.js';
 import { giveAura } from './automation/auras.js';
 import { addSpellPool, openSpellPool, spellPools } from './automation/spell-pools.js';
 import { rerollButton, rerolled } from './roll-item/reroll-buttons.js';
+import { d20Button } from './roll-item/d20-buttons.js';
+import { unarmedDamage } from './automation/unarmed.js';
+import { initiativeSwap } from './automation/initiative-swap.js';
 import { actionTracker } from './automation/action-tracker.js';
 import { bonusAttackAfter } from './automation/bonus-attacks.js';
 import { reactionAttackOn, opportunityInstead } from './automation/action-ready.js';
@@ -92,8 +95,11 @@ export class api{
          by an addRollMode rule for saves or checks */
       rollModeFrom, giveRollMode, saveModeAgainst, sustain,
       /* A choice made as a spell is cast, paid once it's cast (Metamagic); longer durations (Extended Spell); toggles on
-         a save card's rows (Careful, Heightened); a reroll button on a card after the roll (Empowered, Seeking) */
-      castingChoice, castingChoiceOf, extendDurations, saveRowToggle, toggledOn, rerollButton, rerolled,
+         a save card's rows (Careful, Heightened); a reroll button on a card after the roll (Empowered, Seeking, Savage
+         Attacker); a second d20 for a D20 Test already rolled (Lucky) */
+      castingChoice, castingChoiceOf, extendDurations, saveRowToggle, toggledOn, rerollButton, rerolled, d20Button,
+      /* An Unarmed Strike's own damage die (Tavern Brawler, Unarmed Fighting); a swap of initiative with an ally (Alert) */
+      unarmedDamage, initiativeSwap,
       /* A save only an unwilling target makes, the GM saying who's willing (Enlarge/Reduce); a size larger or smaller */
       willingSave, willingOn, changeSize,
       /* A use lent to a creature as an item of its own, with the lender's numbers (Dragon's Breath) */

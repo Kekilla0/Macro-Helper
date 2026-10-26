@@ -101,6 +101,11 @@ Legos are listed in [api.md](api.md). "Data" means the item's own dnd5e or Pluto
 | Weapon Master | a Long Rest | one more weapon mastery, a kind it's proficient with | `extraMasteries` (Weapon Mastery's Rest Choices) |
 | Poisoner (Brew Poison) | Apply Poison; the weapon's damage; the rider save | a dose spent; the poison ends with the damage (or 1 minute); Poisoned until the end of its next turn | `itemFixes`, effect rule `endsOnDamage`, the card's effect flag `until` |
 | Durable | death saves; a Bonus Action | advantage; spend a Hit Die | Plutonium's data |
+| Savage Attacker | a weapon hit | once a turn its damage rolled again, either applied | `rerollButton` (`roll: "again"`, `once`) |
+| Lucky | its own D20 Test; an attack roll against it | a Luck Point: a second d20, the higher kept; against it the lower (the GM's change) | `d20Button` (`keep`, `against`, `cost`) |
+| Tavern Brawler | its Unarmed Strike; a hit with it | 1d4 + modifier, 1s rerolled; once a turn a 5 ft push | `unarmedDamage`, `onHitMove` |
+| Alert | its initiative rolled | swap with a willing ally before a turn passes | `initiativeSwap` |
+| Healer | a healing spell; using the feat | 1s on its healing dice rerolled; Battle Medic: a creature within 5 ft spends a Hit Die, sized by what it has | `onDamage` (`reroll`); Battle Medic its own code |
 
 ## Still to become legos
 
@@ -114,5 +119,6 @@ Parts still written inside one feature's code. Each one becomes a generic lego (
 | Cast-time damage type | sorcerer.js `chooseFor` / `transmute` | a damage type chosen as it's cast, used for its damage (and a reroll within the minute) | `damageTypeChoice` with a type chosen before the roll |
 | Level 1+ spells this turn | sorcerer.js (`leveledSpell` on `dnd5e.postUseActivity`) | marks a level 1+ spell cast this turn, slot or not | casting.js's one-slot-a-turn mark (slots only) |
 | Card AC raised (Shield, monster Parry) | spell-actions.js `shieldAsGM`, creature-traits.js `parryAsGM`, subclasses/common.js `changeRollAsGM` (`ac`) | a creature's AC higher on a card that's out, once | `raiseCardAC` (Defensive Duelist) : move them onto it |
-| A push after a hit (Tavern Brawler, mastery Push) | feats.js `brawlerMove`, masteries.js `pushMove` | the GM's push button, once a turn / once per attack, a size limit | `onHitMove` (Crusher, Charger) : move them onto it |
+| A push after a hit (mastery Push) | masteries.js `pushMove` | the GM's push button, once per attack, a size limit | `onHitMove` (Crusher, Charger, Tavern Brawler) : move it onto it |
+| Battle Medic | feats.js `battleMedic`, `battleMedicKit`, `battleMedicHitDie` | heals by a Hit Die the healed creature spends (its player picks the size), a Healer's Kit use paid | a monster's "spend a Hit Die to heal", Chef-like Hit Die riders |
 | Shared form effects | druid.js `linkNew`, `endPartner` | an effect on a form goes on its original too, and ends on both | other transformations (Polymorph keeps none : only `transform` users that share) |

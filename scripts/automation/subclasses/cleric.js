@@ -237,7 +237,7 @@ export class clericDomains{
       if(!item || !await spendUses(item, 1)) return;
       await actionTracker.spend(token.actor, { kind : "reaction", what : item.name }).catch(() => null);
       const result = await subclasses.changeRoll(message, { ray, d20 : "kl" }, token.actor);
-      if(result === "same") ui.notifications.info(module.i18n("feats.lucky.same"));
+      if(result === "same") ui.notifications.info(module.i18n("rollItem.d20.same"));
     }
     else {
       const channel = this.channelOf(token.actor);

@@ -16,6 +16,7 @@ import { grappling } from '../roll-item/card-builder.js';
 import { onDamage, attackOf } from '../roll-item/damage.js';
 import { cutDamage, cutsOf } from '../roll-item/damage-cuts.js';
 import { onAttacked } from '../roll-item/attacked.js';
+import { unarmedDamage } from './unarmed.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -60,6 +61,9 @@ export class fightingStyles{
     bonusOnlyWhen(["defense", "fighting-style-defense"], "system.attributes.ac.bonus", actor => !isUnarmored(actor, { shield : false }), { enabled });
     rollModes.add("protection", config => this.protectedMode(config));
     onDamage((attack, damage) => this.onDamage(attack, damage));
+    /* Unarmed Fighting : a d8 with no weapon or shield in hand, else a d6 */
+    unarmedDamage(actor => this.styleOf(actor, "unarmed-fighting"), { id : "unarmed-fighting", enabled, bonus : "@abilities.str.mod",
+      die : attack => (!this.otherWeapons(attack.actor, attack.item).length && !hasShieldEquipped(attack.actor)) ? 8 : 6 });
     /* Interception : a creature within 5 ft of yours is hit; Protection : attacked (not when the attack already had
        Disadvantage : they don't stack). The guard's Reaction. */
     onAttacked({ id : "interception", enabled, feature : actor => this.styleOf(actor, "interception"), when : "hit", within : 5, icon : "fa-shield",
@@ -124,7 +128,7 @@ export class fightingStyles{
     return null;
   }
 
-  /* ---------- Damage : Dueling, Great Weapon, Thrown Weapon, Two-Weapon, Unarmed ---------- */
+  /* ---------- Damage : Dueling, Great Weapon, Thrown Weapon, Two-Weapon (Unarmed Fighting : the unarmedDamage lego) ---------- */
 
   /* The damage lego's rule for the fighting styles that change a weapon's damage */
   static onDamage(attack, damage){
@@ -142,18 +146,6 @@ export class fightingStyles{
 
     /* Two-Weapon Fighting : the modifier dnd5e leaves off a Light weapon's extra attack */
     if(this.styleOf(actor, "two-weapon-fighting") && attack.offHand && (damage.modifier > 0) && !damage.has("@mod")) damage.add("@mod");
-
-    /* Unarmed Fighting */
-    if(attack.unarmed && this.styleOf(actor, "unarmed-fighting")) this.unarmedDamage(attack, damage);
-  }
-
-  static unarmedDamage(attack, damage){
-    const base = attack.baseDamage;
-    /* Already a die of its own (a Monk's Martial Arts) : left alone */
-    if(!base || /\d*d\d+/i.test(base)) return;
-    const empty = !this.otherWeapons(attack.actor, attack.item).length && !hasShieldEquipped(attack.actor);
-    const formula = `1d${empty ? 8 : 6} + @abilities.str.mod`;
-    if(damage.setBase(formula)) log.debug("Unarmed Fighting", attack.actor.name, formula);
   }
 
   /* ---------- Interception, Protection : buttons on the attack card ---------- */
@@ -199,7 +191,7 @@ export class fightingStyles{
       name : module.format("fightingStyles.protectingMark", { name : target.name }), img : "icons/equipment/shield/heater-steel-worn.webp",
       flags : { [module.id] : { protection : { token : guard.uuid, target : target.uuid } } },
     }, { of : guard.actor, until : "turnStart" });
-    return (result === "same") ? [module.i18n("feats.lucky.same")] : [];
+    return (result === "same") ? [module.i18n("rollItem.d20.same")] : [];
   }
 
   /* ---------- Unarmed Fighting : 1d4 to the grappled, at the start of its turn ---------- */

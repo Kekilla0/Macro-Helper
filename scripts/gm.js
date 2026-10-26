@@ -166,8 +166,55 @@ export class gm{
     await activity.use(foundry.utils.mergeObject({ [module.id] : { ...(ask.config ?? {}), gmAllowed : true } }, {}));
   }
 
+  /* ---------- Asking a creature's player ---------- */
+
+  /**
+   * The player who should answer for a creature : an active non-GM owner, not one of the excluded users.
+   * @param {Actor} actor
+   * @param {User[]} [exclude]
+   * @returns {User|null}
+   */
+  static playerFor(actor, exclude = []){
+    const skip = new Set(exclude.filter(Boolean).map(u => u.id));
+    return game.users.find(u => u.active && !u.isGM && !skip.has(u.id) && actor?.testUserPermission(u, "OWNER")) ?? null;
+  }
+
+  /**
+   * A question with buttons, asked on this client.
+   * @param {{ title : string, icon? : string, content : string, buttons : { action : string, label : string, default? : boolean }[] }} data
+   * @returns {Promise<string|null>}  the button's action, null when closed
+   */
+  static async askHere({ title, icon, content, buttons } = {}){
+    return foundry.applications.api.DialogV2.wait({
+      window : { title, icon }, content, buttons, rejectClose : false,
+    }) ?? null;
+  }
+
+  /**
+   * Ask a creature's player (see playerFor) : on their client, or here when there is no such player (Alert's swap,
+   * Battle Medic's Hit Die).
+   * @param {Actor} actor
+   * @param {object} data   askHere's question
+   * @param {object} [options]
+   * @param {User[]} [options.exclude]       users who don't count as "its player"
+   * @param {string|null} [options.fallback] the answer when it has no player : undefined asks here instead
+   * @returns {Promise<string|null>}
+   */
+  static async askPlayer(actor, data, { exclude = [], fallback } = {}){
+    const player = this.playerFor(actor, exclude);
+    if(!player) return (fallback !== undefined) ? fallback : this.askHere(data);
+    if(player.isSelf) return this.askHere(data);
+    try {
+      return await player.query(`${module.id}.ask`, data, { timeout : 60000 });
+    } catch(error){
+      log.debug("No answer", player.name, error);
+      return null;
+    }
+  }
+
   static register(){
     Hooks.on("renderChatMessageHTML", (message, html) => this.#askButton(message, html));
+    CONFIG.queries[`${module.id}.ask`] = data => this.askHere(data);
     Hooks.on("updateChatMessage", (message, changes) => this.#allowed(message, changes).catch(error => log.error(error)));
     Hooks.on("combatTurnChange", (combat, prior, current)=> this.expire(combat, prior, current));
     Hooks.on("deleteCombat", combat => this.expireCombat(combat));

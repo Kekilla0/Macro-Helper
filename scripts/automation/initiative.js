@@ -4,7 +4,7 @@ import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
 import { rerolls, extraD20 } from '../roll-item/rerolls.js';
-import { feats } from './feats.js';
+import { initiativeSwap, swappedInitiatives } from './initiative-swap.js';
 import { idOf } from '../helpers/utils.js';
 const log = logger.for(import.meta.url);
 
@@ -292,7 +292,7 @@ export class initiative{
 
   /* Where two combatants would be in the order if they traded initiative : { mine, theirs } as places (1 = first) */
   static previewSwap(combat, a, b){
-    const swapped = feats.swappedInitiatives(a, b);
+    const swapped = swappedInitiatives(a, b);
     const list = (combat.combatants.contents ?? [...combat.combatants]).filter(c => c.initiative !== null)
       .map(c => ({ id : c.id, init : (c.id === a.id) ? swapped.a : (c.id === b.id) ? swapped.b : c.initiative }));
     list.sort((x, y) => y.init - x.init);
@@ -323,24 +323,24 @@ export class initiative{
     if(list) items.sort((a, b) => (combat.combatants.get(b.dataset.combatant)?.initiative ?? -Infinity) - (combat.combatants.get(a.dataset.combatant)?.initiative ?? -Infinity))
       .forEach(li => list.append(li));
 
-    /* Alert : the owner of the Alert character gets a swap on each ally's row, and "Do not swap" on its own */
+    /* Initiative swaps (Alert) : the owner of the swapping creature gets a swap on each ally's row, and "Do not swap" on its own */
     if(!info.hidden){
-      for(const { combatant : alert } of feats.openAlerts(combat)){
+      for(const { combatant : alert, info : offer } of initiativeSwap.open(combat)){
         if(!alert.isOwner) continue;
-        const ask = ally => gm.run("alertSwap", { combat : combat.id, combatant : alert.id, ally }, { timeout : 90000 })
+        const ask = ally => gm.run("initiativeSwap", { combat : combat.id, combatant : alert.id, ally }, { timeout : 90000 })
           .then(notes => { for(const note of notes ?? []) ui.notifications.info(note); });
-        for(const ally of feats.alliesOf(alert, combat)){
+        for(const ally of initiativeSwap.allies(alert, combat)){
           const li = items.find(i => i.dataset.combatant === ally.id);
           if(!li) continue;
           const at = this.previewSwap(combat, alert, ally);
-          const label = module.format("feats.alert.preview", { a : alert.name, mine : this.ordinal(at.mine), myInit : at.a,
+          const label = module.format("initiativeSwap.preview", { feature : offer.feature ?? "", a : alert.name, mine : this.ordinal(at.mine), myInit : at.a,
             b : ally.name, theirs : this.ordinal(at.theirs), theirInit : at.b });
           li.append(this.#button("fa-right-left", label, () => {
-            ui.notifications.info("feats.alert.asking", { localize : true });
+            ui.notifications.info("initiativeSwap.asking", { localize : true });
             return ask(ally.id);
           }));
         }
-        items.find(i => i.dataset.combatant === alert.id)?.append(this.#button("fa-ban", module.i18n("feats.alert.keep"), () => ask(null)));
+        items.find(i => i.dataset.combatant === alert.id)?.append(this.#button("fa-ban", module.i18n("initiativeSwap.keep"), () => ask(null)));
       }
     }
 

@@ -7,15 +7,17 @@ const log = logger.for(import.meta.url);
 
 /**
  * The reroll button lego : a button on a card, after the roll, for the roller's owner, that rolls part of it again
- * (Empowered Spell, Seeking Spell; a monster's "once per turn it can reroll a missed attack"; a homebrew "reroll your
- * lowest damage die").
+ * (Empowered Spell, Seeking Spell, Savage Attacker; a monster's "once per turn it can reroll a missed attack"; a
+ * homebrew "reroll your lowest damage die").
  *
  *   rerollButton({
  *     id : "empowered",                                the rule's key
  *     feature : "empowered-spell",                     the item (identifier) the roller needs; or (actor) => item
  *     roll : "damage",                                 "damage" : the lowest `n` damage dice, once a card (attack
  *                                                      cards and save cards with damage); "attack" : a missed attack's
- *                                                      d20, the new roll kept, once an attack
+ *                                                      d20, the new roll kept, once an attack; "again" : a hit's
+ *                                                      damage rolled again beside the first, each with its own
+ *                                                      APPLY (use either), once an attack
  *     when : (card, actor) => true,                    does this card get it (a spell's card...)
  *     n : (actor, card) => 2,                          damage : how many dice (default 1)
  *     cost : (actor, card) => ({ item, amount }),      paid on the click (no button without enough uses)
@@ -32,13 +34,13 @@ let hooked = false;
 const rayKey = ray => Number.isInteger(ray) ? String(ray) : "single";
 
 export function rerollButton(rule){
-  if(!rule?.id || !["damage", "attack"].includes(rule.roll)) return;
+  if(!rule?.id || !["damage", "attack", "again"].includes(rule.roll)) return;
   rules.set(rule.id, rule);
   if(hooked) return;
   hooked = true;
   Hooks.on(`${module.id}.cardButtons`, (card, buttons, { ray } = {}) => {
     for(const rule of rules.values()){
-      const button = (rule.roll === "attack") ? buttonOf(rule, card, ray ?? null) : (!Number.isInteger(ray) && buttonOf(rule, card, null));
+      const button = (rule.roll === "damage") ? (!Number.isInteger(ray) && buttonOf(rule, card, null)) : buttonOf(rule, card, ray ?? null);
       if(button) buttons.push(button);
     }
   });
@@ -83,6 +85,9 @@ function buttonOf(rule, card, ray){
   if(rule.roll === "attack"){
     if(!card.system?.isHitOn || card.system.isHitOn(ray)) return null;
   }
+  else if(rule.roll === "again"){
+    if(!card.system?.isHitOn?.(ray) || !card.system.rollDamage) return null;
+  }
   else if(!(card.system?.damageRolls?.length)) return null;
   const cost = rule.cost?.(actor, card) ?? null;
   if(cost?.item && !hasUses(cost.item, cost.amount ?? 1)) return null;
@@ -99,6 +104,11 @@ async function clicked(rule, card, ray){
   await card.setFlag(module.id, `rerolls.${rule.id}.${rayKey(ray)}`, true);
   if(rule.once === "turn") await markUsedThisTurn(actor, `reroll-${rule.id}`);
   if(rule.roll === "attack") await card.system.rerollAttackRoll(ray);
+  else if(rule.roll === "again"){
+    const feature = featureOf(rule, actor);
+    const rolls = await card.system.rollDamage(ray);
+    await card.system.addDamage(rolls, { key : `reroll-${rule.id}`, label : feature?.name ?? rule.id, ray, alternative : true });
+  }
   else await card.system.rerollLowestDamage(Math.max(1, Number(rule.n?.(actor, card)) || 1));
   log.debug("Reroll", rule.id, actor.name);
 }

@@ -1,18 +1,20 @@
 import { module } from '../module.js';
-import { whisperOwners, esc, idOf } from '../helpers/utils.js';
+import { esc, idOf } from '../helpers/utils.js';
 import { settings } from '../settings.js';
-import { limits } from './limits.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
 import { uses } from '../uses.js';
 import { pickTargets } from '../helpers/targets.js';
-import { findItem, usedThisTurn, markUsedThisTurn, preventDropToZero } from '../helpers/actors.js';
+import { findItem, preventDropToZero } from '../helpers/actors.js';
 import { spendUses } from '../helpers/items.js';
-import { masteries } from './masteries.js';
-import { rerolls, extraD20 } from '../roll-item/rerolls.js';
 import { itemFixes } from './item-fixes.js';
 import { onDamage } from '../roll-item/damage.js';
 import { saveModeAgainst } from './roll-modes.js';
+import { rerollButton } from '../roll-item/reroll-buttons.js';
+import { d20Button } from '../roll-item/d20-buttons.js';
+import { onHitMove } from '../roll-item/card-moves.js';
+import { unarmedDamage } from './unarmed.js';
+import { initiativeSwap } from './initiative-swap.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -22,32 +24,28 @@ const log = logger.for(import.meta.url);
  *   Tiefling (2024) : the species item's Darkvision is 60 ft (Plutonium's gives 120) : an item fix.
  *   Relentless Endurance : (an Orc, a creature with the trait) dropped to 0 HP but not killed outright : 1 HP instead,
  *                     once until a Long Rest (the item's own uses, or the module's mark when it has none); said in chat.
- *   Tortle          : Claws : its Unarmed Strike deals 1d6 + its modifier Slashing (unless it already rolls a die).
+ *   Tortle          : Claws : its Unarmed Strike deals 1d6 + its modifier Slashing (unarmedDamage).
  *                     Shell Defense : using it puts on "Shell Defense" : +4 AC, advantage on STR / CON saves,
  *                     disadvantage on DEX saves, Prone, Speed 0, no Reactions, and no Action or Bonus Action but Emerge
  *                     (Rule Limits); its action bar's Emerge button, or Shell Defense used again (a toggle), ends it
  *                     (a Bonus Action), still Prone.
  *   Save traits     : advantage on saves against a condition (Brave : Frightened, Fey Ancestry : Charmed, Dwarven
  *                     Resilience : Poisoned), for saves rolled from a card whose activity applies it.
+ * Origin feats, each built from legos the way an Item Macro would be :
  *   Savage Attacker : a button on each weapon hit (for its owner) rolls the damage again as an alternative,
- *                     each roll with its own APPLY; once per turn in combat.
- *   Alert           : right after the Alert character's initiative is rolled, a card (to its owner and the GM) offers
- *                     to swap initiative with an ally in the combat, until the first turn passes, or "Do not swap".
- *                     Not while either is Incapacitated. Carried out by the GM, once the ally's player agrees (no
- *                     question when the asker owns both, or no other player owns the ally).
- *   Lucky           : after an attack roll, a Luck Point adds a second d20 : the attacker's owner keeps the higher, the
- *                     target's owner (attacked Lucky character) keeps the lower. Advantage and disadvantage cancel.
- *   Tavern Brawler  : the Unarmed Strike's own damage becomes 1d4 + STR, its 1s rerolled (Enhanced Unarmed Strike,
- *                     Damage Rerolls), unless it already rolls a die (a Monk's Martial Arts). Once per turn, a hit can
- *                     also push the target 5 ft (a GM button, like Push).
- *   Healer          : Healing Rerolls (1s on a spell's healing dice are rolled again). Battle Medic : using the feat
+ *                     each roll with its own APPLY; once per turn in combat (rerollButton "again").
+ *   Alert           : right after its initiative is rolled, a swap with a willing ally (initiativeSwap).
+ *   Lucky           : a Luck Point adds a second d20 : to its own attack roll, save, check or initiative (the higher
+ *                     kept), or to an attack roll against it (the lower kept; the GM changes the card) (d20Button).
+ *   Tavern Brawler  : the Unarmed Strike's own damage becomes 1d4 + its modifier, its 1s rerolled (unarmedDamage),
+ *                     unless it already rolls a die (a Monk's Martial Arts). Once per turn, a hit can also push the
+ *                     target 5 ft (the GM's button, onHitMove).
+ *   Healer          : Healing Rerolls (1s on a spell's healing dice are rolled again, onDamage). Battle Medic : using the feat
  *                     picks a creature within 5 ft, reads its remaining Hit Dice (its player picks the size when it has several),
  *                     and runs the matching "Heal dX" activity; it needs a Healer's Kit use, and spends the target's Hit
  *                     Die of that size when its owner applies it.
  */
 export class feats{
-  static INCAPACITATED = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
-
   /* Feats (Savage Attacker, Alert, Lucky, Tavern Brawler, Healer) */
   static enabled(){
     return (game.system.id === "dnd5e") && settings.value("featRules");
@@ -69,21 +67,35 @@ export class feats{
   static register(){
     if(game.system.id !== "dnd5e") return;
     itemFixes.add({ name : "Tiefling darkvision", where : "owned", plan : item => this.tieflingFix(item) });
-    Hooks.on(`${module.id}.cardButtons`, (message, buttons, context) => {
-      this.savageButtons(message, buttons, context);
-      this.luckyButtons(message, buttons, context);
-    });
-    Hooks.on(`${module.id}.cardMoves`, (message, uuid, moves, context) => this.brawlerMove(message, moves, context));
-    Hooks.on(`${module.id}.cardButton`, (message, id, context) => {
-      this.savageClicked(message, id, context);
-      this.luckyClicked(message, id, context);
-    });
-    onDamage((attack, damage) => {
-      this.healingRerolls(attack, damage);
-      this.enhancedUnarmedStrike(attack, damage);
-      this.tortleClaws(attack, damage);
-    });
-    for(const [id, against] of Object.entries(this.SAVE_ADVANTAGES)) saveModeAgainst(id, against, { enabled : () => this.speciesEnabled() });
+    const enabled = () => this.enabled();
+    const species = () => this.speciesEnabled();
+
+    /* Savage Attacker */
+    rerollButton({ id : this.SAVAGE, feature : this.SAVAGE, roll : "again", once : "turn", enabled, icon : "fa-hand-fist",
+      when : card => card.getAssociatedItem?.()?.type === "weapon" });
+
+    /* Lucky : a Luck Point each */
+    const luckPoint = (actor, feat) => ({ item : feat, amount : 1 });
+    d20Button({ id : this.LUCKY, feature : this.LUCKY, keep : "kh", cost : luckPoint, enabled, icon : "fa-clover",
+      label : (actor, feat) => this.luckyLabel(feat, "adv") });
+    d20Button({ id : `${this.LUCKY}-against`, feature : this.LUCKY, keep : "kl", against : true, tests : ["attack"], cost : luckPoint, enabled, icon : "fa-clover",
+      label : (actor, feat) => this.luckyLabel(feat, "dis") });
+
+    /* Tavern Brawler */
+    unarmedDamage(this.BRAWLER, { die : 4, reroll : 1, enabled });
+    onHitMove({ id : this.BRAWLER, feature : this.BRAWLER, feet : 5, once : "turn", enabled,
+      when : row => row.unarmed || (idOf(row.item) === this.BRAWLER) });
+
+    /* Alert */
+    initiativeSwap(this.ALERT, { enabled });
+
+    /* Healer : Healing Rerolls */
+    onDamage((attack, damage) => this.healingRerolls(attack, damage));
+
+    /* Tortle : Claws */
+    unarmedDamage("claws", { die : 6, type : "slashing", enabled : species, when : attack => this.isTortle(attack.actor) });
+
+    for(const [id, against] of Object.entries(this.SAVE_ADVANTAGES)) saveModeAgainst(id, against, { enabled : species });
     Hooks.on("dnd5e.preUseActivity", activity => this.battleMedicKit(activity));
     Hooks.on("dnd5e.postUseActivity", activity => this.shellDefense(activity));
     /* Shell Defense again while in the shell : a toggle, it emerges (nothing else happens) */
@@ -97,63 +109,12 @@ export class feats{
     Hooks.on("dnd5e.restCompleted", (actor, result) => { if(result?.longRest && actor?.isOwner && actor.getFlag(module.id, "relentlessUsed")) actor.unsetFlag(module.id, "relentlessUsed"); });
     Hooks.on("dnd5e.postUseActivity", activity => this.battleMedicSpendKit(activity));
     Hooks.on(`${module.id}.preApplyRow`, (message, actor) => this.battleMedicHitDie(message, actor));
-    Hooks.on(`${module.id}.rerollButtons`, (message, buttons, { actor, roll }) => this.luckyTestButtons(message, buttons, actor, roll));
-    gm.handle("luckyAgainst", (data, user) => this.luckyAgainstAsGM(data, user));
 
     /* Using the Healer feat itself : Battle Medic, sized by the target's Hit Dice */
     uses.onItem("healer", (item, ctx, next) => {
       if(!ctx.config.chooseActivity && this.enabled() && ((item.identifier ?? item.system?.identifier) === this.HEALER)) return this.battleMedic(item, ctx.config.event);
       return next();
     });
-    Hooks.on("updateCombatant", (combatant, changes, options) => this.onInitiative(combatant, changes, options));
-    Hooks.on("renderChatMessageHTML", (message, html) => this.wireAlertCard(message, html));
-    gm.handle("alertSwap", (data, user) => this.swapAsGM(data, user));
-    CONFIG.queries[`${module.id}.ask`] = data => this.askHere(data);
-  }
-
-  /* ---------- Asking a creature's player ---------- */
-
-  /**
-   * The player who should answer for a creature : an active non-GM owner, not one of the excluded users.
-   * @param {Actor} actor
-   * @param {User[]} [exclude]
-   * @returns {User|null}
-   */
-  static playerFor(actor, exclude = []){
-    const skip = new Set(exclude.filter(Boolean).map(u => u.id));
-    return game.users.find(u => u.active && !u.isGM && !skip.has(u.id) && actor?.testUserPermission(u, "OWNER")) ?? null;
-  }
-
-  /**
-   * A question with buttons, asked on this client.
-   * @param {{ title : string, icon? : string, content : string, buttons : { action : string, label : string, default? : boolean }[] }} data
-   * @returns {Promise<string|null>}  the button's action, null when closed
-   */
-  static async askHere({ title, icon, content, buttons } = {}){
-    return foundry.applications.api.DialogV2.wait({
-      window : { title, icon }, content, buttons, rejectClose : false,
-    }) ?? null;
-  }
-
-  /**
-   * Ask a creature's player (see playerFor) : on their client, or here when there is no such player.
-   * @param {Actor} actor
-   * @param {object} data   askHere's question
-   * @param {object} [options]
-   * @param {User[]} [options.exclude]       users who don't count as "its player"
-   * @param {string|null} [options.fallback] the answer when it has no player : undefined asks here instead
-   * @returns {Promise<string|null>}
-   */
-  static async askPlayer(actor, data, { exclude = [], fallback } = {}){
-    const player = this.playerFor(actor, exclude);
-    if(!player) return (fallback !== undefined) ? fallback : this.askHere(data);
-    if(player.isSelf) return this.askHere(data);
-    try {
-      return await player.query(`${module.id}.ask`, data, { timeout : 60000 });
-    } catch(error){
-      log.debug("No answer", player.name, error);
-      return null;
-    }
   }
 
   /* ---------- Save traits ---------- */
@@ -165,140 +126,16 @@ export class feats{
     "dwarven-resilience" : ["poisoned"],
   };
 
-  /* ---------- Savage Attacker ---------- */
+  /* ---------- Origin feats ---------- */
 
   static SAVAGE = "savage-attacker";
-
-  static savageButtons(message, buttons, { ray } = {}){
-    if(!this.enabled()) return;
-    const actor = message.getAssociatedActor?.();
-    const feat = actor && findItem(actor, this.SAVAGE);
-    if(!feat || !actor.isOwner || (message.getAssociatedItem?.()?.type !== "weapon")) return;
-    const card = message.system;
-    if(!card?.isHitOn?.(ray) || card.extraRolls(ray, "savage").length || usedThisTurn(actor, "savage")) return;
-    buttons.push({ id : "savage", label : feat.name, icon : "fa-hand-fist" });
-  }
-
-  static async savageClicked(message, id, { ray } = {}){
-    if((id !== "savage") || !this.enabled()) return;
-    const actor = message.getAssociatedActor?.();
-    const feat = actor && findItem(actor, this.SAVAGE);
-    if(!feat || !actor.isOwner) return;
-    if(usedThisTurn(actor, "savage") && !limits.allow(module.format("feats.savage.used", { name : feat.name }), { who : actor.name, what : feat.name })) return;
-    const rolls = await message.system.rollDamage(ray);
-    await message.system.addDamage(rolls, { key : "savage", label : feat.name, ray, alternative : true });
-    await markUsedThisTurn(actor, "savage");
-  }
-
-  /* ---------- Lucky ---------- */
-
   static LUCKY = "lucky";
+  static BRAWLER = "tavern-brawler";
+  static ALERT = "alert";
 
-  /* The Lucky feat, if it has a Luck Point left */
-  static luckyOf(actor){
-    const feat = actor && findItem(actor, this.LUCKY);
-    return (feat && (Number(feat.system.uses?.value) > 0)) ? feat : null;
-  }
-
-  /**
-   * Lucky on a save / check message (and the card rows that link it) : the creature's owner, once, not on a roll that
-   * already has advantage; a second d20, the higher kept.
-   */
-  static luckyTestButtons(message, buttons, actor, roll){
-    const feat = actor?.isOwner && this.enabled() && this.luckyOf(actor);
-    if(!feat || message.getFlag?.(module.id, "lucky") || (Number(roll?.options?.advantageMode ?? 0) === 1)) return;
-    buttons.push({ id : "lucky", icon : "fa-clover", label : this.luckyLabel(feat, "adv"), run : () => this.luckyTest(message, actor) });
-  }
-
-  static async luckyTest(message, actor){
-    const feat = actor?.isOwner && this.luckyOf(actor);
-    if(!feat || !message.isOwner) return;
-    const result = await extraD20(message.rolls[0], "kh");
-    if(!result) return;
-    if(result.status === "same") return ui.notifications.info(module.i18n("feats.lucky.same"));
-    await rerolls.replace(message, result.updated, result.extra ? [result.extra] : []);
-    await spendUses(feat, 1, { warn : false });
-    await message.setFlag(module.id, "lucky", true);
-  }
-
+  /* "Lucky : advantage (2)" : the Luck Points left */
   static luckyLabel(feat, mode){
     return module.format(`feats.lucky.${mode}`, { name : feat.name, left : feat.system.uses?.value ?? 0 });
-  }
-
-  static luckyButtons(message, buttons, { ray } = {}){
-    if(!this.enabled() || !message.system?.addD20) return;
-    const used = message.getFlag?.(module.id, `lucky.${masteries.rayKey(ray)}`) ?? {};
-    /* The attacker : advantage on their own roll */
-    const attacker = message.getAssociatedActor?.();
-    const mine = attacker?.isOwner && this.luckyOf(attacker);
-    if(mine && !used.adv) buttons.push({ id : "lucky-adv", label : this.luckyLabel(mine, "adv"), icon : "fa-clover" });
-    /* Someone attacked who owns a Lucky character : disadvantage on the roll against them */
-    if(used.dis) return;
-    for(const t of message.system.targetsOf(ray) ?? []){
-      const target = dnd5e.dataModels.chatMessage.fields.TargetsField.resolve(t).actor;
-      const feat = target?.isOwner && (target !== attacker) && this.luckyOf(target);
-      if(feat){ buttons.push({ id : "lucky-dis", label : this.luckyLabel(feat, "dis"), icon : "fa-clover" }); break; }
-    }
-  }
-
-  static async luckyClicked(message, id, { ray } = {}){
-    if(!this.enabled() || !["lucky-adv", "lucky-dis"].includes(id)) return;
-    const key = `lucky.${masteries.rayKey(ray)}`;
-    if(id === "lucky-adv"){
-      const attacker = message.getAssociatedActor?.();
-      const feat = attacker?.isOwner && this.luckyOf(attacker);
-      if(!feat || !message.isOwner) return;
-      const result = await message.system.addD20(ray, "kh");
-      if(result === "same") return ui.notifications.info(module.i18n("feats.lucky.same"));
-      if(!result) return;
-      await spendUses(feat, 1, { warn : false });
-      await message.setFlag(module.id, key, { ...(message.getFlag(module.id, key) ?? {}), adv : true });
-      return;
-    }
-    /* Against you : the card isn't yours, the GM changes it */
-    const notes = await gm.run("luckyAgainst", { message : message.id, ray });
-    for(const note of notes ?? []) ui.notifications.info(note);
-  }
-
-  /* GM : the asker must own an attacked Lucky character with a point left; once per attack */
-  static async luckyAgainstAsGM({ message : id, ray = null } = {}, user){
-    const message = game.messages.get(id);
-    if(!message?.system?.addD20) throw new Error("Not a Roll Item attack card.");
-    const key = `lucky.${masteries.rayKey(ray)}`;
-    if(message.getFlag(module.id, key)?.dis) return [module.i18n("feats.lucky.done")];
-    const { TargetsField } = dnd5e.dataModels.chatMessage.fields;
-    const target = (message.system.targetsOf(ray) ?? []).map(t => TargetsField.resolve(t).actor)
-      .find(a => a && a.testUserPermission(user, "OWNER") && this.luckyOf(a));
-    if(!target) return [module.i18n("feats.lucky.none")];
-    const result = await message.system.addD20(ray, "kl");
-    if(result === "same") return [module.i18n("feats.lucky.same")];
-    if(!result) return [];
-    await spendUses(this.luckyOf(target), 1, { warn : false });
-    await message.setFlag(module.id, key, { ...(message.getFlag(module.id, key) ?? {}), dis : true });
-    return [];
-  }
-
-  /* ---------- Tavern Brawler ---------- */
-
-  static BRAWLER = "tavern-brawler";
-
-  /* An Unarmed Strike (the item, or the feat's own Enhanced Unarmed Strike) by someone with the feat */
-  static isBrawlerStrike(message){
-    const actor = message.getAssociatedActor?.();
-    const item = message.getAssociatedItem?.();
-    const id = item?.identifier ?? item?.system?.identifier;
-    return !!(actor && findItem(actor, this.BRAWLER) && ((id === "unarmed-strike") || (id === this.BRAWLER)));
-  }
-
-  /* The push is an outcome : the GM's (card moves), once per turn */
-  static brawlerMove(message, moves, { result, ray } = {}){
-    if(!this.enabled() || !result?.hit || !this.isBrawlerStrike(message)) return;
-    const actor = message.getAssociatedActor();
-    const key = `brawler.${masteries.rayKey(ray)}`;
-    const done = !!message.getFlag(module.id, key);
-    if(!done && usedThisTurn(actor, "brawlerPush")) return;
-    moves.push({ id : "brawlerPush", feet : 5, name : findItem(actor, this.BRAWLER)?.name, done,
-      after : async () => { await markUsedThisTurn(actor, "brawlerPush"); await message.setFlag(module.id, key, true); } });
   }
 
   /* ---------- Healer ---------- */
@@ -312,17 +149,6 @@ export class feats{
 
   static healersKit(actor){
     return actor?.items?.find(i => ((i.identifier ?? i.system?.identifier) === "healers-kit") || /^healer.?s kit$/i.test(i.name ?? "")) ?? null;
-  }
-
-  static BRAWLER = "tavern-brawler";
-
-  /* Tavern Brawler : the Unarmed Strike's base damage "1 + STR" becomes "1d4r1 + STR" */
-  static enhancedUnarmedStrike(attack, damage){
-    if(!this.enabled() || !attack.isAttack || !attack.unarmed || !findItem(attack.actor, this.BRAWLER)) return;
-    /* Unarmed Fighting's d6 / d8 is the better die (fighting-styles.js) */
-    if(attack.actor.items?.some?.(i => ["unarmed-fighting", "fighting-style-unarmed-fighting"].includes(i.identifier ?? i.system?.identifier))) return;
-    if(!attack.baseDamage || /\d*d\d+/i.test(attack.baseDamage)) return;
-    if(damage.setBase("1d4r1 + @mod")) log.debug("Enhanced Unarmed Strike", attack.actor?.name);
   }
 
   /* ---------- Relentless Endurance ---------- */
@@ -355,14 +181,6 @@ export class feats{
 
   static isTortle(actor){
     return !!actor?.items?.some?.(i => (i.type === "race") && String(i.system?.identifier ?? "").startsWith("tortle"));
-  }
-
-  /* Claws : the Unarmed Strike's own damage is 1d6 + its modifier, Slashing */
-  static tortleClaws(attack, damage){
-    if(!this.speciesEnabled() || !attack.isAttack || !attack.unarmed) return;
-    if(!this.isTortle(attack.actor) || !findItem(attack.actor, "claws")) return;
-    const own = /\d*d\d+/i.test(attack.baseDamage) ? null : "1d6 + @mod";
-    if(damage.setBase(own, { type : "slashing" })) log.debug("Tortle Claws", attack.actor?.name);
   }
 
   static SHELL = "shell-defense";
@@ -429,9 +247,9 @@ export class feats{
     let die = [...sizes.keys()][0];
     if(sizes.size > 1){
       /* It's the healed creature's Hit Die to spend : its player picks the size (the healer when it's theirs or an NPC) */
-      const player = this.playerFor(target);
+      const player = gm.playerFor(target);
       if(player && !player.isSelf) ui.notifications.info(module.format("feats.healer.asking", { name : target.name, player : player.name }));
-      die = await this.askPlayer(target, {
+      die = await gm.askPlayer(target, {
         title : item.name, icon : "fa-solid fa-kit-medical",
         content : `<p>${module.format("feats.healer.chooseDie", { name : foundry.utils.escapeHTML(target.name), healer : foundry.utils.escapeHTML(item.actor?.name ?? "") })}</p>`,
         buttons : [...sizes].sort((a, b) => parseInt(b[0].slice(1)) - parseInt(a[0].slice(1))).map(([d, left], i) => ({
@@ -478,168 +296,5 @@ export class feats{
       return false;
     }
     cls.update({ "system.hd.spent" : (Number(cls.system.hd.spent) || 0) + 1 });
-  }
-
-  /* ---------- Alert ---------- */
-
-  static ALERT = "alert";
-
-  /* A combatant's initiative was just rolled (or set) : the active GM posts the swap card for an Alert character */
-  static async onInitiative(combatant, changes, options = {}){
-    if(!this.enabled() || !("initiative" in (changes ?? {})) || (changes.initiative === null)) return;
-    if(options?.[module.id]?.alertSwap) return;   // our own swap, not a new roll
-    if(!game.users.activeGM?.isSelf) return;
-    const actor = combatant.actor;
-    if(!actor || !findItem(actor, this.ALERT)) return;
-    const combat = combatant.combat ?? combatant.parent;
-    const allies = this.alliesOf(combatant, combat);
-    if(!allies.length) return;
-
-    /* Compact Initiative : the offer goes on the round's initiative card (swap buttons on the allies' rows) */
-    if(settings.value("initiativeMessages") === "compact"){
-      await combat.setFlag(module.id, `alert.${combatant.id}`, { round : combat.round, turn : combat.turn ?? 0, done : false });
-      log.debug("Alert swap offered on the initiative card", actor.name);
-      return;
-    }
-
-    const rows = allies.map(c => `
-      <li class="macro-helper-row">
-        <img class="token" src="${esc(c.img)}" alt="" data-token="${esc(c.token?.uuid ?? "")}">
-        <span class="name">${esc(c.name)}</span>
-        <span class="result">${c.initiative ?? "—"}</span>
-        <button type="button" data-macro-helper-alert="${c.id}"><i class="fa-solid fa-right-left" inert></i> ${module.i18n("feats.alert.swap")}</button>
-      </li>`).join("") + `
-      <li class="macro-helper-row">
-        <button type="button" data-macro-helper-alert=""><i class="fa-solid fa-ban" inert></i> ${module.i18n("feats.alert.keep")}</button>
-      </li>`;
-    await whisperOwners(actor, `<div class="macro-helper-alert"><p><strong>${module.i18n("feats.alert.title")}</strong> : ${module.format("feats.alert.hint", { initiative : combatant.initiative })}</p><ul class="unlist macro-helper-rows">${rows}</ul></div>`,
-      { flags : { [module.id] : { alert : { combat : combat.id, combatant : combatant.id, round : combat.round, turn : combat.turn ?? 0, done : false } } } });
-    log.debug("Alert swap offered", actor.name, allies.map(c => c.name));
-  }
-
-  /* Allies in the same combat who could swap : same side, not the Alert character, initiative rolled and not the same
-     as its own (a swap would change nothing), not incapacitated */
-  static alliesOf(combatant, combat){
-    const side = combatant.token?.disposition ?? combatant.actor?.prototypeToken?.disposition;
-    return (combat?.combatants?.contents ?? [...(combat?.combatants ?? [])]).filter(c => (c.id !== combatant.id)
-      && (c.initiative !== null) && (c.initiative !== combatant.initiative) && c.actor
-      && ((c.token?.disposition ?? c.actor.prototypeToken?.disposition) === side)
-      && !this.INCAPACITATED.some(s => c.actor.statuses?.has(s)));
-  }
-
-  /**
-   * An Alert offer and how to close it : from its own card ({ message }), or from the combat (Compact Initiative :
-   * { combat, combatant }).
-   * @returns {{ info : object|null, read : () => object|null, close : () => Promise }}
-   */
-  static alertOffer({ message : id, combat : combatId, combatant : combatantId } = {}){
-    if(id){
-      const message = game.messages.get(id);
-      return { info : message?.getFlag(module.id, "alert") ?? null, read : () => message?.getFlag(module.id, "alert"),
-        close : () => message.setFlag(module.id, "alert.done", true) };
-    }
-    const combat = game.combats.get(combatId);
-    const read = () => {
-      const info = combat?.getFlag(module.id, `alert.${combatantId}`);
-      return info ? { ...info, combat : combatId, combatant : combatantId } : null;
-    };
-    return { info : read(), read, close : () => combat.setFlag(module.id, `alert.${combatantId}.done`, true) };
-  }
-
-  /* The open offers of a combat's Alert characters (Compact Initiative) : [{ combatant, info }] */
-  static openAlerts(combat){
-    const offers = combat?.getFlag?.(module.id, "alert") ?? {};
-    return Object.keys(offers).map(id => ({ combatant : combat.combatants.get(id), info : this.alertOffer({ combat : combat.id, combatant : id }).info }))
-      .filter(o => o.combatant && this.inTime(o.info));
-  }
-
-  /**
-   * Two combatants' initiative after Alert's swap. The rolled initiative trades places; dnd5e's ability score
-   * tie-breaker (DEX 14 : +0.14 in the initiative) belongs to each creature, so each keeps its own.
-   * @returns {{ a : number, b : number }}
-   */
-  static swappedInitiatives(a, b){
-    const tie = c => {
-      let on = false;
-      try { on = game.settings.get("dnd5e", "initiativeDexTiebreaker"); } catch { on = false; }
-      if(!on) return 0;
-      const ability = c.actor?.system?.attributes?.init?.ability || CONFIG.DND5E.defaultAbilities?.initiative || "dex";
-      const value = Number(c.actor?.system?.abilities?.[ability]?.value);
-      return Number.isFinite(value) ? value / 100 : 0;
-    };
-    const round = n => Math.round(n * 100) / 100;
-    const ta = tie(a), tb = tie(b);
-    return { a : round((b.initiative - tb) + ta), b : round((a.initiative - ta) + tb) };
-  }
-
-  /* Still in time : the same combat, no turn has passed since the roll */
-  static inTime(info){
-    const combat = game.combats.get(info?.combat);
-    return !!combat && !info.done && (combat.round === info.round) && ((combat.turn ?? 0) === info.turn);
-  }
-
-  static wireAlertCard(message, html){
-    const info = message.getFlag?.(module.id, "alert");
-    if(!info) return;
-    const open = this.inTime(info);
-    for(const button of html.querySelectorAll("[data-macro-helper-alert]")){
-      button.disabled = !open;
-      button.addEventListener("click", async event => {
-        event.preventDefault();
-        button.disabled = true;
-        const ally = button.dataset.macroHelperAlert || null;
-        if(ally) ui.notifications.info("feats.alert.asking", { localize : true });
-        try {
-          /* The GM may wait on the ally's player : give it time */
-          const notes = await gm.run("alertSwap", { message : message.id, ally }, { timeout : 90000 });
-          for(const note of notes ?? []) ui.notifications.info(note);
-        } catch(error){
-          ui.notifications.warn(error.message);
-        } finally {
-          button.disabled = !this.inTime(message.getFlag(module.id, "alert"));
-        }
-      });
-    }
-  }
-
-  /**
-   * Done by the GM's client : the asker must own the Alert character, it must still be in time, and both must be able
-   * to swap (in the combat, allies, not Incapacitated). The ally's player is asked (unless the asker owns it too, or
-   * no other player does); then the two initiatives trade places. No ally (null) : "Do not swap", the card closes.
-   */
-  static async swapAsGM({ message : id, combat : combatId, combatant : combatantId, ally : allyId } = {}, user){
-    const offer = this.alertOffer({ message : id, combat : combatId, combatant : combatantId });
-    const info = offer.info;
-    const combat = game.combats.get(info?.combat);
-    const combatant = combat?.combatants.get(info?.combatant);
-    if(!combatant) throw new Error("This Alert card no longer matches a combat.");
-    if(!user?.isGM && !combatant.actor?.testUserPermission(user, "OWNER")) throw new Error("Only the Alert character's owner can swap.");
-    if(!this.inTime(info)) return [module.i18n("feats.alert.late")];
-    if(!allyId){
-      await offer.close();
-      return [module.format("feats.alert.kept", { a : combatant.name })];
-    }
-    if(this.INCAPACITATED.some(s => combatant.actor?.statuses?.has(s))) return [module.i18n("feats.alert.incapacitated")];
-    const ally = this.alliesOf(combatant, combat).find(c => c.id === allyId);
-    if(!ally) return [module.i18n("feats.alert.noAlly")];
-
-    /* The ally's player agrees to it (not the asker, not a GM) */
-    const mineFirst = combatant.initiative, theirsFirst = ally.initiative;
-    const answer = await this.askPlayer(ally.actor, {
-      title : module.i18n("feats.alert.title"), icon : "fa-solid fa-right-left",
-      content : `<p>${module.format("feats.alert.askHint", { a : foundry.utils.escapeHTML(combatant.name), b : foundry.utils.escapeHTML(ally.name), mine : mineFirst, theirs : theirsFirst })}</p>`,
-      buttons : [
-        { action : "yes", label : module.i18n("feats.alert.accept"), icon : "fa-solid fa-check", default : true },
-        { action : "no", label : module.i18n("feats.alert.decline"), icon : "fa-solid fa-xmark" },
-      ],
-    }, { exclude : [user], fallback : "yes" });
-    if(answer !== "yes") return [module.format("feats.alert.declined", { b : ally.name })];
-    if(!this.inTime(offer.read())) return [module.i18n("feats.alert.late")];
-
-    const swapped = this.swappedInitiatives(combatant, ally);
-    await combat.updateEmbeddedDocuments("Combatant", [{ _id : combatant.id, initiative : swapped.a }, { _id : ally.id, initiative : swapped.b }],
-      { [module.id] : { alertSwap : true } });
-    await offer.close();
-    return [module.format("feats.alert.swapped", { a : combatant.name, b : ally.name })];
   }
 }
