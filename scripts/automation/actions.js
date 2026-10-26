@@ -135,6 +135,13 @@ export class actions{
     Hooks.once("ready", () => setTimeout(async () => {
       for(const a of game.actors.filter(a => a.type === "character")) await this.giveBasics(a).catch(error => log.debug(error));
     }, 5000));
+    /* Default Actions : Favorites switched on (its first save creates the setting) : every character at once */
+    const favoritesOn = async setting => {
+      if((setting.key !== `${module.id}.actionFavorites`) || !settings.value("actionFavorites")) return;
+      for(const a of game.actors.filter(a => a.type === "character")) await this.giveBasics(a);
+    };
+    Hooks.on("createSetting", favoritesOn);
+    Hooks.on("updateSetting", favoritesOn);
     this.registerSection();
     /* Dodge, Dash and Disengage mark the creature here, not through Roll Item */
     Hooks.on(`${module.id}.selfEffects`, activity => !(this.enabled() && [this.DODGE, this.DASH, this.DISENGAGE, this.HELP, this.HIDE].includes(idOf(activity?.item))));
@@ -526,6 +533,11 @@ export class actions{
     for(const i of actor.items) if(ours(i) && this.BASICS.includes(idOf(i)) && !first.has(idOf(i))) first.set(idOf(i), i);
     const extra = actor.items.filter(i => this.BASICS.includes(idOf(i)) && first.has(idOf(i)) && (first.get(idOf(i)) !== i));
     if(extra.length) await actor.deleteEmbeddedDocuments("Item", extra.map(i => i.id)).catch(error => log.debug("Default actions", error));
+    await this.#addMissing(actor, ours);
+    await this.#favorite(actor, ours);
+  }
+
+  static async #addMissing(actor, ours){
     const missing = this.BASICS.filter(id => !actor.items.some(i => (idOf(i) === id) && ours(i)));
     if(!missing.length) return;
     const pack = game.packs.get(`${module.id}.actions`);
@@ -544,6 +556,22 @@ export class actions{
     const added = new Set((made ?? []).map(i => idOf(i)));
     const others = actor.items.filter(i => added.has(idOf(i)) && !ours(i));
     if(others.length) await actor.deleteEmbeddedDocuments("Item", others.map(i => i.id)).catch(error => log.debug("Default actions", error));
+  }
+
+  /* Default Actions : Favorites : a character's in its sheet's Favorites, once each (one taken out stays out) */
+  static async #favorite(actor, ours){
+    if(!settings.value("actionFavorites") || (actor.type !== "character") || !actor.system.favorites) return;
+    const items = actor.items.filter(i => ours(i) && this.BASICS.includes(idOf(i)) && !i.getFlag(module.id, "favorited"));
+    if(!items.length) return;
+    const favorites = actor.system.favorites.map(f => ({ ...f }));
+    let sort = Math.max(0, ...favorites.map(f => f.sort ?? 0));
+    for(const item of items){
+      const id = foundry.utils.buildRelativeUuid(item, actor);
+      if(!favorites.some(f => f.id === id)) favorites.push({ type : "item", id, sort : sort += CONST.SORT_INTEGER_DENSITY });
+    }
+    await actor.update({ "system.favorites" : favorites }).catch(error => log.debug("Default actions", error));
+    await actor.updateEmbeddedDocuments("Item", items.map(i => ({ _id : i.id, [`flags.${module.id}.favorited`] : true })))
+      .catch(error => log.debug("Default actions", error));
   }
 
 

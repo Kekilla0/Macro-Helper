@@ -89,6 +89,7 @@ export const GROUPS = {
         choices : { off : "settings.vision.off", conditions : "settings.vision.conditions", full : "settings.vision.full" } },
       masteryRules : { scope : "world", default : true, type : Boolean },
       actionRules : { scope : "world", default : true, type : Boolean },
+      actionFavorites : { scope : "world", default : false, type : Boolean },
     },
   },
   /* System Automation → Characters : classes, species, feats, spells */
@@ -215,6 +216,8 @@ const VIRTUAL = {
   /* Default Actions : Dash, Disengage, Dodge, Help, and the Unarmed Strike's Grapple / Shove */
   rollItemManeuvers : rule("actionRules", "rollItemManeuvers"),
   actionRules : rule("actionRules"),
+  /* Off unless switched on, and only with Default Actions */
+  actionFavorites : () => VIRTUAL.actionRules() && (() => { try { return RAW("actionFavorites") === true; } catch { return false; } })(),
   speciesRules : rule("speciesRules", "traitRules"),
   featRules : rule("featRules", "traitRules"),
   spellRules : rule("spellRules"),

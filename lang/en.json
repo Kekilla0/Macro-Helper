@@ -757,6 +757,8 @@
   "settings.dmScreen.hint" : "Players don't see an NPC's dice, totals or damage on Roll Item cards (hit or miss and save success still show); hidden or Invisible tokens show as Unknown.",
   "settings.masteryRules.title" : "Masteries",
   "settings.actionRules.title" : "Default Actions",
+  "settings.actionFavorites.title" : "Default Actions : Favorites",
+  "settings.actionFavorites.hint" : "A character's Default Actions also go in its sheet's Favorites, once each : one taken out of Favorites stays out.",
   "settings.actionTracker.title" : "Action Tracker",
   "settings.combatLogChat.title" : "Combat Log : Also Whisper",
   "settings.combatLogChat.hint" : "Effects ending and death saves changing also go to chat as whispers (the GM and the creature's owners), not only to the combat log.",
