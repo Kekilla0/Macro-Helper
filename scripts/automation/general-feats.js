@@ -22,7 +22,7 @@ import { bonusAttackAfter } from './bonus-attacks.js';
 import { actionReady, reactionAttackOn, opportunityInstead } from './action-ready.js';
 import { actionTracker } from './action-tracker.js';
 import { fightingStyles } from './fighting-styles.js';
-import { speedAs, standUpCost, dragsFreely } from './movement.js';
+import { speedAs, standUpCost, dragsFreely, jumpRule } from './movement.js';
 import { onDefaultAction, actionAs } from './actions.js';
 import { rollModeFrom } from './roll-modes.js';
 import { rollItem } from '../roll-item/roll-item.js';
@@ -95,8 +95,8 @@ import { tokenOf } from '../helpers/tokens.js';
  *                      Fighting); Quick Draw : two weapons without Two-Handed go in hand for the price of one.
  *   Speedy           : Speed + 10 (Plutonium's effect); having taken the Dash action, Difficult Terrain costs no extra
  *                      movement for the rest of the turn; Opportunity Attacks against it have disadvantage.
- *   Athlete          : a Climb Speed equal to its Speed; standing up from Prone costs 5 ft of movement. Its running
- *                      jumps after 5 ft : nothing to change (no jump rule counts the run-up).
+ *   Athlete          : a Climb Speed equal to its Speed; standing up from Prone costs 5 ft of movement; a running
+ *                      jump after only 5 ft of run-up (jumpRule).
  *   Grappler         : Punch and Grab : once a turn, an Unarmed Strike's hit (Damage, the Attack action) : a button
  *                      for its Grapple too, at that creature; advantage on attacks against a creature it grapples;
  *                      Fast Wrestler : dragging a creature its size or smaller costs no extra movement.
@@ -378,6 +378,7 @@ export class generalFeats{
     /* Athlete */
     speedAs(this.ATHLETE, { speed : "climb", as : "walk", enabled });
     standUpCost(this.ATHLETE, 5, { enabled });
+    jumpRule(this.ATHLETE, { runUp : 5, enabled });
 
     /* Grappler */
     onHit({ id : "punch-and-grab", feature : this.GRAPPLER, enabled, once : "turn", attackAction : true, icon : "fa-hand-back-fist",

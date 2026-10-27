@@ -498,12 +498,12 @@
 #macro-helper-action-bar i.fa-crown, .macro-helper-economy i.fa-crown { color: #e0c341; }
 #macro-helper-action-bar i.lair, .macro-helper-economy i.lair { color: #6fa8d8; }
 .macro-helper-economy i.spent { opacity: 0.25; }
-#macro-helper-action-bar .ready-button { width: auto; height: 26px; line-height: 24px; padding: 0 8px; background: none; border: 1px solid #8a7a3a; color: #eee; }
+#macro-helper-action-bar .ready-button, #macro-helper-action-bar .jump-button { width: auto; height: 26px; line-height: 24px; padding: 0 8px; background: none; border: 1px solid #8a7a3a; color: #eee; }
 #macro-helper-action-bar .ready-chip, .macro-helper-economy .readied { color: #e0c341; }
 
 /* Roll Requests : feat buttons (Lose Concentration, Lucky, Bardic Inspiration) sized to fit the row */
 .chat-message button[data-request-feat] { width: auto; flex: 0 0 auto; height: 24px; line-height: 22px; padding: 0 6px; font-size: 12px; white-space: nowrap; }
-#macro-helper-action-bar .ready-button:disabled { opacity: 0.35; cursor: default; }
+#macro-helper-action-bar .ready-button:disabled, #macro-helper-action-bar .jump-button:disabled { opacity: 0.35; cursor: default; }
 #macro-helper-action-bar .big-action { position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); display: flex; gap: 10px; }
 #macro-helper-action-bar .big-action button { width: auto; white-space: nowrap; height: 44px; padding: 0 22px; font-size: 18px; font-weight: bold;
   border-radius: 8px; color: #fff; box-shadow: 0 0 10px rgba(0, 0, 0, 0.6); }

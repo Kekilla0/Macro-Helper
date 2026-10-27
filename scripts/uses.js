@@ -27,6 +27,7 @@ export class uses{
       "sneak",         // Rogue : Sneak Attack from the sheet : the latest qualifying hit
       "giantAncestry", // Goliath : Fire's Burn, Frost's Chill, Hill's Tumble from the sheet : the latest hit they fit
       "cloudsJaunt",   // Goliath : Cloud's Jaunt : the space first, then the use (a teleport)
+      "jump",          // Jump : the landing square first, then the use (its card), then the jump
       "hex",           // Warlock : Hex : pay, ability, pick, curse (or move it)
       "fontOfMagic",   // Sorcerer : Font of Magic : the conversion window
       "arcaneRecovery",// Wizard : Arcane Recovery from the sheet : the slot window

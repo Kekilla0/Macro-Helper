@@ -427,14 +427,17 @@ export class spells{
     return { update };
   }
 
-  /* ---------- Jump : its effect sets the creature's jump speed to 30 ft (the token ruler's Jump action uses it) ---------- */
+  /* ---------- Jump : its effect sets the creature's jump speed to 30 ft (the token ruler's Jump action uses it), and once a
+     turn, a jump up to 30 ft for 10 ft of movement (jump.js : flags.macro-helper.jump) ---------- */
 
   static jumpFix(item){
     if(!this.enabled() || this.is2014(item) || (item?.type !== "spell") || (idOf(item) !== "jump")) return null;
     const KEY = "system.attributes.movement.speeds.jump";
     const effects = item.effects?.contents ?? [...(item.effects ?? [])];
-    const updateEffects = effects.filter(e => !e.transfer && !(e.changes ?? []).some(c => c.key === KEY))
-      .map(e => ({ _id : e.id, changes : [...(e.toObject().changes ?? []), { key : KEY, type : "upgrade", mode : 4, value : "30" }] }));
+    const LEAP = { leap : 30, cost : 10, once : "turn" };
+    const updateEffects = effects.filter(e => !e.transfer && (!(e.changes ?? []).some(c => c.key === KEY) || !e.getFlag?.(module.id, "jump")))
+      .map(e => ({ _id : e.id, [`flags.${module.id}.jump`] : LEAP,
+        ...(!(e.changes ?? []).some(c => c.key === KEY) ? { changes : [...(e.toObject().changes ?? []), { key : KEY, type : "upgrade", mode : 4, value : "30" }] } : {}) }));
     return updateEffects.length ? { updateEffects } : null;
   }
 

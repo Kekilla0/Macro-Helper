@@ -4,6 +4,7 @@ import { distanceBetween } from '../helpers/tokens.js';
 import { actionTracker } from './action-tracker.js';
 import { actionReady } from './action-ready.js';
 import { zones } from './zones.js';
+import { jump } from './jump.js';
 import { cardBuilder, grapplesOn, grappling, attachedTo } from '../roll-item/card-builder.js';
 
 /**
@@ -97,6 +98,8 @@ export class actionBar{
     const areas = (!dying && st.mine && free && may) ? zones.movable(actor) : [];
     /* In its shell (Tortle) : Emerge, its Bonus Action */
     const shell = !dying && st.mine && may && actor.effects?.some?.(e => !e.disabled && e.getFlag(module.id, "rule")?.shell);
+    /* Jump (a Default Action) : its turn, on its feet, movement left */
+    const jumper = !dying && st.mine && free && may && token && !actor.statuses?.has?.("prone") && jump.enabled() && !!jump.itemOf(actor);
     const buttons = dying ? [`<button type="button" class="death-save"><i class="fa-solid fa-skull" inert></i> ${esc(module.i18n("actionTracker.bar.deathSave"))}</button>`]
       : [prone ? `<button type="button" class="stand-up"><i class="fa-solid fa-person-arrow-up-from-line" inert></i> ${esc(module.format("actionTracker.bar.standUp", { cost : actionTracker.standCost(actor) }))}</button>` : "",
          ...grapples.map(g => `<button type="button" class="escape" data-effect="${g.effect.id}"><i class="fa-solid fa-hand-back-fist" inert></i> ${esc(module.format(g.effect.getFlag(module.id, "grapple")?.engulf ? "actionTracker.bar.escapeEngulf" : g.attach ? "actionTracker.bar.detachFrom" : g.free ? "actionTracker.bar.breakFree" : "actionTracker.bar.escapeFrom", { name : g.free ? g.effect.name : g.byName, dc : g.dc }))}</button>`),
@@ -118,6 +121,7 @@ export class actionBar{
       ${actionTracker.extrasHTML(actor) ? `<div class="extras">${actionTracker.extrasHTML(actor)}</div>` : ""}
       ${rec.ready ? `<div class="ready-chip">${actionTracker.readyHTML(rec)} ${esc(rec.ready.name)}</div>`
         : (st.mine && (game.user.isGM || actor.isOwner)) ? `<button type="button" class="ready-button"${(actionTracker.remaining(rec, "action") <= 0) ? " disabled" : ""} data-tooltip="${esc(module.i18n("actionTracker.ready.tip"))}"><i class="fa-solid fa-hourglass-half" inert></i> ${esc(module.i18n("actionTracker.ready.button"))}</button>` : ""}
+      ${jumper ? `<button type="button" class="jump-button"${(speed && (moved >= speed)) ? " disabled" : ""} data-tooltip="${esc(module.i18n("jump.banner"))}"><i class="fa-solid fa-person-running" inert></i> ${esc(module.i18n("jump.button"))}</button>` : ""}
       <div class="move${(speed && (moved > speed)) ? " over" : ""}" data-tooltip="${esc(module.i18n("actionTracker.movement"))}"><i class="fa-solid fa-shoe-prints" inert></i> ${moved} / ${speed} ft</div>
       <div class="object${(rec.objects >= 1) ? " spent" : ""}" data-tooltip="${esc(module.i18n((rec.objects >= 1) ? "actionTracker.bar.objectUsed" : "actionTracker.bar.objectFree"))}"><i class="fa-solid fa-hand-holding" inert></i></div>
       <button type="button" class="log-toggle" data-tooltip="${esc(module.i18n("actionTracker.bar.log"))}"><i class="fa-solid fa-list" inert></i></button>
@@ -145,6 +149,7 @@ export class actionBar{
       await cardBuilder.release(token, fromUuidSync(button.dataset.target, { strict : false }));
       /* Detaching itself (a Darkmantle) : 5 ft of its movement (its own Speed again, once detached) */
       if(button.dataset.attached){ await new Promise(resolve => setTimeout(resolve, 300)); await actionTracker.useMovement(token, -5); } }));
+    el.querySelector(".jump-button")?.addEventListener("click", () => jump.jump(token));
     el.querySelector(".ready-button")?.addEventListener("click", () => actionReady.ready(token, actor));
     el.querySelector(".end-turn")?.addEventListener("click", async event => {
       event.currentTarget.disabled = true;

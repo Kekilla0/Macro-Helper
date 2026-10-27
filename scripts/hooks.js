@@ -65,6 +65,7 @@ import { ammunition } from './automation/ammunition.js';
 import { gm } from './gm.js';
 import { feats } from './automation/feats.js';
 import { goliath } from './automation/goliath.js';
+import { jump } from './automation/jump.js';
 import { generalFeats } from './automation/general-feats.js';
 import { registerIgnores } from './automation/ignores.js';
 import { registerHitDice } from './automation/hit-dice.js';
@@ -110,6 +111,7 @@ Hooks.once("init", ()=> {
   weapons.register();
   homebrew.register();
   actions.register();
+  jump.register();
   actionTracker.register();
   movement.register();
   actionBar.register();

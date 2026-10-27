@@ -94,7 +94,7 @@ export class actionTracker{
     Hooks.on("preMoveToken", (token, movement) => this.preMove(token, movement));
     /* token.hasReaction() (card macros) : false when its Reaction is spent or it can't take one */
     Hooks.on(`${module.id}.hasReaction`, actor => this.left(actor, "reaction") ? undefined : false);
-    Hooks.on("moveToken", (token, movement, options, user) => this.logMove(token, movement, user));
+    Hooks.on("moveToken", (token, movement, options, user) => this.#logging.set(token.id, this.logMove(token, movement, user)));
     Hooks.on("preUpdateActor", (actor, changes, options) => this.preHands(actor, changes, options));
     Hooks.on("updateActor", (actor, changes, options, userId) => this.onHands(actor, options, userId));
   }
@@ -973,6 +973,15 @@ export class actionTracker{
     await this.save(actor, st.rec);
   }
 
+  /* Its last move's log, still being saved : a change to its record right after a move waits for it (else one of the
+     two saves is lost) */
+  static #logging = new Map();
+
+  static async moveLogged(thing){
+    const id = thing?.document?.id ?? thing?.id;
+    await this.#logging.get(id)?.catch?.(() => null);
+  }
+
   /* token.leap : its moves until it lands there are the leap (logMove takes them off the movement spent) */
   static #leaping = new Map();
   static markLeap(tokenId, { x, y } = {}){
@@ -988,6 +997,7 @@ export class actionTracker{
   static async useMovement(thing, feet){
     const token = thing?.document ? thing : (thing?.object ?? null);
     const actor = thing?.actor ?? thing;
+    if(token) await this.moveLogged(token);
     const st = this.enabled() ? this.state(actor) : null;
     const n = Math.round(Number(feet) || 0);
     if(!st || !n) return true;

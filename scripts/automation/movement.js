@@ -17,6 +17,14 @@ const log = logger.for(import.meta.url);
  *   dragsFreely(match, { when })                             dragging a creature it grapples costs no extra movement;
  *                                                            when(grappler, held) : this one qualifies (Fast Wrestler :
  *                                                            its size or smaller)
+ *   jumpRule(match, { times, runUp, leap, cost, once, when })  how its Long Jump goes (jump.js) : times : its distance
+ *                                                            multiplied (Step of the Wind : 2); runUp : the feet it moves
+ *                                                            first for a running jump (Athlete : 5; the least wins);
+ *                                                            leap : a jump up to that many feet for `cost` ft of movement
+ *                                                            (default 10), no run-up, once a turn (once : null : every
+ *                                                            jump) : the Jump spell, Boots of Striding and Springing.
+ *                                                            An Active Effect does the same with flags.macro-helper.jump
+ *                                                            = { times, runUp, leap, cost, once } (no match).
  *
  *   match  an item identifier the creature has (or several), or (actor) => the item (or anything truthy) that gives it
  *   when   (actor, source) => boolean : the rule holds now. enabled () => boolean leaves it off (its setting). The same
@@ -27,7 +35,7 @@ const log = logger.for(import.meta.url);
  * movement costs 1 extra foot, unless each of them is Tiny or two sizes smaller than it (or a dragsFreely rule says
  * so). The ruler shows the cost; the Action Tracker counts it. Release first to leave one behind.
  */
-const rules = { speed : new Map(), stand : new Map(), drag : new Map() };
+const rules = { speed : new Map(), stand : new Map(), drag : new Map(), jump : new Map() };
 
 const keyOf = (match, id) => id ?? ((typeof match === "function") ? foundry.utils.randomID() : [match].flat().map(String).join(","));
 
@@ -81,6 +89,15 @@ export function standUpCost(match, feet, { when = null, enabled = null, id = nul
  */
 export function dragsFreely(match, { when = null, enabled = null, id = null } = {}){
   rules.drag.set(keyOf(match, id), { match, held : when, enabled });
+}
+
+/**
+ * How its Long Jump goes (Athlete's 5 ft run-up, Step of the Wind's doubled distance, the Jump spell's 30 ft for 10 ft).
+ * @param {string|string[]|Function} match
+ * @param {object} [options]  { times, runUp, leap, cost = 10, once = "turn", when, enabled, id }
+ */
+export function jumpRule(match, { times = null, runUp = null, leap = null, cost = 10, once = "turn", when = null, enabled = null, id = null } = {}){
+  rules.jump.set(keyOf(match, id), { key : keyOf(match, id), match, times, runUp, leap, cost, once, when, enabled });
 }
 
 const SIZES = ["tiny", "sm", "med", "lg", "huge", "grg"];
@@ -139,6 +156,21 @@ export class movement{
       if(Number.isFinite(feet)) cost = Math.min(cost, Math.max(0, feet));
     }
     return cost;
+  }
+
+  /* ---------- Jumping ---------- */
+
+  /**
+   * The jump rules holding for it : the jumpRule legos, then its effects' flags.macro-helper.jump.
+   * @returns {object[]}  [{ key, times, runUp, leap, cost, once, name }]
+   */
+  static jumpRules(actor){
+    const out = holding("jump", actor).map(({ rule, source }) => ({ ...rule, name : source?.name ?? "" }));
+    for(const effect of actor?.appliedEffects ?? []){
+      const jump = effect.getFlag?.(module.id, "jump");
+      if(jump) out.push({ cost : 10, once : "turn", ...jump, key : `effect:${effect.origin ?? effect.id}`, name : effect.name });
+    }
+    return out;
   }
 
   /* ---------- Dragging ---------- */

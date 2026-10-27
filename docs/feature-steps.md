@@ -48,7 +48,7 @@ Legos are listed in [api.md](api.md). "Data" means the item's own dnd5e or Pluto
 | Fighter | Action Surge | its use | one more Action this turn | `actionTracker.modify` |
 | Fighter | Tactical Mind | a failed ability check | +1d10; Second Wind spent only if it then succeeds | `onFailedTest` (`cost`, `pay: "success"`) |
 | Monk | Flurry of Blows | its use | a Focus Point; the Unarmed Strike 2 or 3 times, together a Bonus Action; cards tagged for Open Hand | `spendUses`, `multiattack` (`economy`, `tag`); 2 or 3 by level |
-| Monk | Patient Defense, Step of the Wind | its use | Disengage (Dash), with a Focus Point also Dodge (Disengage) | `useDefaultAction`; which ones is its own |
+| Monk | Patient Defense, Step of the Wind | its use | Disengage (Dash), with a Focus Point also Dodge (Disengage; Step of the Wind : jump distance doubled for the turn) | `useDefaultAction`, a timed mark with `flags.macro-helper.jump` (`jumpRule`'s effect form); which ones is its own |
 | Monk | Unarmored Movement | armor, shield, hands change | its speed only while unarmored | `bonusOnlyWhen`, `isUnarmored` |
 | Monk | Uncanny Metabolism | the initiative roll | a button while its use is left (the first roll with Initiative Each Round) | `onInitiative` |
 | Paladin | Paladin's Smite (and the smite spells) | a melee weapon hit | one button for every smite prepared; free Divine Smite or a slot; damage box; its save on the card; Bonus Action, once a turn | `castOnHit` (on `payCasting`, `cardSave`), `countedUses`; Divine Smite's +1d8 against a Fiend or Undead is its own |
@@ -86,7 +86,7 @@ Legos are listed in [api.md](api.md). "Data" means the item's own dnd5e or Pluto
 | Charger | a melee hit after a straight run | 10 ft or more straight toward it: once a turn 1d8 or a 10 ft push | `chargedAt`, `onHit` (`attackAction`), `onHitMove` |
 | Defensive Duelist | hit by a melee attack | holding a Finesse weapon: a Reaction, + PB AC against melee until its next turn, the hit judged again | `onAttacked` (`self`), `raiseCardAC`, `giveEffect` (rule `acOnlyAgainst`) |
 | Speedy | the Dash action; an Opportunity Attack at it | Dashed: Difficult Terrain costs nothing extra this turn; OAs at it have disadvantage | `ignoresTerrain` (`when` Dashing), `rollModeFrom` (`trait`, `tags.opportunity` / `rollItem.usedTags`) |
-| Athlete | always; standing up | Climb Speed = Speed; standing costs 5 ft | `speedAs`, `standUpCost` |
+| Athlete | always; standing up; a jump | Climb Speed = Speed; standing costs 5 ft; a running jump after 5 ft | `speedAs`, `standUpCost`, `jumpRule` (`runUp`) |
 | Grappler | an Unarmed Strike hit; attacking someone it holds; dragging | once a turn its Grapple too (nothing spent); advantage; no extra cost for its size or smaller | `onHit` (no formula, `attackAction`), `rollModeFrom` (`trait`), `dragsFreely` |
 | Keen Mind, Observant | Study / Search | a Bonus Action instead (its choice) | `actionAs` |
 | Charger (Improved Dash) | the Dash action | 10 ft more movement | `onDefaultAction`, `useMovement` |

@@ -10,6 +10,7 @@ import { uses } from '../../uses.js';
 import { onInitiative } from '../initiative.js';
 import { itemFixes } from '../item-fixes.js';
 import { tokenOf } from '../../helpers/tokens.js';
+import { addTimedEffect } from '../../helpers/actors.js';
 import { pickTargets } from '../../helpers/targets.js';
 import { cutDamage, cutsOf } from '../../roll-item/damage-cuts.js';
 import { cardBuilder } from '../../roll-item/card-builder.js';
@@ -32,7 +33,8 @@ const log = logger.for(import.meta.url);
  *   Flurry of Blows    : a Focus Point, then the character's own Unarmed Strike twice (three times from level 10), each
  *                        its own use : Attack, Grapple or Shove (multiattack, economy "bonus", tag "flurry").
  *   Patient Defense    : the free use : Disengage; with a Focus Point : Disengage and Dodge (the Default Actions, free).
- *   Step of the Wind   : like Patient Defense : the free use : Dash; with a Focus Point : Dash and Disengage. Plutonium's
+ *   Step of the Wind   : like Patient Defense : the free use : Dash; with a Focus Point : Dash and Disengage, and its
+ *                        jump distance doubled for the turn (a mark : flags.macro-helper.jump.times). Plutonium's
  *                        item (one Focus Point activity, its own uses) is given the free activity when it lands.
  *   Unarmored Movement : its speed only while wearing no armor and holding no shield (bonusOnlyWhen).
  *   Uncanny Metabolism : a button on the Monk's initiative roll (onInitiative; Initiative Each Round : the combat's first
@@ -188,6 +190,9 @@ export class monk{
     const pair = (id === this.PATIENT) ? ["disengage", "dodge"] : ["dash", "disengage"];
     await actions.useDefault(own, pair[0]);
     if(focus) await actions.useDefault(own, pair[1]);
+    /* Step of the Wind with its Focus Point : its jump distance doubled for the turn (jump.js reads the flag) */
+    if(focus && (id === this.STEP)) await addTimedEffect(own, { name : module.i18n("jump.stepMark"), img : activity.item.img,
+      flags : { [module.id] : { jump : { times : 2 } } } }, { until : "turnEnd", thisTurn : true });
     await actions.autoApplied(results);
     log.debug("Monk", activity.item.name, focus ? "Focus Point" : "free");
   }

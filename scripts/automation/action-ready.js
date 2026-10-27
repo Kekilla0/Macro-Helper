@@ -479,7 +479,7 @@ export class actionReady{
     const grid = token.parent.grid;
     const size = grid.size;
     const points = [movement.origin, ...(movement.passed?.waypoints ?? []), ...(movement.pending?.waypoints ?? [])].filter(Boolean)
-      .map(p => ({ x : p.x, y : p.y, elevation : p.elevation ?? 0 }));
+      .map(p => ({ x : p.x, y : p.y, elevation : p.elevation ?? 0, ...(p.action ? { action : p.action } : {}) }));
     const out = points.length ? [points[0]] : [];
     const centre = p => ({ x : p.x + (token.width * size / 2), y : p.y + (token.height * size / 2) });
     for(let i = 1; i < points.length; i++){
@@ -487,7 +487,7 @@ export class actionReady{
       if(!cellsOn.length){ out.push(points[i]); continue; }
       for(const cell of cellsOn.slice(1)){
         const c = grid.getCenterPoint(cell);
-        out.push({ x : c.x - (token.width * size / 2), y : c.y - (token.height * size / 2), elevation : points[i].elevation });
+        out.push({ x : c.x - (token.width * size / 2), y : c.y - (token.height * size / 2), elevation : points[i].elevation, ...(points[i].action ? { action : points[i].action } : {}) });
       }
     }
     return out.filter((p, i, all) => !i || (p.x !== all[i - 1].x) || (p.y !== all[i - 1].y));
@@ -585,8 +585,10 @@ export class actionReady{
       if(entering.length){ stop = i + 1; rows = entering.map(e => ({ token : e.t.uuid, status : "pending", rule : e.rule.id })); break; }
     }
     if(stop < 0) return;
-    const rest = path.slice(stop + 1).map(p => ({ x : p.x, y : p.y, elevation : p.elevation }));
-    const until = path.slice(1, stop + 1).map(p => ({ x : p.x, y : p.y, elevation : p.elevation }));
+    /* Each part keeps its own kind of move (a jump's run-up walked, its leap a jump) */
+    const part = p => ({ x : p.x, y : p.y, elevation : p.elevation, ...(p.action ? { action : p.action } : {}) });
+    const rest = path.slice(stop + 1).map(part);
+    const until = path.slice(1, stop + 1).map(part);
     this.stopForOA(token, until, rest, rows, [...done]);
     return false;
   }

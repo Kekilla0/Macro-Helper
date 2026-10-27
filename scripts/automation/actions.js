@@ -99,8 +99,8 @@ function defaultRulesFor(kind, actor, action){
  *                    used or spent until allowed; then DEX (Stealth) against DC 15 (a reroll counts) : Invisible on a
  *                    success, until the GM ends it. On its own token.
  *
- * Every creature (characters and monsters) has Macro Helper's default actions : Dash, Disengage, Dodge, Help, Hide and Unarmed
- * Strike (its Grapple and Shove), from the Actions compendium, when its token is placed, when a combat it's in starts,
+ * Every creature (characters and monsters) has Macro Helper's default actions : Dash, Disengage, Dodge, Help, Hide, Jump
+ * (jump.js) and Unarmed Strike (its Grapple and Shove), from the Actions compendium, when its token is placed, when a combat it's in starts,
  * and (characters) when the world loads (the active GM's client). Another item with the same identifier (dnd5e's own
  * Unarmed Strike, Plutonium's "Claw Attack") is replaced by ours, so the features that change it (a Tortle's Claws,
  * Martial Arts) change ours.
@@ -509,7 +509,7 @@ export class actions{
   /* A creature at 0 HP within 5 ft first (none : nothing spent), then the use, then it's Stable (no check) */
   /* ---------- Every creature's default actions ---------- */
 
-  static BASICS = ["dash", "disengage", "dodge", "help", "hide", "search", "study", "unarmed-strike"];
+  static BASICS = ["dash", "disengage", "dodge", "help", "hide", "search", "study", "unarmed-strike", "long-jump"];
 
   static #giving = new Map();  // actor uuid -> the run under way
 

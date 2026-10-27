@@ -16,7 +16,8 @@ import { willingSave, willingOn } from './automation/willing.js';
 import { changeSize } from './automation/size.js';
 import { lendItem, lends } from './automation/lend-item.js';
 import { ignoresDisadvantage, ignoresCover, ignoresProperty, ignoresResistance, ignoresTerrain } from './automation/ignores.js';
-import { speedAs, standUpCost, dragsFreely } from './automation/movement.js';
+import { speedAs, standUpCost, dragsFreely, jumpRule } from './automation/movement.js';
+import { jump } from './automation/jump.js';
 import { hitDieBonus } from './automation/hit-dice.js';
 import { acDexCap } from './automation/armor.js';
 import { extraMasteries } from './automation/weapon-mastery.js';
@@ -144,8 +145,10 @@ export class api{
       /* Something after a Default Action (Charger's Dash); a Default Action as a Bonus Action (Keen Mind's Study) */
       onDefaultAction, actionAs, actionRollMode,
       /* A speed equal to another (Athlete's climb); what standing up costs (Hop Up); dragging a grappled creature
-         without the extra cost (Fast Wrestler) */
-      speedAs, standUpCost, dragsFreely,
+         without the extra cost (Fast Wrestler); how far it jumps (Athlete's run-up, Step of the Wind, the Jump spell);
+         a Long Jump (the green squares, then the move) */
+      speedAs, standUpCost, dragsFreely, jumpRule,
+      jump : (thing, options) => jump.jump(thing, options),
       /* More on a Hit Point Die spent (Chef); a higher Dexterity limit in armor (Medium Armor Master); more weapon
          masteries (Weapon Master); the damage dealer's mode on the Concentration save it causes (Mage Slayer); a push
          or pull on a failed save (Telekinetic Shove, Thunderwave); spells without some components (Improved
