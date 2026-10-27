@@ -864,6 +864,7 @@
   "combatLog.success" : "(DC {dc} : success)",
   "combatLog.failure" : "(DC {dc} : failure)",
   "combatLog.damage" : "takes {n} damage",
+  "combatLog.damageType" : "takes {n} {type} damage",
   "combatLog.sharedWith" : "(shared with {name})",
   "combatLog.healing" : "regains {n} HP",
   "combatLog.folder" : "Combat Logs",

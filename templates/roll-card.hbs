@@ -194,7 +194,7 @@
     {{#with damage}}{{> "macro-helper.damage-rows" }}{{/with}}
 
     {{#if showTray}}
-    <macro-helper-damage class="dnd5e2" data-ray="{{ index }}" data-part="base"></macro-helper-damage>
+    <macro-helper-damage class="dnd5e2" data-ray="{{ index }}" data-part="{{#if damage.merged}}hit{{else}}base{{/if}}"></macro-helper-damage>
     {{/if}}
 
     {{#with extras}}{{> "macro-helper.extras" }}{{/with}}
@@ -203,12 +203,12 @@
 </div>
 {{/each}}
 
-{{!-- Damage, one box per damage type --}}
+{{!-- Damage, one box per damage type (a hit's : what was added on top in it too, one Apply) --}}
 {{#with damage}}
 {{> "macro-helper.damage-rows" }}
 
 {{#if showTray}}
-<macro-helper-damage class="dnd5e2" data-part="base"></macro-helper-damage>
+<macro-helper-damage class="dnd5e2" data-part="{{#if merged}}hit{{else}}base{{/if}}"></macro-helper-damage>
 {{/if}}
 {{/with}}
 

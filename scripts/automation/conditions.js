@@ -603,10 +603,12 @@ export class conditions{
     const message = options.origin?.id ?? null;
     const update = {};
     if(amount > 0) update[`flags.${module.id}.lastDamage`] = { amount, message, at : Date.now() };
-    /* By card and part ("rows", "hits", dnd5e's "tray") : shown on the card, and applied only once */
+    /* By card and part ("rows", "hits", dnd5e's "tray") : shown on the card, and applied only once. A hit's box dealt
+       several parts at once (parts) : the amount on the first, the others marked 0 */
     if(message){
-      const part = options[module.id]?.part ?? "tray";
-      update[`flags.${module.id}.applied.${message}.${part}`] = amount;
+      const own = options[module.id] ?? {};
+      const parts = own.parts?.length ? own.parts : [own.part ?? "tray"];
+      parts.forEach((part, i) => update[`flags.${module.id}.applied.${message}.${part}`] = i ? 0 : amount);
       /* Only the last cards are kept */
       const cards = Object.keys(actor.getFlag?.(module.id, "applied") ?? {}).filter(id => id !== message);
       for(const old of cards.slice(0, Math.max(0, cards.length - (this.APPLIED_KEPT - 1)))){

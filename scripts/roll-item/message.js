@@ -746,20 +746,31 @@ export function registerMessages(){
     return [...new Set(actors.filter(a => a?.isOwner))];
   };
 
-  /* Same call dnd5e's damage tray makes : one entry per damage type, dnd5e applies resistances per type */
-  const applyDamageRolls = async (message, actor, rolls, { multiplier = 1, part = "hits" } = {}) => {
-    if(!rolls.length) return;
-    /* Hook : what a hit does before its damage lands (Sap, Slow, Vex) : a rule pushes its promise into `waits` */
+  /* Rolls as dnd5e's damage descriptions : one entry per damage type, dnd5e applies resistances per type */
+  const damagesOf = rolls => aggregateDamageRolls(rolls, { respectProperties : true }).map(roll => ({
+    properties : new Set(roll.options.properties ?? []),
+    type : roll.options.type,
+    value : Math.max(0, roll.total),
+  }));
+
+  /* What a hit does before its damage lands (Sap, Slow, Vex) : a rule pushes its promise into `waits` */
+  const beforeDamage = async (message, actor) => {
     const waits = [];
     Hooks.callAll(`${module.id}.beforeApplyDamage`, message, actor, waits);
     await Promise.allSettled(waits);
-    const damages = aggregateDamageRolls(rolls, { respectProperties : true }).map(roll => ({
-      properties : new Set(roll.options.properties ?? []),
-      type : roll.options.type,
-      value : Math.max(0, roll.total),
-    }));
-    await actor.applyDamage(damages, { isDelta : true, multiplier, origin : message, [module.id] : { part } });
   };
+
+  /* Same call dnd5e's damage tray makes */
+  const applyDamageRolls = async (message, actor, rolls, { multiplier = 1, part = "hits" } = {}) => {
+    if(!rolls.length) return;
+    await beforeDamage(message, actor);
+    await actor.applyDamage(damagesOf(rolls), { isDelta : true, multiplier, origin : message, [module.id] : { part } });
+  };
+
+  /* A damage box's key, the part of the card it applies : "tray-base", "tray-extra-sneak-2" (ray 2)... A creature's
+     flags.macro-helper.applied.<card>.<key> holds what it took from it */
+  const boxKey = (part, key, ray) => ["tray", part, key, Number.isInteger(ray) ? String(ray) : ray]
+    .filter(v => (v !== undefined) && (v !== null) && (v !== "")).join("-").replace(/\./g, "-");
 
   /* Flag keys can't hold dots : token uuids are stored with dashes (ids never contain one) */
   const uuidKey = uuid => uuid.replaceAll(".", "-");
@@ -769,7 +780,9 @@ export function registerMessages(){
    * dnd5e's damage tray, limited to one part of the card (dnd5e's own applies every damage roll on the message).
    *  data-part="base" | "save" | "graze"  the attack's damage, the on-hit save's damage (halved for targets that saved),
  *                             or the Graze mastery's damage for a miss
-   *  data-ray="n"               one ray of a multi attack card
+   *  data-part="hit"            a hit's damage in one box : the attack's own (or the alternative data-key) and every part
+   *                             added on top (Sneak Attack, a smite); each creature is dealt only the parts it hasn't had
+   *  data-ray="n"              one ray of a multi attack card
    * The parent fills `damages` and `chatMessage` when it connects; here `damages` always reads this part's rolls,
    * and for the save part `chatMessage.system` exposes the save's onSave + outcomes, which the parent uses for its save multiplier.
    */
@@ -797,7 +810,29 @@ export function registerMessages(){
        Graze, the save's... (dnd5e's tray would record them all as one "tray" : the first would block the rest) */
     get partKey(){
       const { part = "base", key, ray } = this.dataset;
-      return ["tray", part, key, ray].filter(v => (v !== undefined) && (v !== "")).join("-").replace(/\./g, "-");
+      return boxKey(part, key, ray);
+    }
+
+    get ray(){
+      return ("ray" in this.dataset) ? Number(this.dataset.ray) : null;
+    }
+
+    /* The hit box's parts (message.system.hitParts), those a creature hasn't been dealt yet when given one */
+    hitParts(actor = null){
+      const message = this.#message;
+      const parts = message?.system?.hitParts?.(this.ray, this.dataset.key || null) ?? [];
+      if(!actor) return parts;
+      const done = actor.getFlag?.(module.id, `applied.${message.id}`) ?? {};
+      return parts.filter(p => !Number.isFinite(done[p.box]));
+    }
+
+    /* The hit box shows each creature what it still has to take (a smite added after the hit was applied : the smite) */
+    #for = null;
+    calculateDamage(actor, options){
+      if(this.dataset.part !== "hit") return super.calculateDamage(actor, options);
+      this.#for = actor;
+      try { return super.calculateDamage(actor, options); }
+      finally { this.#for = null; }
     }
 
     /* Applied to every target the card has (for this box) : open, its numbers showing, the Apply button done. Another
@@ -807,11 +842,12 @@ export function registerMessages(){
       const message = this.#message;
       const button = this.applyButton;
       if(!message?.system || !button) return;
-      const ray = ("ray" in this.dataset) ? Number(this.dataset.ray) : null;
+      const ray = this.ray;
       const targets = (Number.isInteger(ray) && message.system.rayTarget) ? [message.system.rayTarget(ray)].filter(Boolean) : (message.system.targets ?? []);
       if(!targets.length) return;
       const done = targets.every(t => {
         const actor = TargetsField.resolve(t).actor;
+        if(this.dataset.part === "hit") return !!actor && !this.hitParts(actor).length;
         return Number.isFinite(actor?.getFlag?.(module.id, `applied.${message.id}.${this.partKey}`));
       });
       if(!done) return;
@@ -823,7 +859,7 @@ export function registerMessages(){
 
     /* A ray's box lists only that ray's creature (dnd5e's lists every creature on the card) */
     buildTargetListEntry(targetList, entry){
-      const ray = ("ray" in this.dataset) ? Number(this.dataset.ray) : null;
+      const ray = this.ray;
       const target = (Number.isInteger(ray) && (targetList.targetingMode === "targeted")) ? this.#message?.system?.rayTarget?.(ray) : null;
       if(target && (target.token !== entry.uuid)) return;
       return super.buildTargetListEntry(targetList, entry);
@@ -840,21 +876,41 @@ export function registerMessages(){
     async _onApplyDamage(event){
       const message = this.#message;
       const part = this.dataset.part || "base";
-      /* The hit's own damage : what a hit does before it lands (Sap, Slow, Vex), as the row's Apply does */
-      if(message && (part === "base")){
-        for(const option of this.targetList?.querySelectorAll?.("option") ?? []){
-          const actor = fromUuidSync(option.value, { strict : false })?.actor;
-          if(!actor?.isOwner) continue;
-          const waits = [];
-          Hooks.callAll(`${module.id}.beforeApplyDamage`, message, actor, waits);
-          await Promise.allSettled(waits);
+      if(message && (part === "hit")) await this.#applyHit(event, message);
+      else {
+        /* The hit's own damage : what a hit does before it lands (Sap, Slow, Vex), as the row's Apply does */
+        if(message && (part === "base")){
+          for(const option of this.targetList?.querySelectorAll?.("option") ?? []){
+            const actor = fromUuidSync(option.value, { strict : false })?.actor;
+            if(actor?.isOwner) await beforeDamage(message, actor);
+          }
         }
+        await super._onApplyDamage(event);
       }
-      await super._onApplyDamage(event);
-      if(!message?.isOwner || !["base", "extra"].includes(part) || !message.system?.alternativesOf) return;
-      const ray = ("ray" in this.dataset) ? Number(this.dataset.ray) : null;
+      if(!message?.isOwner || !["base", "extra", "hit"].includes(part) || !message.system?.alternativesOf) return;
+      const ray = this.ray;
       if(!message.system.alternativesOf(ray).length) return;
-      await message.setFlag(module.id, `choice.${rayKey(ray)}`, (part === "extra") ? this.dataset.key : "base");
+      await message.setFlag(module.id, `choice.${rayKey(ray)}`, this.dataset.key || "base");
+    }
+
+    /* The hit box : each creature in one go, only the parts it hasn't taken (one damage, one Concentration save).
+       options.macro-helper : part (this box), parts (each part's own box key), withOwn (the attack's own damage is in it) */
+    async #applyHit(event, message){
+      event.preventDefault();
+      for(const option of this.targetList?.querySelectorAll?.("option") ?? []){
+        const token = fromUuidSync(option.value, { strict : false });
+        const actor = token?.actor;
+        if(!token?.isOwner || !actor) continue;
+        const parts = this.hitParts(actor);
+        /* Hook : a rule can hold a part back (Sneak Attack a second time in a turn) : it takes it out of `parts` */
+        Hooks.callAll(`${module.id}.applyHitParts`, message, actor, parts);
+        if(!parts.length) continue;
+        const withOwn = parts.some(p => p.own);
+        if(withOwn) await beforeDamage(message, actor);
+        await actor.applyDamage(damagesOf(parts.flatMap(p => p.rolls)), { ...this.getMergedOptions(option.value), isDelta : true, origin : message,
+          [module.id] : { part : this.partKey, parts : parts.map(p => p.box), withOwn } });
+      }
+      if(game.settings.get("dnd5e", "autoCollapseChatTrays") !== "manual") this.open = false;
     }
 
     matches(roll){
@@ -866,12 +922,8 @@ export function registerMessages(){
     }
 
     partDamages(){
-      const rolls = (this.#message?.rolls ?? []).filter(r => this.matches(r));
-      return aggregateDamageRolls(rolls, { respectProperties : true }).map(roll => ({
-        properties : new Set(roll.options.properties ?? []),
-        type : roll.options.type,
-        value : Math.max(0, roll.total),
-      }));
+      if(this.dataset.part === "hit") return damagesOf(this.hitParts(this.#for).flatMap(p => p.rolls));
+      return damagesOf((this.#message?.rolls ?? []).filter(r => this.matches(r)));
     }
 
     /* The message as the tray sees it : system.onSave is the rider's, system.origin.system.outcomes are the rider saves */
@@ -1087,6 +1139,44 @@ export function registerMessages(){
       return this.extraRolls(ray).filter(r => tagOf(r).alternative);
     }
 
+    /**
+     * One attack's hit damage, as one box : its own damage (or the alternative applied instead : key) and every part
+     * added on top that has been shown (Sneak Attack, Hunter's Mark, a smite). Each part keeps its own box's key, so
+     * each creature is dealt it once.
+     * @param {number|null} ray
+     * @param {string|null} [key]   an alternative's key (Savage Attacker's second roll); null : the attack's own damage
+     * @returns {{ box : string, own : boolean, label : string, rolls : DamageRoll[] }[]}
+     */
+    hitParts(ray, key = null){
+      const extras = this.extraRolls(ray);
+      const own = key ? extras.filter(r => tagOf(r).key === key) : (Number.isInteger(ray) ? this.rayDamage(ray) : this.damageRolls);
+      const groups = new Map();
+      for(const roll of extras){
+        const { key : k, label, alternative } = tagOf(roll);
+        if(alternative) continue;
+        if(!groups.has(k)) groups.set(k, { box : boxKey("extra", k, ray), own : false, label : label ?? k, rolls : [] });
+        groups.get(k).rolls.push(roll);
+      }
+      return [
+        ...(own.length ? [{ box : boxKey(key ? "extra" : "base", key, ray), own : true, label : "", rolls : own }] : []),
+        ...[...groups.values()].filter(g => this.rollsShown(ray, g.rolls)),
+      ];
+    }
+
+    /* Its hit's damage goes in one box : it hit, it has damage of its own, and the hit's dice have played */
+    mergesHit(ray){
+      const own = Number.isInteger(ray) ? this.rayDamage(ray) : this.damageRolls;
+      return this.parent.isContentVisible && (own.length > 0) && this.isHitOn(ray) && this.outcomeShown(ray, "hit");
+    }
+
+    /* The hit box's damage, as the card draws it : one line per type, what was added on top named under it */
+    hitContext(ray, key = null, { hidden = false } = {}){
+      const parts = this.hitParts(ray, key);
+      if(!parts.length) return null;
+      const added = parts.filter(p => !p.own).map(p => p.label).filter(Boolean);
+      return { ...damageContext(this.parent, parts.flatMap(p => p.rolls), { hidden }), merged : true, added : added.join(", ") };
+    }
+
     /* Which damage was applied when there are alternatives : "base", an extra key, or null while all are on offer */
     choiceOf(ray){
       return this.parent.getFlag(module.id, `choice.${rayKey(ray)}`) ?? null;
@@ -1142,8 +1232,8 @@ export function registerMessages(){
     }
 
     /**
-     * Add damage to an attack on this card, in its own labelled box with its own APPLY (Savage Attacker's second roll,
-     * Divine Smite, Sneak Attack...). The dice are shown first.
+     * Add damage to an attack on this card (Savage Attacker's second roll, Divine Smite, Sneak Attack...) : in the hit's box
+     * once it hits (hitParts), else in its own labelled box with its own APPLY. The dice are shown first.
      * @param {DamageRoll[]} rolls
      * @param {object} options
      * @param {string} options.key            what it is ("savage"), one box per key
@@ -1166,7 +1256,7 @@ export function registerMessages(){
     }
 
     /**
-     * The extra-damage lego : more damage on one attack, in its own box with its own Apply (Hunter's Mark, Hex, Sneak
+     * The extra-damage lego : more damage on one attack, in the hit's box (Hunter's Mark, Hex, Sneak
      * Attack) : card.extraDamage("1d6", { key : "hex", type : "necrotic", magical : true, ray }). Once per key per
      * attack (a second call does nothing); doubled when that attack is a crit.
      * @param {string} formula
@@ -1301,7 +1391,8 @@ export function registerMessages(){
       return true;
     }
 
-    /* The extra boxes for one attack, and the buttons item macros add to it (macro-helper.cardButtons) */
+    /* The extra boxes for one attack (on a hit only the alternatives : the rest is in the hit's box), and the buttons
+       item macros add to it (macro-helper.cardButtons) */
     extrasContext(ray){
       if(!this.parent.isContentVisible) return null;
       const hasRay = Number.isInteger(ray);
@@ -1313,12 +1404,16 @@ export function registerMessages(){
         if(!groups.has(key)) groups.set(key, { key, label, rolls : [] });
         groups.get(key).rolls.push(roll);
       }
+      /* A hit : what's added on top is in the hit's box; an alternative's box is the hit's box with it instead */
+      const merged = this.mergesHit(ray);
       const extras = [...groups.values()]
         .filter(g => !choice || (choice === g.key) || !g.rolls.some(r => tagOf(r).alternative))
+        .filter(g => !merged || g.rolls.some(r => tagOf(r).alternative))
         /* On-hit damage only once the attack hits */
         .filter(g => this.rollsShown(ray, g.rolls))
-        .map(g => ({ key : g.key, label : g.label, chosen : choice === g.key,
-          damage : { ...damageContext(this.parent, g.rolls), showTray : this.canApply && (!g.rolls.some(r => tagOf(r).onHit) || this.isHitOn(ray)) } }));
+        .map(g => ({ key : g.key, label : g.label, chosen : choice === g.key, part : merged ? "hit" : "extra",
+          damage : { ...(merged ? this.hitContext(ray, g.key) : damageContext(this.parent, g.rolls)),
+            showTray : this.canApply && (!g.rolls.some(r => tagOf(r).onHit) || this.isHitOn(ray)) } }));
 
       /* Buttons : item macros listening to macro-helper.cardButtons push { id, label, icon, tooltip } */
       const buttons = [];
@@ -1474,7 +1569,7 @@ export function registerMessages(){
               ...coverShown(target),
               applied : appliedOn(this.parent, target.token, ["hits", "tray"]),
             } : null,
-            damage : ((damage.length || !visible) && hitShown) ? damageContext(this.parent, damage, { hidden }) : null,
+            damage : ((damage.length || !visible) && hitShown) ? ((this.mergesHit(i) && this.hitContext(i, null, { hidden })) || damageContext(this.parent, damage, { hidden })) : null,
             /* Damage is rolled either way and shows on a hit (a reroll that hits brings it, the GM can count a miss as one) */
             showTray : canApply && (damage.length > 0) && hit && hitShown,
             sections : this.sectionsContext(i),
@@ -1516,7 +1611,8 @@ export function registerMessages(){
          it, the GM can count a miss as a hit); a hidden card gives nothing away : always "?" */
       const visible = this.parent.isContentVisible;
       const hitShown = !visible || this.outcomeShown(null, "hit");
-      if(damage.length && hitShown) context.damage = { ...damageContext(this.parent, damage, { hidden }), showTray : this.canApply && this.isHitOn(null) };
+      if(damage.length && hitShown) context.damage = { ...((this.mergesHit(null) && this.hitContext(null, null, { hidden })) || damageContext(this.parent, damage, { hidden })),
+        showTray : this.canApply && this.isHitOn(null) };
       if(context.buttons && !hitShown) context.buttons.damage = false;
       if(!hitShown) context.effects = [];
       context.countHit = game.user.isGM && visible && !!this.attackRoll && !this.resultsOf(null).hit;

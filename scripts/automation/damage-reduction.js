@@ -68,9 +68,11 @@ function reduce(actor, damages, options = {}){
       const types = rule.types ?? null;
       const typed = d => (Number(d.value) > 0) && (!types || types.includes(d.type)) && !["healing", "temphp", "maximum"].includes(d.type);
       let left = Number((typeof rule.amount === "function") ? rule.amount(source, actor) : rule.amount) || 0;
-      /* An added box : what the attack's own damage of those types didn't use */
-      const part = String(options?.[module.id]?.part ?? "");
-      if(rule.attacks && part.startsWith("tray-extra")){
+      /* An added box, or a hit's box without the attack's own damage (taken already) : what the attack's own damage of
+         those types didn't use */
+      const own = options?.[module.id] ?? {};
+      const added = own.parts ? !own.withOwn : String(own.part ?? "").startsWith("tray-extra");
+      if(rule.attacks && added){
         const own = (Number.isInteger(ray) ? card.system.rayDamage?.(ray) : card.system.damageRolls) ?? [];
         const used = own.filter(r => !types || types.includes(r.options?.type)).reduce((sum, r) => sum + (Number(r.total) || 0), 0);
         left = Math.max(0, left - used);

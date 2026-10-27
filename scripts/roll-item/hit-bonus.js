@@ -57,6 +57,7 @@ export function onHit(rule){
   Hooks.on(`${module.id}.cardButtons`, (message, buttons, { ray } = {}) => cardButtons(message, buttons, ray ?? null));
   Hooks.on(`${module.id}.cardButton`, (message, id, { ray } = {}) => { if(String(id).startsWith("onHit|")) clicked(message, String(id), ray ?? null); });
   Hooks.on("dnd5e.preApplyDamage", (actor, amount, updates, options) => applied(options));
+  Hooks.on(`${module.id}.applyHitParts`, (message, actor, parts) => appliedInHit(message, parts));
 }
 
 /**
@@ -219,14 +220,28 @@ async function clicked(message, id, ray){
 
 /* Its box applied to a creature : the turn's use, for a rule counted then (a second one that turn : rule.again) */
 function applied(options = {}){
+  /* A hit's box : appliedInHit has seen to it */
+  if(options?.[module.id]?.parts) return;
   const part = String(options?.[module.id]?.part ?? "");
   if(!part.startsWith("tray-extra-")) return;
-  const rule = rules.find(r => (r.counted === "apply") && r.once && part.startsWith(`tray-extra-${r.id}`));
-  const attacker = rule && options.origin?.getAssociatedActor?.();
+  return countApply(options.origin, part);
+}
+
+/* The rule a box's damage is, counted : false when it can't be used again this turn */
+function countApply(message, box){
+  const rule = rules.find(r => (r.counted === "apply") && r.once && box.startsWith(`tray-extra-${r.id}`));
+  const attacker = rule && message?.getAssociatedActor?.();
   if(!attacker || (rule.enabled && !rule.enabled())) return;
   const key = onceKey(rule, { target : null });
   if(usedThisTurn(attacker, key) && (rule.again?.(attacker) === false)) return false;
   markUsedThisTurn(attacker, key);
+}
+
+/* A hit's box applied : a part that can't be used again this turn is held back, the rest of the hit still lands */
+function appliedInHit(message, parts){
+  for(const part of [...parts]){
+    if(part.box.startsWith("tray-extra-") && (countApply(message, part.box) === false)) parts.splice(parts.indexOf(part), 1);
+  }
 }
 
 /**

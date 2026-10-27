@@ -13,7 +13,7 @@ const log = logger.for(import.meta.url);
  * Rolls : an attack once its card is revealed (its total, its targets), saves / checks / death saves
  * (total, against the DC), damage and healing as applied (an attack's damage : "hit by" it). An NPC's numbers show as "?" to players with DM Screen on.
  * Combat Log : Journal (setting) : when the combat is deleted, its log is kept as a journal entry, in the Combat Logs folder.
- * Kept short : an attack is one line (its place in the Attack action, total, targets), one hit's damage one line
+ * Kept short : an attack is one line (its place in the Attack action, total, targets), one hit's damage one line per type
  * (its parts added up), effects applied by another creature (or a condition) a line; duplicate names are numbered.
  */
 export class combatLog{
@@ -35,6 +35,8 @@ export class combatLog{
     Hooks.on("updateChatMessage", (message, changes, options, userId) => this.onAttackCard(message, changes));
     Hooks.on("createChatMessage", (message, options, userId) => this.onRoll(message, userId));
     Hooks.on("dnd5e.applyDamage", (actor, amount, options) => this.onDamage(actor, amount, options));
+    /* What each damage type came to, once every rule has changed it (hooked last) : the damage lines, one per type */
+    Hooks.once("ready", () => Hooks.on("dnd5e.calculateDamage", (actor, damages, options) => this.noteTypes(damages, options)));
     /* Effects put on a creature by another one (Bless, Prone from a bite), or a condition : the client that made it */
     Hooks.on("createActiveEffect", (effect, options, userId) => this.onEffect(effect, userId));
     /* E2 : the log kept as a journal entry when the combat goes */
@@ -58,7 +60,7 @@ export class combatLog{
    * @param {object} [options]
    * @param {boolean} [options.gmOnly]   only the GM sees it
    */
-  static async add(actor, text, { gmOnly = false, numbers = false, group = null, amount = null, key = null, suffix = "" } = {}){
+  static async add(actor, text, { gmOnly = false, numbers = false, group = null, amount = null, key = null, params = {}, suffix = "" } = {}){
     if(!this.enabled() || !actor || !text) return;
     const where = this.whereIs(actor);
     if(!where?.combat) return;
@@ -66,7 +68,7 @@ export class combatLog{
     const masked = (numbers && !actor.hasPlayerOwner && settings.value("rollItemDmScreen")) ? String(text).replace(/\d+/g, "?") : null;
     await gm.run("combatLogAdd", { combat : where.combat.id, token : where.token?.uuid ?? null, actor : actor.uuid,
       name : where.token?.name ?? actor.name, img : where.token?.texture?.src ?? actor.img, text, masked, gmOnly,
-      group, amount, key, suffix, mask : !!masked }).catch(error => log.debug(error));
+      group, amount, key, params, suffix, mask : !!masked }).catch(error => log.debug(error));
   }
 
   /* One after another : lines arriving together (Bless ending on four creatures) would otherwise overwrite each other */
@@ -77,7 +79,7 @@ export class combatLog{
     return run;
   }
 
-  static async #write({ combat : id, token, actor, name, img, text, masked = null, gmOnly = false, group = null, amount = null, key = null, suffix = "", mask = false } = {}, user){
+  static async #write({ combat : id, token, actor, name, img, text, masked = null, gmOnly = false, group = null, amount = null, key = null, params = {}, suffix = "", mask = false } = {}, user){
     const combat = game.combats.get(id);
     const owner = actor ? fromUuidSync(actor, { strict : false }) : null;
     if(!combat || !text || !(user.isGM || owner?.testUserPermission(user, "OWNER") || owner?.testUserPermission(user, "OBSERVER"))) return false;
@@ -86,7 +88,7 @@ export class combatLog{
     const same = group ? entries.slice(-8).reverse().find(e => (e.group === group) && (e.actor === actor) && ((Date.now() - e.at) < 20000)) : null;
     if(same && key && Number.isFinite(amount)){
       same.amount = (Number(same.amount) || 0) + amount;
-      same.text = module.format(key, { n : same.amount }) + suffix;
+      same.text = module.format(key, { ...params, n : same.amount }) + suffix;
       if(mask) same.masked = same.text.replace(/\d+/g, "?");
     }
     else {
@@ -170,8 +172,43 @@ export class combatLog{
     const by = card?.speaker?.alias ?? card?.getAssociatedActor?.()?.name ?? "";
     const hit = (amount > 0) && card?.system?.attackRoll && by && (card.getAssociatedActor?.()?.uuid !== actor.uuid);
     const suffix = hit ? ` ${module.format("combatLog.hitBy", { item : from, name : by })}` : from ? ` (${from})` : "";
-    await this.add(actor, module.format(key, { n : Math.abs(amount) }) + suffix, { numbers : true,
-      group : card ? `${(amount > 0) ? "dmg" : "heal"}:${card.id}` : null, amount : Math.abs(amount), key, suffix });
+    const group = card ? `${(amount > 0) ? "dmg" : "heal"}:${card.id}` : null;
+    /* Damage : a line per type (what it took of each, the card's later parts added to theirs) */
+    const types = (amount > 0) && !Number.isFinite(own.taken) ? this.typesOf(options, amount) : null;
+    if(types){
+      for(const [type, n] of types){
+        const params = { type : this.typeLabel(type) };
+        await this.add(actor, module.format("combatLog.damageType", { ...params, n }) + suffix, { numbers : true,
+          group : group && `${group}:${type}`, amount : n, key : "combatLog.damageType", params, suffix });
+      }
+      return;
+    }
+    await this.add(actor, module.format(key, { n : Math.abs(amount) }) + suffix, { numbers : true, group, amount : Math.abs(amount), key, suffix });
+  }
+
+  /* dnd5e's damage once worked out : what each type came to, on the options it hands to applyDamage */
+  static noteTypes(damages, options){
+    if(!options || !Array.isArray(damages)) return;
+    const types = new Map();
+    for(const d of damages){
+      if(!d?.type || !(d.type in CONFIG.DND5E.damageTypes) || !(Number(d.value) > 0)) continue;
+      types.set(d.type, (types.get(d.type) ?? 0) + Math.trunc(Number(d.value)));
+    }
+    options[`${module.id}Types`] = types;
+  }
+
+  /* Each type's damage, when they add up to what it took (a rule that took some off the total alone : no split) */
+  static typesOf(options, amount){
+    const types = options?.[`${module.id}Types`];
+    if(!(types instanceof Map) || !types.size) return null;
+    const sum = [...types.values()].reduce((a, b) => a + b, 0);
+    if(sum === amount) return [...types];
+    return (types.size === 1) ? [[[...types.keys()][0], amount]] : null;
+  }
+
+  static typeLabel(type){
+    const label = CONFIG.DND5E.damageTypes[type]?.label;
+    return label ? game.i18n.localize(label).toLowerCase() : type;
   }
 
   /* An effect put on it by another creature (Bless, a bite's Prone), or a condition : "Prone applied (Bite, Dire Wolf)" */
