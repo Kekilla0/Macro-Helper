@@ -552,3 +552,12 @@
 
 /* A long list's search box (helpers/utils.js searchList) */
 input.macro-helper-search { width : 100%; margin : 0 0 6px; }
+
+/* Condition tooltips (conditionTip) : the button's own line above the rules */
+#tooltip.macro-helper-rule-tip .macro-helper-tip-note {
+  margin: 0 0 0.5rem;
+  font-weight: bold;
+}
+#tooltip.macro-helper-rule-tip > section.content + section.content {
+  margin-top: 0.75rem;
+}

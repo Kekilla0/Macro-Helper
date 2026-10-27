@@ -5,7 +5,7 @@ import { module } from '../module.js';
 import { settings } from '../settings.js';
 import { rollItem } from './roll-item.js';
 import { extraD20, rerolls, addDie } from './rerolls.js';
-import { originOf, addNote, plainText } from '../helpers/utils.js';
+import { originOf, addNote, plainText, conditionTip } from '../helpers/utils.js';
 import { rollSave } from '../helpers/actors.js';
 import { gm } from '../gm.js';
 
@@ -444,13 +444,15 @@ export function registerMessages(){
 
   /**
    * Buttons rules add to a creature's row : Hooks "macro-helper.rowButtons" (message, tokenUuid, buttons, { result, owner, ray })
-   * push { id, label, icon, img, tooltip, disabled, result : { total, success } (a roll it made, shown beside it) };
+   * push { id, label, icon, img, tooltip, disabled, result : { total, success } (a roll it made, shown beside it),
+   * conditions : [ids] (those it gives : their rules in its tooltip) };
    * a click calls "macro-helper.rowButton" (message, tokenUuid, id, { event, button }). ray : the attack on a multi card.
    */
   const ruleButtonsOf = (message, uuid, { result = null, owner = false, ray = null } = {}) => {
     const buttons = [];
     Hooks.callAll(`${module.id}.rowButtons`, message, uuid, buttons, { result, owner, ray });
-    return buttons.filter(b => b?.id && b?.label).map(({ id, label, icon = "fa-hand-pointer", img = null, tooltip = null, disabled = false, result = null }) => ({ id, label, icon, img, tooltip, disabled, result }));
+    return buttons.filter(b => b?.id && b?.label).map(({ id, label, icon = "fa-hand-pointer", img = null, tooltip = null, disabled = false, result = null, conditions = [] }) =>
+      ({ id, label, icon, img, tooltip, disabled, result, conditions : conditionTip(conditions) }));
   };
   /* A push / pull button at the bottom of the card (card-moves.js) */
   const cardMove = (event, button) => {
@@ -486,12 +488,14 @@ export function registerMessages(){
     const due = all.filter(e => !immuneTo(actor, e));
     const immune = all.filter(e => immuneTo(actor, e)).map(e => e.doc.name);
     const names = due.map(e => e.doc.name).join(", ");
-    /* Rules can change the GM's button (macro-helper.rowEffect : Shove shows the shover's choice, nothing until then) */
-    const row = { show : due.length > 0, names, done : !!message.getFlag(module.id, `effects.${uuidKey(uuid)}`) };
+    /* Rules can change the GM's button (macro-helper.rowEffect : Shove shows the shover's choice, nothing until then);
+       conditions : those it gives, their rules in its tooltip */
+    const row = { show : due.length > 0, names, done : !!message.getFlag(module.id, `effects.${uuidKey(uuid)}`),
+      conditions : [...new Set(due.flatMap(e => [...(e.doc.statuses ?? [])]))] };
     Hooks.callAll(`${module.id}.rowEffect`, message, uuid, row, { success : !!result?.success, effects : due.map(e => e.doc) });
     if(!row.show) return immune.length ? { effectImmune : module.format("rollItem.row.immune", { names : immune.join(", ") }) } : {};
     if(row.done) return { effectApplied : row.names };
-    return { effectApply : module.format("rollItem.row.applyEffect", { names : row.names }) };
+    return { effectApply : module.format("rollItem.row.applyEffect", { names : row.names }), effectConditions : conditionTip(row.conditions) };
   };
 
   /* The GM applies a row's effects to its creature */
@@ -1415,10 +1419,10 @@ export function registerMessages(){
           damage : { ...(merged ? this.hitContext(ray, g.key) : damageContext(this.parent, g.rolls)),
             showTray : this.canApply && (!g.rolls.some(r => tagOf(r).onHit) || this.isHitOn(ray)) } }));
 
-      /* Buttons : item macros listening to macro-helper.cardButtons push { id, label, icon, tooltip } */
+      /* Buttons : item macros listening to macro-helper.cardButtons push { id, label, icon, tooltip, conditions } */
       const buttons = [];
       Hooks.callAll(`${module.id}.cardButtons`, this.parent, buttons, { ray });
-      const valid = buttons.filter(b => b?.id && b?.label);
+      const valid = buttons.filter(b => b?.id && b?.label).map(b => ({ ...b, conditions : conditionTip(b.conditions ?? []) }));
       /* Notes : what changed the card's outcome (Interception) push { text, icon, tooltip } */
       const notes = [];
       Hooks.callAll(`${module.id}.cardNotes`, this.parent, notes, { ray });
@@ -2150,7 +2154,7 @@ export function registerMessages(){
       if(!this.parent.isContentVisible) return null;
       const buttons = [];
       Hooks.callAll(`${module.id}.saveCardButtons`, this.parent, buttons);
-      const valid = buttons.filter(b => b?.id && b?.label);
+      const valid = buttons.filter(b => b?.id && b?.label).map(b => ({ ...b, conditions : conditionTip(b.conditions ?? []) }));
       const notes = [];
       Hooks.callAll(`${module.id}.cardNotes`, this.parent, notes, { ray : null });
       if(!valid.length && !notes.length) return null;

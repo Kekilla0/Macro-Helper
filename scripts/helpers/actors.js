@@ -373,7 +373,7 @@ export async function giveEffect(thing, data, { save = null, dc = null, from = n
     const name = tokenOf(thing)?.name ?? actor.name;
     await gm.ask("giveEffectAsk", payload, { actor : from?.actor ?? null,
       text : module.format("giveEffect.ask", { item : from?.name ?? "", name, effect : effect.name }),
-      label : module.format("giveEffect.button", { name, effect : effect.name }) });
+      label : module.format("giveEffect.button", { name, effect : effect.name }), conditions : [...(effect.statuses ?? [])] });
     return { applied : false, asked : true, save : rolled };
   }
   const applied = !!await gm.run("giveEffect", payload);

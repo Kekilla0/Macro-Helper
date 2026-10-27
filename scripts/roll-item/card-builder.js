@@ -510,7 +510,7 @@ export async function applyConditionNow(thing, spec = {}){
     const name = (doc ?? actor).name;
     await gm.ask("applyConditionAsk", data, { actor : by?.actor ?? (by?.documentName === "Actor" ? by : null) ?? spec.from?.actor ?? null,
       text : module.format("cardBuilder.conditionAsk", { item : spec.from?.name ?? "", name, condition }),
-      label : module.format("cardBuilder.conditionButton", { name, condition }) });
+      label : module.format("cardBuilder.conditionButton", { name, condition }), conditions : [part.type, ...part.with] });
     return null;
   }
   return gm.run("applyConditionNow", data);
@@ -1155,7 +1155,8 @@ export class cardBuilder{
           const status = CONFIG.statusEffects.find(s => s.id === part.type);
           const name = part.label ?? game.i18n.localize(status?.name ?? part.type);
           /* The condition's own picture and name; once applied, greyed out */
-          buttons.push({ id : `part:${index}`, img : status?.img ?? null, icon : "fa-circle-exclamation", disabled : done, label : name });
+          buttons.push({ id : `part:${index}`, img : status?.img ?? null, icon : "fa-circle-exclamation", disabled : done, label : name,
+            conditions : [part.type, ...(part.with ?? [])] });
         }
         else if(["effect", "attach", "disease", "engulf", "immunity"].includes(part.kind)){
           if(!(game.user.isGM || gm.mine(target?.actor))) return;
@@ -1164,7 +1165,8 @@ export class cardBuilder{
           const also = (part.with ?? []).map(id => game.i18n.localize(CONFIG.statusEffects.find(st => st.id === id)?.name ?? id)).join(", ");
           const label = part.label ?? ((part.kind === "attach") ? (module.i18n("cardBuilder.attach") + (also ? ` (${also})` : ""))
             : (part.kind === "engulf") ? module.i18n("cardBuilder.engulf") : (part.kind === "immunity") ? module.i18n("cardBuilder.immunity") : (part.name ?? item?.name ?? ""));
-          buttons.push({ id : `part:${index}`, img : part.img ?? item?.img ?? null, icon : "fa-circle-exclamation", disabled : done, label });
+          buttons.push({ id : `part:${index}`, img : part.img ?? item?.img ?? null, icon : "fa-circle-exclamation", disabled : done, label,
+            conditions : (part.kind === "engulf") ? ["restrained"] : (part.with ?? []) });
         }
         else if(part.kind === "followUp"){
           if(!message.isOwner) return;

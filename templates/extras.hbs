@@ -22,7 +22,7 @@
     {{#if buttons.length}}
     <div class="card-buttons">
         {{#each buttons}}
-        <button type="button" data-action="cardButton" data-id="{{ id }}" data-ray="{{ ../ray }}" {{#if tooltip}}data-tooltip="{{ tooltip }}"{{/if}}>
+        <button type="button" data-action="cardButton" data-id="{{ id }}" data-ray="{{ ../ray }}" {{#if tooltip}}data-tooltip="{{ tooltip }}"{{else if conditions}}data-tooltip="{{ label }}"{{/if}}{{#if conditions}} data-macro-helper-conditions="{{ conditions }}"{{/if}}>
             <i class="fa-solid {{#if icon}}{{ icon }}{{else}}fa-star{{/if}}" inert></i>
             <span>{{ label }}</span>
         </button>

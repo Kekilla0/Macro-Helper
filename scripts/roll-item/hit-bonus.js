@@ -1,6 +1,6 @@
 import { module } from '../module.js';
 import { logger } from '../log.js';
-import { idOf } from '../helpers/utils.js';
+import { idOf, conditionTip } from '../helpers/utils.js';
 import { tokenOf, distanceBetween } from '../helpers/tokens.js';
 import { usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
 import { spendUses } from '../helpers/items.js';
@@ -31,6 +31,8 @@ const log = logger.for(import.meta.url);
  *     cost : hit => ({ item, amount : 1 }),                  spent on the click (none left : no button); { activity } :
  *                                                            that activity's own uses (Dreadful Strike's)
  *     after : (hit, card) => {},                             once it's on the card (a save, a mark)
+ *     conditions : ["prone"],                                the conditions it gives (or hit => [ids]) : their rules in
+ *                                                            the button's tooltip
  *   })
  *
  * hit : { message, ray, actor, token, item, activity, roll, critical, advantage, disadvantage, target, targets, weapon,
@@ -185,10 +187,11 @@ function cardButtons(message, buttons, ray){
     if(problem(rule, hit)) continue;
     const types = typesOf(rule, hit);
     const label = labelOf(rule, hit);
+    const conditions = conditionTip(((typeof rule.conditions === "function") ? rule.conditions(hit) : rule.conditions) ?? []);
     for(const type of types){
       const typeLabel = type ? (CONFIG.DND5E.damageTypes?.[type]?.label ?? type) : "";
       buttons.push({ id : `onHit|${rule.id}|${type}`, icon : rule.icon ?? "fa-burst",
-        label : (types.length > 1) ? `${label} (${typeLabel})` : label });
+        label : (types.length > 1) ? `${label} (${typeLabel})` : label, conditions });
     }
   }
 }

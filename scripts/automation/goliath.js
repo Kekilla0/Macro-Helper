@@ -63,7 +63,7 @@ export class goliath{
     onHit({ id : this.FROST, feature : this.FROST, enabled, icon : "fa-snowflake", cost, noHit,
       formula : () => "1d6", types : () => ["cold"], after : hit => this.chill(hit) });
     onHit({ id : this.HILL, feature : this.HILL, enabled, icon : "fa-person-falling", cost, noHit,
-      when : hit => !!hit.target && isSmaller(hit.target, "large"), after : hit => this.tumble(hit) });
+      when : hit => !!hit.target && isSmaller(hit.target, "large"), after : hit => this.tumble(hit), conditions : ["prone"] });
     uses.onItem("giantAncestry", (item, ctx, next) => {
       const id = idOf(item);
       if(!this.enabled() || !item.actor || ![this.FIRE, this.FROST, this.HILL].includes(id)) return next();

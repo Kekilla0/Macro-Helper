@@ -71,7 +71,7 @@ export class fighterArchetypes{
         when : hit => !this.maneuvered(hit) && ((id !== "trip-attack" && id !== "pushing-attack") || !hit.target || isSmaller(hit.target, "large")),
         cost : hit => ({ item : this.diceOf(hit.actor), amount : 1 }),
         formula : hit => this.dieOf(hit.actor),
-        after : hit => this.rider(id, hit) });
+        after : hit => this.rider(id, hit), conditions : { "trip-attack" : ["prone"], "menacing-attack" : ["frightened"] }[id] ?? [] });
     }
     for(const id of this.PRIMED){
       onHit({ id, feature : actor => this.has(actor, id), icon : "fa-chess-knight", enabled : () => this.enabled(), ownTurn : true,

@@ -219,14 +219,20 @@ export async function withUnlocked(pack, fn){
  * @param {boolean} [options.tooltip=true]  label as a tooltip
  * @param {boolean} [options.disabled]
  * @param {boolean} [options.once]          stays disabled after it worked (used up)
+ * @param {string[]} [options.conditions]   the conditions it gives : their rules in its tooltip (conditionTip)
  * @param {(event : Event) => any} options.onClick
  * @returns {HTMLButtonElement}
  */
-export function makeButton({ icon, label = "", text = "", className = "", tooltip = true, disabled = false, once = false, onClick }){
+export function makeButton({ icon, label = "", text = "", className = "", tooltip = true, disabled = false, once = false, conditions = [], onClick }){
   const button = document.createElement("button");
   button.type = "button";
   if(className) button.className = className;
   if(tooltip && label) button.dataset.tooltip = label;
+  const tip = conditionTip(conditions);
+  if(tip){
+    button.dataset.macroHelperConditions = tip;
+    button.dataset.tooltip ??= label || text;
+  }
   if(label) button.ariaLabel = label;
   button.disabled = disabled;
   button.innerHTML = `<i class="fa-solid ${icon}" inert></i>${text ? ` <span>${esc(text)}</span>` : ""}`;
@@ -299,3 +305,55 @@ export function addNote(html, text, { key = `${module.id}-note` } = {}){
   else (html.querySelector(".chat-card") ?? html.querySelector(".message-content") ?? html).append(p);
   return p;
 }
+
+/* ---------- Condition tooltips ---------- */
+
+/**
+ * What a condition does, on hover : an element with data-macro-helper-conditions="prone,blinded" (the value
+ * conditionTip gives) shows each condition's rule, dnd5e's 2024 rule page as its sheets show it, its own data-tooltip
+ * as a line above when that says more than the element's own words. Foundry needs a data-tooltip (or an aria label)
+ * on it to show anything; with no rule page found, that plain tooltip stays.
+ * @param {string|string[]} ids  condition ids (CONFIG.statusEffects); those with no rule page are left out
+ * @returns {string}  the attribute's value ("" : none)
+ */
+export function conditionTip(ids){
+  return [...new Set([ids].flat().filter(id => CONFIG.DND5E?.conditionTypes?.[id]?.reference))].join(",");
+}
+
+const ruleTips = new Map();
+function ruleTip(id){
+  if(!ruleTips.has(id)) ruleTips.set(id, fromUuid(CONFIG.DND5E.conditionTypes[id]?.reference ?? "")
+    .then(page => page?.system?.richTooltip?.() ?? null).then(tip => tip?.content ?? null).catch(() => null));
+  return ruleTips.get(id);
+}
+
+/* Its rules into its tooltip (once per element; a re-rendered card's buttons are new elements) */
+async function showRules(element){
+  const ids = element.dataset.macroHelperConditions;
+  if(element.dataset.macroHelperShown === ids) return;
+  element.dataset.macroHelperShown = ids;
+  const note = element.dataset.tooltip ?? "";
+  const rules = (await Promise.all(ids.split(",").filter(Boolean).map(ruleTip))).filter(Boolean);
+  if(!rules.length || !element.isConnected) return;
+  const line = (note && (note !== element.textContent.trim())) ? `<p class="${module.id}-tip-note">${esc(note)}</p>` : "";
+  element.dataset.tooltipHtml = line + rules.join("");
+  element.dataset.tooltipClass = `dnd5e2 dnd5e-tooltip rule-tooltip ${module.id}-rule-tip`;
+  if(game.tooltip.element === element) game.tooltip.activate(element);
+}
+
+Hooks.once("ready", () => {
+  /* Before Foundry's own listener (on the body) reads the tooltip */
+  window.addEventListener("pointerenter", event => {
+    if(event.target?.dataset?.macroHelperConditions) showRules(event.target);
+  }, { capture : true, passive : true });
+  /* The theme dnd5e gives its rule tooltips : the hovered element's (Foundry makes every tooltip dark) */
+  const tooltip = document.getElementById("tooltip");
+  if(tooltip) new MutationObserver(() => {
+    if(!tooltip.classList.contains(`${module.id}-rule-tip`) || !tooltip.classList.contains("theme-dark")) return;
+    const themed = game.tooltip.element?.closest(".themed") ?? document.body;
+    const theme = themed.className.match(/(?:^|\s)(theme-\w+)/)?.[1] ?? "theme-light";
+    if(theme === "theme-dark") return;
+    tooltip.classList.remove("theme-dark");
+    tooltip.classList.add(theme);
+  }).observe(tooltip, { attributeFilter : ["class"] });
+});

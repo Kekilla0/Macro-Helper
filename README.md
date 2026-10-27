@@ -83,6 +83,7 @@ The main pieces, as methods on tokens, actors and items. Most also exist as `Mac
 | `MacroHelper.moveZone(actor, region?)` | Move a creature's movable area (Moonbeam's 60 ft): pick a space on the map, its cost spent. |
 | `MacroHelper.giveEffect(target, data, { save, dc, from, until })` | An effect on a creature, after its save; the GM's button when it isn't yours (Goaded, Seared). |
 | `MacroHelper.onMiss({ formula })`, `MacroHelper.addRow({ run, withDamage, once })` | Damage on a miss (Graze), and a GM button on a hit creature's card row (Topple, Sap, Slasher's Hamstring). |
+| `MacroHelper.conditionTip(ids)` | A button that gives a condition shows its 2024 rules on hover (every Apply button, Topple, Trip Attack); `conditions` on `makeButton`, `addRow`, `onHit`, `gm.ask`. |
 | `MacroHelper.onAttacked({ when, within, run })`, `MacroHelper.onTurnStart({ run })` | A creature's Reaction button when one near it is attacked or hit (Interception, Protection), and something at the start of its turns. |
 | `MacroHelper.bonusOnlyWhen(match, key, test)` | An effect's bonus only where a check holds (Rage's Strength attacks, Dueling, Defense in armor). |
 | `MacroHelper.cantUseWhile(id, rule)`, `MacroHelper.freeUseWhile(id, rule)` | What can't be used, or is free, while something holds (no spells while raging; Rage extended). |

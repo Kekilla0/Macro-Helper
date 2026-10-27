@@ -296,7 +296,7 @@ export class generalFeats{
     onHit({ id : "shield-bash", feature : this.SHIELD_MASTER, enabled, once : "turn", attackAction : true, within : 5, icon : "fa-shield",
       when : hit => this.meleeWeapon(hit.item) && hasShieldEquipped(hit.actor),
       label : hit => module.format("feats.shieldMaster.bash", { name : hit.feature?.name ?? "" }),
-      after : hit => this.shieldBash(hit) });
+      after : hit => this.shieldBash(hit), conditions : ["prone"] });
     saveDamage(this.SHIELD_MASTER, { abilities : ["dex"], success : 0, reaction : true, enabled, icon : "fa-shield",
       label : () => module.i18n("feats.shieldMaster.interpose"),
       unmet : actor => hasShieldEquipped(actor) ? "" : module.format("feats.shieldMaster.noShield", { name : actor.name }) });
@@ -384,7 +384,7 @@ export class generalFeats{
     onHit({ id : "punch-and-grab", feature : this.GRAPPLER, enabled, once : "turn", attackAction : true, icon : "fa-hand-back-fist",
       when : hit => hit.unarmed && !!hit.target && !!this.grappleOf(hit.item) && !grappling(hit.actor).some(t => (t.document ?? t) === (hit.target.document ?? hit.target)),
       label : hit => module.format("feats.grappler.grab", { name : hit.feature?.name ?? "" }),
-      after : hit => this.punchAndGrab(hit) });
+      after : hit => this.punchAndGrab(hit), conditions : ["grappled"] });
     rollModeFrom(this.GRAPPLER, { id : "grappler-advantage", trait : true, enabled,
       by : { mode : "advantage", when : (attack, target) => !!target && grappling(attack.actor).some(t => (t.document ?? t) === (target.document ?? target)),
         reason : () => module.i18n("feats.grappler.advantage") } });

@@ -17,6 +17,8 @@ const log = logger.for(import.meta.url);
  *     feature : "topple",                                   the item (identifier) the attacker needs; or (actor) => item
  *     when : row => row.mastery === "topple",               does this creature's row get it
  *     label : row => "Topple DC 13", tooltip, icon : "fa-person-falling", img : row => "...",
+ *     conditions : ["prone"],                               the conditions it gives (or row => [ids]) : their rules in
+ *                                                           its tooltip
  *     run : async row => {},                                does it; may return { total, success } (a save it rolled,
  *                                                           shown beside the button)
  *     withDamage : true,                                    applying the hit's damage to that creature runs it first
@@ -92,6 +94,7 @@ function rowButtons(message, uuid, buttons, { result, ray = null } = {}){
         id : `row|${rule.id}|${rayKey(ray)}`,
         label : rule.label?.(row) ?? row.feature?.name ?? rule.id,
         tooltip : rule.tooltip?.(row) ?? null,
+        conditions : ((typeof rule.conditions === "function") ? rule.conditions(row) : rule.conditions) ?? [],
         icon : rule.icon ?? "fa-hand-pointer",
         img : rule.img?.(row) ?? null,
         disabled : !!done,

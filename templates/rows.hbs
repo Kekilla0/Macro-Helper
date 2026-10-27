@@ -44,7 +44,7 @@
         <span class="applied {{#if healing}}healing{{else}}damage{{/if}}" data-tooltip="{{ localize "rollItem.row.applied" }}">{{ text }}</span>
         {{/with}}
         {{#if effectApply}}
-        <button type="button" class="apply" data-action="rowEffect" data-target="{{ uuid }}">
+        <button type="button" class="apply" data-action="rowEffect" data-target="{{ uuid }}"{{#if effectConditions}} data-tooltip="{{ effectApply }}" data-macro-helper-conditions="{{ effectConditions }}"{{/if}}>
             <i class="fa-solid fa-reply-all fa-flip-horizontal" inert></i> {{ effectApply }}
         </button>
         {{/if}}
@@ -58,7 +58,7 @@
         {{#with result}}
         <span class="result {{#if success}}success{{else}}failure{{/if}}">{{ total }} <i class="fa-solid {{#if success}}fa-check{{else}}fa-xmark{{/if}}" inert></i></span>
         {{/with}}
-        <button type="button" class="apply" data-action="rowRule" data-target="{{ ../uuid }}" data-id="{{ id }}"{{#if tooltip}} data-tooltip="{{ tooltip }}"{{/if}}{{#if disabled}} disabled{{/if}}>
+        <button type="button" class="apply" data-action="rowRule" data-target="{{ ../uuid }}" data-id="{{ id }}"{{#if tooltip}} data-tooltip="{{ tooltip }}"{{else if conditions}} data-tooltip="{{ label }}"{{/if}}{{#if conditions}} data-macro-helper-conditions="{{ conditions }}"{{/if}}{{#if disabled}} disabled{{/if}}>
             {{#if img}}<img src="{{ img }}" alt="" inert>{{else}}<i class="fa-solid {{ icon }}" inert></i>{{/if}} {{ label }}
         </button>
         {{/each}}

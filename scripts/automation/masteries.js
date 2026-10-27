@@ -72,7 +72,8 @@ export class masteries{
     const row = (key, extra = {}) => addRow({ id : `mastery-${key}`, enabled : () => this.enabled(), when : r => r.mastery === key,
       label : r => this.buttonLabel(key, r.actor, r.roll), icon : this.ICONS[key], run : r => this.apply(key, r), ...extra });
     row("topple", { label : r => module.format("rollItem.mastery.row.topple", { dc : this.toppleDC(r.actor, r.ability) }),
-      tooltip : r => this.buttonLabel("topple", r.actor, r.roll), img : () => CONFIG.statusEffects.find(s => s.id === "prone")?.img ?? null });
+      tooltip : r => this.buttonLabel("topple", r.actor, r.roll), img : () => CONFIG.statusEffects.find(s => s.id === "prone")?.img ?? null,
+      conditions : ["prone"] });
     row("sap", { withDamage : true });
     row("slow", { withDamage : true });
     row("vex", { withDamage : true, mayRun : r => r.actor?.isOwner });

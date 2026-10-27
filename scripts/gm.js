@@ -90,15 +90,16 @@ export class gm{
    * @param {string} options.label   the GM's button
    * @param {Actor} [options.actor]  who's asking (the card's speaker)
    * @param {boolean} [options.deny=false]   a Decline button too
+   * @param {string[]} [options.conditions]  the conditions it gives : their rules in the button's tooltip
    * @returns {Promise<ChatMessage>}  the card
    */
-  static async ask(name, data, { text, label, actor = null, deny = false } = {}){
+  static async ask(name, data, { text, label, actor = null, deny = false, conditions = [] } = {}){
     const handler = this.#handlers.get(name);
     if(!handler) throw new Error(`Macro Helper | no GM handler "${name}"`);
     return ChatMessage.implementation.create({
       speaker : actor ? ChatMessage.implementation.getSpeaker({ actor }) : { alias : module.title },
       content : `<p>${esc(text)}</p>`,
-      flags : { [module.id] : { gmAsk : { name, data, label, deny, done : false } } },
+      flags : { [module.id] : { gmAsk : { name, data, label, deny, conditions, done : false } } },
     });
   }
 
@@ -151,7 +152,7 @@ export class gm{
       }
       await message.setFlag(module.id, "gmAsk", { ...now, done : allow ? "allowed" : "denied" });
     };
-    addButton(row, makeButton({ icon : "fa-gavel", text : ask.label, once : true, disabled : !!ask.done, onClick : () => answer(true) }));
+    addButton(row, makeButton({ icon : "fa-gavel", text : ask.label, once : true, disabled : !!ask.done, conditions : ask.conditions ?? [], onClick : () => answer(true) }));
     if(ask.deny) addButton(row, makeButton({ icon : "fa-xmark", text : module.i18n("gm.deny"), once : true, disabled : !!ask.done, onClick : () => answer(false) }));
   }
 
