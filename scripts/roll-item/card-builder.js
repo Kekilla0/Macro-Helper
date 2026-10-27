@@ -315,9 +315,9 @@ export function hasReaction(thing){
   return Hooks.call(`${module.id}.hasReaction`, thing?.actor ?? thing) !== false;
 }
 
-export async function useReaction(thing, what = ""){
+export async function useReaction(thing, what = "", { readied = false } = {}){
   const { actionTracker } = await import('../automation/action-tracker.js');
-  return actionTracker.useReaction(thing?.actor ?? thing, what);
+  return actionTracker.useReaction(thing?.actor ?? thing, what, { readied });
 }
 
 /**
@@ -331,12 +331,13 @@ export async function useReaction(thing, what = ""){
  * @param {number} [options.feet]               default its walking Speed (half : Math.floor(speed / 2))
  * @param {boolean|Array} [options.noOA=true]   true, false, or the tokens (or uuids) that can't make one
  * @param {string} [options.name]               what it's for (the effect's name, the turn log)
+ * @param {boolean} [options.readied]           Ready's move released (its readied action isn't lost to it)
  * @returns {Promise<boolean>}
  */
-export async function reactionMove(thing, { feet = null, noOA = true, name = null } = {}){
+export async function reactionMove(thing, { feet = null, noOA = true, name = null, readied = false } = {}){
   const actor = thing?.actor ?? thing;
   if(!actor?.isOwner) return false;
-  if(!hasReaction(actor) || !await useReaction(actor, name ?? "")){
+  if(!hasReaction(actor) || !await useReaction(actor, name ?? "", { readied })){
     ui.notifications.warn(module.format("cardBuilder.noReaction", { name : actor.name }));
     return false;
   }

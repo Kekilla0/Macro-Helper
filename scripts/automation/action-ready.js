@@ -5,7 +5,7 @@ import { idOf, esc, chooseOption, waitFor } from '../helpers/utils.js';
 import { cells, gridSteps, canSee } from '../helpers/tokens.js';
 import { pickTargets } from '../helpers/targets.js';
 import { actionTracker } from './action-tracker.js';
-import { reactionMoveOf } from '../roll-item/card-builder.js';
+import { reactionMove, reactionMoveOf } from '../roll-item/card-builder.js';
 import { hands } from './hands.js';
 import { uses } from '../uses.js';
 import { movement as moves } from './movement.js';
@@ -14,7 +14,8 @@ const log = logger.for(import.meta.url);
 /**
  * Action Tracker : readied actions and Opportunity Attacks.
  *
- *   Ready         : on its turn (the action bar's Ready), its Action : which use, and its trigger from a list (what it
+ *   Ready         : on its turn (the action bar's Ready), its Action : which use (or Move : up to its Speed, the
+ *                   reactionMove lego, Opportunity Attacks as usual), and its trigger from a list (what it
  *                   can see, off its turn, before its next turn) : an enemy / an ally attacks (an attack or a spell, once
  *                   its card is out), moves, heals; an enemy leaves its reach; a creature's turn starts (picked on the
  *                   map). A levelled spell is cast now : its slot spent, Concentration held (Readied). When the trigger
@@ -128,11 +129,13 @@ export class actionReady{
 
   /* ---------- Ready ---------- */
 
-  /* Actions with nothing to do as a Reaction once readied movement isn't offered (Dash, Disengage), or that make no sense
-     readied (Dodge, Ready itself) */
+  /* Actions with nothing to do as a Reaction (Dash, Disengage : readied movement is Move), or that make no sense readied
+     (Dodge, Ready itself) */
   static NOT_READIED = ["dash", "disengage", "dodge", "ready"];
 
-  /* What it can ready : its uses that take an Action and it could make now. Weapons : held (Hands; else equipped), or
+  static MOVE = "move";
+
+  /* What it can ready : Move first, then its uses that take an Action and it could make now. Weapons : held (Hands; else equipped), or
      part of the body (Unarmed Strike, natural weapons). Spells : prepared, a slot left for a levelled one. Nothing with
      its uses spent */
   static readyChoices(actor){
@@ -157,7 +160,8 @@ export class actionReady{
         out.push({ value : `${item.id}.${activity.id}`, label : (activity.name && (activity.name !== item.name)) ? `${item.name} : ${activity.name}` : item.name });
       }
     }
-    return out.sort((a, b) => a.label.localeCompare(b.label));
+    out.sort((a, b) => a.label.localeCompare(b.label));
+    return [{ value : this.MOVE, label : module.i18n("actionTracker.ready.move") }, ...out];
   }
 
   static lowestSlot(actor, level){
@@ -174,7 +178,6 @@ export class actionReady{
     if((actionTracker.remaining(st.rec, "action") <= 0)
       && !(await import('./limits.js')).limits.allow(module.format("actionTracker.spent", { name : actor.name, kind : actionTracker.label("action") }), { who : actor.name, what : module.i18n("actionTracker.ready.title") })) return;
     const choices = this.readyChoices(actor);
-    if(!choices.length) return ui.notifications.warn(module.i18n("actionTracker.ready.none"));
     const use = await chooseOption({ title : module.i18n("actionTracker.ready.title"), icon : "fa-solid fa-hourglass-half", prompt : module.i18n("actionTracker.ready.what"), options : choices });
     if(!use) return;
     const trigger = await chooseOption({ title : module.i18n("actionTracker.ready.title"), icon : "fa-solid fa-hourglass-half", prompt : module.i18n("actionTracker.ready.when"),
@@ -186,6 +189,15 @@ export class actionReady{
         notice : module.i18n("actionTracker.ready.pickTurn") }) ?? [];
       if(!picked) return;
       turnOf = { token : picked.document.uuid, name : picked.name };
+    }
+    /* Move : nothing to cast, its Reaction moves it when released */
+    if(use === this.MOVE){
+      const fresh = actionTracker.state(actor);
+      if(!fresh) return;
+      fresh.rec.used.action = (Number(fresh.rec.used.action) || 0) + 1;
+      fresh.rec.ready = { move : true, name : module.i18n("actionTracker.ready.moveName"), trigger, turnOf, at : Date.now() };
+      actionTracker.note(fresh.rec, module.format("actionTracker.log.ready", { what : fresh.rec.ready.name, trigger : this.triggerText(fresh.rec.ready) }));
+      return actionTracker.save(actor, fresh.rec);
     }
     const [itemId, activityId] = use.split(".");
     const item = actor.items.get(itemId);
@@ -222,11 +234,12 @@ export class actionReady{
     if(effect) await effect.delete().catch(error => log.debug(error));
   }
 
-  /* Initiate : the readied use, as its Reaction (a spell : the slot already paid) */
+  /* Initiate : the readied use, as its Reaction (a spell : the slot already paid); Move : true once it may move */
   static async release(actor, at = null){
     const st = actionTracker.state(actor);
     const ready = st?.rec.ready;
     if(at && (ready?.at !== at)) return null;
+    if(ready?.move) return reactionMove(actor, { noOA : false, name : ready.name, readied : true });
     const item = ready ? actor.items.get(ready.item) : null;
     const activity = item?.system.activities?.get(ready.activity);
     if(!activity) return null;
@@ -387,7 +400,7 @@ export class actionReady{
         token?.object?.control({ releaseOthers : true });
         const used = await this.release(actor, flag.at);
         /* Closed before anything was rolled (the target pick) : still readied */
-        if(!used || !(await uses.cardOf(used).catch(() => null))){ box.querySelectorAll("button").forEach(b => b.disabled = false); return; }
+        if(!used || ((used !== true) && !(await uses.cardOf(used).catch(() => null)))){ box.querySelectorAll("button").forEach(b => b.disabled = false); return; }
       }
       await gm.run("readyAnswer", { message : message.id, status : answer });
     });
@@ -402,9 +415,10 @@ export class actionReady{
     return true;
   }
 
-  /* How close the readied use reaches : a melee attack's reach (a thrown weapon : its normal range), else its (normal)
+  /* How close the readied use reaches (Move : its own reach) : a melee attack's reach (a thrown weapon : its normal range), else its (normal)
      range; Touch : 5 ft */
   static readyRange(actor, ready){
+    if(ready?.move) return this.reachOf(actor) || this.DEFAULT_REACH;
     const item = actor?.items?.get(ready?.item);
     const activity = item?.system.activities?.get(ready?.activity);
     if(!activity) return null;

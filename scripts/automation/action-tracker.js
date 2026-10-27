@@ -750,10 +750,10 @@ export class actionTracker{
 
   /* A macro's Reaction (an Ochre Jelly's Split) : false when it has none left (spent, or it can't take Reactions);
      otherwise spent and logged. Out of combat, or the tracker off : true, nothing to spend. */
-  static async useReaction(thing, what = ""){
+  static async useReaction(thing, what = "", { readied = false } = {}){
     const actor = thing?.actor ?? thing;
     if(!this.left(actor, "reaction")) return false;
-    if(this.state(actor)) await this.spend(actor, { kind : "reaction", what });
+    if(this.state(actor)) await this.spend(actor, { kind : "reaction", what, readied });
     return true;
   }
 
