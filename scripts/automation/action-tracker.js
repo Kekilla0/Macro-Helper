@@ -209,7 +209,8 @@ export class actionTracker{
     return true;
   }
 
-  /* Its turn, Grappled : escape (its Action) : the better of Athletics and Acrobatics against the escape DC */
+  /* Its turn, Grappled : escape (its Action) : the better of Athletics and Acrobatics against the escape DC; an effect
+     with the rule escapeMode ("advantage" / "disadvantage") gives that roll its mode */
   static async escape(actor, effectId = null){
     const grapple = grapplesOn(actor).find(g => !effectId || (g.effect.id === effectId)) ?? null;
     if(!grapple) return;
@@ -217,7 +218,10 @@ export class actionTracker{
     const skills = actor.system?.skills ?? {};
     /* The better of Athletics and Acrobatics, unless it says which (a Darkmantle's attach : Athletics) */
     const skill = grapple.skill ?? (((Number(skills.acr?.total) || 0) > (Number(skills.ath?.total) || 0)) ? "acr" : "ath");
-    const rolls = await actor.rollSkill?.({ skill, target : grapple.dc }, { configure : false }).catch(error => { log.debug(error); return null; });
+    /* Advantage on it (Powerful Build : an effect with the rule escapeMode) */
+    const modes = actor.appliedEffects?.map?.(e => e.getFlag(module.id, "rule")?.escapeMode).filter(Boolean) ?? [];
+    const mode = { advantage : modes.includes("advantage"), disadvantage : modes.includes("disadvantage") };
+    const rolls = await actor.rollSkill?.({ skill, target : grapple.dc, ...mode }, { configure : false }).catch(error => { log.debug(error); return null; });
     const roll = Array.isArray(rolls) ? rolls[0] : rolls;
     if(!roll) return;
     await this.spend(actor, { kind : "action", what : module.i18n("actionTracker.escape") });

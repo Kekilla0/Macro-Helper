@@ -34,6 +34,8 @@ const log = logger.for(import.meta.url);
  *                                 (Protection from Evil and Good)
  *   onlyAgainstOrigin : "disadvantage"   its attacks on anyone but the caster have it (Compelled Duel)
  *   noReactions : true            it can't take Reactions (Rule Limits) (Arms of Hadar)
+ *   noOpportunity : true          it can't make Opportunity Attacks (none offered; its other Reactions stay) (Shocking
+ *                                 Grasp, until the start of its next turn)
  *   acOnlyAgainst : "melee"       the effect's AC bonus counts only against melee (or "ranged") attacks (Defensive
  *                                 Duelist's Parry)
  *   sanctuary : true              targeted by an attack or a damaging spell : the attacker makes a WIS save (the
@@ -61,8 +63,13 @@ export class spellEffects{
     "protection-from-evil-and-good" : { attackersOfTypes : { types : ["aberration", "celestial", "elemental", "fey", "fiend", "undead"], mode : "disadvantage", resist : ["charmed", "frightened"] } },
     "compelled-duel" : { onlyAgainstOrigin : "disadvantage" },
     "arms-of-hadar" : { noReactions : true },
-    "shocking-grasp" : { noReactions : true },
+    "shocking-grasp" : { noOpportunity : true },
     "sanctuary" : { sanctuary : true },
+  };
+  /* Spells whose effects end at a turn of their own, whatever the data says (dnd5e's : targetStart, the start of the
+     affected creature's next turn) */
+  static EXPIRIES = {
+    "shocking-grasp" : "targetStart",
   };
   /* Spells whose effects are a choice : the question, and the rule the chosen one carries */
   static CHOICES = {
@@ -118,6 +125,7 @@ export class spellEffects{
     /* A choice spell's effect : its rule from the effect (Resistance : the damage type in its name) */
     const rule = this.RULES[id] ?? this.CHOICES[id]?.rule?.(effect);
     if(rule) effect.updateSource({ [`flags.${module.id}.rule`] : rule });
+    if(this.EXPIRIES[id]) effect.updateSource({ "duration.expiry" : this.EXPIRIES[id] });
   }
 
   /* Dim Light round the creature while the effect lasts (each effect its own light, the token's own back after) */
@@ -342,7 +350,8 @@ export class spellEffects{
 
   /* Healing that would raise its Hit Points : none (temporary Hit Points aren't Hit Points) */
   static blockHealing(actor, amount, updates, options){
-    if(!(Number(amount) < 0) || !this.has(actor, "noHealing")) return;
+    /* Damage taken back (Stone's Endurance) isn't healing */
+    if(!(Number(amount) < 0) || !this.has(actor, "noHealing") || options?.[module.id]?.takenBack) return;
     const now = Number(actor.system?.attributes?.hp?.value) || 0;
     const next = foundry.utils.getProperty(updates ?? {}, "system.attributes.hp.value");
     if((next === undefined) || !(Number(next) > now)) return;

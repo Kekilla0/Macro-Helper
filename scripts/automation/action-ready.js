@@ -512,6 +512,11 @@ export class actionReady{
     return { spared : new Set(Array.isArray(reacting?.noOA) ? reacting.noOA : []) };
   }
 
+  /* It can't make Opportunity Attacks (Open Hand Technique's Addle, Shocking Grasp) */
+  static noOpportunity(actor){
+    return !!actor?.appliedEffects?.some?.(e => e.getFlag(module.id, "rule")?.noOpportunity);
+  }
+
   /* Could this creature react to `other` now : an enemy in the fight, its Reaction left, able to act */
   static canReact(t, other){
     return (t !== other) && !!t.actor && !t.hidden && (this.relation(t, other) === "enemy") && !!actionTracker.combatOf(t.actor)
@@ -563,10 +568,11 @@ export class actionReady{
     const provoked = this.provokes(token, movement);
     const leavers = provoked ? token.parent.tokens.filter(t => this.canReact(t, token) && !done.has(t.uuid) && !provoked.spared.has(t.uuid)
       /* Can't make Opportunity Attacks (Open Hand Technique's Addle) */
-      && !t.actor.appliedEffects?.some?.(e => e.getFlag(module.id, "rule")?.noOpportunity)
+      && !this.noOpportunity(t.actor)
       && (this.reachOf(t.actor) > 0) && (!t.object || !token.object || canSee(t.object, token.object))) : [];
     const enterers = attackRules.size ? token.parent.tokens.filter(t => this.canReact(t, token))
-      .flatMap(t => this.rulesOf(t, "enters", token).filter(({ rule }) => !done.has(t.uuid) && !done.has(`${t.uuid}|${rule.id}`))
+      .flatMap(t => this.rulesOf(t, "enters", token).filter(({ rule }) => !done.has(t.uuid) && !done.has(`${t.uuid}|${rule.id}`)
+        && ((rule.opportunity === false) || !this.noOpportunity(t.actor)))
         .map(({ rule }) => ({ t, rule, reach : this.ruleReach(t.actor, rule) })).filter(e => e.reach > 0)) : [];
     if(!leavers.length && !enterers.length) return;
     const path = this.pathOf(token, movement);

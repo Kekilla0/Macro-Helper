@@ -57,6 +57,7 @@ import { cantUseWhile, freeUseWhile, isFreeUse } from './automation/use-rules.js
 import { castingOptions, payCasting } from './automation/casting.js';
 import { summon, summonKind, controllerOf } from './automation/summons.js';
 import { actFrom, actFromPlace } from './automation/act-from.js';
+import { whenDamaged } from './automation/when-damaged.js';
 import { pickFromCompendium } from './automation/compendiums.js';
 import { onTurnStart } from './gm.js';
 import { rollRequests } from './requests/requests.js';
@@ -125,7 +126,7 @@ export class api{
       onDamage : (fn, options) => onDamage(fn, options),
       /* Damage on a miss (Graze), a GM button on a creature's card row (Topple), a guard's button when a creature
          near it is attacked (Interception), something at the start of each turn */
-      onMiss, addRow, removeRow, onAttacked, onTurnStart,
+      onMiss, addRow, removeRow, onAttacked, onTurnStart, whenDamaged,
       /* A bonus only where a check holds (Rage, Dueling, Defense), what can't be used / is free while something holds */
       bonusOnlyWhen, cantUseWhile, freeUseWhile, isFreeUse,
       /* A spell cast outside dnd5e's use : how to pay; a save put on an attack card; a choice of damage types */

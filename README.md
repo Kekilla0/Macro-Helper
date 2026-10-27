@@ -57,6 +57,7 @@ The main pieces, as methods on tokens, actors and items. Most also exist as `Mac
 | `MacroHelper.drawsTwo(match, { when })` | Two weapons go in hand for the price of one draw (Quick Draw). |
 | `MacroHelper.onHitMove({ feet, when, once, larger })` | A push or pull a hit brings, the GM's button on the card (Crusher, Charger). |
 | `MacroHelper.raiseCardAC(card, token, amount, { id })` | A creature's AC raised on an attack card that's out, its hit judged again (Defensive Duelist's Parry). |
+| `MacroHelper.whenDamaged(id, { feature, within, atSource, after })` | A Use / Pass card for a creature right after it takes damage, while it can (Stone's Endurance, Storm's Thunder). |
 | `MacroHelper.reducesDamage(match, { amount, types, attacks, when })` | Less damage of some types, from attacks or anything (Heavy Armor Master). |
 | `MacroHelper.saveDamage(match, { abilities, success, fail, reaction })` | A different share of a save's damage, at once or for a Reaction (Interpose Shield; Evasion). |
 | `card.system.addHealing(activity, tokens)` | A second activity's healing on a save card, under the saves, with its own row and Apply (Land's Aid). |

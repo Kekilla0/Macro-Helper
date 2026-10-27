@@ -25,6 +25,8 @@ export class uses{
       "smite",         // Cast on hit : a smite spell (or a feature casting one) from the sheet : the latest hit it fits
       "huntersMark",   // Ranger : Hunter's Mark / Favored Enemy : pay, pick, mark (or move the mark)
       "sneak",         // Rogue : Sneak Attack from the sheet : the latest qualifying hit
+      "giantAncestry", // Goliath : Fire's Burn, Frost's Chill, Hill's Tumble from the sheet : the latest hit they fit
+      "cloudsJaunt",   // Goliath : Cloud's Jaunt : the space first, then the use (a teleport)
       "hex",           // Warlock : Hex : pay, ability, pick, curse (or move it)
       "fontOfMagic",   // Sorcerer : Font of Magic : the conversion window
       "arcaneRecovery",// Wizard : Arcane Recovery from the sheet : the slot window
@@ -60,6 +62,7 @@ export class uses{
       "slotPerTurn",   // Casting : a second spell slot this turn follows Rule Limits
       "castingChoice", // Casting choice : an option chosen as it's cast, paid once cast (Metamagic; Quickened : its economy)
       "actionAs",      // Default Actions : a Default Action a rule lets cost a Bonus Action (Keen Mind's Study) : which one
+      "largeForm",     // Goliath : Large Form needs room to grow (Rule Limits), before anything is spent
       "economy",       // Action Tracker : its Action / Bonus Action / Reaction (Rule Limits for a second), spent once used
       "components",    // Components : V (not Silenced), S (a free hand), M (a focus, or a pouch and a free hand) : Rule Limits
       "actFrom",       // Act from : a place the use can be made from (Invoke Duplicity's illusion) : themself or there, before any pick
