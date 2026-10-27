@@ -122,6 +122,7 @@ export class druid{
       holder : actor => this.wildShapeItem(this.originalOf(actor)),
       applies : actor => this.enabled() && !!this.wildShapeItem(this.originalOf(actor)),
       summary : actor => this.formsSummary(actor),
+      state : actor => this.knownForms(this.originalOf(actor)).map(uuid => fromUuidSync(uuid, { strict : false })?.name ?? uuid),
       open : actor => this.manageForms(actor),
     });
   }

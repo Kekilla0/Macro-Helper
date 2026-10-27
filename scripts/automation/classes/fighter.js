@@ -46,6 +46,7 @@ export class fighter{
       applies : actor => this.enabled() && !!this.styleOf(actor),
       summary : actor => module.format("classes.fighter.styleSummary", { name : this.styleOf(actor)?.name ?? "—",
         swaps : restChoices.swapsText(actor, "fightingStyle") }),
+      state : actor => [this.styleOf(actor)?.name].filter(Boolean),
       open : (actor, swap) => this.swapStyle(actor, swap),
     });
   }

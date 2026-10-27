@@ -35,6 +35,9 @@ const log = logger.for(import.meta.url);
  *                     restChoices.swapsLeft(actor, id) / swapsText(actor, id) ("∞" for the GM) for the summary. Something free (filling up to a limit) needs
  *                     neither.
  *   holder(actor)   : with count, the document keeping the count (default : the actor; a Wild Shape form : its Druid)
+ *   state(actor)    : what's chosen now, as names (["Longsword", "Rapier"]), may be async. Once the window (or the
+ *                     windows in turn) is done, one chat message lists each choice's changes (+ added, − removed); a
+ *                     choice without it (Arcane Recovery : its own message) isn't listed.
  * }
  */
 export class restChoices{
@@ -78,9 +81,31 @@ export class restChoices{
     };
   }
 
-  /* A choice's own window, with its count when it has one */
-  static async openChoice(actor, choice){
+  /* A choice's own window, with its count when it has one; changes (a Map) : what it held before the first time */
+  static async openChoice(actor, choice, changes = null){
+    if(changes && choice?.state && !changes.has(choice.id)) changes.set(choice.id, { choice, before : await this.stateOf(actor, choice) });
     return choice?.open?.(actor, choice.count ? this.swapOf(actor, choice) : undefined);
+  }
+
+  static async stateOf(actor, choice){
+    try { return [...((await choice.state(actor)) ?? [])].map(String); }
+    catch(error){ log.error(choice.id, error); return []; }
+  }
+
+  /* One message : each choice's changes since its window first opened (none : no message) */
+  static async postChanges(actor, changes, { level = false } = {}){
+    const rows = [];
+    for(const { choice, before } of changes.values()){
+      const after = await this.stateOf(actor, choice);
+      const added = after.filter(n => !before.includes(n));
+      const removed = before.filter(n => !after.includes(n));
+      if(!added.length && !removed.length) continue;
+      const parts = [...added.map(n => `+ ${esc(n)}`), ...removed.map(n => `− ${esc(n)}`)];
+      rows.push(`<li><strong>${esc(module.i18n(choice.label))}</strong> : ${parts.join(" · ")}</li>`);
+    }
+    if(!rows.length) return null;
+    return ChatMessage.implementation.create({ speaker : ChatMessage.implementation.getSpeaker({ actor }),
+      content : `<p>${esc(module.format(level ? "restChoices.levelChanged" : "restChoices.changed", { name : actor.name }))}</p><ul>${rows.join("")}</ul>` });
   }
 
   /* The rest / level happened : its count set, then the choice's own grant */
@@ -252,10 +277,12 @@ export class restChoices{
 
   /* Each choice's own window, one after the other (the next once the last is closed) */
   static async sequence(actor, choices){
+    const changes = new Map();
     for(const choice of choices){
-      try { await this.openChoice(actor, choice); }
+      try { await this.openChoice(actor, choice, changes); }
       catch(error){ log.error(choice.id, error); }
     }
+    await this.postChanges(actor, changes);
   }
 
   /**
@@ -265,6 +292,7 @@ export class restChoices{
    */
   static async open(actor, choices = this.choicesFor(actor), { level = false } = {}){
     if(!choices.length) return;
+    const changes = new Map();
     const rows = choices.map(c => `<div class="form-group ${module.id}-rest-choice">
         <label>${esc(module.i18n(c.label))}</label>
         <div class="form-fields"><span class="summary">${esc(c.summary(actor))}</span>
@@ -278,12 +306,13 @@ export class restChoices{
       render : (event, dialog) => {
         dialog.element.querySelectorAll("button[data-choice]").forEach(button => button.addEventListener("click", async () => {
           const choice = this.#choices.get(button.dataset.choice);
-          await this.openChoice(actor, choice);
+          await this.openChoice(actor, choice, changes);
           const summary = button.closest(".form-fields")?.querySelector(".summary");
           if(summary && choice) summary.textContent = choice.summary(actor);
         }));
       },
       rejectClose : false,
     });
+    await this.postChanges(actor, changes, { level });
   }
 }

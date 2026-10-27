@@ -1,5 +1,5 @@
 import { module } from '../module.js';
-import { esc } from './utils.js';
+import { esc, searchList } from './utils.js';
 
 /**
  * Choosing creatures (and other things) from a grid of pictures, and whether a creature fits one of dnd5e's transform /
@@ -86,8 +86,9 @@ export async function chooseOne(entries, { title, prompt = "", icon = "fa-solid 
         callback : (event, button) => button.form.elements.creature?.value ?? null },
       ...extra,
     ],
-    /* A double click on a picture chooses it */
+    /* A double click on a picture chooses it; a long list gets a search box */
     render : (event, dialog) => {
+      searchList(dialog.element, `.${module.id}-creature`);
       dialog.element.querySelectorAll(`.${module.id}-creature`).forEach(el => el.addEventListener("dblclick", () => {
         el.querySelector("input").checked = true;
         dialog.element.querySelector('button[data-action="ok"]')?.click();
@@ -145,6 +146,7 @@ export async function chooseSet(entries, { known = [], max, swaps = Infinity, ti
           + (warning ? ` <strong class="warning">${esc(warning)}</strong>` : "");
       };
       const past = () => !!root.querySelector('input[name="past"]')?.checked;
+      searchList(root, `.${module.id}-creature`);
       root.querySelector('input[name="past"]')?.addEventListener("change", () => show());
       root.querySelectorAll('input[name="creature"]').forEach(input => input.addEventListener("change", () => {
         const picked = root.querySelectorAll('input[name="creature"]:checked').length;

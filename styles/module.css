@@ -549,3 +549,6 @@
   background: rgba(20, 18, 24, 0.95); border: 1px solid #666; color: #eee; font-size: 13px; line-height: 1.4; }
 .macro-helper-pick-tip .adv { color: #6fcf7a; }
 .macro-helper-pick-tip .dis { color: #e07070; }
+
+/* A long list's search box (helpers/utils.js searchList) */
+input.macro-helper-search { width : 100%; margin : 0 0 6px; }

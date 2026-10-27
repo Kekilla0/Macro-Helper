@@ -291,6 +291,7 @@ export class sorcerer{
       applies : actor => this.enabled() && (this.optionsOf(actor).length > 0),
       summary : actor => module.format("classes.sorcerer.swapSummary", { names : this.optionsOf(actor).map(o => o.item.name).join(", "),
         swaps : restChoices.swapsText(actor, "metamagic") }),
+      state : actor => this.optionsOf(actor).map(o => o.item.name),
       open : (actor, swap) => this.swapMetamagic(actor, swap),
     });
   }

@@ -85,6 +85,7 @@ export class warlock{
       id : "invocationCantrips", label : "restChoices.invocationCantrips", rest : "level", classes : ["warlock"], count : 1,
       applies : actor => this.enabled() && this.cantripInvocations(actor).length > 0,
       summary : actor => this.cantripSummary(actor),
+      state : actor => this.cantripSummary(actor).split(" · ").filter(line => line && !line.endsWith(" : —")),
       open : (actor, swap) => this.chooseCantrips(actor, swap),
     });
     Hooks.on(`${module.id}.cardMoves`, (message, uuid, moves, context) => this.repelMove(message, uuid, moves, context));

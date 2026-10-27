@@ -148,6 +148,7 @@ Everything Macro Helper does at the table, page by page. The [README](../README.
 **Elevation:** distances count the height gap between tokens from their elevation, which you set by hand for flying or climbing. Each token is as tall as it is wide, so a Medium creature flying 5 ft up is still adjacent to one on the ground, and one 30 ft up is out of a sword's reach.
 
 **Classes** (System Automation → Characters, on by default): class features at levels 1-3, on top of what the items' own data does. Edits Plutonium's items need are listed in [docs/plutonium-notes.md](../docs/plutonium-notes.md). So far:
+- **Rest Choices:** what a character may change after a rest or a level (Weapon Mastery, Fighting Style, Prepared Spells, Wild Shape forms...) opens in one window for its player; the sheet's header has a Rest Choices button too. A long list (spells, forms, weapons) has a search box: typing hides what doesn't match, ticked ones stay ticked. Once you're done, one chat message lists what changed (+ added, − removed); nothing changed, no message.
 - **Barbarian, Rage:** dnd5e's Rage effect already gives the resistances, the STR advantage and the Rage damage. The module adds:
   - *Turning it on:* using Rage turns its effect on and ends your Concentration. Using it again while raging extends it without spending a use (the Bonus Action extension).
   - *Rage damage:* only on attacks using Strength. A DEX melee attack doesn't get it, and a STR thrown attack does.

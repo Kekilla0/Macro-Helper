@@ -57,6 +57,7 @@ export class weaponMastery{
       applies : actor => this.limitOf(actor) > 0,
       summary : actor => module.format("weaponMastery.summary", { known : this.knownOf(actor).length, max : this.limitOf(actor),
         swaps : Number(actor.getFlag(module.id, this.SWAPS)) || 0 }),
+      state : async actor => { const kinds = await this.weaponKinds(); return this.knownOf(actor).map(key => kinds.find(k => k.key === key)?.name ?? key); },
       open : actor => this.choose(actor),
     });
   }

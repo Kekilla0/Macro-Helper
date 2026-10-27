@@ -63,6 +63,7 @@ export class wizard{
       id : "wizardSpellbook", label : "restChoices.spellbook", rest : "level", classes : ["wizard"],
       applies : actor => this.enabled() && !!actor?.classes?.wizard,
       summary : actor => module.format("classes.wizard.bookSummary", { count : spellPools.countText(actor, this.BOOK) }),
+      state : actor => spellPools.names(actor, this.BOOK),
       open : actor => spellPools.open(actor, this.BOOK),
     });
     preparedSpells.addVia("wizard", actor => spellPools.open(actor, this.BOOK));

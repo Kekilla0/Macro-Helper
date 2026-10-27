@@ -1,7 +1,7 @@
 import { module } from '../module.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
-import { esc, idOf } from '../helpers/utils.js';
+import { esc, idOf, searchList } from '../helpers/utils.js';
 import { limits } from './limits.js';
 import { restChoices } from './rest-choices.js';
 import { compendiums } from './compendiums.js';
@@ -48,6 +48,7 @@ export class preparedSpells{
         applies : actor => this.enabled() && !!actor?.classes?.[cls] && ((this.spellsOf(actor, cls).length > 0) || (Number(this.maxOf(actor, cls)) > 0)),
         grant : actor => this.grant(actor, cls),
         summary : actor => this.summary(actor, cls),
+        state : actor => this.spellsOf(actor, cls).filter(s => (Number(s.system.prepared) === 1) && !this.always(s)).map(s => s.name),
         open : actor => this.choose(actor, cls),
       });
     }
@@ -204,6 +205,7 @@ export class preparedSpells{
           line.innerHTML = esc(module.format("preparedSpells.status", { count : ids.length, max : max ?? "—", left }))
             + (warning ? ` <strong class="warning">${esc(warning)}</strong>` : "");
         };
+        searchList(form, `.${module.id}-prepared-row`, { groups : `.${module.id}-prepared-column`, before : form.querySelector(`.${module.id}-prepared-columns`) });
         form.querySelector('input[name="past"]')?.addEventListener("change", () => show());
         form.querySelectorAll("input[type=checkbox]:not([name=past])").forEach(input => input.addEventListener("change", () => {
           if(!input.checked) return show();

@@ -91,6 +91,38 @@ export async function chooseOption({ title, options = [], prompt = "", value, ic
 }
 
 /**
+ * A search box above a long list : typing hides the rows whose text doesn't have every word typed (ticked boxes stay
+ * ticked while hidden). Enter in the box doesn't confirm the window.
+ * @param {HTMLElement} root           the window
+ * @param {string} rows                the rows' selector
+ * @param {object} [options]
+ * @param {number} [options.min=12]    fewer rows : no box
+ * @param {string} [options.groups]    a selector for groups of rows (a spell level's column) : hidden when none of theirs show
+ * @param {HTMLElement} [options.before]  where the box goes (default : before the first row's list)
+ * @returns {HTMLInputElement|null}
+ */
+export function searchList(root, rows, { min = 12, groups = null, before = null } = {}){
+  const all = [...(root?.querySelectorAll(rows) ?? [])];
+  if((all.length < min) || root.querySelector(`.${module.id}-search`)) return null;
+  const input = document.createElement("input");
+  input.type = "search";
+  input.className = `${module.id}-search`;
+  input.placeholder = module.i18n("helpers.search");
+  (before ?? all[0].parentElement).before(input);
+  input.addEventListener("keydown", event => { if(event.key === "Enter") event.preventDefault(); });
+  input.addEventListener("input", () => {
+    const words = input.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+    for(const row of all) row.style.display = words.every(w => row.textContent.toLocaleLowerCase().includes(w)) ? "" : "none";
+    if(groups) root.querySelectorAll(groups).forEach(group => {
+      group.style.display = [...group.querySelectorAll(rows)].some(row => row.style.display !== "none") ? "" : "none";
+    });
+  });
+  /* After the window's own autofocus (its default button) */
+  setTimeout(() => input.focus(), 50);
+  return input;
+}
+
+/**
  * A document's dnd5e identifier ("wild-shape", "unarmed-strike"), from an item, an index entry or raw data; "" if none.
  * @param {Item|object} doc
  * @returns {string}

@@ -59,6 +59,7 @@ export class rangerConclaves{
       applies : actor => this.enabled() && !!subclasses.has(actor, this.PREY),
       grant : actor => subclasses.has(actor, this.PREY)?.setFlag(module.id, "preySwap", true),
       summary : actor => module.i18n(`subclasses.ranger.${this.preyOf(actor) ?? "unchosen"}`),
+      state : actor => [this.preyOf(actor)].filter(Boolean).map(prey => module.i18n(`subclasses.ranger.${prey}`)),
       open : actor => this.swapPrey(actor),
     });
   }

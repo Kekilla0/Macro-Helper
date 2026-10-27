@@ -81,6 +81,11 @@ export class spellPools{
     return new Set(actor.items.filter(i => (i.type === "spell") && !i.getFlag("dnd5e", "cachedFor")).map(i => idOf(i) || i.name));
   }
 
+  /* The pool's spells, by name (Rest Choices' change list) */
+  static names(actor, id){
+    return this.get(id)?.members(actor).map(s => s.name) ?? [];
+  }
+
   /* "4 / 6" : free places taken over places, all kinds together */
   static countText(actor, id){
     const pool = this.get(id);
@@ -172,8 +177,7 @@ export class spellPools{
     await old.delete();
     const added = await this.addSpell(actor, pool, chosen, place);
     await swap.spend();
-    if(added) await ChatMessage.implementation.create({ speaker : ChatMessage.implementation.getSpeaker({ actor }),
-      content : `<p>${esc(module.format("spellPools.swapped", { book : pool.title(actor), from : old.name, to : added.name }))}</p>` });
+    /* Rest Choices' message lists the swap */
     return !!added;
   }
 

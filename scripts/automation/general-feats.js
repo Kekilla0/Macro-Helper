@@ -438,6 +438,7 @@ export class generalFeats{
       full : actor => module.format("feats.ritualCaster.full", { name : actor.name }),
     });
     restChoices.add({ id : "ritualCaster", label : "restChoices.ritualCaster", rest : "level", classes : "any",
+      state : actor => spellPools.names(actor, this.RITUAL),
       applies : actor => enabled() && !!this.has(actor, this.RITUAL),
       summary : actor => spellPools.countText(actor, this.RITUAL),
       open : actor => spellPools.open(actor, this.RITUAL) });

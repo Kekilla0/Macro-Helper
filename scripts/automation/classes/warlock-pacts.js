@@ -76,6 +76,7 @@ export class pacts{
       id : "bookOfShadows", label : "restChoices.bookOfShadows", rest : "level", classes : ["warlock"], count : (actor, { levels }) => levels || 1,
       applies : actor => this.enabled() && !!this.tomeOf(actor),
       summary : actor => this.bookSummary(actor),
+      state : actor => this.spellsIn(actor).map(s => s.name),
       open : (actor, swap) => this.openBook(actor, swap),
     });
   }
