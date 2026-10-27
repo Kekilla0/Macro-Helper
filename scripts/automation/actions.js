@@ -135,9 +135,9 @@ export class actions{
     Hooks.once("ready", () => setTimeout(async () => {
       for(const a of game.actors.filter(a => a.type === "character")) await this.giveBasics(a).catch(error => log.debug(error));
     }, 5000));
-    /* Default Actions : Favorites switched on (its first save creates the setting) : every character at once */
+    /* Default Actions switched on, or to On + Favorites (its first save creates the setting) : every character at once */
     const favoritesOn = async setting => {
-      if((setting.key !== `${module.id}.actionFavorites`) || !settings.value("actionFavorites")) return;
+      if((setting.key !== `${module.id}.defaultActions`) || !settings.value("actionRules")) return;
       for(const a of game.actors.filter(a => a.type === "character")) await this.giveBasics(a);
     };
     Hooks.on("createSetting", favoritesOn);

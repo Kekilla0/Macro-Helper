@@ -2,7 +2,7 @@ import { module } from '../module.js';
 import { gm } from '../gm.js';
 import { uses } from '../uses.js';
 import { logger } from '../log.js';
-import { cells, gridSteps, tokenOf, forcedMove, forcedMoveAsGM, pushAway, movedThisTurn } from '../helpers/tokens.js';
+import { cells, cellGap, gridSteps, tokenOf, forcedMove, forcedMoveAsGM, pushAway, movedThisTurn } from '../helpers/tokens.js';
 import { pickSpace, isEnemy } from '../helpers/targets.js';
 import { postTargetCard, registerTargetCards, targetActions } from '../helpers/target-card.js';
 import { rollOptions, rollOptionDamage, rollOptionD20, rollOptionDamageDice } from './roll-options.js';
@@ -724,7 +724,8 @@ export function chargedAt(thing, target, feet = 30, { reach = null } = {}){
   const centre = p => ({ x : p.x + ((doc.width || 1) * size / 2), y : p.y + ((doc.height || 1) * size / 2) });
   const length = scene.grid.measurePath([centre(start), centre(end)]).distance;
   const gap = p => { const a = cells(foot(p)), b = cells(other);
-    return gridSteps(Math.max(0, b.left - a.right, a.left - b.right), Math.max(0, b.top - a.bottom, a.top - b.bottom)) * unit; };
+    const { gx, gy } = cellGap(a, b);
+    return gridSteps(gx, gy) * unit; };
   const within = reach ?? unit;
   return (length >= feet) && (gap(end) <= within) && ((gap(start) - gap(end)) >= (feet - unit));
 }

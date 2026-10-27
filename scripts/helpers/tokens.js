@@ -5,25 +5,64 @@ import { gm } from '../gm.js';
 /**
  * Token / distance helpers. Distances are measured between token footprints on the grid :
  * adjacent squares (sides or diagonals) are 5 ft (one grid unit), whatever the token art looks like.
- * Further out, the Helpers "Range Shape" setting decides :
- *   circle (default) : true distance, so a range reaches its full length north / east / south / west and less on the diagonals
- *   square (5e rules) : every diagonal step counts as 5 ft, so a range is a square
+ * Further out, the scene's diagonal rule decides, as Foundry's ruler measures it (core setting Square Grid Diagonals) :
+ *   Equidistant (dnd5e's default, the 2024 rule) : every diagonal step is 5 ft, so a range is a square
+ *   Exact / Approximate : a diagonal step is 1.41 / 1.5 squares; Alternating : 5 / 10 / 5 ft (or 10 / 5 / 10)
+ *   Rectilinear / Illegal : no diagonals; a gridless scene : true distance
  */
 
-/* Round ranges (true distance) unless the Helpers setting asks for 5e's square ones */
-export function isCircular(){
-  try { return game.settings.get(module.id, "rangeShape") !== "square"; }
-  catch { return true; }
+/* Foundry's diagonal rule for the scene, null on a gridless one (true distance) */
+function diagonalRule(){
+  if(canvas.grid?.isGridless) return null;
+  return canvas.grid?.diagonals ?? CONST.GRID_DIAGONALS.EQUIDISTANT;
+}
+
+/* Diagonal steps count as straight ones (the 2024 rule) : ranges are squares */
+export function isEquidistant(){
+  return diagonalRule() === CONST.GRID_DIAGONALS.EQUIDISTANT;
 }
 
 /**
- * Distance in grid steps for a gap of gx columns and gy rows between two footprints (0, 0 = adjacent) : 1 = adjacent.
+ * What a move of gx columns, gy rows and gz grid steps up costs in grid steps, by the scene's diagonal rule
+ * (Foundry's own formulas : SquareGrid#_measurePath).
  * @param {number} gx
  * @param {number} gy
+ * @param {number} [gz=0]
+ * @returns {number}
+ */
+export function gridCost(gx, gy, gz = 0){
+  const [a, b, c] = [Math.abs(gx), Math.abs(gy), Math.abs(gz)].sort((x, y) => y - x);
+  const D = CONST.GRID_DIAGONALS;
+  switch(diagonalRule()){
+    case null : return Math.hypot(a, b, c);
+    case D.EQUIDISTANT : return a;
+    case D.EXACT : return a + ((Math.SQRT2 - 1) * (b - c)) + ((Math.sqrt(3) - 1) * c);
+    case D.APPROXIMATE : return a + (0.5 * (b - c)) + (0.75 * c);
+    /* 5 / 10 / 5 : every second diagonal costs one more; 10 / 5 / 10 : the first one already does */
+    case D.ALTERNATING_1 : return a + Math.floor((b + (0.5 * c)) / 2);
+    case D.ALTERNATING_2 : return a + Math.floor((b + (0.5 * c) + 1.5) / 2);
+    default : return a + b + c;
+  }
+}
+
+/**
+ * Distance in grid steps between two footprints, from the gap between them on each axis : the free squares between
+ * (0 = touching, below 0 = overlapping on that axis). Adjacent (diagonals too) = 1. Further out it's the ruler's count
+ * from square to square (a gap of 3 diagonally is 4 diagonal steps). gz : the height gap in squares (0 = level).
+ * @param {number} gx
+ * @param {number} gy
+ * @param {number} [gz=0]
  * @returns {number}
  */
 export function gridSteps(gx, gy, gz = 0){
-  return (isCircular() ? Math.hypot(gx, gy, gz) : Math.max(gx, gy, gz)) + 1;
+  const ox = Math.max(0, gx + 1), oy = Math.max(0, gy + 1), oz = (gz > 0) ? (gz + 1) : 0;
+  if(Math.max(ox, oy, oz) <= 1) return 1;
+  return gridCost(ox, oy, oz);
+}
+
+/* The gap between two footprints (cells()) on each axis, for gridSteps */
+export function cellGap(a, b){
+  return { gx : Math.max(b.left - a.right, a.left - b.right), gy : Math.max(b.top - a.bottom, a.top - b.bottom) };
 }
 
 /**
@@ -93,17 +132,15 @@ export function cells(token){
 
 /**
  * Distance between two tokens' footprints, in scene units (feet). Adjacent (sides or diagonals) = one grid unit (5 ft).
- * Beyond that it follows the Range Shape setting (see the top of this file). Not rounded : 2 squares diagonally is ~12.07 ft.
+ * Beyond that it follows the scene's diagonal rule (see the top of this file). Not rounded : with Exact, 2 squares diagonally is ~12.07 ft.
  * @param {Token|TokenDocument} a
  * @param {Token|TokenDocument} b
  * @returns {number}
  */
 export function distanceBetween(a, b){
   const ta = tokenOf(a) ?? a, tb = tokenOf(b) ?? b;
-  const ca = cells(ta), cb = cells(tb);
-  const gapX = Math.max(0, cb.left - ca.right, ca.left - cb.right);
-  const gapY = Math.max(0, cb.top - ca.bottom, ca.top - cb.bottom);
-  return gridSteps(gapX, gapY, heightGap(ta, tb)) * canvas.scene.grid.distance;
+  const { gx, gy } = cellGap(cells(ta), cells(tb));
+  return gridSteps(gx, gy, heightGap(ta, tb)) * canvas.scene.grid.distance;
 }
 
 /**
@@ -226,12 +263,13 @@ export function highlightRange(origin, feet, { normal, tokens = [], selected = [
 
   /**
    * The squares of a row within `steps` grid steps of the footprint, as [first, last + 1) columns, or null.
-   * Same measure as distanceBetween, so every square shown in range is one a token could be picked in.
+   * gy : the row's gap from the footprint (below 0 : one of its own rows). Same measure as distanceBetween, so every
+   * square shown in range is one a token could be picked in.
    */
   const span = (c, gy, steps) => {
-    const k = steps - 1;                                            // largest gap allowed (0 = adjacent only)
-    if((k < 0) || (gy > k)) return null;
-    const gx = isCircular() ? Math.floor(Math.sqrt((k * k) - (gy * gy)) + 1e-9) : k;
+    if((steps < 1) || (gridSteps(-1, gy) > steps + 1e-9)) return null;
+    let gx = steps - 1;                                             // free squares between the footprint and the row's last
+    while((gx >= 0) && (gridSteps(gx, gy) > steps + 1e-9)) gx--;
     return [c.left - 1 - gx, c.right + gx + 1];
   };
 
@@ -244,7 +282,7 @@ export function highlightRange(origin, feet, { normal, tokens = [], selected = [
       const outer = Math.floor(feet / unit);
       const inner = Number.isFinite(normal) ? Math.min(outer, Math.max(0, Math.floor(normal / unit))) : outer;
       for(let j = c.top - outer; j < c.bottom + outer; j++){
-        const gy = (j < c.top) ? (c.top - 1 - j) : (j >= c.bottom) ? (j - c.bottom) : 0;
+        const gy = (j < c.top) ? (c.top - 1 - j) : (j >= c.bottom) ? (j - c.bottom) : -1;
         const inRow = (j >= c.top) && (j < c.bottom);
         const long = span(c, gy, outer), near = span(c, gy, inner);
         const y0 = j * grid, y1 = y0 + grid;
@@ -280,7 +318,7 @@ export function highlightRange(origin, feet, { normal, tokens = [], selected = [
 /**
  * Where a push would leave a token : straight away from `from`, up to `feet`, square by square, stopping at walls
  * and at other creatures (a square another token stands in blocks it, like a wall).
- * Measured like everything else here (Range Shape) : with Square, a diagonal square is 5 ft, so 10 ft is 2 diagonal squares.
+ * Measured like everything else here (the scene's diagonal rule) : with Equidistant, a diagonal square is 5 ft, so 10 ft is 2 diagonal squares.
  * @param {Token|TokenDocument|Actor} thing   who is pushed
  * @param {Token|TokenDocument|Actor|{x : number, y : number}} from   who pushes, or a point on the map (canvas pixels)
  * @param {number} [feet=10]
@@ -295,7 +333,7 @@ export function pushDestination(thing, from, feet = 10, { toward = false } = {})
   let dx = start.x - origin.x, dy = start.y - origin.y;
   /* A pull : straight toward the source instead (stops at the first creature : the source itself at the latest) */
   if(toward){ dx = -dx; dy = -dy; }
-  const norm = isCircular() ? Math.hypot(dx, dy) : Math.max(Math.abs(dx), Math.abs(dy));
+  const norm = isEquidistant() ? Math.max(Math.abs(dx), Math.abs(dy)) : Math.hypot(dx, dy);
   if(!norm) return null;
   dx /= norm; dy /= norm;
 

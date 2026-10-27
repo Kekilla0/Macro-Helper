@@ -2,7 +2,7 @@ import { module } from '../module.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
 import { idOf, esc, chooseOption, waitFor } from '../helpers/utils.js';
-import { cells, gridSteps, canSee } from '../helpers/tokens.js';
+import { cells, cellGap, gridSteps, canSee } from '../helpers/tokens.js';
 import { pickTargets } from '../helpers/targets.js';
 import { actionTracker } from './action-tracker.js';
 import { reactionMove, reactionMoveOf } from '../roll-item/card-builder.js';
@@ -482,9 +482,7 @@ export class actionReady{
 
   /* Feet between a footprint ({x, y, width, height, elevation}) and a token */
   static feet(a, b){
-    const ca = cells(a), cb = cells(b.document ?? b);
-    const gx = Math.max(0, cb.left - ca.right, ca.left - cb.right);
-    const gy = Math.max(0, cb.top - ca.bottom, ca.top - cb.bottom);
+    const { gx, gy } = cellGap(cells(a), cells(b.document ?? b));
     return gridSteps(gx, gy) * (canvas.scene?.grid?.distance || 5);
   }
 

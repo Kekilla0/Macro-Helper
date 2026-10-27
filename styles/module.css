@@ -272,7 +272,7 @@
   opacity: 0.5;
 }
 
-/* Settings sub-menus : the list scrolls, the Save button stays in view */
+/* Settings pages : the list scrolls, the Save button stays in view */
 .macro-helper-settings .window-content {
   max-height: 80vh;
 }
@@ -280,6 +280,22 @@
   max-height: 65vh;
   overflow-y: auto;
   padding-inline-end: 4px;
+}
+/* A setting whose Features switch is off : greyed */
+.macro-helper-settings .macro-helper-setting-off > label,
+.macro-helper-settings .macro-helper-setting-off > .form-fields {
+  opacity: 0.5;
+}
+/* Not rules as written */
+.macro-helper-settings .macro-helper-homebrew-tag {
+  margin-inline-start: 4px;
+  padding: 0 4px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  font-size: var(--font-size-10, 10px);
+  font-weight: normal;
+  opacity: 0.75;
+  vertical-align: middle;
 }
 /* My Settings : the GM's pages, two buttons a row */
 .macro-helper-settings .macro-helper-server-buttons {
