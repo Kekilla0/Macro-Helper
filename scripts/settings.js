@@ -4,9 +4,9 @@ import { SettingsMenu } from './settings-menu.js';
 const log = logger.for(import.meta.url);
 
 /**
- * Settings per page. Foundry has no settings folders, so each page gets its own button under Macro Helper in Configure
- * Settings (one level : no page opens another). Features holds every part's on / off; the other pages that part's
- * options, greyed while it's off (part). A setting that stayed the same kept its key, so saved values carry over;
+ * Settings per page, in the order listed (My Settings on top). Foundry has no settings folders, so each page gets its
+ * own button under Macro Helper in Configure Settings (one level : no page opens another). Features holds every part's
+ * on / off; the other pages that part's options, greyed while it's off (part). A setting that stayed the same kept its key, so saved values carry over;
  * merged settings got new keys, filled once by migrate().
  * World settings are the GM's and apply to everyone, on GM-only pages. Each user's own (client) settings are on one
  * page, My Settings, which shows only those whose feature the GM has on (needs : a setting that must be on; players :
@@ -15,6 +15,18 @@ const log = logger.for(import.meta.url);
  * part (a Features switch : greyed while it's off; a page's own part covers all of it).
  */
 export const GROUPS = {
+  /* Each user's own choices, for the features the GM has on */
+  player : {
+    icon : "fa-solid fa-user-gear",
+    settings : {
+      rollItemPick : { scope : "client", default : "always", type : String, needs : "rollItem",
+        choices : { off : "settings.rollItemPick.off", empty : "settings.rollItemPick.empty", always : "settings.rollItemPick.always" } },
+      handsMain : { scope : "client", default : "right", type : String, needs : "handsEnabled",
+        choices : { right : "settings.handsMain.right", left : "settings.handsMain.left" } },
+      /* Players only see it when they may edit item macros */
+      itemMacroTitleBar : { scope : "client", default : true, type : Boolean, requiresReload : true, needs : "itemMacro", players : "itemMacroPlayers" },
+    },
+  },
   /* Every part of the module, on or off */
   features : {
     icon : "fa-solid fa-toggle-on",
@@ -28,18 +40,6 @@ export const GROUPS = {
       combatLog : { scope : "world", default : "tracker", type : String, part : "actionTracker",
         choices : { tracker : "settings.combatLog.tracker", journal : "settings.combatLog.journal", whispers : "settings.combatLog.whispers" } },
       debug : { scope : "world", default : false, type : Boolean },
-    },
-  },
-  /* Each user's own choices, for the features the GM has on */
-  player : {
-    icon : "fa-solid fa-user-gear",
-    settings : {
-      rollItemPick : { scope : "client", default : "always", type : String, needs : "rollItem",
-        choices : { off : "settings.rollItemPick.off", empty : "settings.rollItemPick.empty", always : "settings.rollItemPick.always" } },
-      handsMain : { scope : "client", default : "right", type : String, needs : "handsEnabled",
-        choices : { right : "settings.handsMain.right", left : "settings.handsMain.left" } },
-      /* Players only see it when they may edit item macros */
-      itemMacroTitleBar : { scope : "client", default : true, type : Boolean, requiresReload : true, needs : "itemMacro", players : "itemMacroPlayers" },
     },
   },
   /* Every chat card the module makes : Roll Item's, the requests', initiative's */
