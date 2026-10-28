@@ -297,12 +297,6 @@
   opacity: 0.75;
   vertical-align: middle;
 }
-/* My Settings : the GM's pages, two buttons a row */
-.macro-helper-settings .macro-helper-server-buttons {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-}
 
 
 /* Cover (GM only) : a row per target, its levels small on the right */

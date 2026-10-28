@@ -33,8 +33,6 @@ export const GROUPS = {
   /* Each user's own choices, for the features the GM has on */
   player : {
     icon : "fa-solid fa-user-gear",
-    /* Server Settings : a button for each GM page (no hints), for the GM */
-    server : ["features", "cards", "macros", "rules"],
     settings : {
       rollItemPick : { scope : "client", default : "always", type : String, needs : "rollItem",
         choices : { off : "settings.rollItemPick.off", empty : "settings.rollItemPick.empty", always : "settings.rollItemPick.always" } },

@@ -79,23 +79,10 @@ export class SettingsMenu extends HandlebarsApplicationMixin(ApplicationV2){
       };
     });
     context.settings = all;
-    /* My Settings : the GM's pages, one button each (no hints) */
-    context.server = game.user.isGM ? (page.server ?? [])
-      .map(group => ({ key : group, icon : GROUPS[group].icon, label : `settings.${group}.menu.title` })) : [];
     /* A player with nothing to set here (Allow Players to Edit off) */
-    context.empty = !all.length && !context.server.length;
+    context.empty = !all.length;
     context.buttons = [{ type : "submit", icon : "fa-solid fa-floppy-disk", label : "SETTINGS.Save" }];
     return context;
-  }
-
-  _onRender(context, options){
-    super._onRender?.(context, options);
-    for(const button of this.element.querySelectorAll("[data-submenu]")){
-      button.addEventListener("click", event => {
-        event.preventDefault();
-        new (SettingsMenu.for(button.dataset.submenu))().render({ force : true });
-      });
-    }
   }
 
   /** @this {SettingsMenu} */

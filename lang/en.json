@@ -2,7 +2,6 @@
   "settings.menu.client" : "(Just for you)",
   "settings.player.menu.title" : "My Settings",
   "settings.player.menu.label" : "My Settings",
-  "settings.player.server" : "Server Settings",
   "settings.player.menu.hint" : "Your own choices, for the features the GM has on (Pick Targets, Main Hand, the Item Macro button).",
   "settings.itemMacro.title" : "Item Macros",
   "settings.itemMacro.hint" : "Macros stored on items and activities, run when they are used.",
