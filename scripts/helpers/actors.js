@@ -766,6 +766,19 @@ export function findItem(thing, query, { type } = {}){
   return null;
 }
 
+/**
+ * One of an actor's items by its exact dnd5e identifier, nothing else (findItem also matches names).
+ * @param {Actor|Token|TokenDocument} thing
+ * @param {string|string[]} ids   one identifier or several (the first item that has any of them)
+ * @param {object} [options]
+ * @param {string} [options.type] only items of this type
+ * @returns {Item|null}
+ */
+export function itemOf(thing, ids, { type } = {}){
+  const actor = actorOf(thing), list = [ids].flat();
+  return actor?.items?.find?.(i => (!type || (i.type === type)) && list.includes(idOf(i))) ?? null;
+}
+
 /* ---------- Conditions & combat ---------- */
 
 /**

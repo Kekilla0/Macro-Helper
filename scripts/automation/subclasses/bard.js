@@ -1,7 +1,7 @@
 import { module } from '../../module.js';
 import { logger } from '../../log.js';
 import { idOf, originItem } from '../../helpers/utils.js';
-import { tokenOf, distanceBetween, canSee } from '../../helpers/tokens.js';
+import { tokenOf, distanceBetween, canSee, isIncapacitated } from '../../helpers/tokens.js';
 import { isAlly } from '../../helpers/targets.js';
 import { spendUses } from '../../helpers/items.js';
 import { onHit } from '../../roll-item/hit-bonus.js';
@@ -16,6 +16,7 @@ import { repeating } from '../repeating.js';
 import { spellEffects } from '../spell-effects.js';
 import { bard } from '../classes/bard.js';
 import { subclasses } from './common.js';
+import { itemOf } from '../../helpers/actors.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -80,7 +81,7 @@ export class bardColleges{
 
   /* The Bard's Bardic Inspiration item */
   static inspirationItem(actor){
-    return subclasses.has(actor, bard.BARDIC);
+    return itemOf(actor, bard.BARDIC);
   }
 
   /* ---------- Dance ---------- */
@@ -90,7 +91,7 @@ export class bardColleges{
     const spent = foundry.utils.getProperty(changes ?? {}, "system.uses.spent");
     const before = this.#spent.get(item.uuid);
     this.#spent.delete(item.uuid);
-    if((spent === undefined) || (before === undefined) || !(Number(spent) > before) || !subclasses.has(item.actor, this.AGILE)) return;
+    if((spent === undefined) || (before === undefined) || !(Number(spent) > before) || !itemOf(item.actor, this.AGILE)) return;
     await subclasses.offer(item.actor, { key : "agileStrike", label : module.i18n("subclasses.bard.agileStrike"),
       text : module.format("subclasses.bard.agileText", { name : item.actor.name }) });
   }
@@ -99,10 +100,10 @@ export class bardColleges{
 
   /* One Unarmed Strike, part of the action that spent the die (no use of its own) */
   static async agileStrike(actor){
-    const feature = subclasses.has(actor, this.BARDIC_DAMAGE);
+    const feature = itemOf(actor, this.BARDIC_DAMAGE);
     const own = [...(feature?.system?.activities ?? [])].find(a => a.type === "attack");
     if(own) return !!await cardBuilder.roll(feature, { use : false, attack : own });
-    const unarmed = subclasses.has(actor, "unarmed-strike");
+    const unarmed = itemOf(actor, "unarmed-strike");
     if(!unarmed){ ui.notifications.warn(module.format("subclasses.bard.noUnarmed", { name : actor.name })); return false; }
     return !!await cardBuilder.roll(unarmed, { use : false });
   }
@@ -141,7 +142,7 @@ export class bardColleges{
     const spell = activity?.item;
     if(!this.enabled() || !actor?.isOwner || (spell?.type !== "spell") || !this.SCHOOLS.includes(spell.system?.school)) return;
     if(!casting.spendsSlot(activity, usage ?? {})) return;
-    const item = subclasses.has(actor, this.BEGUILING);
+    const item = itemOf(actor, this.BEGUILING);
     if(!item || !(Number(item.system.uses?.value) > 0)) return;
     const save = [...(item.system.activities ?? [])].find(a => a.type === "save");
     if(!save) return;
@@ -165,9 +166,9 @@ export class bardColleges{
   /* This user's Lore Bards that can react to that creature : within 60 ft, seeing it, Reaction and a die left */
   static cutters(creature){
     if(!this.enabled() || !creature) return [];
-    return (canvas.tokens?.placeables ?? []).filter(t => t.actor?.isOwner && (t !== creature) && subclasses.has(t.actor, this.CUTTING)
+    return (canvas.tokens?.placeables ?? []).filter(t => t.actor?.isOwner && (t !== creature) && itemOf(t.actor, this.CUTTING)
       && !isAlly(t, creature) && (distanceBetween(t, creature) <= 60) && canSee(t, creature) && actionTracker.left(t.actor, "reaction")
-      && !actionTracker.OUT_OF_ACTION.some(s => t.actor.statuses?.has?.(s)) && (Number(this.inspirationItem(t.actor)?.system?.uses?.value) > 0));
+      && !isIncapacitated(t) && (Number(this.inspirationItem(t.actor)?.system?.uses?.value) > 0));
   }
 
   static cuttingButtons(message, buttons, ray){
@@ -190,7 +191,7 @@ export class bardColleges{
     const roll = await new Roll(bard.dieOf(item)).evaluate();
     const { rollItem } = await import('../../roll-item/roll-item.js');
     await rollItem.showDice([roll], message);
-    await actionTracker.spend(token.actor, { kind : "reaction", what : subclasses.has(token.actor, this.CUTTING)?.name ?? "" }).catch(() => null);
+    await actionTracker.spend(token.actor, { kind : "reaction", what : itemOf(token.actor, this.CUTTING)?.name ?? "" }).catch(() => null);
     return roll;
   }
 
@@ -205,7 +206,7 @@ export class bardColleges{
     this.#cut.add(`${message.id}|${ray}`);
     const roll = await this.cutRoll(token, message);
     if(!roll) return;
-    const label = subclasses.has(token.actor, this.CUTTING)?.name ?? "Cutting Words";
+    const label = itemOf(token.actor, this.CUTTING)?.name ?? "Cutting Words";
     if(kind === "cutAttack") await subclasses.changeRoll(message, { ray, subtract : String(roll.total) }, token.actor);
     else await cutDamage(message, "all", { id : this.CUTTING, amount : roll.total, by : token.name, label, formula : roll.formula, result : roll.result });
     log.debug("Cutting Words", token.name, kind, roll.total);
@@ -235,8 +236,8 @@ export class bardColleges{
     const inspiration = bard.inspirationOf(actor);
     if(!inspiration) return null;
     const from = originItem(inspiration.effect)?.actor
-      ?? game.actors.find(a => (a.name === inspiration.by) && subclasses.has(a, this.COMBAT));
-    return (from && subclasses.has(from, this.COMBAT)) ? inspiration : null;
+      ?? game.actors.find(a => (a.name === inspiration.by) && itemOf(a, this.COMBAT));
+    return (from && itemOf(from, this.COMBAT)) ? inspiration : null;
   }
 
   static async useUp(actor){

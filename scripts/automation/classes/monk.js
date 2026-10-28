@@ -9,8 +9,8 @@ import { weaponUses } from '../weapon-uses.js';
 import { uses } from '../../uses.js';
 import { onInitiative } from '../initiative.js';
 import { itemFixes } from '../item-fixes.js';
-import { tokenOf } from '../../helpers/tokens.js';
-import { addTimedEffect } from '../../helpers/actors.js';
+import { tokenOf, isIncapacitated } from '../../helpers/tokens.js';
+import { addTimedEffect, itemOf } from '../../helpers/actors.js';
 import { pickTargets } from '../../helpers/targets.js';
 import { cutDamage, cutsOf } from '../../roll-item/damage-cuts.js';
 import { cardBuilder } from '../../roll-item/card-builder.js';
@@ -241,13 +241,13 @@ export class monk{
     const rolls = this.attackDamage(message, ray);
     if(!rolls.some(r => this.DEFLECTED.includes(r.options?.type))) return [];
     return (message.system.hitTargets?.(ray) ?? []).map(t => tokenOf(t)).filter(t => t?.actor?.isOwner
-      && t.actor.items.some(i => idOf(i) === this.DEFLECT) && !actionTracker.OUT_OF_ACTION.some(s => t.actor.statuses?.has?.(s)));
+      && itemOf(t.actor, this.DEFLECT) && !isIncapacitated(t));
   }
 
   static deflectButtons(message, buttons, ray){
     if(!this.enabled()) return;
     for(const token of this.deflectors(message, ray)){
-      const item = token.actor.items.find(i => idOf(i) === this.DEFLECT);
+      const item = itemOf(token.actor, this.DEFLECT);
       if(!cutsOf(message, token).some(c => c.id === this.DEFLECT)){
         if(actionTracker.left(token.actor, "reaction")) buttons.push({ id : `deflect|${token.document.uuid}`, icon : "fa-hand", label : item.name });
         continue;
@@ -266,7 +266,7 @@ export class monk{
     const token = tokenOf(fromUuidSync(uuid, { strict : false }));
     if(!this.enabled() || !token || !this.deflectors(message, ray).includes(token)) return;
     const actor = token.actor;
-    const item = actor.items.find(i => idOf(i) === this.DEFLECT);
+    const item = itemOf(actor, this.DEFLECT);
     const roll = await new Roll("1d10 + @abilities.dex.mod + @classes.monk.levels", actor.getRollData()).evaluate();
     const { rollItem } = await import('../../roll-item/roll-item.js');
     await rollItem.showDice([roll], message);
@@ -290,7 +290,7 @@ export class monk{
     const actor = token?.actor;
     const done = actor?.getFlag(module.id, "deflect");
     if(!actor?.isOwner || !done?.zero || done.redirected || (done.message !== message.id)) return;
-    const item = actor.items.find(i => idOf(i) === this.DEFLECT);
+    const item = itemOf(actor, this.DEFLECT);
     const activity = [...(item?.system?.activities ?? [])].find(a => a.type === "save");
     if(!activity) return ui.notifications.warn(module.format("classes.monk.noRedirect", { item : item?.name ?? "" }));
     const [target] = await pickTargets(token, { count : 1, range : done.melee ? 5 : 60, disposition : "any", confirm : "auto", useTargets : false,

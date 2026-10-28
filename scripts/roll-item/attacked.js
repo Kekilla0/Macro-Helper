@@ -1,7 +1,7 @@
 import { module } from '../module.js';
 import { logger } from '../log.js';
 import { idOf } from '../helpers/utils.js';
-import { tokenOf, distanceBetween, canSee } from '../helpers/tokens.js';
+import { tokenOf, distanceBetween, canSee, isIncapacitated } from '../helpers/tokens.js';
 import { limits } from '../automation/limits.js';
 import { actionTracker } from '../automation/action-tracker.js';
 import { gm } from '../gm.js';
@@ -64,7 +64,7 @@ function guardsFor(rule, target, attacker){
 function unmet(rule, ctx){
   const { guard, attacker } = ctx;
   if(rule.reaction !== false){
-    if(actionTracker.OUT_OF_ACTION.some(s => guard.actor?.statuses?.has?.(s)) || (Number(guard.actor?.system?.attributes?.hp?.value) <= 0))
+    if(isIncapacitated(guard) || (Number(guard.actor?.system?.attributes?.hp?.value) <= 0))
       return module.format("fightingStyles.cantReact", { name : guard.name });
     if(!actionTracker.left(guard.actor, "reaction")) return module.format("actionTracker.spent", { name : guard.name, kind : actionTracker.label("reaction") });
   }

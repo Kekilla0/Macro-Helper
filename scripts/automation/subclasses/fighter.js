@@ -2,7 +2,7 @@ import { module } from '../../module.js';
 import { logger } from '../../log.js';
 import { gm } from '../../gm.js';
 import { idOf, chooseOption, esc } from '../../helpers/utils.js';
-import { addTimedEffect, rollSave } from '../../helpers/actors.js';
+import { addTimedEffect, rollSave, itemOf } from '../../helpers/actors.js';
 import { tokenOf, distanceBetween, canSee, forcedMove } from '../../helpers/tokens.js';
 import { pickTargets, pickSpace } from '../../helpers/targets.js';
 import { spendUses, heldItems, dropHeld } from '../../helpers/items.js';
@@ -131,7 +131,7 @@ export class fighterArchetypes{
 
   /* A maneuver by its name's identifier : Plutonium's 2024 ones are "maneuvers-riposte" */
   static has(actor, id){
-    return subclasses.has(actor, id) ?? subclasses.has(actor, `maneuvers-${id}`);
+    return itemOf(actor, [id, `maneuvers-${id}`]);
   }
 
   static maneuverId(item){
@@ -432,7 +432,7 @@ export class fighterArchetypes{
   /* The Psionic Energy Dice : Plutonium's "Psionic Energy Die" item (4 at level 3), else Psionic Power's uses (Plutonium's
      own Protective Field spends Psionic Power's single use : a short rest's one die, not the pool) */
   static psionicOf(actor){
-    return subclasses.has(actor, "psionic-energy-die") ?? subclasses.has(actor, "psionic-energy-dice") ?? subclasses.has(actor, this.PSIONIC);
+    return itemOf(actor, "psionic-energy-die") ?? itemOf(actor, "psionic-energy-dice") ?? itemOf(actor, this.PSIONIC);
   }
 
   static psionicDie(actor){
@@ -455,7 +455,7 @@ export class fighterArchetypes{
 
   static fieldGuards(token){
     if(!this.enabled()) return [];
-    return (canvas.tokens?.placeables ?? []).filter(g => g.actor?.isOwner && subclasses.has(g.actor, "protective-field")
+    return (canvas.tokens?.placeables ?? []).filter(g => g.actor?.isOwner && itemOf(g.actor, "protective-field")
       && ((g === token) || ((distanceBetween(g, token) <= 30) && canSee(g, token))) && actionTracker.left(g.actor, "reaction")
       && (Number(this.psionicOf(g.actor)?.system?.uses?.value) > 0));
   }
@@ -463,7 +463,7 @@ export class fighterArchetypes{
   static async field(message, guard, target, key){
     if(!guard || !target || this.#done.has(`f|${key}|${target.id}`)) return;
     const actor = guard.actor;
-    const item = subclasses.has(actor, "protective-field");
+    const item = itemOf(actor, "protective-field");
     if(!await spendUses(this.psionicOf(actor), 1)) return;
     this.#done.add(`f|${key}|${target.id}`);
     const roll = await new Roll(`max(1, ${this.psionicDie(actor)} + @abilities.int.mod)`, actor.getRollData()).evaluate();

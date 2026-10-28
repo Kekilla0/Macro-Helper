@@ -2,8 +2,8 @@ import { module } from '../../module.js';
 import { logger } from '../../log.js';
 import { gm } from '../../gm.js';
 import { idOf, originItem } from '../../helpers/utils.js';
-import { heal } from '../../helpers/actors.js';
-import { tokenOf, distanceBetween, canSee, getTokensWithin } from '../../helpers/tokens.js';
+import { heal, itemOf } from '../../helpers/actors.js';
+import { tokenOf, distanceBetween, canSee, getTokensWithin, isIncapacitated } from '../../helpers/tokens.js';
 import { isAlly, pickSpace } from '../../helpers/targets.js';
 import { spendUses } from '../../helpers/items.js';
 import { chooseOne, divideAmong } from '../../helpers/creatures.js';
@@ -89,7 +89,7 @@ export class clericDomains{
 
   /* A healing spell from a slot : 2 + the slot's level on its healing roll */
   static discipleOfLife(attack, damage){
-    if(!this.enabled() || !attack.spell || (attack.type !== "heal") || !subclasses.has(attack.actor, this.DISCIPLE)) return;
+    if(!this.enabled() || !attack.spell || (attack.type !== "heal") || !itemOf(attack.actor, this.DISCIPLE)) return;
     if(damage.rolls[0]?.options?.type !== "healing") return;
     const level = (Number(attack.item.system?.level) || 0) + (Number(attack.item.getFlag?.("dnd5e", "scaling") ?? damage.config?.scaling) || 0);
     if(level < 1) return;
@@ -191,15 +191,15 @@ export class clericDomains{
   /* ---------- Warding Flare, Guided Strike : on attack cards ---------- */
 
   static channelOf(actor){
-    return subclasses.has(actor, this.CHANNEL);
+    return itemOf(actor, this.CHANNEL);
   }
 
   /* This user's creatures with that feature that can use it on that attacker now */
   static helpers(attacker, id, { range, reaction = true, self = false } = {}){
     if(!this.enabled() || !attacker) return [];
-    return (canvas.tokens?.placeables ?? []).filter(t => t.actor?.isOwner && subclasses.has(t.actor, id)
+    return (canvas.tokens?.placeables ?? []).filter(t => t.actor?.isOwner && itemOf(t.actor, id)
       && ((t === attacker) ? self : (distanceBetween(t, attacker) <= range) && canSee(t, attacker) && (!reaction || actionTracker.left(t.actor, "reaction")))
-      && !actionTracker.OUT_OF_ACTION.some(s => t.actor.statuses?.has?.(s)));
+      && !isIncapacitated(t));
   }
 
   static #done = new Set();
@@ -211,15 +211,15 @@ export class clericDomains{
     /* Warding Flare : an attack roll by a creature not on its side */
     if(!this.#done.has(`flare|${key}`)){
       for(const t of this.helpers(attacker, this.FLARE, { range : 30 })){
-        if(isAlly(t, attacker) || !(Number(subclasses.has(t.actor, this.FLARE)?.system?.uses?.value) > 0)) continue;
-        buttons.push({ id : `flare|${t.document.uuid}`, icon : "fa-sun", label : subclasses.has(t.actor, this.FLARE).name });
+        if(isAlly(t, attacker) || !(Number(itemOf(t.actor, this.FLARE)?.system?.uses?.value) > 0)) continue;
+        buttons.push({ id : `flare|${t.document.uuid}`, icon : "fa-sun", label : itemOf(t.actor, this.FLARE).name });
       }
     }
     /* Guided Strike : a miss, yours or a creature's within 30 ft */
     if(!message.system.isHitOn?.(ray) && !this.#done.has(`guided|${key}`)){
       for(const t of this.helpers(attacker, this.GUIDED, { range : 30, self : true })){
         if(!(Number(this.channelOf(t.actor)?.system?.uses?.value) > 0)) continue;
-        buttons.push({ id : `guided|${t.document.uuid}`, icon : "fa-crosshairs", label : module.format("subclasses.cleric.guided", { name : subclasses.has(t.actor, this.GUIDED).name }) });
+        buttons.push({ id : `guided|${t.document.uuid}`, icon : "fa-crosshairs", label : module.format("subclasses.cleric.guided", { name : itemOf(t.actor, this.GUIDED).name }) });
       }
     }
   }
@@ -233,7 +233,7 @@ export class clericDomains{
     if(!token?.actor?.isOwner || this.#done.has(key)) return;
     this.#done.add(key);
     if(kind === "flare"){
-      const item = subclasses.has(token.actor, this.FLARE);
+      const item = itemOf(token.actor, this.FLARE);
       if(!item || !await spendUses(item, 1)) return;
       await actionTracker.spend(token.actor, { kind : "reaction", what : item.name }).catch(() => null);
       const result = await subclasses.changeRoll(message, { ray, d20 : "kl" }, token.actor);
@@ -242,7 +242,7 @@ export class clericDomains{
     else {
       const channel = this.channelOf(token.actor);
       if(!channel || !await spendUses(channel, 1)) return;
-      if(token !== attacker) await actionTracker.spend(token.actor, { kind : "reaction", what : subclasses.has(token.actor, this.GUIDED)?.name ?? "" }).catch(() => null);
+      if(token !== attacker) await actionTracker.spend(token.actor, { kind : "reaction", what : itemOf(token.actor, this.GUIDED)?.name ?? "" }).catch(() => null);
       await subclasses.changeRoll(message, { ray, add : "10" }, token.actor);
     }
     log.debug("Domain reaction", kind, token.name);
@@ -276,7 +276,7 @@ export class clericDomains{
   }
 
   static async blessingsEnd(actor){
-    const item = subclasses.has(actor, this.BLESSING);
+    const item = itemOf(actor, this.BLESSING);
     if(!this.enabled() || !item || !actor.isOwner) return;
     const old = this.blessings(item);
     if(old.length) await gm.run("subclassEffectsEnd", { effects : old.map(e => e.uuid), item : item.uuid });
@@ -374,7 +374,7 @@ export class clericDomains{
       && [...(i.system.activities ?? [])].some(a => a.type === "attack"));
     if(!weapons.length) return ui.notifications.warn(module.format("subclasses.cleric.noWeapon", { name : actor.name }));
     const uuid = (weapons.length === 1) ? weapons[0].uuid : await chooseOne(weapons.map(w => ({ value : w.uuid, label : w.name, img : w.img })),
-      { title : subclasses.has(actor, this.WAR_PRIEST)?.name, icon : "fa-solid fa-khanda" });
+      { title : itemOf(actor, this.WAR_PRIEST)?.name, icon : "fa-solid fa-khanda" });
     const weapon = uuid ? fromUuidSync(uuid, { strict : false }) : null;
     if(weapon) await cardBuilder.roll(weapon, { use : false });
   }

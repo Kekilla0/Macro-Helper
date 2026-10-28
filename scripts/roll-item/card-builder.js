@@ -2,7 +2,7 @@ import { module } from '../module.js';
 import { gm } from '../gm.js';
 import { uses } from '../uses.js';
 import { logger } from '../log.js';
-import { cells, cellGap, gridSteps, tokenOf, forcedMove, forcedMoveAsGM, pushAway, movedThisTurn } from '../helpers/tokens.js';
+import { cells, cellGap, gridSteps, tokenOf, forcedMove, forcedMoveAsGM, pushAway, pullToward, movedThisTurn } from '../helpers/tokens.js';
 import { pickSpace, isEnemy } from '../helpers/targets.js';
 import { postTargetCard, registerTargetCards, targetActions } from '../helpers/target-card.js';
 import { rollOptions, rollOptionDamage, rollOptionD20, rollOptionDamageDice } from './roll-options.js';
@@ -121,13 +121,6 @@ export function affectedBy(item){
   const uuid = item?.uuid;
   if(!uuid) return [];
   return canvas.tokens.placeables.filter(t => t.actor?.effects?.some?.(e => !e.disabled && (e.origin === uuid)));
-}
-
-/* Pull a creature up to `feet` straight toward this one (Ettercap's Reel), stopping at walls and creatures */
-export async function pull(thing, target, feet = 5){
-  const from = tokenOf(thing), to = tokenOf(target);
-  if(!from || !to) return 0;
-  return forcedMove(to, { direction : "toward", from, feet });
 }
 
 export function applyDisease({ when = [], name = null, img = null, ability = "con", dc = null, every = "24h", stages = [], removal = ["save"], cure = "full", label = null } = {}){
@@ -991,7 +984,7 @@ export class cardBuilder{
       add(cls, "reactionMove", function(options){ return reactionMove(this, options); });
       add(cls, "reactionAttack", function(options){ return reactionAttack(this, options); });
       add(cls, "trample", function(feet, options){ return trample(this, feet, options); });
-      add(cls, "pull", function(target, feet){ return pull(this, target, feet); });
+      add(cls, "pull", function(target, feet = 5, options){ return pullToward(target, this, feet, options); });
       add(cls, "push", function(target, feet, options){ return pushAway(target, this, feet, options); });
       add(cls, "isDifficultTerrain", function(point){ return isDifficultTerrain(this, point); });
     }

@@ -7,6 +7,7 @@ import { limits } from './limits.js';
 import { hands } from './hands.js';
 import { itemFixes } from './item-fixes.js';
 import { idOf } from '../helpers/utils.js';
+import { itemOf } from '../helpers/actors.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -119,7 +120,7 @@ export class components{
     /* A Versatile weapon held in both hands could be held in one : a hand is free for the spell */
     const bothHands = managed && held.main && (held.main === held.off) ? actor.items.get(held.main) : null;
     const freeHand = managed ? (!held.main || !held.off || (!!bothHands && hands.isVersatile(bothHands) && !hands.isTwoHanded(bothHands))) : true;
-    const warCaster = actor.items.some(i => idOf(i) === this.WAR_CASTER);
+    const warCaster = !!itemOf(actor, this.WAR_CASTER);
     const foci = actor.items.filter(i => i.system?.properties?.has?.("foc") && i.system.equipped);
     /* In a hand (or an emblem on a held shield) : that hand also does S */
     const focusInHand = foci.find(i => !managed || hands.handOf(actor, i) || this.isShield(i));

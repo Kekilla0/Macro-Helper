@@ -8,11 +8,12 @@ import { uses } from '../../uses.js';
 import { fitsProfile, chooseCreature, chooseCreatures } from '../../helpers/creatures.js';
 import { compendiums } from '../compendiums.js';
 import { limits } from '../limits.js';
-import { tokenOf, fitSpace } from '../../helpers/tokens.js';
+import { tokenOf, fitSpace, isIncapacitated, INCAPACITATING } from '../../helpers/tokens.js';
 import { restChoices } from '../rest-choices.js';
 import { familiars } from '../familiars.js';
 import { transform, revert, revertEverywhere, isReverting } from '../transform.js';
 import { cantUseWhile } from '../use-rules.js';
+import { itemOf } from '../../helpers/actors.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -46,7 +47,6 @@ export class druid{
   static WILD_SHAPE = "wild-shape";
   static WILD_COMPANION = "wild-companion";
   static CIRCLE_FORMS = "circle-forms";
-  static INCAPACITATED = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
   /* Known forms' changes left (Rest Choices' count), on the Wild Shape item */
   static SWAPS = "swaps.wildShapeForms";
 
@@ -150,7 +150,7 @@ export class druid{
   }
 
   static wildShapeItem(actor){
-    return actor?.items?.find(i => idOf(i) === this.WILD_SHAPE) ?? null;
+    return itemOf(actor, this.WILD_SHAPE);
   }
 
   static wildShapeActivity(item){
@@ -159,7 +159,7 @@ export class druid{
 
   /* The profile the Druid's level allows now (CR ¼ Beast, no fly speed at level 2), and the roll data for its CR */
   static profileOf(actor){
-    const moon = this.moonOn() ? actor?.items?.find(i => idOf(i) === this.CIRCLE_FORMS) : null;
+    const moon = this.moonOn() ? itemOf(actor, this.CIRCLE_FORMS) : null;
     const activity = this.wildShapeActivity(moon) ?? this.wildShapeActivity(this.wildShapeItem(actor));
     const profile = activity?.availableProfiles?.[0] ?? null;
     return { profile, rollData : activity?.getRollData?.({ deterministic : true }) ?? {} };
@@ -333,7 +333,7 @@ export class druid{
     const had = Number(actor.system?.attributes?.hp?.temp) || 0;
     const levels = Number(actor.classes?.druid?.system?.levels) || 0;
     /* Circle Forms : three times the Druid level, AC 13 + WIS when higher */
-    if(this.moonOn() && actor.items.some(i => idOf(i) === this.CIRCLE_FORMS)){
+    if(this.moonOn() && itemOf(actor, this.CIRCLE_FORMS)){
       if(hp) hp.temp = Math.max(Number(hp.temp) || 0, 3 * levels);
       const ac = data.system?.attributes?.ac;
       const wis = Number(actor.system?.abilities?.wis?.mod) || 0;
@@ -342,7 +342,7 @@ export class druid{
     }
     if(hp && (had > (Number(hp.temp) || 0))) hp.temp = had;
     const hours = Math.max(1, Math.floor(levels / 2));
-    const item = actor.items.find(i => idOf(i) === this.WILD_SHAPE);
+    const item = itemOf(actor, this.WILD_SHAPE);
     /* A new form from a form : the old form's Wild Shape effect comes along with its effects; the new use starts a new one.
        A beast holds nothing : the Druid's lit lights (and its hands) stay with the Druid */
     data.effects = data.effects.filter(e => !foundry.utils.getProperty(e, `flags.${module.id}.wildShape`) && !foundry.utils.getProperty(e, `flags.${module.id}.heldLight`));
@@ -420,7 +420,7 @@ export class druid{
     if(!this.enabled() || !game.users.activeGM?.isSelf) return;
     const actor = (effect?.parent?.documentName === "Actor") ? effect.parent : null;
     if(!this.isWildShaped(actor)) return;
-    const down = this.INCAPACITATED.some(s => actor.statuses?.has(s));
+    const down = isIncapacitated(actor);
     const expired = !!effect.getFlag(module.id, "wildShape") && !!effect.duration?.expired;
     if(!down && !expired) return;
     await this.endWildShape(actor, module.i18n(down ? "classes.druid.incapacitated" : "classes.druid.expired"));
@@ -473,7 +473,7 @@ export class druid{
   }
 
   /* The form's conditions that end it go with the Druid (reverting drops the form's effects : Unconscious at 0 HP) */
-  static CARRIED = [...this.INCAPACITATED, "prone"];
+  static CARRIED = [...INCAPACITATING, "prone"];
 
   static async endWildShape(actor, why){
     if(!this.isWildShaped(actor)) return;
@@ -499,7 +499,7 @@ export class druid{
     }
     if(!(result?.longRest || (config?.type === "long"))) return;
     const druidActor = this.originalOf(actor);
-    if(!druidActor.items.some(i => idOf(i) === this.WILD_COMPANION)) return;
+    if(!itemOf(druidActor, this.WILD_COMPANION)) return;
     gm.run("wildCompanionDismiss", { actor : druidActor.uuid }).catch(error => log.error(error));
   }
 

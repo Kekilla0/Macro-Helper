@@ -8,6 +8,7 @@ import { rollModes } from '../roll-modes.js';
 import { conditions } from '../conditions.js';
 import { itemFixes } from '../item-fixes.js';
 import { subclasses } from './common.js';
+import { itemOf } from '../../helpers/actors.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -44,7 +45,7 @@ export class rogueArchetypes{
   /* An Assassin, in the first round of its combat */
   static firstRound(actor){
     const combat = game.combat;
-    return this.enabled() && !!subclasses.has(actor, this.ASSASSINATE) && !!combat?.started && (combat.round === 1);
+    return this.enabled() && !!itemOf(actor, this.ASSASSINATE) && !!combat?.started && (combat.round === 1);
   }
 
   /* Against a creature that hasn't taken its turn this round */
@@ -54,14 +55,14 @@ export class rogueArchetypes{
     if(!target?.actor || !this.firstRound(actor)) return;
     const combat = game.combat;
     const index = combat.turns.findIndex(c => (c.tokenId === target.id) || (c.actor === target.actor));
-    if((index > combat.turn) && config.rolls?.[0]) giveMode(config.rolls[0], "advantage", subclasses.has(actor, this.ASSASSINATE).name);
+    if((index > combat.turn) && config.rolls?.[0]) giveMode(config.rolls[0], "advantage", itemOf(actor, this.ASSASSINATE).name);
   }
 
   /* ---------- Soulknife ---------- */
 
   /* The Psionic Energy Dice pool (Plutonium's own item; Psionic Power is the feature itself, one use) */
   static psionicOf(actor){
-    return subclasses.has(actor, "psionic-energy-die") ?? subclasses.has(actor, "psionic-energy-dice") ?? subclasses.has(actor, this.PSIONIC);
+    return itemOf(actor, "psionic-energy-die") ?? itemOf(actor, "psionic-energy-dice") ?? itemOf(actor, this.PSIONIC);
   }
 
   static dieOf(actor){
@@ -77,11 +78,11 @@ export class rogueArchetypes{
   }
 
   static knackButtons(message, buttons, actor, roll){
-    if(!this.enabled() || (message?.type !== "check") || !actor?.isOwner || message.getFlag?.(module.id, "knack") || !subclasses.has(actor, this.KNACK)) return;
+    if(!this.enabled() || (message?.type !== "check") || !actor?.isOwner || message.getFlag?.(module.id, "knack") || !itemOf(actor, this.KNACK)) return;
     const target = roll?.options?.target;
     if(Number.isFinite(target) && (roll.total >= target)) return;
     if(!this.proficient(actor, message) || !(Number(this.psionicOf(actor)?.system?.uses?.value) > 0)) return;
-    buttons.push({ id : "knack", icon : "fa-brain", label : subclasses.has(actor, this.KNACK).name, run : async () => {
+    buttons.push({ id : "knack", icon : "fa-brain", label : itemOf(actor, this.KNACK).name, run : async () => {
       if(message.getFlag(module.id, "knack") || !message.isOwner) return;
       const { updated, extra } = await addDie(message.rolls[0], this.dieOf(actor));
       await rerolls.replace(message, updated, [extra]);

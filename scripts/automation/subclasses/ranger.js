@@ -1,7 +1,7 @@
 import { module } from '../../module.js';
 import { logger } from '../../log.js';
 import { idOf, esc, ownerIds, chooseOption } from '../../helpers/utils.js';
-import { addTimedEffect, usedThisTurn, markUsedThisTurn } from '../../helpers/actors.js';
+import { addTimedEffect, usedThisTurn, markUsedThisTurn, itemOf } from '../../helpers/actors.js';
 import { tokenOf, distanceBetween, getRange } from '../../helpers/tokens.js';
 import { pickTargets } from '../../helpers/targets.js';
 import { onHit } from '../../roll-item/hit-bonus.js';
@@ -56,8 +56,8 @@ export class rangerConclaves{
     Hooks.on("createActiveEffect", (effect, options, userId) => this.huntersLore(effect, userId));
     restChoices.add({
       id : "huntersPrey", label : "subclasses.ranger.preyChoice", rest : "short",
-      applies : actor => this.enabled() && !!subclasses.has(actor, this.PREY),
-      grant : actor => subclasses.has(actor, this.PREY)?.setFlag(module.id, "preySwap", true),
+      applies : actor => this.enabled() && !!itemOf(actor, this.PREY),
+      grant : actor => itemOf(actor, this.PREY)?.setFlag(module.id, "preySwap", true),
       summary : actor => module.i18n(`subclasses.ranger.${this.preyOf(actor) ?? "unchosen"}`),
       state : actor => [this.preyOf(actor)].filter(Boolean).map(prey => module.i18n(`subclasses.ranger.${prey}`)),
       open : actor => this.swapPrey(actor),
@@ -73,17 +73,17 @@ export class rangerConclaves{
   /* ---------- Gloom Stalker ---------- */
 
   static dreadfulActivity(actor){
-    const item = subclasses.has(actor, this.AMBUSHER);
+    const item = itemOf(actor, this.AMBUSHER);
     return [...(item?.system?.activities ?? [])].find(a => (a.type === "damage") && a.uses?.max) ?? null;
   }
 
   /* Its first turn of each combat : +10 ft Speed until that turn ends */
   static async ambushersLeap(combat, combatant){
     const actor = combatant?.actor;
-    if(!this.enabled() || !game.users.activeGM?.isSelf || !subclasses.has(actor, this.AMBUSHER)) return;
+    if(!this.enabled() || !game.users.activeGM?.isSelf || !itemOf(actor, this.AMBUSHER)) return;
     if(combat.getFlag?.(module.id, `leap.${combatant.id}`)) return;
     await combat.setFlag(module.id, `leap.${combatant.id}`, true);
-    await addTimedEffect(actor, { name : module.i18n("subclasses.ranger.leap"), img : subclasses.has(actor, this.AMBUSHER).img,
+    await addTimedEffect(actor, { name : module.i18n("subclasses.ranger.leap"), img : itemOf(actor, this.AMBUSHER).img,
       changes : [{ key : "system.attributes.movement.speeds.walk", type : "add", mode : 2, value : "10" }] }, { until : "turnEnd", thisTurn : true });
   }
 
@@ -95,17 +95,17 @@ export class rangerConclaves{
   }
 
   static preyOf(actor){
-    return subclasses.has(actor, this.PREY)?.getFlag(module.id, "prey") ?? null;
+    return itemOf(actor, this.PREY)?.getFlag(module.id, "prey") ?? null;
   }
 
   /* The first one used is the choice */
   static async choosePrey(actor, prey){
-    const item = subclasses.has(actor, this.PREY);
+    const item = itemOf(actor, this.PREY);
     if(item && !this.preyOf(actor)) await item.setFlag(module.id, "prey", prey);
   }
 
   static async swapPrey(actor){
-    const item = subclasses.has(actor, this.PREY);
+    const item = itemOf(actor, this.PREY);
     if(!item) return;
     if(!game.user.isGM && !item.getFlag(module.id, "preySwap") && this.preyOf(actor)) return ui.notifications.warn(module.format("subclasses.ranger.noSwap", { name : actor.name }));
     const prey = await chooseOption({ title : item.name, icon : "fa-solid fa-crosshairs", value : this.preyOf(actor) ?? "colossus",
@@ -118,7 +118,7 @@ export class rangerConclaves{
     if(!this.enabled() || (message.type !== TYPES.attack) || !message.system?.attackOf?.(ray)) return;
     const actor = message.getAssociatedActor?.();
     const item = message.getAssociatedItem?.();
-    if(!actor?.isOwner || (item?.type !== "weapon") || !subclasses.has(actor, this.PREY) || (this.preyOf(actor) === "colossus")) return;
+    if(!actor?.isOwner || (item?.type !== "weapon") || !itemOf(actor, this.PREY) || (this.preyOf(actor) === "colossus")) return;
     if(usedThisTurn(actor, "hordeBreaker") || (game.combat?.started && (game.combat.combatant?.actor !== actor))) return;
     buttons.push({ id : "hordeBreaker", icon : "fa-people-group", label : module.i18n("subclasses.ranger.horde") });
   }
@@ -144,7 +144,7 @@ export class rangerConclaves{
     if(!this.enabled() || !mark || (userId !== game.user.id)) return;
     const caster = fromUuidSync(mark.caster ?? "", { strict : false });
     const target = effect.parent;
-    if(!subclasses.has(caster, this.LORE) || !target?.system?.traits) return;
+    if(!itemOf(caster, this.LORE) || !target?.system?.traits) return;
     const list = key => {
       const trait = target.system.traits[key];
       const values = [...(trait?.value ?? [])].map(t => game.i18n.localize(CONFIG.DND5E.damageTypes[t]?.label ?? CONFIG.DND5E.conditionTypes?.[t]?.name ?? CONFIG.DND5E.conditionTypes?.[t]?.label ?? t));

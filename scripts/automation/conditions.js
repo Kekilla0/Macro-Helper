@@ -4,7 +4,7 @@ import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { patch } from '../patch.js';
 import { spellEffects } from './spell-effects.js';
-import { tokenOf, distanceBetween, canSee } from '../helpers/tokens.js';
+import { tokenOf, distanceBetween, canSee, isIncapacitated } from '../helpers/tokens.js';
 import { clearLastDamage, isKilledOutright, setStatus } from '../helpers/actors.js';
 import { giveMode, noteReason, conditionName, logReasons } from '../roll-item/reasons.js';
 import { idOf, originItem } from '../helpers/utils.js';
@@ -122,12 +122,6 @@ export class conditions{
     for(const id of ids) this.endsWhen(id, { incapacitated : true });
   }
 
-  static INCAPACITATING = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
-
-  static isIncapacitated(actor){
-    return this.INCAPACITATING.some(s => actor?.statuses?.has?.(s));
-  }
-
   /* The item an effect comes from : the item it's on, or its origin's */
   static #itemOf(effect){
     return (effect?.parent?.documentName === "Item") ? effect.parent : originItem(effect);
@@ -201,7 +195,7 @@ export class conditions{
   static async #statusEnds(effect){
     if(!game.users.activeGM?.isSelf) return;
     const actor = (effect?.parent?.documentName === "Actor") ? effect.parent : effect?.parent?.actor;
-    if(!this.isIncapacitated(actor)) return;
+    if(!isIncapacitated(actor)) return;
     await this.endsOn(actor, "incapacitated");
     await this.#fromSource(actor, "sourceDown");
   }

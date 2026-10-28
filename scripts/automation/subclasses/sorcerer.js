@@ -2,8 +2,8 @@ import { module } from '../../module.js';
 import { logger } from '../../log.js';
 import { gm } from '../../gm.js';
 import { idOf, esc, buttonRow, addButton, makeButton } from '../../helpers/utils.js';
-import { usedThisTurn, markUsedThisTurn } from '../../helpers/actors.js';
-import { tokenOf, distanceBetween, canSee } from '../../helpers/tokens.js';
+import { usedThisTurn, markUsedThisTurn, itemOf } from '../../helpers/actors.js';
+import { tokenOf, distanceBetween, canSee, isIncapacitated } from '../../helpers/tokens.js';
 import { spendUses } from '../../helpers/items.js';
 import { giveMode } from '../../roll-item/reasons.js';
 import { TYPES } from '../../roll-item/message.js';
@@ -57,7 +57,7 @@ export class sorcererOrigins{
     }
     Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.afterSpell(activity, usage, results));
     Hooks.on("dnd5e.renderChatMessage", (message, html) => this.surgeButton(message, html));
-    Hooks.on("dnd5e.restCompleted", (actor, result) => { if(result?.longRest && actor?.isOwner && subclasses.has(actor, this.TIDES)?.getFlag(module.id, "tidesUsed")) subclasses.has(actor, this.TIDES).unsetFlag(module.id, "tidesUsed"); });
+    Hooks.on("dnd5e.restCompleted", (actor, result) => { if(result?.longRest && actor?.isOwner && itemOf(actor, this.TIDES)?.getFlag(module.id, "tidesUsed")) itemOf(actor, this.TIDES).unsetFlag(module.id, "tidesUsed"); });
   }
 
   /* ---------- Clockwork : Restore Balance ---------- */
@@ -67,9 +67,9 @@ export class sorcererOrigins{
   /* This user's Clockwork Sorcerers that can steady that creature's roll */
   static balancers(creature){
     if(!this.enabled() || !creature) return [];
-    return (canvas.tokens?.placeables ?? []).filter(t => t.actor?.isOwner && subclasses.has(t.actor, this.RESTORE)
+    return (canvas.tokens?.placeables ?? []).filter(t => t.actor?.isOwner && itemOf(t.actor, this.RESTORE)
       && ((t === creature) || ((distanceBetween(t, creature) <= 60) && canSee(t, creature))) && actionTracker.left(t.actor, "reaction")
-      && (Number(subclasses.has(t.actor, this.RESTORE).system?.uses?.value) > 0) && !actionTracker.OUT_OF_ACTION.some(s => t.actor.statuses?.has?.(s)));
+      && (Number(itemOf(t.actor, this.RESTORE).system?.uses?.value) > 0) && !isIncapacitated(t));
   }
 
   static uneven(roll){
@@ -80,14 +80,14 @@ export class sorcererOrigins{
   static balanceButtons(message, buttons, ray){
     if((message.type !== TYPES.attack) || !this.uneven(message.system?.attackOf?.(ray)) || this.#done.has(`${message.id}|${ray}`)) return;
     const creature = tokenOf(message.getAssociatedToken?.() ?? message.getAssociatedActor?.());
-    for(const t of this.balancers(creature)) buttons.push({ id : `balance|${t.document.uuid}`, icon : "fa-scale-balanced", label : subclasses.has(t.actor, this.RESTORE).name });
+    for(const t of this.balancers(creature)) buttons.push({ id : `balance|${t.document.uuid}`, icon : "fa-scale-balanced", label : itemOf(t.actor, this.RESTORE).name });
   }
 
   static testButtons(message, buttons, roll){
     if(!["save", "check"].includes(message?.type) || !this.uneven(roll) || this.#done.has(`${message.id}|test`)) return;
     const creature = tokenOf(message.getAssociatedToken?.() ?? message.getAssociatedActor?.());
     for(const t of this.balancers(creature)){
-      buttons.push({ id : `balance-${t.id}`, icon : "fa-scale-balanced", label : subclasses.has(t.actor, this.RESTORE).name,
+      buttons.push({ id : `balance-${t.id}`, icon : "fa-scale-balanced", label : itemOf(t.actor, this.RESTORE).name,
         run : () => this.restore(message, null, t.document.uuid, "test") });
     }
   }
@@ -95,7 +95,7 @@ export class sorcererOrigins{
   static async restore(message, ray, uuid, kind = null){
     const token = tokenOf(fromUuidSync(uuid ?? "", { strict : false }));
     const key = `${message.id}|${kind ?? ray}`;
-    const item = subclasses.has(token?.actor, this.RESTORE);
+    const item = itemOf(token?.actor, this.RESTORE);
     if(!token?.actor?.isOwner || !item || this.#done.has(key) || !await spendUses(item, 1)) return;
     this.#done.add(key);
     await actionTracker.spend(token.actor, { kind : "reaction", what : item.name }).catch(() => null);
@@ -134,13 +134,13 @@ export class sorcererOrigins{
   static async afterSpell(activity, usage, results){
     const actor = activity?.actor;
     if(!this.enabled() || !actor?.isOwner || !sorcerer.isSorcererSpell(activity.item) || !casting.spendsSlot(activity, usage ?? {})) return;
-    const tides = subclasses.has(actor, this.TIDES);
+    const tides = itemOf(actor, this.TIDES);
     if(tides?.getFlag(module.id, "tidesUsed")){
       await tides.unsetFlag(module.id, "tidesUsed");
       await spendUses(tides, -1, { warn : false });
       return this.surge(actor);
     }
-    if(!subclasses.has(actor, this.SURGE) || usedThisTurn(actor, "wildSurge")) return;
+    if(!itemOf(actor, this.SURGE) || usedThisTurn(actor, "wildSurge")) return;
     const card = await uses.cardOf(results);
     const message = (card?.documentName === "ChatMessage") ? card : (card?.message ?? results?.message);
     const now = gm.stamp(actor, "cast");
@@ -158,7 +158,7 @@ export class sorcererOrigins{
   static surgeButton(message, html){
     const uuid = message.getFlag?.(module.id, "wildSurge")?.actor;
     const actor = uuid ? fromUuidSync(uuid, { strict : false }) : null;
-    if(!this.enabled() || !actor?.isOwner || !subclasses.has(actor, this.SURGE) || message.getFlag(module.id, "wildSurgeRolled") || !this.surgeNow(message, actor)) return;
+    if(!this.enabled() || !actor?.isOwner || !itemOf(actor, this.SURGE) || message.getFlag(module.id, "wildSurgeRolled") || !this.surgeNow(message, actor)) return;
     const row = buttonRow(html, { key : `${module.id}-wild-surge` });
     if(row.childElementCount) return;
     addButton(row, makeButton({ icon : "fa-dice-d20", text : module.i18n("subclasses.sorcerer.surgeRoll"), once : true,
@@ -171,7 +171,7 @@ export class sorcererOrigins{
     await markUsedThisTurn(actor, "wildSurge");
     if(message.isOwner) await message.setFlag(module.id, "wildSurgeRolled", true);
     const roll = await new Roll("1d20").evaluate();
-    await roll.toMessage({ speaker : ChatMessage.implementation.getSpeaker({ actor }), flavor : subclasses.has(actor, this.SURGE).name });
+    await roll.toMessage({ speaker : ChatMessage.implementation.getSpeaker({ actor }), flavor : itemOf(actor, this.SURGE).name });
     if(roll.total === 20) await this.surge(actor);
   }
 

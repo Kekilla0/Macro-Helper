@@ -10,6 +10,7 @@ import { pacts } from './warlock-pacts.js';
 import { restChoices } from '../rest-choices.js';
 import { chooseOne } from '../../helpers/creatures.js';
 import { isClassSpell, pickOwned, enchant } from '../../helpers/items.js';
+import { itemOf } from '../../helpers/actors.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -217,6 +218,6 @@ export class warlock{
     if(!(chosen ? this.carries(item, this.REPELLING) : (idOf(item) === this.BLAST))) return;
     const token = fromUuidSync(uuid, { strict : false });
     if(!this.PUSHABLE.includes(token?.actor?.system?.traits?.size ?? "med")) return;
-    moves.push({ id : "repel", feet : 10, name : actor.items.find(i => idOf(i) === this.REPELLING)?.name });
+    moves.push({ id : "repel", feet : 10, name : itemOf(actor, this.REPELLING)?.name });
   }
 }

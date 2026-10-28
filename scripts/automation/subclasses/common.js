@@ -6,14 +6,14 @@ import { cardBuilder } from '../../roll-item/card-builder.js';
 import { gm } from '../../gm.js';
 import { uses } from '../../uses.js';
 import { rerolls, addDie } from '../../roll-item/rerolls.js';
-import { giveEffect } from '../../helpers/actors.js';
+import { giveEffect, itemOf } from '../../helpers/actors.js';
 const log = logger.for(import.meta.url);
 
 /**
  * Shared by the subclass rules (System Automation → Characters → Subclasses).
  *
  *   subclasses.enabled()                       the switch
- *   subclasses.has(actor, id)                  its item with that identifier
+ *   itemOf(actor, id)                  its item with that identifier
  *   subclasses.offer(actor, { item, activity, text, label, data })
  *                                              a card for the creature's owners (and the GM) with a button that uses
  *                                              that item's activity (item.roll : its card, its cost, its targets), once :
@@ -36,10 +36,6 @@ export class subclasses{
 
   static enabled(){
     return (game.system.id === "dnd5e") && settings.value("subclassRules");
-  }
-
-  static has(actor, id){
-    return actor?.items?.find?.(i => idOf(i) === id) ?? null;
   }
 
   static register(){

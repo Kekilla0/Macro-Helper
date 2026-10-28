@@ -6,6 +6,7 @@ import { gm } from '../gm.js';
 import { rerolls, extraD20 } from '../roll-item/rerolls.js';
 import { initiativeSwap, swappedInitiatives } from './initiative-swap.js';
 import { idOf } from '../helpers/utils.js';
+import { itemOf } from '../helpers/actors.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -424,7 +425,7 @@ export function onInitiative(rule){
 /* The feature's button now : { item, used }, null : none */
 function initFound(rule, actor, key, combat){
   if(!actor?.isOwner) return null;
-  const item = actor.items.find(i => idOf(i) === rule.feature);
+  const item = itemOf(actor, rule.feature);
   if(!item || (rule.when && !rule.when(actor, combat))) return null;
   if((item.getFlag(module.id, "initiativeUsed") ?? {})[rule.id] === key) return { item, used : true };
   if(!(Number(item.system.uses?.value) > 0) && item.system.uses?.max) return null;

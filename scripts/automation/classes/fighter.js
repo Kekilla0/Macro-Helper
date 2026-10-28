@@ -6,7 +6,7 @@ import { actionTracker } from '../action-tracker.js';
 import { compendiums, pickFromCompendium } from '../compendiums.js';
 import { restChoices } from '../rest-choices.js';
 import { onFailedTest } from '../../roll-item/rerolls.js';
-import { findItem } from '../../helpers/actors.js';
+import { findItem, itemOf } from '../../helpers/actors.js';
 import { replaceItem } from '../../helpers/items.js';
 const log = logger.for(import.meta.url);
 
@@ -74,7 +74,7 @@ export class fighter{
   /* ---------- Tactical Mind ---------- */
 
   static secondWindOf(actor){
-    return actor?.items?.find(i => idOf(i) === this.SECOND_WIND) ?? null;
+    return itemOf(actor, this.SECOND_WIND);
   }
 
   /* ---------- Fighting Style ---------- */

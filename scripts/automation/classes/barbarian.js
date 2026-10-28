@@ -3,7 +3,7 @@ import { rollModeFrom } from '../roll-modes.js';
 import { settings } from '../../settings.js';
 import { limits } from '../limits.js';
 import { logger } from '../../log.js';
-import { tokenOf } from '../../helpers/tokens.js';
+import { tokenOf, isIncapacitated } from '../../helpers/tokens.js';
 import { findItem, addTimedEffect, itemEffectOn, itemEffectOff } from '../../helpers/actors.js';
 import { originOf, idOf } from '../../helpers/utils.js';
 import { conditions } from '../conditions.js';
@@ -43,7 +43,6 @@ export class barbarian{
   static DANGER_SENSE = "danger-sense";
   static PRIMAL_KNOWLEDGE = "primal-knowledge";
   static PRIMAL_SKILLS = ["acr", "itm", "prc", "ste", "sur"];
-  static INCAPACITATED = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
   static ENDS = { incapacitated : "classes.barbarian.incapacitated", heavyArmor : "classes.barbarian.heavyArmor", combatEnd : "classes.barbarian.combatEnded" };
 
   static enabled(){
@@ -72,7 +71,7 @@ export class barbarian{
     bonusOnlyWhen(effect => this.isRageEffect(effect), ["system.bonuses.mwak.damage", "system.rolls.damage.mwak.bonus"],
       attack => attack.weapon && (attack.ability === "str"), { enabled : () => this.enabled(), id : "rageDamage" });
     /* Danger Sense : its DEX save advantage switched off while Incapacitated */
-    bonusOnlyWhen(this.DANGER_SENSE, "system.abilities.dex.save.roll.mode", actor => !this.INCAPACITATED.some(s => actor?.statuses?.has(s)),
+    bonusOnlyWhen(this.DANGER_SENSE, "system.abilities.dex.save.roll.mode", actor => !isIncapacitated(actor),
       { enabled : () => this.enabled(), id : "dangerSense" });
     Hooks.on("createChatMessage", message => this.onCard(message));
     Hooks.on("combatTurnChange", (combat, prior, current) => this.onTurnEnd(combat, prior, current));

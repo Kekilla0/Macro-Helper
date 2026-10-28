@@ -3,6 +3,7 @@ import { idOf, whisperOwners } from '../helpers/utils.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { addLight, removeLight, hasLight } from '../helpers/tokens.js';
+import { itemOf } from '../helpers/actors.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -90,7 +91,7 @@ export class heldLight{
     if(timed){
       if(item.getFlag(module.id, "burnedOut")){
         if(!source.oil) return false;
-        const oil = actor.items.find(i => this.OIL.includes(idOf(i)));
+        const oil = itemOf(actor, this.OIL);
         if(!oil){
           ui.notifications.warn(module.format("hands.noOil", { item : item.name }));
           return false;

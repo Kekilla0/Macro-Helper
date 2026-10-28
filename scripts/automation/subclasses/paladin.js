@@ -2,7 +2,7 @@ import { module } from '../../module.js';
 import { logger } from '../../log.js';
 import { gm } from '../../gm.js';
 import { idOf, originItem } from '../../helpers/utils.js';
-import { tempHP } from '../../helpers/actors.js';
+import { tempHP, itemOf } from '../../helpers/actors.js';
 import { tokenOf, addLight, removeLight } from '../../helpers/tokens.js';
 import { pickTargets } from '../../helpers/targets.js';
 import { spendUses } from '../../helpers/items.js';
@@ -89,16 +89,16 @@ export class paladinOaths{
   /* ---------- Glory ---------- */
 
   static async afterSmite(actor, spell){
-    if(!this.enabled() || (idOf(spell) !== "divine-smite") || !subclasses.has(actor, this.INSPIRING)) return;
-    if(!(Number(subclasses.has(actor, this.CHANNEL)?.system?.uses?.value) > 0)) return;
-    await subclasses.offer(actor, { key : "inspiringSmite", label : subclasses.has(actor, this.INSPIRING).name,
+    if(!this.enabled() || (idOf(spell) !== "divine-smite") || !itemOf(actor, this.INSPIRING)) return;
+    if(!(Number(itemOf(actor, this.CHANNEL)?.system?.uses?.value) > 0)) return;
+    await subclasses.offer(actor, { key : "inspiringSmite", label : itemOf(actor, this.INSPIRING).name,
       text : module.format("subclasses.paladin.inspiringText", { name : actor.name }) });
   }
 
   static async inspiringSmite(actor){
     const me = tokenOf(actor);
-    const item = subclasses.has(actor, this.INSPIRING);
-    const channel = subclasses.has(actor, this.CHANNEL);
+    const item = itemOf(actor, this.INSPIRING);
+    const channel = itemOf(actor, this.CHANNEL);
     if(!me || !item || !channel) return false;
     const tokens = await pickTargets(me, { count : 12, range : 30, disposition : "any", includeSelf : true, confirm : "enter", useTargets : false });
     if(!tokens?.length || !(Number(channel.system?.uses?.value) > 0)) return false;
@@ -175,7 +175,7 @@ export class paladinOaths{
 
   static async transferVow(actor){
     const vow = this.vowOf(actor);
-    const item = subclasses.has(actor, this.VOW);
+    const item = itemOf(actor, this.VOW);
     if(!vow || !item) return false;
     const [target] = await pickTargets(tokenOf(actor), { count : 1, range : 30, disposition : "nonAlly", confirm : "auto", useTargets : false }) ?? [];
     if(!target) return false;

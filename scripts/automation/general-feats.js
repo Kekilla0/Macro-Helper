@@ -14,7 +14,7 @@ import { chargedAt, giveCondition } from '../roll-item/card-builder.js';
 import { saveDamage } from './save-damage.js';
 import { reducesDamage } from './damage-reduction.js';
 import { itemFixes } from './item-fixes.js';
-import { giveEffect, rollSave, usedThisTurn } from '../helpers/actors.js';
+import { giveEffect, rollSave, usedThisTurn, itemOf } from '../helpers/actors.js';
 import { hasShieldEquipped, heldItems, wearsArmor } from '../helpers/items.js';
 import { forcedMove } from '../helpers/tokens.js';
 import { chooseOne } from '../helpers/creatures.js';
@@ -197,10 +197,6 @@ export class generalFeats{
     return (activity ?? item.system?.activities?.find?.(a => a.type === "attack"))?.type === "attack";
   }
 
-  static has(actor, id){
-    return actor?.items?.find?.(i => idOf(i) === id) ?? null;
-  }
-
   static meleeWeapon(item){
     return (item?.type === "weapon") && String(item.system?.type?.value ?? "").endsWith("M");
   }
@@ -240,11 +236,11 @@ export class generalFeats{
       if(!this.enabled() || !attack.actor) return;
       /* Crossbow Expert : the modifier on a Light crossbow's extra attack */
       if(attack.offHand && this.crossbow(attack.item) && attack.properties.has?.("lgt") && (damage.modifier > 0) && !damage.has("@mod")
-        && attack.actor.items.some(i => idOf(i) === this.CROSSBOW_EXPERT)) damage.add("@mod");
+        && itemOf(attack.actor, this.CROSSBOW_EXPERT)) damage.add("@mod");
       /* Piercer : one more Piercing die on a critical hit */
-      if(attack.critical && attack.isAttack && this.has(attack.actor, this.PIERCER)) damage.critDice(1, { types : ["piercing"] });
+      if(attack.critical && attack.isAttack && itemOf(attack.actor, this.PIERCER)) damage.critDice(1, { types : ["piercing"] });
       /* Great Weapon Master : + PB on a Heavy weapon's hit, as part of the Attack action on its turn */
-      if(attack.weapon && attack.properties.has?.("hvy") && this.has(attack.actor, this.GWM) && isAttackAction(attack.actor, attack.activity)
+      if(attack.weapon && attack.properties.has?.("hvy") && itemOf(attack.actor, this.GWM) && isAttackAction(attack.actor, attack.activity)
         && !damage.has("@prof")) damage.add("@prof");
       /* Elemental Adept : 1s count as 2s on its type's dice */
       if(attack.spell){
@@ -310,7 +306,7 @@ export class generalFeats{
 
     /* Defensive Duelist */
     onAttacked({ id : this.DUELIST, feature : this.DUELIST, when : "hit", self : true, sees : false, icon : "fa-shield-halved", enabled,
-      label : ctx => this.has(ctx.guard.actor, this.DUELIST)?.name ?? "Parry",
+      label : ctx => itemOf(ctx.guard.actor, this.DUELIST)?.name ?? "Parry",
       tooltip : ctx => module.format("feats.duelist.tip", { name : ctx.guard.name, n : ctx.guard.actor.system.attributes?.prof ?? 2 }),
       done : ctx => !!ctx.roll?.isCritical || !this.meleeAttack(ctx.message) || raisedCardAC(ctx.message, ctx.target, this.DUELIST),
       unmet : guard => heldItems(guard).some(i => (i.type === "weapon") && i.system.properties?.has?.("fin")) ? "" : module.format("feats.duelist.noFinesse", { name : guard.name }),
@@ -415,7 +411,7 @@ export class generalFeats{
     /* Inspiring Leader : Bolstering Performance after a rest */
     this.abilityChoice(this.INSPIRING, ["wis", "cha"]);
     restChoices.add({ id : "bolsteringPerformance", label : "restChoices.bolsteringPerformance", rest : "short",
-      applies : actor => enabled() && !!this.has(actor, this.INSPIRING),
+      applies : actor => enabled() && !!itemOf(actor, this.INSPIRING),
       summary : () => module.i18n("feats.inspiring.summary"),
       open : actor => this.perform(actor) });
 
@@ -423,23 +419,23 @@ export class generalFeats{
     concentrationModeFrom(this.MAGE_SLAYER, { mode : "disadvantage", enabled });
     onFailedTest({ id : "guardedMind", tests : ["save"], succeed : true, icon : "fa-brain",
       when : ({ ability }) => this.MENTAL.includes(ability),
-      source : actor => { const feat = enabled() && this.has(actor, this.MAGE_SLAYER); return (feat && (Number(feat.system.uses?.value) > 0)) ? feat : null; },
-      cost : (actor, feat) => feat ?? this.has(actor, this.MAGE_SLAYER),
+      source : actor => { const feat = enabled() && itemOf(actor, this.MAGE_SLAYER); return (feat && (Number(feat.system.uses?.value) > 0)) ? feat : null; },
+      cost : (actor, feat) => feat ?? itemOf(actor, this.MAGE_SLAYER),
       label : feat => module.format("feats.mageSlayer.guarded", { name : feat.name }) });
 
     /* Ritual Caster : its Ritual spells (a spell pool), Quick Ritual */
     this.abilityChoice(this.RITUAL, this.MENTAL);
     spellPools.add(this.RITUAL, {
-      title : actor => this.has(actor, this.RITUAL)?.name ?? module.i18n("feats.ritualCaster.title"),
+      title : actor => itemOf(actor, this.RITUAL)?.name ?? module.i18n("feats.ritualCaster.title"),
       places : actor => [{ key : "rituals", count : Number(actor.system.attributes?.prof) || 2, prompt : "feats.ritualCaster.pick",
         filter : e => (Number(e.system?.level) === 1) && spellPools.hasProperty(e, "ritual") }],
       members : actor => actor.items.filter(i => (i.type === "spell") && (i.getFlag(module.id, "pool")?.id === this.RITUAL)),
-      data : actor => ({ "system.method" : "spell", "system.prepared" : 2, "system.ability" : choiceOf(this.has(actor, this.RITUAL), "ability") ?? "" }),
+      data : actor => ({ "system.method" : "spell", "system.prepared" : 2, "system.ability" : choiceOf(itemOf(actor, this.RITUAL), "ability") ?? "" }),
       full : actor => module.format("feats.ritualCaster.full", { name : actor.name }),
     });
     restChoices.add({ id : "ritualCaster", label : "restChoices.ritualCaster", rest : "level", classes : "any",
       state : actor => spellPools.names(actor, this.RITUAL),
-      applies : actor => enabled() && !!this.has(actor, this.RITUAL),
+      applies : actor => enabled() && !!itemOf(actor, this.RITUAL),
       summary : actor => spellPools.countText(actor, this.RITUAL),
       open : actor => spellPools.open(actor, this.RITUAL) });
     spells.quickRitual(this.RITUAL, { enabled, label : feat => module.format("feats.ritualCaster.quick", { name : feat.name }) });
@@ -485,7 +481,7 @@ export class generalFeats{
 
   /* Bolstering Performance : up to six allies within 30 ft (itself too), the chosen ability's Temporary Hit Points */
   static async perform(actor){
-    const feat = this.has(actor, this.INSPIRING);
+    const feat = itemOf(actor, this.INSPIRING);
     if(!feat) return;
     if(!choiceOf(feat, "ability")) await askChoice(feat, "ability");
     const ability = choiceOf(feat, "ability");
@@ -586,7 +582,7 @@ export class generalFeats{
   /* Parry : + PB AC against melee attacks until its next turn starts, this hit judged again */
   static async parry(ctx){
     const actor = ctx.guard.actor;
-    const feat = this.has(actor, this.DUELIST);
+    const feat = itemOf(actor, this.DUELIST);
     const prof = Number(actor.system.attributes?.prof) || 0;
     if(!await raiseCardAC(ctx.message, ctx.target, prof, { id : this.DUELIST })) return false;
     await giveEffect(ctx.guard, { name : feat?.name ?? "Parry", system : { changes : [{ key : "system.attributes.ac.bonus", type : "add", value : String(prof) }] },

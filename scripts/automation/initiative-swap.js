@@ -3,6 +3,7 @@ import { whisperOwners, esc, idOf } from '../helpers/utils.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
+import { isIncapacitated } from '../helpers/tokens.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -23,8 +24,6 @@ const log = logger.for(import.meta.url);
  */
 const rules = new Map();
 let hooked = false;
-
-const INCAPACITATED = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
 
 export function initiativeSwap(feature, rule = {}){
   if(!feature) return;
@@ -87,7 +86,7 @@ function allies(combatant, combat){
   return (combat?.combatants?.contents ?? [...(combat?.combatants ?? [])]).filter(c => (c.id !== combatant.id)
     && (c.initiative !== null) && (c.initiative !== combatant.initiative) && c.actor
     && ((c.token?.disposition ?? c.actor.prototypeToken?.disposition) === side)
-    && !INCAPACITATED.some(s => c.actor.statuses?.has(s)));
+    && !isIncapacitated(c.actor));
 }
 initiativeSwap.allies = allies;
 
@@ -183,7 +182,7 @@ async function swapAsGM({ message : id, combat : combatId, combatant : combatant
     await offer.close();
     return [module.format("initiativeSwap.kept", { a : combatant.name })];
   }
-  if(INCAPACITATED.some(s => combatant.actor?.statuses?.has(s))) return [module.i18n("initiativeSwap.incapacitated")];
+  if(isIncapacitated(combatant.actor)) return [module.i18n("initiativeSwap.incapacitated")];
   const ally = allies(combatant, combat).find(c => c.id === allyId);
   if(!ally) return [module.i18n("initiativeSwap.noAlly")];
 

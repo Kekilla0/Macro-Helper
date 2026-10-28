@@ -1,5 +1,5 @@
 import { module } from '../module.js';
-import { idOf, esc, gmIds } from '../helpers/utils.js';
+import { esc, gmIds } from '../helpers/utils.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
@@ -8,7 +8,8 @@ import { addDie, extraD20 } from '../roll-item/rerolls.js';
 import { bard } from '../automation/classes/bard.js';
 import { fighter } from '../automation/classes/fighter.js';
 import { spendUses } from '../helpers/items.js';
-import { findItem } from '../helpers/actors.js';
+import { findItem, itemOf } from '../helpers/actors.js';
+import { isIncapacitated } from '../helpers/tokens.js';
 import { patch } from '../patch.js';
 import { concentrationModeFor } from '../automation/roll-modes.js';
 const log = logger.for(import.meta.url);
@@ -67,7 +68,7 @@ export class rollRequests{
     Hooks.once("setup", () => patch.wrap("CONFIG.Actor.documentClass.prototype.challengeConcentration", async function(wrapped, options = {}, ...rest){
       if(!settings.value("rollItem") || !(this.concentration?.effects?.size > 0)) return wrapped(options, ...rest);
       /* Down (0 HP) or unable to act : no save, its Concentration just ends (the 0 HP card says so) */
-      const out = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"].some(s => this.statuses?.has?.(s));
+      const out = isIncapacitated(this);
       if(out || (Number(this.system?.attributes?.hp?.value) <= 0)){
         if(this.isOwner) await this.endConcentration().catch(() => null);
         return null;
@@ -333,7 +334,7 @@ export class rollRequests{
       }
       const inspiration = failed && !entry.bardic && bard.inspirationOf(actor);
       if(inspiration) out.push(button("bardic", "fa-music", module.format("requests.featFor", { feat : module.format("classes.bard.use", { die : inspiration.die }), name : row.name })));
-      const tactical = failed && isCheck && !entry.tactical && fighter.enabled() && actor.items.some(i => idOf(i) === fighter.TACTICAL_MIND)
+      const tactical = failed && isCheck && !entry.tactical && fighter.enabled() && itemOf(actor, fighter.TACTICAL_MIND)
         && (Number(fighter.secondWindOf(actor)?.system?.uses?.value) > 0);
       if(tactical) out.push(button("tactical", "fa-chess-knight", module.format("requests.featFor", { feat : module.i18n("classes.fighter.tactical"), name : row.name })));
     }

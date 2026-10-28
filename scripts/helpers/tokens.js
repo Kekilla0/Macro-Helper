@@ -760,6 +760,19 @@ export function isOutOfAction(token){
   return (actor?.type === "character") && (Number(hp?.max) > 0) && ((Number(hp?.value) || 0) <= 0);
 }
 
+/* The conditions that leave a creature Incapacitated (theirs include it) */
+export const INCAPACITATING = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
+
+/**
+ * Incapacitated : the condition, or one that includes it (Paralyzed, Petrified, Stunned, Unconscious), or Dead.
+ * @param {Actor|Token|TokenDocument} thing
+ * @returns {boolean}
+ */
+export function isIncapacitated(thing){
+  const actor = actorOf(thing);
+  return INCAPACITATING.some(s => actor?.statuses?.has?.(s));
+}
+
 /**
  * Tokens within a distance of an origin token, nearest first.
  * @param {Token|TokenDocument|Actor|Item} origin

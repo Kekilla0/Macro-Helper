@@ -1,7 +1,7 @@
 import { module } from '../../module.js';
 import { logger } from '../../log.js';
 import { idOf, chooseOption, originItem } from '../../helpers/utils.js';
-import { tempHP } from '../../helpers/actors.js';
+import { tempHP, itemOf } from '../../helpers/actors.js';
 import { tokenOf, distanceBetween } from '../../helpers/tokens.js';
 import { isAlly, isEnemy } from '../../helpers/targets.js';
 import { giveMode } from '../../roll-item/reasons.js';
@@ -67,9 +67,9 @@ export class barbarianPaths{
   static async onRage(actor){
     if(!this.enabled() || !actor?.isOwner) return;
     try {
-      const vitality = subclasses.has(actor, this.VITALITY);
+      const vitality = itemOf(actor, this.VITALITY);
       if(vitality) await tempHP(actor, Number(actor.classes?.barbarian?.system?.levels) || 0, vitality);
-      const wilds = subclasses.has(actor, this.WILDS);
+      const wilds = itemOf(actor, this.WILDS);
       if(wilds){
         const choice = await chooseOption({ title : wilds.name, icon : "fa-solid fa-paw", prompt : module.i18n("subclasses.barbarian.wildsPrompt"),
           options : ["bear", "eagle", "wolf"].map(value => ({ value, label : module.i18n(`subclasses.barbarian.${value}`) })) });
@@ -149,7 +149,7 @@ export class barbarianPaths{
 
   static async lifeGivingForce(actor){
     if(!this.enabled() || !game.users.activeGM?.isSelf || !barbarian.isRaging(actor)) return;
-    const item = subclasses.has(actor, this.VITALITY);
+    const item = itemOf(actor, this.VITALITY);
     const activity = [...(item?.system?.activities ?? [])].find(a => /life-giving/i.test(a.name ?? ""));
     if(!activity) return;
     await subclasses.offer(actor, { item, activity : activity.id, label : activity.name,

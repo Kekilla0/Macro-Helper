@@ -1,8 +1,8 @@
 import { module } from '../../module.js';
 import { logger } from '../../log.js';
 import { idOf, chooseOption, originItem } from '../../helpers/utils.js';
-import { rollSave } from '../../helpers/actors.js';
-import { forcedMove } from '../../helpers/tokens.js';
+import { rollSave, itemOf } from '../../helpers/actors.js';
+import { forcedMove, isIncapacitated } from '../../helpers/tokens.js';
 import { onHit, hitOf } from '../../roll-item/hit-bonus.js';
 import { giveCondition } from '../../roll-item/card-builder.js';
 import { conditions } from '../conditions.js';
@@ -56,7 +56,7 @@ export class monkTraditions{
 
   /* Its enchantment on the item, or an effect from it on the Monk */
   static attunements(actor){
-    const item = subclasses.has(actor, this.ATTUNEMENT);
+    const item = itemOf(actor, this.ATTUNEMENT);
     if(!item) return [];
     /* the item's own enchantment is only the profile its activity applies : the applied copies count */
     const enchantments = new Set([...item.effects.filter(e => e.isAppliedEnchantment), ...(item.system?.appliedEnchantments ?? [])]);
@@ -71,7 +71,7 @@ export class monkTraditions{
   static async attunementEnds(effect){
     if(!this.enabled() || !game.users.activeGM?.isSelf) return;
     const actor = (effect?.parent?.documentName === "Actor") ? effect.parent : effect?.parent?.actor;
-    if(!actor || !conditions.INCAPACITATING.some(s => actor.statuses?.has?.(s))) return;
+    if(!actor || !isIncapacitated(actor)) return;
     for(const e of this.attunements(actor)) if(e.parent?.documentName === "Item") await e.delete();
   }
 
@@ -84,8 +84,8 @@ export class monkTraditions{
     if(!hit?.actor?.isOwner || !hit.target || (idOf(hit.item) !== monk.UNARMED)) return;
     const key = `${message.id}|${ray}`;
     if(this.attuned(hit.actor) && !this.#done.has(`e|${key}`)) buttons.push({ id : "elemental", icon : "fa-fire-flame-curved", label : module.i18n("subclasses.monk.elemental") });
-    if(message.getFlag(module.id, "tags.flurry") && subclasses.has(hit.actor, this.OPEN_HAND) && !this.#done.has(`o|${key}`)){
-      buttons.push({ id : "openHand", icon : "fa-hand", label : subclasses.has(hit.actor, this.OPEN_HAND).name });
+    if(message.getFlag(module.id, "tags.flurry") && itemOf(hit.actor, this.OPEN_HAND) && !this.#done.has(`o|${key}`)){
+      buttons.push({ id : "openHand", icon : "fa-hand", label : itemOf(hit.actor, this.OPEN_HAND).name });
     }
   }
 
@@ -108,7 +108,7 @@ export class monkTraditions{
     if(!type) return;
     this.#done.add(key);
     await hit.message.system.setDamageType?.(type, hit.ray);
-    const item = subclasses.has(hit.actor, this.ATTUNEMENT);
+    const item = itemOf(hit.actor, this.ATTUNEMENT);
     const save = await rollSave(hit.target, "str", this.dcOf(hit.actor), { from : item });
     if(!save || save.success) return;
     const direction = await chooseOption({ title : item.name, icon : "fa-solid fa-arrows-left-right", prompt : module.format("subclasses.monk.movePrompt", { name : hit.target.name }),
@@ -117,7 +117,7 @@ export class monkTraditions{
   }
 
   static async openHand(hit, key){
-    const item = subclasses.has(hit.actor, this.OPEN_HAND);
+    const item = itemOf(hit.actor, this.OPEN_HAND);
     const choice = await chooseOption({ title : item.name, icon : "fa-solid fa-hand", options : ["addle", "push", "topple"]
       .map(value => ({ value, label : module.i18n(`subclasses.monk.${value}`) })) });
     if(!choice) return;

@@ -9,6 +9,7 @@ import { conditions } from '../conditions.js';
 import { casting } from '../casting.js';
 import { itemFixes } from '../item-fixes.js';
 import { subclasses } from './common.js';
+import { itemOf } from '../../helpers/actors.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -170,7 +171,7 @@ export class druidCircles{
 
   /* The constellation's own item (Plutonium : Archer, Chalice, Dragon) */
   static formItem(actor, form){
-    return subclasses.has(actor, form) ?? actor.items.find(i => (i.type === "feat") && (i.name.toLowerCase() === form));
+    return itemOf(actor, form) ?? actor.items.find(i => (i.type === "feat") && (i.name.toLowerCase() === form));
   }
 
   static async archer(actor){
@@ -214,7 +215,7 @@ export class druidCircles{
   static async onTurn(actor){
     if(!this.enabled() || !game.users.activeGM?.isSelf || !actor) return;
     if(this.wrathOf(actor)){
-      const item = subclasses.has(actor, this.WRATH);
+      const item = itemOf(actor, this.WRATH);
       const save = [...(item?.system?.activities ?? [])].filter(a => a.type === "save").at(-1);
       if(save) await subclasses.offer(actor, { item, activity : save.id, label : save.name || item.name,
         text : module.format("subclasses.druid.wrathText", { name : actor.name }) });

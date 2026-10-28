@@ -13,14 +13,14 @@ import { idOf, chooseOption, buttonRow, addButton, makeButton, esc, ownerIds, or
 import { conditions } from './conditions.js';
 import { rollRequests } from '../requests/requests.js';
 import { heldLight } from './held-light.js';
-import { stabilize, addTimedEffect, spendHitDice, heal, rollSave, giveEffect } from '../helpers/actors.js';
+import { stabilize, addTimedEffect, spendHitDice, heal, rollSave, giveEffect, itemOf } from '../helpers/actors.js';
 import { itemFixes } from './item-fixes.js';
 import { conjureItem, isMetal, dropHeld, heldItems } from '../helpers/items.js';
 import { endCondition, moveFirst } from '../roll-item/card-builder.js';
 import { onSaveMove } from '../roll-item/card-moves.js';
 import { saveModeAgainst } from './roll-modes.js';
 import { pickTargets, pickSpace } from '../helpers/targets.js';
-import { tokenOf, getRange, addLight, removeLight, getTokensInArea, distanceBetween, canSee } from '../helpers/tokens.js';
+import { tokenOf, getRange, addLight, removeLight, getTokensInArea, distanceBetween, canSee, isIncapacitated } from '../helpers/tokens.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -1122,7 +1122,7 @@ export class spellActions{
     if(choice === "fill"){
       /* No area to place : the card's rows are the creatures within range carrying a waterskin, each with its Fill */
       const near = caster ? canvas.tokens.placeables.filter(t => t.actor && ((t === caster) || (distanceBetween(t, caster) <= this.WATER.range))
-        && t.actor.items.some(i => idOf(i) === "waterskin")) : [];
+        && itemOf(t.actor, "waterskin")) : [];
       if(!near.length) ui.notifications.info(module.i18n("spellActions.water.noSkins"));
       canvas.tokens.setTargets(near.map(t => t.id));
       return use.use({ ...usage, create : { ...(usage.create ?? {}), measuredTemplate : false },
@@ -1667,9 +1667,8 @@ export class spellActions{
 
   /* A reaction spell it can cast now : it can react (not incapacitated, not at 0 HP), the spell ready (prepared, or
      always ready) and a slot for it : { spell, slot } or null */
-  static OUT = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
   static reactionReady(actor, id){
-    if(!actor || this.OUT.some(s => actor.statuses?.has(s)) || (Number(actor.system?.attributes?.hp?.value) <= 0)) return null;
+    if(!actor || isIncapacitated(actor) || (Number(actor.system?.attributes?.hp?.value) <= 0)) return null;
     /* Its Reaction already used (Action Tracker) */
     if(!actionTracker.left(actor, "reaction")) return null;
     const spell = actor?.items?.find?.(i => (i.type === "spell") && (idOf(i) === id) && ((i.system.method !== "spell") || (Number(i.system.prepared) > 0)));

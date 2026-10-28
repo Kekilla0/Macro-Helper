@@ -1,5 +1,5 @@
 import { module } from '../module.js';
-import { tokenOf, distanceBetween, getRange, getTokensWithin, highlightRange, isOutOfAction, canSee, canSeePoint, isSpaceFree, HIGHLIGHT, actingNowFrom } from './tokens.js';
+import { tokenOf, distanceBetween, getRange, getTokensWithin, highlightRange, isOutOfAction, isIncapacitated, canSee, canSeePoint, isSpaceFree, HIGHLIGHT, actingNowFrom } from './tokens.js';
 
 /* Opposite dispositions (hostile vs friendly) */
 export function isEnemy(a, b){
@@ -12,7 +12,6 @@ export function isAlly(a, b){
 }
 
 /* dnd5e conditions that stop a creature threatening anyone (all of them include Incapacitated) */
-const INCAPACITATED = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
 
 /**
  * The allies of a creature within `feet` of a target, nearest first (Sneak Attack's "an ally within 5 ft of it", Pack
@@ -29,7 +28,7 @@ export function alliesNear(target, of, { feet = 5, includeIncapacitated = false,
   const t = tokenOf(target), a = tokenOf(of);
   if(!t || !a) return [];
   return getTokensWithin(t, feet, { filter : ally => (ally !== a) && isAlly(ally, a)
-    && (includeIncapacitated || !INCAPACITATED.some(s => ally.actor.statuses?.has?.(s)))
+    && (includeIncapacitated || !isIncapacitated(ally))
     && (!filter || filter(ally)) });
 }
 
@@ -93,7 +92,7 @@ export function getThreats(thing, { range = 5, includeIncapacitated = false, inc
     disposition : "nonAlly",
     includeHidden,
     /* 2024 : an enemy who can see you and isn't Incapacitated */
-    filter : t => (includeIncapacitated || !INCAPACITATED.some(status => t.actor.statuses?.has(status))) && canSee(t, token),
+    filter : t => (includeIncapacitated || !isIncapacitated(t)) && canSee(t, token),
   });
 }
 
@@ -639,7 +638,7 @@ export function getFlanker(attacker, target){
   return canvas.tokens.placeables.find(ally => (ally !== a) && (ally !== t) && ally.actor
     && isAlly(ally, a)
     && !isOutOfAction(ally)
-    && !INCAPACITATED.some(status => ally.actor.statuses?.has(status))
+    && !isIncapacitated(ally)
     && (distanceBetween(ally, t) <= reach)
     && opposite(centre(a), centre(ally))) ?? null;
 }

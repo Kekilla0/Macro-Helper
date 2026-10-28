@@ -4,7 +4,7 @@ import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
 import { pickTargets } from '../helpers/targets.js';
-import { tokenOf, isDown, canSee } from '../helpers/tokens.js';
+import { tokenOf, isDown, canSee, isIncapacitated } from '../helpers/tokens.js';
 import { addTimedEffect, stabilize, setStatus } from '../helpers/actors.js';
 import { giveMode } from '../roll-item/reasons.js';
 import { chooseOption, idOf } from '../helpers/utils.js';
@@ -340,13 +340,12 @@ export class actions{
 
   /* ---------- Hide ---------- */
 
-  static OUT = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
 
   /* Enemies whose tokens see this one (the vision rules) */
   static seenBy(token){
     const side = token?.document?.disposition;
     return (canvas.tokens?.placeables ?? []).filter(t => (t !== token) && t.actor && (t.document.disposition !== side)
-      && (t.document.disposition !== CONST.TOKEN_DISPOSITIONS?.NEUTRAL) && !this.OUT.some(st => t.actor.statuses?.has?.(st)) && canSee(t, token));
+      && (t.document.disposition !== CONST.TOKEN_DISPOSITIONS?.NEUTRAL) && !isIncapacitated(t) && canSee(t, token));
   }
 
   /* DEX (Stealth) against DC 15; a success : Invisible, until the GM ends it (found, attacked, made noise) */

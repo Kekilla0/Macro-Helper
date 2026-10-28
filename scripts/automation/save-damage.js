@@ -4,6 +4,7 @@ import { idOf } from '../helpers/utils.js';
 import { gm } from '../gm.js';
 import { limits } from './limits.js';
 import { actionTracker } from './action-tracker.js';
+import { isIncapacitated } from '../helpers/tokens.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -111,7 +112,7 @@ function rowButtons(card, uuid, buttons, { result } = {}){
 /* Why it can't now, "" when it can (a Reaction : not out of action, one left) */
 function unmetOf(rule, actor){
   if(rule.reaction){
-    if(actionTracker.OUT_OF_ACTION.some(s => actor.statuses?.has?.(s))) return module.format("fightingStyles.cantReact", { name : actor.name });
+    if(isIncapacitated(actor)) return module.format("fightingStyles.cantReact", { name : actor.name });
     if(!actionTracker.left(actor, "reaction")) return module.format("actionTracker.spent", { name : actor.name, kind : actionTracker.label("reaction") });
   }
   return rule.unmet?.(actor) ?? "";

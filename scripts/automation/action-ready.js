@@ -2,7 +2,7 @@ import { module } from '../module.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
 import { idOf, esc, chooseOption, waitFor } from '../helpers/utils.js';
-import { cells, cellGap, gridSteps, canSee } from '../helpers/tokens.js';
+import { cells, cellGap, gridSteps, canSee, isIncapacitated } from '../helpers/tokens.js';
 import { pickTargets } from '../helpers/targets.js';
 import { actionTracker } from './action-tracker.js';
 import { reactionMove, reactionMoveOf } from '../roll-item/card-builder.js';
@@ -532,7 +532,7 @@ export class actionReady{
   /* Could this creature react to `other` now : an enemy in the fight, its Reaction left, able to act */
   static canReact(t, other){
     return (t !== other) && !!t.actor && !t.hidden && (this.relation(t, other) === "enemy") && !!actionTracker.combatOf(t.actor)
-      && actionTracker.left(t.actor, "reaction") && !actionTracker.OUT_OF_ACTION.some(s => t.actor.statuses?.has?.(s));
+      && actionTracker.left(t.actor, "reaction") && !isIncapacitated(t);
   }
 
   /* Its reaction attack rules for a moment : [{ rule, source }] */

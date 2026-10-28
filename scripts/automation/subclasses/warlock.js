@@ -1,7 +1,7 @@
 import { module } from '../../module.js';
 import { logger } from '../../log.js';
 import { idOf, chooseOption } from '../../helpers/utils.js';
-import { tempHP } from '../../helpers/actors.js';
+import { tempHP, itemOf } from '../../helpers/actors.js';
 import { gm } from '../../gm.js';
 import { tokenOf, distanceBetween } from '../../helpers/tokens.js';
 import { isEnemy } from '../../helpers/targets.js';
@@ -57,7 +57,7 @@ export class warlockPatrons{
     Hooks.on(`${module.id}.cardButtons`, (message, buttons, { ray } = {}) => this.psychicButton(message, buttons, ray ?? null));
     Hooks.on(`${module.id}.saveCardButtons`, (message, buttons) => this.psychicButton(message, buttons, null, { save : true }));
     Hooks.on(`${module.id}.cardButton`, (message, id, { ray } = {}) => { if(id === "psychicSpells") message.system.setDamageType?.("psychic", ray ?? null); });
-    dropsComponents(actor => subclasses.has(actor, this.PSYCHIC), ["v", "s"], { id : this.PSYCHIC, enabled : () => this.enabled(),
+    dropsComponents(actor => itemOf(actor, this.PSYCHIC), ["v", "s"], { id : this.PSYCHIC, enabled : () => this.enabled(),
       when : ({ item }) => this.isWarlockSpell(item) && ["enc", "ill"].includes(item.system.school) });
   }
 
@@ -104,16 +104,16 @@ export class warlockPatrons{
   /* Misty Step cast : where it stood (the space it leaves), and the choice */
   static async afterMistyStep(activity){
     const actor = activity?.actor;
-    if(!this.enabled() || (idOf(activity?.item) !== "misty-step") || !actor?.isOwner || !subclasses.has(actor, this.STEPS)) return;
+    if(!this.enabled() || (idOf(activity?.item) !== "misty-step") || !actor?.isOwner || !itemOf(actor, this.STEPS)) return;
     const me = tokenOf(actor);
     if(!me) return;
-    await subclasses.offer(actor, { key : "stepsOfTheFey", label : subclasses.has(actor, this.STEPS).name,
+    await subclasses.offer(actor, { key : "stepsOfTheFey", label : itemOf(actor, this.STEPS).name,
       data : { x : me.document.x, y : me.document.y, w : me.document.width, h : me.document.height },
       text : module.format("subclasses.warlock.stepsText", { name : actor.name }) });
   }
 
   static async step(actor, space){
-    const item = subclasses.has(actor, this.STEPS);
+    const item = itemOf(actor, this.STEPS);
     const me = tokenOf(actor);
     if(!item || !me) return false;
     const choice = await chooseOption({ title : item.name, icon : "fa-solid fa-wand-sparkles",
@@ -151,7 +151,7 @@ export class warlockPatrons{
     if(!downed) return;
     const killer = (options.origin ?? options.originatingMessage)?.getAssociatedActor?.() ?? null;
     for(const t of canvas.tokens.placeables){
-      const item = subclasses.has(t.actor, this.BLESSING);
+      const item = itemOf(t.actor, this.BLESSING);
       if(!item || (t === downed) || !isEnemy(t, downed)) continue;
       if(!((killer === t.actor) || (distanceBetween(t, downed) <= 10))) continue;
       const temp = Math.max(1, (Number(t.actor.system.abilities?.cha?.mod) || 0) + (Number(t.actor.classes?.warlock?.system?.levels) || 0));
@@ -178,9 +178,9 @@ export class warlockPatrons{
     if(!this.enabled() || (save ? ((message.type !== TYPES.save) || !message.system?.dealsDamage) : ((message.type !== TYPES.attack) || !message.system?.isHitOn?.(ray)))) return;
     const actor = message.getAssociatedActor?.();
     const item = message.getAssociatedItem?.();
-    if(!actor?.isOwner || !this.isWarlockSpell(item) || !subclasses.has(actor, this.PSYCHIC)) return;
+    if(!actor?.isOwner || !this.isWarlockSpell(item) || !itemOf(actor, this.PSYCHIC)) return;
     const rolls = Number.isInteger(ray) ? message.system.rayDamage?.(ray) : message.system.damageRolls;
     if(!rolls?.length || rolls.every(r => r.options?.type === "psychic")) return;
-    buttons.push({ id : "psychicSpells", icon : "fa-brain", label : subclasses.has(actor, this.PSYCHIC).name });
+    buttons.push({ id : "psychicSpells", icon : "fa-brain", label : itemOf(actor, this.PSYCHIC).name });
   }
 }

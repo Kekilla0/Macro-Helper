@@ -1,6 +1,6 @@
 import { module } from '../module.js';
 import { esc } from '../helpers/utils.js';
-import { distanceBetween } from '../helpers/tokens.js';
+import { distanceBetween, isIncapacitated } from '../helpers/tokens.js';
 import { actionTracker } from './action-tracker.js';
 import { actionReady } from './action-ready.js';
 import { zones } from './zones.js';
@@ -81,7 +81,7 @@ export class actionBar{
     const prone = !dying && st.mine && actor.statuses?.has?.("prone") && !actor.statuses?.has?.("unconscious") && (game.user.isGM || actor.isOwner)
       && !actor.effects?.some?.(e => !e.disabled && e.getFlag(module.id, "rule")?.shell);
     const may = game.user.isGM || actor.isOwner;
-    const free = !actionTracker.OUT_OF_ACTION.some(s => actor.statuses?.has?.(s));
+    const free = !isIncapacitated(actor);
     /* One Escape per grapple on it (its turn), one Release per creature it holds (any time) */
     const grapples = (!dying && st.mine && free && may) ? grapplesOn(actor) : [];
     const holds = (!dying && may && token) ? grappling(token) : [];

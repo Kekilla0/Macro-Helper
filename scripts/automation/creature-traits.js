@@ -3,7 +3,7 @@ import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
 import { idOf } from '../helpers/utils.js';
-import { tokenOf, distanceBetween } from '../helpers/tokens.js';
+import { tokenOf, distanceBetween, isIncapacitated } from '../helpers/tokens.js';
 import { isAlly } from '../helpers/targets.js';
 import { giveMode } from '../roll-item/reasons.js';
 import { TYPES } from '../roll-item/message.js';
@@ -15,6 +15,7 @@ import { chooseOption } from '../helpers/utils.js';
 import { actions } from './actions.js';
 import { compendiums } from './compendiums.js';
 import { dragsFreely } from './movement.js';
+import { itemOf } from '../helpers/actors.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -34,7 +35,6 @@ const log = logger.for(import.meta.url);
  */
 export class creatureTraits{
   static PARRY_AC = 2;
-  static OUT = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
 
   static enabled(){
     return (game.system.id === "dnd5e") && !!settings.value("featRules");
@@ -86,7 +86,7 @@ export class creatureTraits{
 
   /* The creature's Default Action item, copied from the Actions compendium when it has none */
   static async defaultActionItem(actor, id){
-    const had = actor.items.find(i => idOf(i) === id);
+    const had = itemOf(actor, id);
     if(had) return had;
     const pack = compendiums.pack(compendiums.ACTIONS);
     const entry = pack ? [...await pack.getIndex({ fields : ["system.identifier"] })].find(e => e.system?.identifier === id) : null;
@@ -108,7 +108,7 @@ export class creatureTraits{
     const me = tokenOf(attacker);
     if(!target || !me) return;
     const ally = canvas.tokens.placeables.find(t => (t !== me) && (t !== target) && t.actor && isAlly(t, me)
-      && !this.OUT.some(s => t.actor.statuses?.has?.(s)) && (distanceBetween(t, target) <= 5));
+      && !isIncapacitated(t) && (distanceBetween(t, target) <= 5));
     if(ally) giveMode(config.rolls[0], "advantage", module.format("traits.packTactics", { name : ally.name }));
   }
 
@@ -147,7 +147,7 @@ export class creatureTraits{
       const token = hit?.document ?? hit;
       const actor = token?.actor;
       if(!actor || !(game.user.isGM || actor.isOwner) || message.getFlag(module.id, this.parryKey(token.uuid))) continue;
-      if(!this.has(actor, "Parry") || !this.holdsWeapon(actor) || this.OUT.some(s => actor.statuses?.has?.(s)) || !actionTracker.left(actor, "reaction")) continue;
+      if(!this.has(actor, "Parry") || !this.holdsWeapon(actor) || isIncapacitated(actor) || !actionTracker.left(actor, "reaction")) continue;
       buttons.push({ id : `traitParry|${token.uuid}`, icon : "fa-shield", label : module.i18n("traits.parry"),
         tooltip : module.format("traits.parryTip", { name : token.name, ac : this.PARRY_AC }) });
     }

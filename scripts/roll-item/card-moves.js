@@ -2,7 +2,7 @@ import { module } from '../module.js';
 import { logger } from '../log.js';
 import { tokenOf, forcedMove } from '../helpers/tokens.js';
 import { idOf } from '../helpers/utils.js';
-import { getSize, usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
+import { getSize, usedThisTurn, markUsedThisTurn, itemOf } from '../helpers/actors.js';
 import { limits } from '../automation/limits.js';
 import { hitOf } from './hit-bonus.js';
 import { TYPES } from './message.js';
@@ -160,7 +160,7 @@ function hitMove(rule, message, uuid, moves, ray){
   const hit = hitOf(message, ray);
   const target = hit?.targets.find(t => t.document?.uuid === uuid);
   if(!target) return;
-  const feature = (typeof rule.feature === "function") ? rule.feature(hit.actor) : (rule.feature ? hit.actor.items.find(i => idOf(i) === rule.feature) : true);
+  const feature = (typeof rule.feature === "function") ? rule.feature(hit.actor) : (rule.feature ? itemOf(hit.actor, rule.feature) : true);
   if(!feature) return;
   const key = `onHitMove.${rule.id}.${Number.isInteger(ray) ? ray : "x"}.${String(uuid).replace(/[.|]/g, "-")}`;
   const done = !!message.getFlag(module.id, key);

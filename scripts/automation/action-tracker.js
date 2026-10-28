@@ -7,12 +7,13 @@ import { limits } from './limits.js';
 import { combatLog } from './combat-log.js';
 import { grapplesOn, reactionMoveOf } from '../roll-item/card-builder.js';
 import { idOf, esc } from '../helpers/utils.js';
-import { getTokensWithin, movedThisTurn } from '../helpers/tokens.js';
+import { getTokensWithin, movedThisTurn, isIncapacitated } from '../helpers/tokens.js';
 import { masteries } from './masteries.js';
 import { controllerOf } from './summons.js';
 import { bonusAttackAfter, bonusAttackRule } from './bonus-attacks.js';
 import { rollItem } from '../roll-item/roll-item.js';
 import { movement } from './movement.js';
+import { itemOf } from '../helpers/actors.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -56,7 +57,6 @@ export class actionTracker{
   static CLASS_ATTACKS = { fighter : [[20, 4], [11, 3], [5, 2]], barbarian : [[5, 2]], monk : [[5, 2]], paladin : [[5, 2]], ranger : [[5, 2]] };
   static NUMBERS = { a : 1, an : 1, one : 1, two : 2, three : 3, four : 4, five : 5, six : 6 };
   static MANY = 99;
-  static OUT_OF_ACTION = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
   static LOG_MAX = 40;
 
   static enabled(){
@@ -307,7 +307,7 @@ export class actionTracker{
     /* It can't take Reactions (Arms of Hadar, Slowing Breath : flags.macro-helper.rule.noReactions) : none to offer */
     if((kind === "reaction") && actor?.effects?.some?.(e => !e.disabled && !e.isSuppressed && e.getFlag(module.id, "rule")?.noReactions)) return false;
     /* Incapacitated (or a condition that brings it) : no Reactions, in combat or not */
-    if((kind === "reaction") && this.OUT_OF_ACTION.some(s => actor?.statuses?.has?.(s))) return false;
+    if((kind === "reaction") && isIncapacitated(actor)) return false;
     const st = this.state(actor);
     return !st || (this.remaining(st.rec, kind) > 0);
   }
@@ -1040,7 +1040,7 @@ export class actionTracker{
   static drawTwoFor(actor, item){
     for(const rule of this.DRAW_TWO.values()){
       if(rule.enabled && !rule.enabled()) continue;
-      const has = (typeof rule.match === "function") ? rule.match(actor) : actor.items.some(i => [rule.match].flat().includes(idOf(i)));
+      const has = (typeof rule.match === "function") ? rule.match(actor) : !!itemOf(actor, rule.match);
       if(has && (!rule.when || rule.when(item))) return true;
     }
     return false;

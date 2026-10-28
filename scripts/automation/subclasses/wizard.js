@@ -2,7 +2,7 @@ import { module } from '../../module.js';
 import { logger } from '../../log.js';
 import { gm } from '../../gm.js';
 import { idOf, esc, ownerIds } from '../../helpers/utils.js';
-import { usedThisTurn, markUsedThisTurn } from '../../helpers/actors.js';
+import { usedThisTurn, markUsedThisTurn, itemOf } from '../../helpers/actors.js';
 import { tokenOf, canSee, registerPool } from '../../helpers/tokens.js';
 import { TYPES } from '../../roll-item/message.js';
 import { itemFixes } from '../item-fixes.js';
@@ -53,7 +53,7 @@ export class wizardSchools{
     itemFixes.add({ name : "Potent Cantrip", where : "owned", plan : item => this.potentFix(item) });
     Hooks.on("createItem", (item, options, userId) => { if((userId === game.user.id) && (idOf(item) === this.POTENT)) this.potentAll(item.actor); });
     /* Improved Illusions */
-    dropsComponents(actor => subclasses.has(actor, this.IMPROVED), ["v"], { id : this.IMPROVED, enabled : () => this.enabled(), when : ({ item }) => this.illusionist(item) });
+    dropsComponents(actor => itemOf(actor, this.IMPROVED), ["v"], { id : this.IMPROVED, enabled : () => this.enabled(), when : ({ item }) => this.illusionist(item) });
     addRange(this.IMPROVED, 60, { enabled : () => this.enabled(), when : ({ item }) => this.illusionist(item) && ((item.system.range?.units ?? "ft") === "ft") && (Number(item.system.range?.value) >= 10) });
   }
 
@@ -70,7 +70,7 @@ export class wizardSchools{
   static async afterSpell(activity, usage){
     const actor = activity?.actor;
     if(!this.enabled() || !actor?.isOwner || (activity.item?.type !== "spell") || (activity.item.system.school !== "abj") || !casting.spendsSlot(activity, usage ?? {})) return;
-    const item = subclasses.has(actor, this.WARD);
+    const item = itemOf(actor, this.WARD);
     if(!item) return;
     const create = [...(item.system.activities ?? [])].find(a => a.uses?.max);
     const spent = Number(item.system.uses?.spent) || 0;
@@ -88,7 +88,7 @@ export class wizardSchools{
 
   /* The ward's Hit Points : none until Create Ward has been used since the Long Rest */
   static wardPool(actor){
-    const item = subclasses.has(actor, this.WARD);
+    const item = itemOf(actor, this.WARD);
     if(!item?.system?.uses?.max) return null;
     const create = [...(item.system.activities ?? [])].find(a => a.uses?.max);
     const made = !create || ((Number(create.uses.spent) || 0) > 0);
@@ -98,7 +98,7 @@ export class wizardSchools{
   /* Damage really applied : the ward takes it first */
   static ward(actor, damages, options = {}){
     if(!this.enabled() || !options?.[module.id]?.applying || !(damages?.amount > 0)) return;
-    const item = subclasses.has(actor, this.WARD);
+    const item = itemOf(actor, this.WARD);
     const hp = this.wardPool(actor)?.value ?? 0;
     if(!item || (hp <= 0)) return;
     const taken = Math.min(hp, damages.amount);
@@ -118,11 +118,11 @@ export class wizardSchools{
   /* ---------- Diviner : Portent ---------- */
 
   static rollsOf(actor){
-    return [...(subclasses.has(actor, this.PORTENT)?.getFlag(module.id, "portent") ?? [])];
+    return [...(itemOf(actor, this.PORTENT)?.getFlag(module.id, "portent") ?? [])];
   }
 
   static async foretell(actor){
-    const item = subclasses.has(actor, this.PORTENT);
+    const item = itemOf(actor, this.PORTENT);
     if(!this.enabled() || !item || !actor.isOwner) return;
     const roll = await new Roll("2d20").evaluate();
     const values = roll.dice[0].results.map(r => r.result);
@@ -165,7 +165,7 @@ export class wizardSchools{
     const value = values[index];
     if(!Number.isFinite(value) || usedThisTurn(token.actor, "portent")) return;
     values.splice(index, 1);
-    await subclasses.has(token.actor, this.PORTENT).setFlag(module.id, "portent", values);
+    await itemOf(token.actor, this.PORTENT).setFlag(module.id, "portent", values);
     await markUsedThisTurn(token.actor, "portent");
     await subclasses.changeRoll(message, { ray, value }, token.actor);
   }
@@ -174,7 +174,7 @@ export class wizardSchools{
 
   /* A cantrip's save that does damage : half on a success */
   static potentFix(item){
-    if(!this.enabled() || (item?.type !== "spell") || (Number(item.system.level) !== 0) || !subclasses.has(item.actor, this.POTENT)) return null;
+    if(!this.enabled() || (item?.type !== "spell") || (Number(item.system.level) !== 0) || !itemOf(item.actor, this.POTENT)) return null;
     const update = {};
     for(const a of item.system.activities ?? []){
       if((a.type === "save") && a.damage?.parts?.length && (a.damage.onSave === "none")) update[`system.activities.${a.id}.damage.onSave`] = "half";
@@ -195,9 +195,9 @@ export class wizardSchools{
     if(!this.enabled() || (message.type !== TYPES.attack) || !message.system?.attackOf?.(ray) || message.system.isHitOn?.(ray)) return;
     const actor = message.getAssociatedActor?.();
     const item = message.getAssociatedItem?.();
-    if(!actor?.isOwner || (item?.type !== "spell") || (Number(item.system.level) !== 0) || !subclasses.has(actor, this.POTENT)) return;
+    if(!actor?.isOwner || (item?.type !== "spell") || (Number(item.system.level) !== 0) || !itemOf(actor, this.POTENT)) return;
     if(message.system.extraRolls?.(ray, this.POTENT)?.length) return;
-    buttons.push({ id : "potentCantrip", icon : "fa-burst", label : subclasses.has(actor, this.POTENT).name });
+    buttons.push({ id : "potentCantrip", icon : "fa-burst", label : itemOf(actor, this.POTENT).name });
   }
 
   static async cardClicked(message, id, ray){
@@ -205,7 +205,7 @@ export class wizardSchools{
       const rolls = (Number.isInteger(ray) ? message.system.rayDamage?.(ray) : message.system.damageRolls) ?? [];
       const half = Math.floor(rolls.reduce((sum, r) => sum + (Number(r.total) || 0), 0) / 2);
       if(half > 0) await message.system.extraDamage(String(half), { key : this.POTENT, type : rolls[0]?.options?.type ?? null, ray, onHit : false,
-        label : subclasses.has(message.getAssociatedActor?.(), this.POTENT)?.name ?? "Potent Cantrip" });
+        label : itemOf(message.getAssociatedActor?.(), this.POTENT)?.name ?? "Potent Cantrip" });
       return;
     }
     if(!id.startsWith("portent|")) return;
@@ -217,6 +217,6 @@ export class wizardSchools{
   /* ---------- Illusionist ---------- */
 
   static illusionist(item){
-    return this.enabled() && (item?.type === "spell") && (item.system?.school === "ill") && !!subclasses.has(item.actor, this.IMPROVED);
+    return this.enabled() && (item?.type === "spell") && (item.system?.school === "ill") && !!itemOf(item.actor, this.IMPROVED);
   }
 }
