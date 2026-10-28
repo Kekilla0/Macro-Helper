@@ -5,7 +5,7 @@ import { logger } from '../../log.js';
 import { gm } from '../../gm.js';
 import { patch } from '../../patch.js';
 import { uses } from '../../uses.js';
-import { fitsProfile, chooseCreature, chooseCreatures } from '../../helpers/creatures.js';
+import { fitsProfile, chooseOne, chooseSet } from '../../helpers/creatures.js';
 import { compendiums } from '../compendiums.js';
 import { limits } from '../limits.js';
 import { tokenOf, fitSpace, isIncapacitated, INCAPACITATING } from '../../helpers/tokens.js';
@@ -207,7 +207,7 @@ export class druid{
     const known = this.knownForms(original);
     const swaps = restChoices.swapsLeft(original, "wildShapeForms");
     const max = this.formLimit(original);
-    const chosen = await chooseCreatures(eligible, {
+    const chosen = await chooseSet(eligible, {
       known, max, swaps, allowPast : limits.canGoPast(),
       title : module.format("classes.druid.formsTitle", { name : original.name }),
       prompt : module.i18n("classes.druid.formsPrompt"),
@@ -289,7 +289,7 @@ export class druid{
         if(!(await this.manageForms(original))?.length) return null;
         continue;
       }
-      const chosen = await chooseCreature(forms, {
+      const chosen = await chooseOne(forms, {
         title : item?.name ?? module.i18n("classes.druid.wildShape"), prompt : module.i18n("classes.druid.formPrompt"),
         extra : [{ action : "manage", label : module.i18n("classes.druid.knownForms"), icon : "fa-solid fa-list" }],
       });

@@ -41,9 +41,11 @@ export function fitsProfile(actor, profile, rollData = {}){
 }
 
 
-/* A creature as a tile entry : picture, name, CR */
-function entryOf(actor){
-  return { value : actor.uuid, label : actor.name, img : actor.prototypeToken?.texture?.src || actor.img, detail : `CR ${crLabel(crOf(actor))}` };
+/* A tile entry : a creature (an actor or a compendium index entry) becomes its picture, name and CR; one with a `value`
+   is already { value, label, img, detail } */
+function entryOf(entry){
+  if(entry.value !== undefined) return entry;
+  return { value : entry.uuid, label : entry.name, img : entry.prototypeToken?.texture?.src || entry.img, detail : `CR ${crLabel(crOf(entry))}` };
 }
 
 /* One tile : picture, name, a detail line (CR, weapon type) */
@@ -57,25 +59,20 @@ function tile(entry, input, { original = false } = {}){
 }
 
 /**
- * Choose one creature from a grid of pictures.
- * @param {Actor[]} actors
+ * Choose one from a grid of tiles ({ value, label, img, detail }), or of creatures (actors or
+ * compendium index entries : picture, name, CR; the value is the uuid).
+ * @param {(object|Actor)[]} entries
  * @param {object} [options]
  * @param {string} [options.title]
  * @param {string} [options.prompt]
  * @param {string} [options.icon]
  * @param {object[]} [options.extra]   more buttons, as DialogV2 buttons ({ action, label, icon }) : their action is returned
- * @returns {Promise<string|null>}  the creature's uuid (or an extra button's action), null if closed
- */
-export async function chooseCreature(actors, options = {}){
-  return chooseOne(actors.map(entryOf), options);
-}
-
-/**
- * Choose one from a grid of tiles ({ value, label, img, detail }).
+ * @param {number} [options.columns]
  * @returns {Promise<string|null>}  the value (or an extra button's action), null if closed
  */
 export async function chooseOne(entries, { title, prompt = "", icon = "fa-solid fa-paw", extra = [], columns = null } = {}){
   if(!entries.length) return null;
+  entries = entries.map(entryOf);
   const grid = entries.map((e, i) => tile(e, `<input type="radio" name="creature" value="${esc(e.value)}"${i ? "" : " checked"}>`)).join("");
   const chosen = await foundry.applications.api.DialogV2.wait({
     window : { title, icon },
@@ -100,26 +97,22 @@ export async function chooseOne(entries, { title, prompt = "", icon = "fa-solid 
 }
 
 /**
- * Choose a set of creatures (Wild Shape's known forms) : up to `max`, with at most `swaps` of the current ones taken away.
- * @param {Actor[]} actors
+ * Choose a set from a grid of tiles ({ value, label, img, detail }) or of creatures (Wild Shape's known forms : the values
+ * are uuids) : up to `max`, with at most `swaps` of the current ones taken away (more when there are more than `max`
+ * already : down to `max` is free).
+ * @param {(object|Actor)[]} entries
  * @param {object} options
- * @param {string[]} options.known    uuids chosen now
+ * @param {string[]} options.known    values chosen now
  * @param {number} options.max
  * @param {number} [options.swaps=Infinity]  how many of the known ones may be replaced
  * @param {string} [options.title]
  * @param {string} [options.prompt]
- * @returns {Promise<string[]|null>}  the new set, null if closed
- */
-export async function chooseCreatures(actors, options = {}){
-  return chooseSet(actors.map(entryOf), options);
-}
-
-/**
- * Choose a set from a grid of tiles ({ value, label, img, detail }) : up to `max`, with at most `swaps` of the current
- * ones taken away (more when there are more than `max` already : down to `max` is free).
+ * @param {string} [options.icon]
+ * @param {boolean} [options.allowPast]  a box to go past the limits (the GM is told by the caller)
  * @returns {Promise<string[]|null>}  the new set, null if closed
  */
 export async function chooseSet(entries, { known = [], max, swaps = Infinity, title, prompt = "", icon = "fa-solid fa-paw", allowPast = false } = {}){
+  entries = entries.map(entryOf);
   /* Known ones no longer offered (deleted, moved out of the folder) don't count against the swaps */
   known = known.filter(value => entries.some(e => e.value === value));
   swaps += Math.max(0, known.length - max);

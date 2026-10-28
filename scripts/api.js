@@ -164,7 +164,7 @@ export class api{
       ...items,     // pickAndAttack, pickAttack, attackModeFor, isLongRange, isRangedItem, isRangedAttack, canThrow, getAmmunition,
                   // getUses, hasUses, spendUses, useActivity, useAndApply, getAppliedConditions, multiattack, untilShown, getHealing, updateItem, setBaseDamage, setDamage, isClassSpell, isUnarmored, conjureItem, linkItems, linkedItems, pickOwned, enchant, replaceItem
       ...utils,     // wait, waitFor, originOf, chooseOption
-      ...creatures, // crOf, fitsProfile, chooseCreature, chooseCreatures, chooseOne, chooseSet, divideAmong
+      ...creatures, // crOf, fitsProfile, chooseOne, chooseSet, divideAmong
       /* The character's Rest Choices window (Wild Shape forms...), e.g. after a rest the GM ran for everyone */
       restChoices : actor => restChoices.open(actor),
       /* Roll Requests : the window (no options), or a card straight away ({ who, what, dc, hideDC, mode, whisper }) */

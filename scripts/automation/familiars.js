@@ -10,7 +10,7 @@ import { limits } from './limits.js';
 import { tokenOf, getRange, distanceBetween } from '../helpers/tokens.js';
 import { actFromPlace } from './act-from.js';
 import { pickSpace } from '../helpers/targets.js';
-import { fitsProfile, chooseCreature } from '../helpers/creatures.js';
+import { fitsProfile, chooseOne } from '../helpers/creatures.js';
 import { compendiums } from './compendiums.js';
 import { summon, summonKind } from './summons.js';
 const log = logger.for(import.meta.url);
@@ -65,7 +65,7 @@ export class familiars{
       if(!familiars.enabledFor(idOf(this.item))) return wrapped(...args);
       const profile = args[0];
       const creatures = (await compendiums.entries(compendiums.FAMILIARS)).filter(a => !profile || fitsProfile(a, profile, this.getRollData?.({ deterministic : true }) ?? {}));
-      return creatures.length ? chooseCreature(creatures, { title : this.item.name, prompt : module.i18n("classes.druid.familiarPrompt") }) : wrapped(...args);
+      return creatures.length ? chooseOne(creatures, { title : this.item.name, prompt : module.i18n("classes.druid.familiarPrompt") }) : wrapped(...args);
     }));
     /* The summon lego's rules for a familiar (the GM's client) : one of ours, one at a time, nothing to attack with */
     summonKind("familiar", {
@@ -184,7 +184,7 @@ export class familiars{
       ui.notifications.warn(module.i18n("classes.druid.noFamiliars"));
       return null;
     }
-    const creature = await chooseCreature(creatures, { title : activity.item.name, prompt : module.i18n("classes.druid.familiarPrompt") });
+    const creature = await chooseOne(creatures, { title : activity.item.name, prompt : module.i18n("classes.druid.familiarPrompt") });
     if(!creature) return false;
     const actor = creatures.find(a => a.uuid === creature);
     /* A special form : its own profile when the activity has one */
