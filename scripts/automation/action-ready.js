@@ -775,12 +775,14 @@ export class actionReady{
     if(allDone && !flag.waiting && (flag.status === "pending")) flag.status = "continue";
     const mover = fromUuidSync(flag.mover, { strict : false });
     if((flag.status === "continue") && !forced && flag.rest?.length && mover?.actor && (this.speedOf(mover.actor) <= 0)) flag.status = "halted";
+    if((flag.status === "continue") && this.isDown(mover?.actor)) flag.status = "down";
     await message.setFlag(module.id, "oaStop", flag);
-    if(flag.status === "continue"){
-      const alive = mover?.actor && !(Number(mover.actor.system?.attributes?.hp?.value) <= 0);
-      if(alive && flag.rest?.length) await mover.move(flag.rest, { [module.id] : { oaResume : true, oaDone : flag.done } }).catch(error => log.debug(error));
-    }
+    if((flag.status === "continue") && mover?.actor && flag.rest?.length) await mover.move(flag.rest, { [module.id] : { oaResume : true, oaDone : flag.done } }).catch(error => log.debug(error));
     return true;
+  }
+
+  static isDown(actor){
+    return !!actor && (Number(actor.system?.attributes?.hp?.value) <= 0);
   }
 
   /* Its fastest Speed now (a jump's distance isn't a Speed) */
@@ -794,9 +796,12 @@ export class actionReady{
     if(!this.enabled()) return;
     const origin = options?.origin ?? options?.originatingMessage;
     if(!origin?.id) return;
+    /* Waiting for that hit's damage, or already going on when the damage dropped it (the card then says so) */
     const stop = game.messages.contents.slice(-30).find(m => {
       const f = m.getFlag(module.id, "oaStop");
-      return f && (f.status === "pending") && f.rows?.some(r => (r.card === origin.id) && r.hit && !r.damaged) && (fromUuidSync(f.mover, { strict : false })?.actor === actor);
+      if(!f || (fromUuidSync(f.mover, { strict : false })?.actor !== actor)) return false;
+      if(f.status === "pending") return f.rows?.some(r => (r.card === origin.id) && r.hit && !r.damaged);
+      return (f.status === "continue") && this.isDown(actor) && f.rows?.some(r => r.card === origin.id);
     });
     if(stop) gm.run("oaDamaged", { message : stop.id, card : origin.id });
   }
@@ -804,6 +809,11 @@ export class actionReady{
   static async oaDamagedAsGM({ message : id, card } = {}){
     const message = game.messages.get(id);
     const flag = foundry.utils.deepClone(message?.getFlag(module.id, "oaStop"));
+    if(flag?.status === "continue"){
+      if(!this.isDown(fromUuidSync(flag.mover, { strict : false })?.actor)) return false;
+      await message.setFlag(module.id, "oaStop", { ...flag, status : "down" });
+      return true;
+    }
     if(!flag || (flag.status !== "pending")) return false;
     const row = flag.rows.find(r => r.card === card);
     if(!row || row.damaged) return false;

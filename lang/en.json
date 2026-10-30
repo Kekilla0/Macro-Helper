@@ -1450,6 +1450,7 @@
   "actionTracker.oa.instead" : "Reacted instead",
   "actionTracker.oa.insteadWhat" : "What instead ?",
   "actionTracker.oa.halted" : "Its Speed is 0 : the move ends here.",
+  "actionTracker.oa.down" : "It's down : the move ends here.",
   "actionTracker.oa.waiting" : "Waiting for the hit's damage before the move goes on.",
   "bonusAttack.light" : "Light",
   "bonusAttack.granted" : "{what} : a Bonus Action attack with {item} this turn",

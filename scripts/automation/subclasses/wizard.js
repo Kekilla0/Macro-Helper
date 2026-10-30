@@ -49,6 +49,9 @@ export class wizardSchools{
     Hooks.on(`${module.id}.cardButtons`, (message, buttons, { ray } = {}) => { this.portentButtons(message, buttons, ray ?? null); this.potentButton(message, buttons, ray ?? null); });
     Hooks.on(`${module.id}.cardButton`, (message, id, { ray } = {}) => this.cardClicked(message, String(id), ray ?? null));
     Hooks.on(`${module.id}.rerollButtons`, (message, buttons) => this.portentTestButtons(message, buttons));
+    /* A foretold roll spent (or its once a turn used) : the cards showing its buttons drop them, on every client */
+    Hooks.on("updateItem", (item, changes) => { if(foundry.utils.hasProperty(changes, `flags.${module.id}.portent`)) this.redrawCards(); });
+    Hooks.on("updateActor", (actor, changes) => { if(foundry.utils.hasProperty(changes, `flags.${module.id}.turn.portent`)) this.redrawCards(); });
     /* Potent Cantrip */
     itemFixes.add({ name : "Potent Cantrip", where : "owned", plan : item => this.potentFix(item) });
     Hooks.on("createItem", (item, options, userId) => { if((userId === game.user.id) && (idOf(item) === this.POTENT)) this.potentAll(item.actor); });
@@ -140,6 +143,10 @@ export class wizardSchools{
       && !t.actor.statuses?.has("unconscious") && ((t === creature) || canSee(t, creature)));
   }
 
+  static redrawCards(){
+    for(const message of game.messages.contents.slice(-20)) ui.chat?.updateMessage(message);
+  }
+
   static portentButtons(message, buttons, ray){
     if((message.type !== TYPES.attack) || !message.system?.attackOf?.(ray)) return;
     const creature = tokenOf(message.getAssociatedToken?.() ?? message.getAssociatedActor?.());
@@ -162,13 +169,24 @@ export class wizardSchools{
   }
 
   static async usePortent(message, ray, token, index){
+    const value = await this.spendPortent(token, index);
+    if(value !== null) await subclasses.changeRoll(message, { ray, value }, token.actor);
+  }
+
+  /* A request card's row (requests.js) : each foretold roll this user's Diviners can give that creature now */
+  static portentOffers(creature){
+    return this.diviners(creature).flatMap(t => this.rollsOf(t.actor).map((value, index) => ({ token : t, index, value })));
+  }
+
+  /* One foretold roll spent : its value, null when it can't be used now */
+  static async spendPortent(token, index){
     const values = this.rollsOf(token.actor);
     const value = values[index];
-    if(!Number.isFinite(value) || usedThisTurn(token.actor, "portent")) return;
+    if(!Number.isFinite(value) || usedThisTurn(token.actor, "portent")) return null;
     values.splice(index, 1);
     await itemOf(token.actor, this.PORTENT).setFlag(module.id, "portent", values);
     await markUsedThisTurn(token.actor, "portent");
-    await subclasses.changeRoll(message, { ray, value }, token.actor);
+    return value;
   }
 
   /* ---------- Evoker : Potent Cantrip ---------- */

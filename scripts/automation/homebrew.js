@@ -4,7 +4,7 @@ import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { tokenOf } from '../helpers/tokens.js';
 import { getFlanker } from '../helpers/targets.js';
-import { giveMode } from '../roll-item/reasons.js';
+import { giveMode, noteBonus } from '../roll-item/reasons.js';
 import { conditions } from './conditions.js';
 import { initiative } from './initiative.js';
 import { gm } from '../gm.js';
@@ -58,6 +58,7 @@ export class homebrew{
     else if(mode === "bonus"){
       roll.parts = [...(roll.parts ?? []), "@flanking"];
       roll.data = { ...(roll.data ?? {}), flanking : 2 };
+      noteBonus(roll, 2, module.format("reasons.flanking", { name : flanker.name }));
     }
     log.debug("Flanking", attacker.name, "with", flanker.name, "against", target.name, mode);
   }

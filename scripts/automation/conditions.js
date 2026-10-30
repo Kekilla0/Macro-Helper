@@ -352,6 +352,9 @@ export class conditions{
 
     /* Reasons given with the roll (Roll Item : chosen, keys, long range...) */
     for(const { mode, reason } of config[module.id]?.reasons ?? []) noteReason(roll, mode, reason);
+    /* Who it's aimed at, on the roll already (the reasons log runs before Roll Item stamps it : each ray its own) */
+    const target = config[module.id]?.target;
+    if(target) roll.options[module.id] = { ...(roll.options[module.id] ?? {}), target };
 
     if(settings.value("conditionAttacks") && this.hasAttackDisadvantage(actor, config.ability)){
       giveMode(roll, "disadvantage", module.format("reasons.attackerIs", { condition : this.disadvantageConditions(actor).join(", ") || module.i18n("reasons.conditions") }));

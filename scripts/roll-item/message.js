@@ -194,6 +194,10 @@ export function registerMessages(){
    * @param {string[]} [parts]
    * @returns {{ text : string, healing : boolean }|null}
    */
+  /* A player's Apply only reaches creatures they own : none of its creatures theirs, no button (no target : it goes to
+     the selected tokens) */
+  const mayApplyTo = targets => game.user.isGM || !targets.length || targets.some(t => TargetsField.resolve(t).actor?.isOwner);
+
   const appliedOn = (message, tokenUuid, parts = ["rows"]) => {
     const actor = tokenUuid ? fromUuidSync(tokenUuid, { strict : false })?.actor : null;
     const here = actor?.getFlag?.(module.id, `applied.${message.id}`) ?? {};
@@ -1431,7 +1435,7 @@ export function registerMessages(){
         .filter(g => this.rollsShown(ray, g.rolls))
         .map(g => ({ key : g.key, label : g.label, chosen : choice === g.key, part : merged ? "hit" : "extra",
           damage : { ...(merged ? this.hitContext(ray, g.key) : damageContext(this.parent, g.rolls)),
-            showTray : this.canApply && (!g.rolls.some(r => tagOf(r).onHit) || this.isHitOn(ray)) } }));
+            showTray : this.canApplyOn(ray) && (!g.rolls.some(r => tagOf(r).onHit) || this.isHitOn(ray)) } }));
 
       /* Buttons : item macros listening to macro-helper.cardButtons push { id, label, icon, tooltip, conditions } */
       const buttons = [];
@@ -1512,6 +1516,11 @@ export function registerMessages(){
       return this.parent.isContentVisible && (game.user.isGM || dnd5e.settings.allowPlayerDamageTray);
     }
 
+    /* An Apply for one ray's creature (null : the card's) : a player sees it only for a creature they own */
+    canApplyOn(ray = null){
+      return this.canApply && mayApplyTo(Number.isInteger(ray) ? [this.rayTarget(ray)].filter(Boolean) : this.targets);
+    }
+
     async applyRolls(actor, rolls){
       return applyDamageRolls(this.parent, actor, rolls);
     }
@@ -1589,7 +1598,7 @@ export function registerMessages(){
             } : null,
             damage : ((damage.length || !visible) && hitShown) ? ((this.mergesHit(i) && this.hitContext(i, null, { hidden })) || damageContext(this.parent, damage, { hidden })) : null,
             /* Damage is rolled either way and shows on a hit (a reroll that hits brings it, the GM can count a miss as one) */
-            showTray : canApply && (damage.length > 0) && hit && hitShown,
+            showTray : this.canApplyOn(i) && (damage.length > 0) && hit && hitShown,
             sections : this.sectionsContext(i),
             extras : this.extrasContext(i),
             /* What rules let you do to its target (a mastery) : its row */
@@ -1603,7 +1612,7 @@ export function registerMessages(){
           const choice = this.choiceOf(ray.index);
           if(choice && (choice !== "base")){ ray.damage = null; ray.showTray = false; }
         }
-        context.applyHits = canApply && context.rays.some(r => (r.hit && r.showTray) || r.sections.some(s => s.applies));
+        context.applyHits = canApply && context.rays.some(r => (r.hit && r.showTray) || (this.canApplyOn(r.index) && r.sections.some(s => s.applies)));
         /* The attack's effects : once one of its attacks hits */
         if(!context.rays.some(r => r.hitShown)) context.effects = [];
         context.moves = cardMoves.context(this.parent);
@@ -1630,7 +1639,7 @@ export function registerMessages(){
       const visible = this.parent.isContentVisible;
       const hitShown = !visible || this.outcomeShown(null, "hit");
       if(damage.length && hitShown) context.damage = { ...((this.mergesHit(null) && this.hitContext(null, null, { hidden })) || damageContext(this.parent, damage, { hidden })),
-        showTray : this.canApply && this.isHitOn(null) };
+        showTray : this.canApplyOn(null) && this.isHitOn(null) };
       if(context.buttons && !hitShown) context.buttons.damage = false;
       if(!hitShown) context.effects = [];
       context.countHit = game.user.isGM && visible && !!this.attackRoll && !this.resultsOf(null).hit;
@@ -1728,7 +1737,7 @@ export function registerMessages(){
         /* Faded when the attack is known to have missed, the GM can still use it (not when it's for others, hit or miss) */
         miss : visible && !rollItem.isHit(this.attackRoll) && !this.rider?.targets?.length,
         hasDamage : rolls.length > 0,
-        damage : rolls.length ? { ...damageContext(this.parent, rolls, { hidden : hidesNumbers(this.parent) }), showTray : this.canApply && rollItem.isHit(this.attackRoll) } : null,
+        damage : rolls.length ? { ...damageContext(this.parent, rolls, { hidden : hidesNumbers(this.parent) }), showTray : this.canApplyOn(null) && rollItem.isHit(this.attackRoll) } : null,
         summaries,
         rows : this.riderRows(),
         /* The rows apply the save's effects (Apply effect, GM) : no tray, which would use the GM's selection */
@@ -1895,26 +1904,46 @@ export function registerMessages(){
     /* Every ray that hit onto its own target, rays without a target go to the selected tokens. Misses with Graze deal that. */
     /** @this {RollItemMessageData} */
     static async #applyHits(event, target){
+      /* Each ray's boxes by their own keys (the ray's own tray uses the same) : a box a creature already took from a
+         ray's Apply isn't dealt again, and that tray sees what this dealt */
       const byActor = new Map();
+      let aimed = false;
       for(const i of this.rays.keys()){
         const hit = rollItem.isHit(this.rayAttack(i));
-        /* A miss : what rules added for one (Graze) */
-        let rolls = hit ? this.rayDamage(i) : this.addedRollsOf(i).filter(r => tagOf(r).onMiss);
+        let parts;
         if(hit){
           const choice = this.choiceOf(i);
-          const extras = this.extraRolls(i);
-          if(choice && (choice !== "base")) rolls = extras.filter(r => tagOf(r).key === choice);
-          rolls = [...rolls, ...extras.filter(r => !tagOf(r).alternative)];
+          parts = this.hitParts(i, (choice && (choice !== "base")) ? choice : null);
         }
-        if(!rolls.length) continue;
+        /* A miss : what rules added for one (Graze) */
+        else {
+          const groups = new Map();
+          for(const roll of this.addedRollsOf(i).filter(r => tagOf(r).onMiss)){
+            const box = boxKey(tagOf(roll).part, null, i);
+            if(!groups.has(box)) groups.set(box, { box, own : false, rolls : [] });
+            groups.get(box).rolls.push(roll);
+          }
+          parts = [...groups.values()];
+        }
+        if(!parts.length) continue;
         for(const actor of this.rayActors(i)){
-          byActor.set(actor, [...(byActor.get(actor) ?? []), ...rolls]);
+          aimed = true;
+          const done = actor.getFlag?.(module.id, `applied.${this.parent.id}`) ?? {};
+          const left = parts.filter(p => !Number.isFinite(done[p.box]));
+          if(left.length) byActor.set(actor, [...(byActor.get(actor) ?? []), ...left]);
         }
       }
-      if(!byActor.size) return ui.notifications.warn("rollItem.apply.noTarget", { localize : true });
+      if(!aimed) return ui.notifications.warn("rollItem.apply.noTarget", { localize : true });
 
       target.disabled = true;
-      for(const [actor, rolls] of byActor) await this.applyRolls(actor, rolls);
+      for(const [actor, parts] of byActor){
+        /* Hook : a rule can hold a part back (Sneak Attack a second time in a turn), as the hit box does */
+        Hooks.callAll(`${module.id}.applyHitParts`, this.parent, actor, parts);
+        if(!parts.length) continue;
+        if(parts.some(p => p.own)) await beforeDamage(this.parent, actor);
+        await actor.applyDamage(damagesOf(parts.flatMap(p => p.rolls)), { isDelta : true, origin : this.parent,
+          [module.id] : { part : "hits", parts : parts.map(p => p.box), withOwn : parts.some(p => p.own) } });
+      }
       target.disabled = false;
     }
   }
@@ -2124,10 +2153,15 @@ export function registerMessages(){
             canReroll,
             target : visible ? this.rayTarget(i) : null,
             damage : damageContext(this.parent, damage),
-            showTray : canApply && damage.length > 0,
+            showTray : canApply && (damage.length > 0) && mayApplyTo([this.rayTarget(i)].filter(Boolean)),
           };
         });
         context.extras = this.buttonsContext();
+        /* Apply All : not for a player owning none of the rays' creatures (it would do nothing) */
+        if(context.buttonGroups?.applyRays && !this.rays.some((_, i) => mayApplyTo([this.rayTarget(i)].filter(Boolean)))){
+          delete context.buttonGroups.applyRays;
+          if(foundry.utils.isEmpty(context.buttonGroups)) delete context.buttonGroups;
+        }
         return context;
       }
 

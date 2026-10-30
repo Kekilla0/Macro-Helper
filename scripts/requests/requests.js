@@ -12,6 +12,8 @@ import { findItem, itemOf } from '../helpers/actors.js';
 import { isIncapacitated } from '../helpers/tokens.js';
 import { patch } from '../patch.js';
 import { concentrationModeFor } from '../automation/roll-modes.js';
+import { wizardSchools } from '../automation/subclasses/wizard.js';
+import { subclasses } from '../automation/subclasses/common.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -28,7 +30,7 @@ const log = logger.for(import.meta.url);
  *                succeeded (a majority of the checks). The window stays open until then.
  *   DM Screen  : players see ✓ / ✗, never the DC.
  *   Messages   : Compact : the rolls go into the card; Reroll by the total (Rule Limits); Lucky / Bardic Inspiration /
- *                Tactical Mind at the card's foot for their owners. Individual : dnd5e's own roll messages, linked.
+ *                Tactical Mind / Portent at the card's foot for their owners. Individual : dnd5e's own roll messages, linked.
  *   Whisper    : the cards and the rolls only for the GM and the creatures' owners.
  *   Concentration (Roll Item on) : dnd5e's prompt after damage becomes a card like these, one row (whispered to the
  *                creature's owners and the GM; the DC shown). Rolled once (rerolls on the card); a failure gives a
@@ -336,6 +338,13 @@ export class rollRequests{
         && (Number(fighter.secondWindOf(actor)?.system?.uses?.value) > 0);
       if(tactical) out.push(button("tactical", "fa-chess-knight", module.format("requests.featFor", { feat : module.i18n("classes.fighter.tactical"), name : row.name })));
     }
+    /* Portent : a Diviner of this user's that sees the creature replaces its d20 (once a turn) */
+    if(!entry.portent){
+      const creature = fromUuidSync(row.token ?? "", { strict : false })?.object ?? actor?.getActiveTokens?.()[0] ?? null;
+      for(const { token, index, value } of wizardSchools.portentOffers(creature)){
+        out.push(button(`portent|${token.document.uuid}|${index}`, "fa-eye", module.format("requests.featFor", { feat : module.format("subclasses.wizard.portent", { value }), name : row.name })));
+      }
+    }
     /* Concentration failed : losing it is a button (Lucky or Bardic Inspiration may still change the roll first) */
     if((this.checkOf(request).kind === "concentration") && (entry.success === false) && actor?.isOwner && (actor.concentration?.effects?.size > 0) && !entry.lostConcentration){
       out.push(button("loseConcentration", "fa-heart-crack", module.i18n("requests.loseConcentration")));
@@ -426,7 +435,16 @@ export class rollRequests{
     const roll = this.rollOf(request?.results?.[1]?.[rowKey]);
     const actor = row && this.actorOf(row);
     if(!roll || !actor) return;
-    const store = (updated, mark) => gm.run("requestStore", { message : message.id, row : rowKey, roll : updated.toJSON(), mark });
+    const store = (updated, mark, by) => gm.run("requestStore", { message : message.id, row : rowKey, roll : updated.toJSON(), mark, by });
+    if(feat.startsWith("portent|")){
+      const [, uuid, index] = feat.split("|");
+      const token = fromUuidSync(uuid ?? "", { strict : false })?.object;
+      if(!token?.actor?.isOwner) return;
+      const value = await wizardSchools.spendPortent(token, Number(index));
+      const updated = (value !== null) ? subclasses.setD20(roll, value) : null;
+      if(updated) await store(updated, { portent : true }, uuid);
+      return;
+    }
     if(feat === "lucky"){
       const item = findItem(actor, "lucky");
       const result = await extraD20(roll, "kh");
@@ -459,12 +477,14 @@ export class rollRequests{
   }
 
   /* GM : a row's roll stored on the card (its owner sent it), judged against the DC */
-  static async storeAsGM({ message : id, row : rowKey, roll : data, mark = {}, reset = false } = {}, user){
+  static async storeAsGM({ message : id, row : rowKey, roll : data, mark = {}, reset = false, by = null } = {}, user){
     const card = game.messages.get(id);
     const request = card?.getFlag(module.id, "request");
     const row = request?.rows.find(r => r.key === rowKey);
     const actor = row && this.actorOf(row);
-    if(!row || !(user?.isGM || actor?.testUserPermission(user, "OWNER"))) return false;
+    /* Its owner, or a Diviner's owner giving it Portent */
+    const diviner = (mark.portent && by) ? fromUuidSync(by, { strict : false })?.actor : null;
+    if(!row || !(user?.isGM || actor?.testUserPermission(user, "OWNER") || diviner?.testUserPermission(user, "OWNER"))) return false;
     const total = Number(data?.total ?? Roll.fromData(data).total);
     const before = reset ? {} : (request.results?.[1]?.[rowKey] ?? {});
     const dc = this.dcOf(request);

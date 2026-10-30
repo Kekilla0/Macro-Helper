@@ -736,6 +736,10 @@ export class spells{
         options : options.map(o => ({ value : o.key, label : o.label })), value : options[0].key });
       if(!key) return;
       this.setSlot(ctx, activity, options.find(o => o.key === key));
+      /* dnd5e's window would only ask the level again : skipped, unless it has more to ask (which Concentration to end,
+         other resources to spend) */
+      const concentrating = activity.item.requiresConcentration && (activity.actor?.concentration?.effects?.size > 0);
+      if(!concentrating && !activity.consumption?.targets?.length) ctx.dialog = { ...ctx.dialog, configure : false };
     }
     else if(options.length === 1) this.setSlot(ctx, activity, options[0]);
     return next();

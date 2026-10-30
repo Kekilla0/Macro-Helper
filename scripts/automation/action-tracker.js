@@ -83,6 +83,8 @@ export class actionTracker{
     Hooks.on("renderChatMessageHTML", (message, html) => this.drawRequest(message, html));
     Hooks.on("updateChatMessage", message => this.answered(message));
     Hooks.on("renderCombatTracker", (app, html) => this.drawTracker(html));
+    /* Prone cleared from the token HUD on its own turn : that's standing up (its cost, Rule Limits) */
+    Hooks.on("renderTokenHUD", (hud, html) => this.hudStandUp(hud, html));
     Hooks.on("updateActor", (actor, changes) => {
       if(this.enabled() && foundry.utils.hasProperty(changes ?? {}, `flags.${module.id}.economy`)) ui.combat?.render();
     });
@@ -253,6 +255,18 @@ export class actionTracker{
     st.rec.standing = (Number(st.rec.standing) || 0) + cost;
     this.note(st.rec, module.format("actionTracker.log.stood", { cost }));
     await this.save(actor, st.rec);
+  }
+
+  static hudStandUp(hud, html){
+    const actor = hud.actor;
+    const button = html?.querySelector?.('[data-status-id="prone"].active');
+    if(!button) return;
+    button.addEventListener("click", event => {
+      if(!this.state(actor)?.mine) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.standUp(actor, hud.object);
+    }, { capture : true });
   }
 
   /* ---------- State ---------- */

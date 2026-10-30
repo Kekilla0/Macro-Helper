@@ -88,7 +88,7 @@ function sectionsFor(message, sections, ray){
       context : {
         part : rule.id, icon : rule.icon ?? "fa-droplet",
         label : rolls[0].options?.[module.id]?.label ?? rule.id,
-        damage : { ...card.damageContextOf(rolls), showTray : card.canApply, onMiss : !targets.length },
+        damage : { ...card.damageContextOf(rolls), showTray : card.canApplyOn?.(ray) ?? card.canApply, onMiss : !targets.length },
         ray : Number.isInteger(ray) ? ray : "", hasRay : Number.isInteger(ray),
       },
     });

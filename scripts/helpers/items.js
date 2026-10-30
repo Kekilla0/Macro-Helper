@@ -671,7 +671,8 @@ function tagCards(actor, tag){
  */
 export async function untilShown(fn){
   const made = [], landed = new Set();
-  const onCreate = (message, options, userId) => { if(userId === game.user.id) made.push(message); };
+  /* Only a use's own cards (a roll, an item's card) : a refusal's Rule Limits log or the GM's approval ask isn't a use */
+  const onCreate = (message, options, userId) => { if((userId === game.user.id) && isUseCard(message)) made.push(message); };
   const onLanded = id => landed.add(id);
   Hooks.on("createChatMessage", onCreate);
   Hooks.on("diceSoNiceRollComplete", onLanded);
@@ -698,6 +699,12 @@ export async function untilShown(fn){
     Hooks.off("createChatMessage", onCreate);
     Hooks.off("diceSoNiceRollComplete", onLanded);
   }
+}
+
+function isUseCard(message){
+  if(message.getFlag?.(module.id, "economyRequest")) return false;
+  return !!(message.rolls?.length || message.getFlag?.("dnd5e", "item") || message.getFlag?.("dnd5e", "activity")
+    || message.system?.activity || message.system?.item);
 }
 
 /* "Two attacks with Scimitar or Shortbow" : how many with each. All with the first by default. */
