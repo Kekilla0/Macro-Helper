@@ -183,7 +183,7 @@ export async function cast(id, message, ray, { only = null, freeOnly = false } =
 
   const target = targetOf(message, ray);
   const damage = rule.damage ? rule.damage(choice.spell, choice.level, target) : spellDamage(choice.spell, choice.level);
-  const roll = damage?.formula ? await damageRoll(damage.formula, { type : damage.type, crit : !!message.system.attackOf(ray)?.isCritical, magical : true }) : null;
+  const roll = damage?.formula ? await damageRoll(damage.formula, { type : damage.type, crit : !!(message.system.critOf?.(ray) ?? message.system.attackOf(ray)?.isCritical), magical : true }) : null;
   /* The card's part : here when it's this user's card, else the GM's client (the GM rolled the attack for them) */
   const card = { id, message : message.id, ray, spell : choice.spell.id, level : choice.level, formula : damage?.formula ?? null, roll : roll ? roll.toJSON() : null };
   if(message.isOwner) await writeCard(card);

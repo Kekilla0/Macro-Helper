@@ -52,9 +52,8 @@ export const auras = {
       if(effect.disabled) this.removeFor(effect.uuid);
       else this.fromEffect(effect);
     });
-    /* A token placed for a creature under one : its own aura; a token gone : its auras too */
+    /* A token placed for a creature under one : its own aura (a token gone : Foundry deletes the regions attached to it) */
     Hooks.on("createToken", token => { for(const effect of token.actor?.effects ?? []) this.fromEffect(effect, token); });
-    Hooks.on("deleteToken", token => this.removeFor(null, token));
     /* A condition on or off : its auras with `unless` switch off or back on */
     Hooks.on("createActiveEffect", effect => this.refresh(effect.parent));
     Hooks.on("deleteActiveEffect", effect => this.refresh(effect.parent));

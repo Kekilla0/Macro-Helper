@@ -48,6 +48,8 @@ export async function extraD20(roll, keep){
     /* The opposite : they cancel, a straight roll on the first d20 */
     d20.modifiers = (d20.modifiers ?? []).filter(m => !/^(k[hl]|adv|dis)/i.test(m));
     d20.results.forEach((r, i) => { r.active = (i === 0); r.discarded = (i !== 0); });
+    /* One d20 counts ("1d20"); the other stays on the roll, discarded */
+    d20.number = 1;
     updated.options.advantageMode = 0;
   }
   else {
@@ -67,6 +69,7 @@ export async function extraD20(roll, keep){
     }
     updated.options.advantageMode = want;
   }
+  updated.resetFormula();
   updated._total = updated._evaluateTotal();
   return { status : extra ? "applied" : "cancelled", updated, extra };
 }

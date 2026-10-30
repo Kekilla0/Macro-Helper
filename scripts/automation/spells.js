@@ -16,6 +16,7 @@ import { originItem } from '../helpers/utils.js';
 import { rollModeFrom } from './roll-modes.js';
 import { onMiss } from '../roll-item/miss-damage.js';
 import { willingSave } from './willing.js';
+import { onlyTypes } from './target-types.js';
 import { sharesDamage } from '../roll-item/card-builder.js';
 import { hitBecomesMiss } from '../roll-item/hit-becomes-miss.js';
 import { lends } from './lend-item.js';
@@ -106,6 +107,13 @@ export class spells{
     /* Round the caster wherever it goes : the caster and its side get the +10 while inside (user : allies, no pick) */
     "pass-without-trace" : { effect : true, who : "ally", cast : false },
   };
+  /* Spells that work on those creature types only : another target "succeeds" (2024 : Invalid Targets) */
+  static ONLY_TYPES = {
+    "animal-friendship" : ["beast"], "dominate-beast" : ["beast"],
+    "calm-emotions" : ["humanoid"], "charm-person" : ["humanoid"], "crown-of-madness" : ["humanoid"],
+    "dominate-person" : ["humanoid"], "friends" : ["humanoid"], "hold-person" : ["humanoid"],
+    "planar-binding" : ["celestial", "elemental", "fey", "fiend"],
+  };
   /* The effects the fixes add (16-character ids, so a fix can tell it's done) */
   static EFFECT_IDS = { "blade-ward" : "mhBladeWardWard1", "ray-of-sickness" : "mhRaySicknessPsn" };
 
@@ -144,6 +152,7 @@ export class spells{
     Hooks.on("dnd5e.preApplyDamage", (actor, amount) => this.blockHealing(actor, amount));
     itemFixes.add({ name : "Giant Insect", where : "owned", plan : item => this.giantInsectFix(item) });
     itemFixes.add({ name : "Enlarge/Reduce", where : "owned", plan : item => this.enlargeReduceFix(item) });
+    for(const [id, types] of Object.entries(this.ONLY_TYPES)) onlyTypes(id, { types, enabled : () => this.enabled() });
     /* Enlarge/Reduce : only an unwilling target saves (the GM says which) */
     willingSave({ id : this.ENLARGE_REDUCE, enabled : () => this.enabled(), applies : activity => idOf(activity?.item) === this.ENLARGE_REDUCE });
     /* Blade Ward's die is the attacker's : Roll Item doesn't roll it on a card */

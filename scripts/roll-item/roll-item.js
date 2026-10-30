@@ -114,6 +114,14 @@ export class rollItem{
   static async rollActivity(activity, { event, scaling = 0, count, attackMode, disadvantage, targets, tags, note, cardFlags } = {}){
     if(!this.ready("attack")) return;
 
+    /* Attacking itself : an error state (a macro or a leftover target aimed it at the attacker), nothing is rolled */
+    const self = tokenOf(activity.item)?.document;
+    if(self && (targets?.length ? targets : [...game.user.targets]).some(t => (t?.document ?? t) === self)){
+      ui.notifications.error(module.format("rollItem.selfTarget", { name : self.name }));
+      log.debug("Attack aimed at the attacker", activity.item?.name, self.name);
+      return this.cancelUse(activity);
+    }
+
     /* Advantage / disadvantage for the whole card : the keys held, or asked now (targets are already chosen) */
     const mode = await this.chooseMode(activity, event);
     if(!mode) return this.cancelUse(activity);
@@ -957,8 +965,8 @@ export class rollItem{
   }
 
   /**
-   * A "Range : Self" cone or line is placed from its caster : while placing, its point stays on the caster's token and
-   * the mouse only aims it. dnd5e places templates through core's canvas.regions.placeRegions without an onMove; this
+   * A "Range : Self" cone or line is placed from its caster : while placing, its point stays on the edge of the
+   * caster's space and the mouse only aims it. dnd5e places templates through core's canvas.regions.placeRegions without an onMove; this
    * gives the next call one, then steps aside.
    */
   static anchorToSelf(activity){
@@ -974,11 +982,15 @@ export class rollItem{
     const restore = () => { if(hadOwn) layer.placeRegions = original; else delete layer.placeRegions; };
     const anchored = function(data, options = {}){
       restore();
+      /* Its point on the edge of the caster's space, where the aim leaves it (from the centre, a 15 ft cone would
+         reach only 2½ squares past the caster's own) */
       const onMove = args => {
         const { shape, position } = args;
-        const center = token.center;
-        const rotation = Math.toDegrees(Math.atan2(position.y - center.y, position.x - center.x));
-        shape.updateSource({ x : center.x, y : center.y, rotation });
+        const center = token.center, b = token.bounds;
+        const angle = Math.atan2(position.y - center.y, position.x - center.x);
+        const cos = Math.cos(angle), sin = Math.sin(angle);
+        const out = Math.min((Math.abs(cos) > 1e-6) ? (b.width / 2) / Math.abs(cos) : Infinity, (Math.abs(sin) > 1e-6) ? (b.height / 2) / Math.abs(sin) : Infinity);
+        shape.updateSource({ x : center.x + (cos * out), y : center.y + (sin * out), rotation : Math.toDegrees(angle) });
         options.onMove?.(args);
         return false;
       };

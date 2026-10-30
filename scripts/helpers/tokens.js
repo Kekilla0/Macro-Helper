@@ -708,7 +708,7 @@ function drawPoolBars(token){
     const pct = Math.clamp(pool.value, 0, pool.max) / pool.max;
     layer.lineStyle(s, 0x000000, 1.0);
     layer.beginFill(0x000000, 0.5).drawRoundedRect(0, y, width, bh, 3 * s);
-    layer.beginFill(Color.from(pool.color), 1.0).drawRoundedRect(0, y, pct * width, bh, 2 * s);
+    layer.beginFill(foundry.utils.Color.from(pool.color), 1.0).drawRoundedRect(0, y, pct * width, bh, 2 * s);
     layer.endFill();
     y -= bh;
   }
@@ -888,6 +888,8 @@ export function canSee(viewer, target){
   if(mode === "off") return true;
   /* A heavily obscured area (Fog Cloud) in the way, or either inside one : no sight through it */
   if(obscuredBetween(v, t)) return false;
+  /* Unconscious (or dead) : unaware, it sees nothing */
+  if(sightless(v)) return false;
   /* Blinded : only senses that aren't sight (blindsight, tremorsense...) can still find it */
   const blinded = !!v.actor?.statuses?.has("blinded");
   /* Without sight to work it out (vision off on the token or the scene), the conditions still count :
@@ -902,12 +904,18 @@ export function canSee(viewer, target){
   return detects(v, [t.center], { object : t, tolerance : Math.max(2, Math.floor(Math.min(t.w, t.h) / 4)) });
 }
 
+/* Unaware of everything around it : Unconscious, or dead */
+function sightless(token){
+  return ["unconscious", "dead"].some(s => token?.actor?.statuses?.has?.(s));
+}
+
 /* canSee for a place instead of a creature */
 function seesPoint(viewer, point){
   const v = tokenOf(viewer);
   if(!v || !point) return true;
   const mode = visionMode();
   if(mode === "off") return true;
+  if(sightless(v)) return false;
   const blinded = !!v.actor?.statuses?.has("blinded");
   if((mode === "conditions") || !canvas.ready || !canvas.visibility?.tokenVision || !v.document.sight?.enabled) return !blinded;
   return detects(v, [{ x : point.x, y : point.y, elevation : v.document.elevation ?? 0 }]);

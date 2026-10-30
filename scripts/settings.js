@@ -105,6 +105,7 @@ export const GROUPS = {
       homebrewAmmoSearch : { scope : "world", default : false, type : Boolean, homebrew : true },
       spellMaterials : { scope : "world", default : "off", type : String,
         choices : { off : "settings.spellMaterials.off", item : "settings.spellMaterials.item", coins : "settings.spellMaterials.coins" } },
+      armorTraining : { scope : "world", default : true, type : Boolean },
       initiativeMethod : { scope : "world", default : "player", type : String, section : "combat",
         choices : { player : "settings.initiativeMethod.player", auto : "settings.initiativeMethod.auto" } },
       homebrewInitiative : { scope : "world", default : false, type : Boolean, homebrew : true },
@@ -197,7 +198,7 @@ const VIRTUAL = {
 
 /* The rest of System Automation's settings, as they read while it's off */
 const AUTOMATION_OFF = {
-  conditions : "off", masteryRules : false, handsEnabled : false, handsLight : "off", ammunition : "off", spellMaterials : "off",
+  conditions : "off", masteryRules : false, handsEnabled : false, handsLight : "off", ammunition : "off", spellMaterials : "off", armorTraining : false,
   initiativeMethod : "player", summonInitiative : "roll", clearAreas : false, defaultActions : "off",
   homebrewPush : false, homebrewInitiative : false, homebrewAmmoSearch : false, homebrewLoadHand : false, homebrewFlanking : "off",
 };

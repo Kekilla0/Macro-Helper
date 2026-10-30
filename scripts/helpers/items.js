@@ -188,16 +188,15 @@ export function attackModeFor(item, target, { long = true, from : place = null }
 }
 
 /**
- * Is an attack with this weapon the off-hand (Light extra) attack ? With Hands : a Light weapon in the off hand, always
- * (the hand says what it's for). Without : a Light weapon after a different Light weapon attacked this turn (out of
- * combat, within the last minute), and not itself already.
+ * Is an attack with this weapon the off-hand (Light extra) attack ? A Light weapon after a different Light weapon attacked
+ * this turn (out of combat, within the last minute), and not itself already. With Hands too : the hand it's in doesn't
+ * decide (2024 has no off hand), so a Light weapon in the left hand can make the Attack action's attack.
  * @param {Item} item
  * @returns {boolean}
  */
 export function isExtraLightAttack(item){
   const actor = item?.actor;
   if(!actor || !item.system?.properties?.has?.("lgt")) return false;
-  if(hands.manages(actor) && hands.inUse(actor)) return hands.handOf(actor, item) === "off";
   if(usedThisTurn(actor, `light.${item.id}`)) return false;
   /* Out of combat : a different Light weapon attacked within the last minute */
   if(!game.combat?.started){
@@ -209,7 +208,7 @@ export function isExtraLightAttack(item){
 
 /**
  * Pick targets on the map, then attack each with this item : one Roll Item card, one attack roll per target.
- *   Your targets are cleared first, so every attack starts from a fresh pick (nothing left over gets hit by accident).
+ *   The pick follows your Pick Targets setting (Always : your targets are cleared first, a fresh pick; Off : your targets).
  *   Thrown weapons can pick out to their throwing range : targets beyond reach are thrown at (uses one up, not with Returning).
  *   Targets at long range (ranged or thrown) are attacked with disadvantage, target by target (advantage keys still combine).
  *   While threatened (an enemy within 5 ft), ranged and thrown attacks have disadvantage, melee attacks don't.
@@ -265,7 +264,9 @@ function attackFailed(item, message, error){
  * @param {number} [options.within]                  feet the targets must be within of each other
  * @param {boolean} [options.long=true]              ranged / thrown : allow targets out to long range (with disadvantage)
  * @param {"auto"|"enter"} [options.confirm="auto"]  finish as soon as the most allowed are picked, or wait for Enter
- * @param {boolean} [options.clearTargets=true]      clear your targets and always pick; false uses targets in range as-is
+ * @param {boolean} [options.clearTargets]          true : clear your targets and always pick; false : your targets in range
+ *                                                   as-is, a pick without any. Default : your Pick Targets setting (Always :
+ *                                                   true; no targets in range : false; Off : your targets, no pick at all)
  * @param {boolean} [options.strict=true]            hold the attacker to their inventory (quantity, throws, ammunition)
  * @param {boolean} [options.threatened=true]        apply the threatened rule (ranged attacks with an enemy within 5 ft)
  * @param {boolean} [options.repeat=false]           the same target can be picked more than once (one attack per pick)
@@ -282,7 +283,7 @@ function attackFailed(item, message, error){
  *          null if cancelled or refused (with a notification saying why)
  */
 export async function pickAttack(item, { count = 1, disposition = "nonAlly", within = Infinity, long = true, confirm = "auto",
-  clearTargets = true, strict = true, threatened : threatRule = true, repeat = false, activity, used = false, filter , rangeMultiplier = 1,
+  clearTargets, strict = true, threatened : threatRule = true, repeat = false, activity, used = false, filter , rangeMultiplier = 1,
   numberAllowed = Infinity, from : place = null } = {}){
   const fail = (message, error) => attackFailed(item, message, error);
 
@@ -342,11 +343,17 @@ export async function pickAttack(item, { count = 1, disposition = "nonAlly", wit
     const longOrThreat = t => isLong(t) || isThreat(t);
     /* Behind a wall (total cover) : not a target. Unseen (darkness, Invisible) still is, at disadvantage */
     const reachable = t => hasLineOfSight(at, t) && (!filter || filter(t));
-    const targets = await pickTargets(item, {
+    /* Pick Targets (the user's own setting) unless the caller says : Off uses your targets as they are, no pick */
+    const pick = (clearTargets === undefined) ? settings.value("rollItemPick") : (clearTargets ? "always" : "empty");
+    if((pick === "off") && !game.user.targets.size) return fail(module.i18n("helpers.attack.noTargets"));
+    /* (with repeat, fewer targets than attacks are spread over them : 2 attacks, one target -> both at it) */
+    const own = [...game.user.targets], most = Math.max(1, Math.floor(count) || 1);
+    const targets = (pick === "off") ? (repeat ? Array.from({ length : most }, (_, i) => own[Math.floor(i * own.length / most)]) : own.slice(0, most))
+      : await pickTargets(item, {
       count : Math.max(1, Math.floor(count) || 1),
       range, within, numberAllowed, disposition, confirm, notice, repeat, filter : reachable, ...by,
       normalRange : shownNormal,
-      useTargets : !clearTargets,
+      useTargets : pick !== "always",
       /* An attack can go at a creature you can't see (in fog, Invisible) : the roll gives the disadvantage, the colours show it */
       sight : false,
       tokenColor : t => predictModeWhy(attack, t, { attackMode : attackModeFor(item, t, { long, ...by }), disadvantage : longOrThreat(t) }).mode,
@@ -636,7 +643,8 @@ export async function multiattack(thing, plan = [], { repeat = true, event, atta
     }
     for(const { item, count } of steps){
       for(let i = 0; i < count; i++){
-        const used = await untilShown(() => item.use({ event, [module.id] : { economy : results.length ? "free" : economy } }));
+        /* The first pays; the rest come free, each still one of the attacks it paid for (the Action Tracker counts them) */
+        const used = await untilShown(() => item.use({ event, [module.id] : results.length ? { economy : "free", attackOf : economy } : { economy } }));
         if(!used) return results;
         results.push(used);
       }

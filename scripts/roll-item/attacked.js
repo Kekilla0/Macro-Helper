@@ -28,7 +28,8 @@ const log = logger.for(import.meta.url);
  *
  * ctx : { message, ray, guard (token), target (the attacked creature's token), attacker (token), roll (the attack) }.
  * Guards are on the attacked creature's side, not the attacker's. A requirement unmet : Rule Limits decides (Off and
- * Warn : the button, with a notice on use; Block : no button).
+ * Warn : the button, with a notice on use; Block : no button). Who is near is judged as the attack was made (the card
+ * keeps it : a push afterwards brings no guard in); once that creature's damage from the card is applied, no button.
  */
 const rules = ruleSet("When attacked", { when : false });
 let hooked = false;
@@ -40,19 +41,39 @@ export function onAttacked(match, rule){
   rules.add(rule.feature ?? (() => true), rule, rule.id);
   if(hooked) return;
   hooked = true;
+  Hooks.on("preCreateChatMessage", message => stampNear(message));
   Hooks.on(`${module.id}.cardButtons`, (message, buttons, { ray } = {}) => cardButtons(message, buttons, ray ?? null));
   Hooks.on(`${module.id}.cardButton`, (message, id, { ray } = {}) => { if(String(id).startsWith("attacked|")) clicked(message, String(id), ray ?? null); });
 }
 
 const side = t => t?.document?.disposition;
 
-/* The user's tokens that could step in for this creature */
-function guardsFor(rule, target, attacker){
+/* Who was near each target as the attack was made (the card's author, as it's made) : { targetId : { tokenId : feet } } */
+function stampNear(message){
+  if((typeof message.system?.attackOf !== "function") || !canvas.ready || !rules.size) return;
+  const most = Math.max(5, ...[...rules.values()].map(r => Number(r.within) || 0));
+  const near = {};
+  for(const t of message.system.targets ?? []){
+    const target = fromUuidSync(t.token ?? "", { strict : false })?.object;
+    if(!target || (target.document.parent !== canvas.scene)) continue;
+    near[target.document.id] = Object.fromEntries((canvas.tokens?.placeables ?? []).filter(o => o !== target)
+      .map(o => [o.document.id, distanceBetween(o, target)]).filter(([, feet]) => feet <= most));
+  }
+  message.updateSource({ [`flags.${module.id}.nearAtAttack`] : near });
+}
+
+/* The user's tokens that could step in for this creature (near it as the attack was made, else now) */
+function guardsFor(rule, target, attacker, message){
   if(rule.self) return (target?.actor?.isOwner && rules.holds(rule, target.actor)) ? [target] : [];
+  const near = message?.getFlag?.(module.id, "nearAtAttack")?.[target.document.id];
+  const feet = t => near ? (near[t.document.id] ?? Infinity) : distanceBetween(t, target);
   return (canvas.tokens?.placeables ?? []).filter(t => t.actor?.isOwner && (t !== target) && (t !== attacker)
     && (side(target) === side(t)) && (!attacker || (side(attacker) !== side(t)))
-    && rules.holds(rule, t.actor) && (distanceBetween(t, target) <= (rule.within ?? 5)));
+    && rules.holds(rule, t.actor) && (feet(t) <= (rule.within ?? 5)));
 }
+
+/* This card's damage to it is applied already : too late to step in */
+const applied = (message, target) => Object.keys(target.actor?.getFlag?.(module.id, `applied.${message.id}`) ?? {}).length > 0;
 
 /* Why the guard can't, "" when it can */
 function unmet(rule, ctx){
@@ -88,8 +109,8 @@ function cardButtons(message, buttons, ray){
   for(const rule of rules.values()){
     try {
       for(const base of contexts(message, ray)){
-        if((rule.when === "hit") && !base.hit) continue;
-        for(const guard of guardsFor(rule, base.target, base.attacker)){
+        if(((rule.when === "hit") && !base.hit) || applied(message, base.target)) continue;
+        for(const guard of guardsFor(rule, base.target, base.attacker, message)){
           const ctx = { ...base, guard };
           if(rule.done?.(ctx) || !offered(unmet(rule, ctx))) continue;
           buttons.push({ id : `attacked|${rule.id}|${guard.document.uuid}|${base.target.document.uuid}`, icon : rule.icon ?? "fa-shield",
@@ -105,7 +126,7 @@ async function clicked(message, id, ray){
   const rule = rules.get(ruleId);
   const guard = fromUuidSync(guardUuid, { strict : false })?.object;
   const base = rule && guard?.actor?.isOwner && contexts(message, ray).find(c => c.target.document.uuid === targetUuid);
-  if(!base || (rule.enabled && !rule.enabled())) return;
+  if(!base || (rule.enabled && !rule.enabled()) || applied(message, base.target)) return;
   const ctx = { ...base, guard };
   if(rule.done?.(ctx)) return;
   const problem = unmet(rule, ctx);

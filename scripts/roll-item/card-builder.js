@@ -768,7 +768,7 @@ export class CardBuilder{
       const facts = Object.values(part.facts ?? {});
       if(facts.length && !facts.some(Boolean)) continue;
       const type = part.type ?? this.message.system?.damageRolls?.[0]?.options?.type ?? null;
-      rolls.push(await damageRoll(part.formula, { type, crit : !!attack?.isCritical, rollData }));
+      rolls.push(await damageRoll(part.formula, { type, crit : !!(this.message.system?.critOf?.(null) ?? attack?.isCritical), rollData }));
     }
     return rolls;
   }

@@ -182,7 +182,9 @@ export const zones = {
     const actor = token?.actor;
     if(!item || !actor) return;
     const ids = actor.effects.filter(e => String(e.origin ?? "").startsWith(item.uuid)).map(e => e.id);
-    if(ids.length) await actor.deleteEmbeddedDocuments("ActiveEffect", ids, { [module.id] : { reason : module.format("zones.left", { zone : item.name }) } }).catch(error => log.error(error));
+    /* Already gone is fine (its Concentration ended : dnd5e deletes what depends on it, the area goes too) */
+    if(ids.length) await actor.deleteEmbeddedDocuments("ActiveEffect", ids, { [module.id] : { reason : module.format("zones.left", { zone : item.name }) } })
+      .catch(error => /does not exist/.test(String(error?.message ?? error)) ? log.debug(error) : log.error(error));
   },
 
   /* The creature that made the area : the one it's stuck to, else the one that used the item */

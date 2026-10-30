@@ -359,9 +359,11 @@ export async function itemEffectOn(item, { on = null, effect : id = null, activi
  * @param {string} [options.until]     "turnStart" | "turnEnd"
  * @param {Actor|Token} [options.of]   whose turn
  * @param {boolean} [options.thisTurn=false]  "turnEnd" : the end of the turn going on now, not the next one
+ * @param {boolean} [options.confirmed=false] at once, no GM button : a consequence of a change already allowed, or an
+ *                                            automatic part of the creature's own action on itself (Vex)
  * @returns {Promise<{ applied : boolean, asked : boolean, save : object|null }>}
  */
-export async function giveEffect(thing, data, { save = null, dc = null, from = null, until = null, of = null, thisTurn = false } = {}){
+export async function giveEffect(thing, data, { save = null, dc = null, from = null, until = null, of = null, thisTurn = false, confirmed = false } = {}){
   const actor = actorOf(thing);
   if(!actor) return { applied : false, asked : false, save : null };
   const effect = foundry.utils.mergeObject({ showIcon : CONST.ACTIVE_EFFECT_SHOW_ICON?.ALWAYS ?? 2, origin : from?.uuid ?? null, img : from?.img ?? null }, data, { inplace : false });
@@ -373,11 +375,13 @@ export async function giveEffect(thing, data, { save = null, dc = null, from = n
   }
   const payload = { actor : actor.uuid, data : effect, item : from?.uuid ?? null };
   const name = tokenOf(thing)?.name ?? actor.name;
-  return saveThenGive(thing, { save, dc, from, against : data?.statuses ?? [],
+  /* The ask card names what it comes from : the item given, else the effect's origin */
+  const source = from?.name ?? fromUuidSync(effect.origin ?? "", { strict : false })?.name ?? "";
+  return saveThenGive(thing, { save, dc, from, confirmed, against : data?.statuses ?? [],
     /* Its own creature the user may change : here (no GM needed); else the GM's client */
     run : () => actor.isOwner ? giveEffectAsGM(payload, game.user) : gm.run("giveEffect", payload),
     ask : () => gm.ask("giveEffectAsk", payload, { actor : from?.actor ?? null,
-      text : module.format("giveEffect.ask", { item : from?.name ?? "", name, effect : effect.name }),
+      text : module.format("giveEffect.ask", { item : source, name, effect : effect.name }),
       label : module.format("giveEffect.button", { name, effect : effect.name }), conditions : [...(effect.statuses ?? [])] }) });
 }
 

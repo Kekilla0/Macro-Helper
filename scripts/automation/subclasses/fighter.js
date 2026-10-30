@@ -138,9 +138,12 @@ export class fighterArchetypes{
     return String(idOf(item)).replace(/^maneuvers-/, "");
   }
 
-  /* One maneuver per attack */
+  /* One maneuver per attack : a hit maneuver's die, Precision's (on this client), or Riposte's own attack (its die, added
+     to the whole card) */
   static maneuvered(hit){
-    return [...this.HIT, ...this.PRIMED].some(id => hit.message.system.extraRolls?.(hit.ray, id)?.length);
+    return [...this.HIT, ...this.PRIMED].some(id => hit.message.system.extraRolls?.(hit.ray, id)?.length)
+      || this.#done.has(`m|${hit.message.id}|${hit.ray}`)
+      || !!hit.message.system.extraRolls?.(null, "riposte")?.length;
   }
 
   /* The die rolled now (shown), for a use that isn't damage */

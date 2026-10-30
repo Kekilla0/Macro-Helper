@@ -41,6 +41,8 @@ const log = logger.for(import.meta.url);
  *                           rider's save, Chromatic Orb's leap : noCast), and uses another one paid for, marked
  *                           config[module.id].economy = "free" (True Strike's attack, Flurry of Blows' second strike);
  *                           economy = "bonus" / "action" / "reaction" sets what a use costs (Witch Bolt's later damage).
+ *                           With attackOf = "action" too, a free attack is one of the Attack action's (Multiattack's
+ *                           second) : it comes out of that action's attacks, so none is left over.
  *
  *   Legendary actions     : dnd5e spends and resets them; here only off its own turn (Rule Limits), shown as crowns.
  *   Lair actions          : once a round (Rule Limits for a second).
@@ -600,7 +602,8 @@ export class actionTracker{
         /* Nick (mastery) : the Light property's extra attack is part of the Attack action, once a turn */
         if(attack && this.otherLight(st.rec, activity.item) && !st.rec.nick && masteries.nick(activity)) return { kind : null, attack : "more", pool, nick : true };
         const bonus = (attack && (this.remaining(st.rec, "bonus") > 0)) ? this.bonusAttack(activity, st.rec) : null;
-        if(bonus) return { kind : "bonus", attack : "bonus", bonus };
+        /* An Action left too (Action Surge) : either, the user says */
+        if(bonus) return { kind : "bonus", attack : "bonus", bonus, orAction : this.remaining(st.rec, "action") > 0 };
         if(this.remaining(st.rec, "action") > 0) return { kind : "action", attack : "new" };
         return { kind : "action", attack : "over", pool };
       }
@@ -625,12 +628,19 @@ export class actionTracker{
     const special = await this.specialStep(activity, ctx);
     if(special === false) return null;
     const cost = this.costOf(activity, ctx.config);
+    /* One of the attacks a use already paid for (Multiattack's second) : it comes out of the Attack action's attacks */
+    if(!cost && (ctx.config?.[module.id]?.attackOf === "action") && this.isAttack(activity)) await this.takeFree(actor, activity);
     const st = cost ? this.state(actor) : null;
     if(!st) return next();
     /* In its shell (a Tortle's Shell Defense) : nothing but Emerge (its action bar's button) */
     if(actor.effects?.some?.(e => !e.disabled && e.getFlag(module.id, "rule")?.shell)
       && !limits.allow(module.format("species.inShell", { name : actor.name }), { who : actor.name, what : activity.item?.name ?? "" })) return null;
     const plan = this.plan(activity, cost, st);
+    if(plan.orAction){
+      const pick = await this.bonusOrAction(actor, activity, plan.bonus);
+      if(!pick) return null;
+      if(pick === "action"){ plan.kind = "action"; plan.attack = "new"; delete plan.bonus; }
+    }
     const own = ctx.config?.[module.id] ?? {};
     if(own.readied){ plan.readied = true; plan.ask = false; plan.offTurn = null; }
     if(own.oa){ plan.oa = true; plan.ask = false; plan.offTurn = null; }
@@ -664,6 +674,28 @@ export class actionTracker{
     if(result) uses.cardOf(result).then(card => card ? null : this.refund(actor, st.rec, spent)).catch(error => log.debug(error)).finally(() => untag?.());
     else untag?.();
     return result;
+  }
+
+  /* A free attack that's one of the Attack action's (its pool) : counted and logged, nothing paid */
+  static async takeFree(actor, activity){
+    const st = this.state(actor);
+    if(!st?.mine || !st.rec.attack) return;
+    const pool = foundry.utils.deepClone(st.rec.attack);
+    if(this.takeAttack(pool, activity.item)) await this.spend(actor, { kind : null, attack : "more", pool }, activity).catch(error => log.error(error));
+  }
+
+  /* An attack that could be the Bonus Action attack or start a new Attack action : "bonus", "action", or null (closed) */
+  static async bonusOrAction(actor, activity, bonus){
+    const item = activity.item?.name ?? activity.name ?? "";
+    return foundry.applications.api.DialogV2.wait({
+      window : { title : item, icon : "fa-solid fa-hand-fist" },
+      content : `<p>${esc(module.format("actionTracker.bonusOrAction", { name : actor.name, item }))}</p>`,
+      buttons : [
+        { action : "bonus", label : module.format("actionTracker.asBonus", { what : bonus?.text ?? "" }), icon : "fa-solid fa-circle-plus", default : true },
+        { action : "action", label : module.i18n("actionTracker.asAction"), icon : "fa-solid fa-circle" },
+      ],
+      rejectClose : false,
+    });
   }
 
   /**
@@ -1049,15 +1081,32 @@ export class actionTracker{
     const next = foundry.utils.getProperty(changes ?? {}, `flags.${module.id}.hands`);
     /* A creature's first hand change starts from the shield the GM marked equipped : bookkeeping, free */
     if(!next || !this.enabled() || options?.[module.id]?.handsAdopt) return;
+    const plan = this.handsPlan(actor, next);
+    if(!plan) return;
+    /* Asked already (an attack's weapon check, before its roll) */
+    if(plan.short && !options?.[module.id]?.handsChecked && !limits.allow(plan.short, { who : actor.name, what : module.i18n("actionTracker.objects") })) return false;
+    const { short, ...economyHands } = plan;
+    options[module.id] = { ...(options[module.id] ?? {}), economyHands };
+  }
+
+  /**
+   * What a hand change costs on its turn, or null (not its turn, nothing moved).
+   * @param {Actor} actor
+   * @param {{ main, off }} next   the hands after
+   * @param {{ main, off }} [was]  the hands before (default : as saved)
+   * @returns {{ swaps, objects, utilize, paired, entries, short : string|null }|null}  short : the Rule Limits text
+   *   when it needs more Utilize actions than are left
+   */
+  static handsPlan(actor, next, was = actor.getFlag(module.id, "hands") ?? {}){
+    if(!this.enabled()) return null;
     const st = this.state(actor);
-    if(!st?.mine) return;
-    const was = actor.getFlag(module.id, "hands") ?? {};
+    if(!st?.mine) return null;
     const before = new Set([was.main, was.off].filter(Boolean));
     const after = new Set([next.main ?? was.main, next.off ?? was.off].filter(Boolean));
     const moved = [...new Set([...after].filter(id => !before.has(id)).concat([...before].filter(id => !after.has(id))))].map(id => actor.items.get(id))
       /* Unarmed Strike and natural weapons aren't objects : nothing to count */
       .filter(item => item && !((item.type === "weapon") && ((item.system.type?.value === "natural") || (idOf(item) === "unarmed-strike"))));
-    if(!moved.length) return;
+    if(!moved.length) return null;
     const rec = st.rec;
     let swaps = Number(rec.swaps) || 0, objects = Number(rec.objects) || 0, utilize = 0, paired = Number(rec.paired) || 0;
     const entries = [];
@@ -1072,9 +1121,9 @@ export class actionTracker{
       if(objects < 1){ objects += 1; if(two) paired += 1; entries.push([item, "object", into]); continue; }
       utilize += 1; if(two) paired += 1; entries.push([item, "utilize", into]);
     }
-    if(utilize && (this.remaining(rec, "action") < utilize)
-      && !limits.allow(module.format("actionTracker.utilize", { name : actor.name, item : entries.filter(e => e[1] === "utilize").map(e => e[0].name).join(", ") }), { who : actor.name, what : module.i18n("actionTracker.objects") })) return false;
-    options[module.id] = { ...(options[module.id] ?? {}), economyHands : { swaps, objects, utilize, paired, entries : entries.map(([item, how, into]) => ({ name : item.name, how, into })) } };
+    const short = (utilize && (this.remaining(rec, "action") < utilize))
+      ? module.format("actionTracker.utilize", { name : actor.name, item : entries.filter(e => e[1] === "utilize").map(e => e[0].name).join(", ") }) : null;
+    return { swaps, objects, utilize, paired, entries : entries.map(([item, how, into]) => ({ name : item.name, how, into })), short };
   }
 
   static async onHands(actor, options, userId){

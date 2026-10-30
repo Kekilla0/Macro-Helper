@@ -13,13 +13,14 @@ import { castingChoice, castingChoiceOf } from './automation/casting-choice.js';
 import { extendDurations } from './automation/durations.js';
 import { saveRowToggle, toggledOn } from './roll-item/row-toggles.js';
 import { willingSave, willingOn } from './automation/willing.js';
+import { onlyTypes } from './automation/target-types.js';
 import { changeSize } from './automation/size.js';
 import { lendItem, lends } from './automation/lend-item.js';
 import { ignoresDisadvantage, ignoresCover, ignoresProperty, ignoresResistance, ignoresTerrain } from './automation/ignores.js';
 import { speedAs, standUpCost, dragsFreely, jumpRule } from './automation/movement.js';
 import { jump } from './automation/jump.js';
 import { hitDieBonus } from './automation/hit-dice.js';
-import { acDexCap } from './automation/armor.js';
+import { acDexCap, untrainedArmor, untrainedShield } from './automation/armor.js';
 import { extraMasteries } from './automation/weapon-mastery.js';
 import { concentrationModeFrom } from './automation/roll-modes.js';
 import { onSaveMove } from './roll-item/card-moves.js';
@@ -103,7 +104,7 @@ export class api{
       /* An Unarmed Strike's own damage die (Tavern Brawler, Unarmed Fighting); a swap of initiative with an ally (Alert) */
       unarmedDamage, initiativeSwap,
       /* A save only an unwilling target makes, the GM saying who's willing (Enlarge/Reduce); a size larger or smaller */
-      willingSave, willingOn, changeSize,
+      willingSave, willingOn, onlyTypes, changeSize,
       /* A use lent to a creature as an item of its own, with the lender's numbers (Dragon's Breath) */
       lendItem, lends,
       /* Attacks or damage that skip a rule : disadvantage (threatened, long range), cover, a weapon property's limit,
@@ -153,7 +154,7 @@ export class api{
          masteries (Weapon Master); the damage dealer's mode on the Concentration save it causes (Mage Slayer); a push
          or pull on a failed save (Telekinetic Shove, Thunderwave); spells without some components (Improved
          Illusions); a prepared Ritual at its normal time with no slot (Quick Ritual) */
-      hitDieBonus, acDexCap, extraMasteries, concentrationModeFrom, onSaveMove, dropsComponents,
+      hitDieBonus, acDexCap, untrainedArmor, untrainedShield, extraMasteries, concentrationModeFrom, onSaveMove, dropsComponents,
       quickRitual : (match, options) => spells.quickRitual(match, options),
       askToUse : (activity, ctx, options) => gm.askToUse(activity, ctx, options),
 

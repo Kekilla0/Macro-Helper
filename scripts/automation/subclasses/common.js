@@ -117,9 +117,11 @@ export class subclasses{
       /* dnd5e 6 writes the mode as an adv / dis modifier, older rolls as kh / kl */
       d20.modifiers = (d20.modifiers ?? []).filter(m => !/^(k[hl]|adv|dis)/i.test(m));
       d20.results.forEach((r, i) => { r.active = (i === 0); r.discarded = (i !== 0); });
+      d20.number = 1;
       if(updated.options) updated.options.advantageMode = 0;
     }
     else d20.results = d20.results.map((r, i) => ({ ...r, result : value, active : i === 0, discarded : i !== 0 }));
+    updated.resetFormula();
     updated._total = updated._evaluateTotal();
     return updated;
   }

@@ -200,20 +200,21 @@ export class masteries{
       }
       case "sap" :
         await this.#replace(actor, "sap", attacker);
-        await giveEffect(actor, this.#effect("sap", item, attacker), { of : attacker, until : "turnStart" });
+        await giveEffect(actor, this.#effect("sap", item, attacker), { from : item, of : attacker, until : "turnStart" });
         return;
       case "slow" : {
         /* Doesn't stack : a new Slow replaces the old one, whoever's it was */
         await this.#replace(actor, "slow");
         const changes = this.#slowChanges(actor);
-        if(changes.length) await giveEffect(actor, this.#effect("slow", item, attacker, { system : { changes } }), { of : attacker, until : "turnStart" });
+        if(changes.length) await giveEffect(actor, this.#effect("slow", item, attacker, { system : { changes } }), { from : item, of : attacker, until : "turnStart" });
         return;
       }
+      /* On the attacker itself, automatic with the hit (not a choice) : at once, even from the GM's click */
       case "vex" :
         await giveEffect(attacker, this.#effect("vex", item, attacker, {
           name : `${this.label("vex")}: ${target.name}`,
           flags : { [module.id] : { target : target.document.uuid, targetActor : actor.uuid } },
-        }), { of : attacker, until : "turnEnd" });
+        }), { from : item, of : attacker, until : "turnEnd", confirmed : true });
         return;
     }
   }

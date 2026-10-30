@@ -36,6 +36,11 @@ export class casting{
     /* ---------- One spell slot a turn ---------- */
     uses.onActivity("slotPerTurn", (activity, ctx, next) => this.slotStep(activity, ctx, next));
     Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.onCast(activity, usage, results));
+    /* Its card's Refund Resource (the slot back) : this turn's slot too; Consume Resource spends it again */
+    Hooks.on("preUpdateChatMessage", (message, changes, options) => {
+      if(message.getFlag(module.id, "slotTurn") && foundry.utils.hasProperty(changes ?? {}, "system.deltas")) options[`${module.id}Slot`] = !!foundry.utils.getProperty(changes, "system.deltas");
+    });
+    Hooks.on("updateChatMessage", (message, changes, options, userId) => { if((userId === game.user.id) && (`${module.id}Slot` in options)) this.onRefund(message, options[`${module.id}Slot`]); });
     Hooks.on(`${module.id}.useCancelled`, activity => this.onCancelled(activity));
     /* ---------- Long casts ---------- */
     uses.onItem("castingBusy", (item, ctx, next) => this.busyStep(item?.actor, ctx, next));
@@ -74,6 +79,20 @@ export class casting{
   static async onCast(activity, usage, results){
     if(!this.enabled() || !results || !activity?.actor?.isOwner || !this.spendsSlot(activity, usage)) return;
     await markUsedThisTurn(activity.actor, "spellSlot");
+    /* Its card knows the turn, for a refund */
+    const stamp = activity.actor.getFlag(module.id, "turn.spellSlot");
+    if(stamp) uses.cardOf(results).then(card => card?.isOwner ? card.setFlag(module.id, "slotTurn", stamp) : null).catch(error => log.debug(error));
+  }
+
+  /* The card's slot refunded (spent : false) or spent again : on the turn it was cast, this turn's slot follows */
+  static async onRefund(message, spent){
+    const actor = message.getAssociatedActor?.();
+    const stamp = message.getFlag(module.id, "slotTurn");
+    if(!this.enabled() || !actor?.isOwner || !stamp) return;
+    const now = gm.stamp(actor, "turnEnd");
+    if(!now || (now.combat !== stamp.combat) || (now.round !== stamp.round) || (now.turn !== stamp.turn)) return;
+    if(spent) await markUsedThisTurn(actor, "spellSlot");
+    else await actor.unsetFlag(module.id, "turn.spellSlot");
   }
 
   /**

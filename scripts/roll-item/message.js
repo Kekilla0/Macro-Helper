@@ -863,6 +863,8 @@ export function registerMessages(){
 
     /* A ray's box lists only that ray's creature (dnd5e's lists every creature on the card) */
     buildTargetListEntry(targetList, entry){
+      /* A creature since removed (its token being deleted : no actor left) : not listed */
+      if(!fromUuidSync(entry?.uuid ?? "", { strict : false })?.actor) return;
       const ray = this.ray;
       const target = (Number.isInteger(ray) && (targetList.targetingMode === "targeted")) ? this.#message?.system?.rayTarget?.(ray) : null;
       if(target && (target.token !== entry.uuid)) return;
@@ -1043,6 +1045,18 @@ export function registerMessages(){
 
     attackOf(ray){
       return Number.isInteger(ray) ? this.rayAttack(ray) : this.attackRoll;
+    }
+
+    /**
+     * Is this attack a critical hit : its d20, or a rule's (a hit on a Paralyzed creature from within 5 ft makes its
+     * damage a crit, not its d20). Damage added on top (Sneak Attack, a smite) doubles to match.
+     * @param {number|null} [ray=null]
+     * @returns {boolean}
+     */
+    critOf(ray = null){
+      if(this.attackOf(ray)?.isCritical) return true;
+      const base = Number.isInteger(ray) ? this.rayDamage(ray) : this.damageRolls;
+      return !!base?.some?.(r => r.isCritical);
     }
 
     /* The mastery the attack used, as dnd5e chose it (only for actors who have mastered the weapon) */
@@ -1279,7 +1293,7 @@ export function registerMessages(){
       const item = this.parent.getAssociatedItem?.();
       const kind = type ?? [...(item?.system?.damage?.base?.types ?? [])][0] ?? this.damageRolls?.[0]?.options?.type ?? null;
       const data = rollData ?? this.parent.getAssociatedActivity?.()?.getRollData?.() ?? this.parent.getAssociatedActor?.()?.getRollData?.() ?? {};
-      const roll = await damageRoll(formula, { type : kind, crit : !!this.attackOf(ray)?.isCritical, magical, rollData : data });
+      const roll = await damageRoll(formula, { type : kind, crit : this.critOf(ray), magical, rollData : data });
       await this.addDamage([roll], { key, label : label ?? key, ray, onHit, formula });
       return roll;
     }

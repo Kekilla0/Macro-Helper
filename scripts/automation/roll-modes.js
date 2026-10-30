@@ -27,6 +27,7 @@ export class rollModes{
     "conditions",  // conditions.js : the attacker's and target's conditions, sight, Dodging; reasons given with the roll
     "masteries",   // Sap, Vex
     "heavy",       // weapon handling : Heavy for a Small creature (or one too weak)
+    "armorTraining", // Armor Training : STR / DEX in armor worn untrained
     "flanking",    // Homebrew : flanking
     "packTactics", // Creature traits : Pack Tactics
     "help",        // Default Actions : Help's Assist Attack

@@ -136,7 +136,8 @@ export class wizardSchools{
   static diviners(creature){
     if(!this.enabled() || !creature) return [];
     return (canvas.tokens?.placeables ?? []).filter(t => t.actor?.isOwner && this.rollsOf(t.actor).length && !usedThisTurn(t.actor, "portent")
-      && ((t === creature) || canSee(t, creature)));
+      /* Unconscious : unaware, not even of its own rolls */
+      && !t.actor.statuses?.has("unconscious") && ((t === creature) || canSee(t, creature)));
   }
 
   static portentButtons(message, buttons, ray){

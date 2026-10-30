@@ -162,14 +162,15 @@ export class weapons{
        needs it in both. They can't overfill, so there's nothing to count */
     /* A creature (NPC) : the weapon it attacks with is taken in hand, whatever Rule Fixes says (the GM's gear is
        what it has; the swap still follows the rules : free with the attack, then its object interaction) */
-    let putIn = null;
     if(hands.manages(actor) && !natural){
       const held = hands.handOf(actor, item);
       if(!held){
         if(change || hands.isNpc(actor)){
           const slot = attackMode.endsWith("offhand") ? "off" : (hands.freeHand(actor, item) ?? "main");
-          putIn = slot;
-          hands.put(actor, item, slot);
+          /* What it lets go of may cost a Utilize action (a shield) : none left, Block stops the attack */
+          const short = actionTracker.handsPlan(actor, hands.placed(actor, hands.startOf(actor), item, slot), hands.startOf(actor))?.short;
+          if(short && !limits.allow(short, { who : actor.name, what : module.i18n("actionTracker.objects") })) return false;
+          hands.put(actor, item, slot, { [module.id] : { handsChecked : true } });
           changed.push(module.format("hands.putInHand", { item : item.name }));
         }
         else fixable(module.format("hands.notInHand", { item : item.name }), { type : "hand", slot : hands.freeHand(actor, item) ?? "main" });
@@ -240,10 +241,6 @@ export class weapons{
         }
         else fixable(module.format("rules.weapon.loadHand", { item : item.name, items : names }), { type : "free", ids : busy.map(i => i.id) });
       }
-    }
-    /* Hands : an off-hand attack is with what the left hand holds */
-    if(attackMode.endsWith("offhand") && hands.manages(actor) && (putIn !== "off") && (hands.handOf(actor, item) !== "off")){
-      problems.push(module.format("hands.notOffHand", { item : item.name }));
     }
     if(attackMode.endsWith("offhand") && !props.has("lgt")) problems.push(module.format("rules.weapon.offhandLight", { item : item.name }));
     if(attackMode.endsWith("offhand") && game.combat?.started){

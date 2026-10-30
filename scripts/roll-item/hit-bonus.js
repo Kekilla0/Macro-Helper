@@ -87,7 +87,7 @@ export function hitOf(message, ray = null){
   if(!damageTypes.size) for(const t of item.system?.damage?.base?.types ?? []) damageTypes.add(t);
   return {
     message, ray, actor, token : tokenOf(message.getAssociatedToken?.() ?? actor), item, activity, roll,
-    critical : !!roll?.isCritical, advantage : !!roll?.hasAdvantage, disadvantage : !!roll?.hasDisadvantage, target : targets[0] ?? null, targets,
+    critical : !!(card.critOf?.(ray) ?? roll?.isCritical), advantage : !!roll?.hasAdvantage, disadvantage : !!roll?.hasDisadvantage, target : targets[0] ?? null, targets,
     weapon : item.type === "weapon", finesse : !!item.system?.properties?.has?.("fin"), unarmed : (idOf(item) === "unarmed-strike") || (classification === "unarmed"),
     spell : item.type === "spell", cantrip : (item.type === "spell") && (Number(item.system?.level) === 0),
     melee : action.startsWith("m"), ranged : action.startsWith("r"),

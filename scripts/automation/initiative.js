@@ -277,9 +277,15 @@ export class initiative{
   }
 
   static #content(combat, rolls, hidden){
-    const rows = rolls
+    const rolled = rolls
       .map(roll => ({ roll, combatant : combat.combatants.get(roll.options?.[module.id]?.combatant) }))
-      .filter(r => r.combatant)
+      .filter(r => r.combatant);
+    /* dnd5e rolls once for creatures of a kind (its grouping key) : the others take that roll, without a message */
+    const keyOf = c => c.getInitiativeGroupingKey?.() ?? null;
+    const shared = combat.combatants.filter(c => !rolled.some(r => r.combatant.id === c.id) && (c.hidden === hidden) && keyOf(c))
+      .map(c => ({ combatant : c, roll : rolled.find(r => (keyOf(r.combatant) === keyOf(c)) && (r.combatant.initiative === c.initiative))?.roll }))
+      .filter(r => r.roll);
+    const rows = [...rolled, ...shared]
       .sort((a, b) => b.roll.total - a.roll.total)
       .map(({ roll, combatant }) => `
         <li class="macro-helper-row" data-combatant="${combatant.id}">

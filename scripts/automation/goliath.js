@@ -86,7 +86,7 @@ export class goliath{
 
   static usesFix(item){
     if(!this.enabled() || (item?.type !== "feat") || !idOf(item).startsWith(this.ANCESTRY)) return null;
-    const max = item.system?.uses?.max;
+    const max = item._source?.system?.uses?.max ?? item.system?.uses?.max;      // the formula, not the prepared number
     return (max && (String(max) !== "@prof")) ? { update : { "system.uses.max" : "@prof" } } : null;
   }
 

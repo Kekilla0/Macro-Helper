@@ -428,7 +428,7 @@ export class conditions{
     sees ??= { target : canSee(attacker, target), attacker : canSee(target, attacker) };
     const explained = s => mine.has("blinded") || theirs.has(s);
     if(!sees.target && !explained("invisible")) giveMode(roll, "disadvantage", module.i18n("reasons.cantSeeTarget"));
-    if(!sees.attacker && !theirs.has("blinded") && !mine.has("invisible")) giveMode(roll, "advantage", module.i18n("reasons.unseenAttacker"));
+    if(!sees.attacker && !theirs.has("blinded") && !theirs.has("unconscious") && !mine.has("invisible")) giveMode(roll, "advantage", module.i18n("reasons.unseenAttacker"));
   }
 
   /* ---------- Saves : automatic failures, outcomes ---------- */

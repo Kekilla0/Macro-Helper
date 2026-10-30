@@ -23,8 +23,8 @@ const log = logger.for(import.meta.url);
  *                    Actions tab), no object interaction.
  * dnd5e's "equipped" follows : what's in a hand is equipped, what leaves it isn't (weapons and shields). Right-click
  * a hand to empty it. Equipping or unequipping a weapon or shield on the sheet puts it in (a free hand) or takes it
- * out; with no hand free, Rule Limits decides. An off-hand attack (the Light extra attack) is with the item in the
- * left hand, and a Versatile weapon rolls two-handed only when it's in both.
+ * out; with no hand free, Rule Limits decides. A Versatile weapon rolls two-handed only when it's in both. The hand
+ * doesn't make the Light extra attack (2024 has no off hand) : the second Light weapon to attack does.
  *   Light          : a torch, lantern, lamp or candle in a hand lights the token, with its burn time (held-light.js).
  */
 export class hands{
@@ -241,8 +241,14 @@ export class hands{
      object interaction), so picking up a one-handed weapon keeps it */
   static async adopt(actor){
     if(!this.isNpc(actor) || this.inUse(actor)) return;
+    await actor.update({ [`flags.${module.id}.hands`] : this.startOf(actor) }, { [module.id] : { handsAdopt : true } });
+  }
+
+  /* The hands a change starts from : a creature not using its hands yet holds the shield the GM marked equipped */
+  static startOf(actor){
+    if(!this.isNpc(actor) || this.inUse(actor)) return this.of(actor);
     const shield = actor.items.find(i => this.isShield(i) && i.system.equipped);
-    await actor.update({ [`flags.${module.id}.hands`] : { main : null, off : shield?.id ?? null } }, { [module.id] : { handsAdopt : true } });
+    return { main : null, off : shield?.id ?? null };
   }
 
   static isShield(item){
@@ -287,8 +293,10 @@ export class hands{
    * Save the hands, and dnd5e's equipped to match : held gear equipped, gear let go unequipped.
    * @param {Actor} actor
    * @param {{ main, off }} next
+   * @param {object} [options]  the hands update's options
+   * @returns {Promise<boolean>}  false : the change was refused (Rule Limits : no Utilize action left), nothing changed
    */
-  static async save(actor, next){
+  static async save(actor, next, options = {}){
     const before = this.of(actor);
     const held = new Set([next.main, next.off].filter(Boolean));
     const was = new Set([before.main, before.off].filter(Boolean));
@@ -305,13 +313,17 @@ export class hands{
     if(this.isNpc(actor)) for(const item of actor.items){
       if(!held.has(item.id) && !was.has(item.id) && this.isHeldGear(item) && this.canHold(item) && item.system.equipped) updates.push({ _id : item.id, "system.equipped" : false });
     }
-    await actor.setFlag(module.id, "hands", { main : next.main ?? null, off : next.off ?? null });
+    const flag = { main : next.main ?? null, off : next.off ?? null };
+    await actor.update({ [`flags.${module.id}.hands`] : flag }, options);
+    const now = actor.getFlag(module.id, "hands") ?? {};
+    if(((now.main ?? null) !== flag.main) || ((now.off ?? null) !== flag.off)) return false;
     if(updates.length) await actor.updateEmbeddedDocuments("Item", updates, { [module.id] : { hands : true } });
     await this.syncLights(actor, held, was);
     /* A conjured item that goes once let go (Flame Blade's blade) */
     const gone = [...was].filter(id => !held.has(id) && actor.items.get(id)?.getFlag(module.id, "vanishes"));
     if(gone.length) await actor.deleteEmbeddedDocuments("Item", gone);
     log.debug("Hands", actor.name, next);
+    return true;
   }
 
   /* What's held changed : its light (held-light.js) */
@@ -319,10 +331,10 @@ export class hands{
     await heldLight.sync(actor, held, was);
   }
 
-  static async put(actor, item, slot){
+  static async put(actor, item, slot, options = {}){
     if(!this.canHold(item)) return ui.notifications.warn(module.format("hands.cantHold", { item : item?.name ?? "" }));
     await this.adopt(actor);
-    await this.save(actor, this.placed(actor, this.of(actor), item, slot));
+    return this.save(actor, this.placed(actor, this.of(actor), item, slot), options);
   }
 
   /* Empty a hand (both, if what it holds is in both); a Versatile item left alone goes two-handed */
@@ -333,7 +345,7 @@ export class hands{
     const next = { ...h };
     if(next.main === next.off) next.main = next.off = null;
     else next[slot] = null;
-    await this.save(actor, this.normalised(actor, next));
+    return this.save(actor, this.normalised(actor, next));
   }
 
   /* Let go of an item (dropped : out of its hand, still on the sheet); a creature whose hands aren't in use, or with the
@@ -427,24 +439,26 @@ export class hands{
     if(!this.manages(actor) || !this.isHeldGear(item) || !this.canHold(item)) return;
     const equipped = foundry.utils.getProperty(changes ?? {}, "system.equipped");
     if(equipped === undefined) return;
-    const h = this.of(actor);
+    /* Refused (no Utilize action left, Rule Limits) : the sheet's box goes back */
+    const undo = async saved => { if(saved === false) await item.update({ "system.equipped" : !equipped }, { [module.id] : { hands : true } }); };
     if(!equipped){
-      if(this.handOf(actor, item)) await this.empty(actor, this.handOf(actor, item) === "off" ? "off" : "main");
+      if(this.handOf(actor, item)) await undo(await this.empty(actor, this.handOf(actor, item) === "off" ? "off" : "main"));
       return;
     }
     if(this.handOf(actor, item)) return;
     await this.adopt(actor);
     if(this.handOf(actor, item)) return;
+    const h = this.of(actor);
     const free = this.isTwoHanded(item) ? ((!h.main && !h.off) ? "main" : null)
       : !h.main ? "main" : !h.off ? "off" : null;
-    if(free) return this.save(actor, this.placed(actor, h, item, free));
+    if(free) return undo(await this.save(actor, this.placed(actor, h, item, free)));
     /* A Versatile item held two-handed makes room for one more */
     const versatileBoth = h.main && (h.main === h.off) && this.isVersatile(actor.items.get(h.main));
-    if(versatileBoth && !this.isTwoHanded(item)) return this.save(actor, this.placed(actor, h, item, "off"));
+    if(versatileBoth && !this.isTwoHanded(item)) return undo(await this.save(actor, this.placed(actor, h, item, "off")));
     const outcome = await limits.resolve(module.format("hands.full", { name : actor.name, item : item.name }), {
       fix : async () => {}, fixLabel : module.format("hands.fixMain", { item : item.name }),
       who : actor.name, what : module.format("hands.equipped", { item : item.name }) });
-    if(outcome !== "stopped") return this.save(actor, this.placed(actor, h, item, "main"));
+    if(outcome !== "stopped") return undo(await this.save(actor, this.placed(actor, h, item, "main")));
     await item.update({ "system.equipped" : false }, { [module.id] : { hands : true } });
   }
 
