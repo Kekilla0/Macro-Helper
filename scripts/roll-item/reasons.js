@@ -29,6 +29,13 @@ export function noteReason(roll, mode, reason){
   log.debug(mode === "advantage" ? "Advantage" : "Disadvantage", reason);
 }
 
+/* A bonus a rule added to the roll, and why ("+2 : flanking with Goblin") : shown in the log */
+export function noteBonus(roll, bonus, reason){
+  roll.options ??= {};
+  const mine = roll.options[module.id] = { ...(roll.options[module.id] ?? {}) };
+  mine.bonuses = [...(mine.bonuses ?? []), { bonus, reason }];
+}
+
 /* A condition's name : "Prone" */
 export function conditionName(id){
   const label = CONFIG.DND5E?.conditionTypes?.[id]?.name ?? CONFIG.statusEffects?.find(e => e.id === id)?.name ?? id;
@@ -65,9 +72,10 @@ export function modeNote(roll){
  */
 export function logReasons(activity, roll){
   const note = modeNote(roll);
-  if(!note) return;
+  const bonuses = (roll?.options?.[module.id]?.bonuses ?? []).map(b => `${(Number(b.bonus) >= 0) ? "+" : ""}${b.bonus} : ${b.reason}`);
+  if(!note && !bonuses.length) return;
   const uuid = roll.options?.[module.id]?.target;
   const target = uuid ? fromUuidSync(uuid, { strict : false })?.name : (game.user.targets?.first?.()?.name ?? null);
   const who = `${activity?.actor?.name ?? "?"}, ${activity?.item?.name ?? "?"}${target ? ` → ${target}` : ""}`;
-  log.info(`${who} : ${note.text}`);
+  log.info(`${who} : ${[note?.text, ...bonuses].filter(Boolean).join(" · ")}`);
 }

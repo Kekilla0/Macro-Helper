@@ -1,13 +1,16 @@
 import { module } from '../../module.js';
-import { rollModes } from '../roll-modes.js';
+import { rollModeFrom } from '../roll-modes.js';
 import { settings } from '../../settings.js';
 import { limits } from '../limits.js';
 import { logger } from '../../log.js';
-import { tokenOf } from '../../helpers/tokens.js';
-import { findItem, addTimedEffect } from '../../helpers/actors.js';
+import { tokenOf, isIncapacitated } from '../../helpers/tokens.js';
+import { findItem, giveEffect, itemEffectOn, itemEffectOff } from '../../helpers/actors.js';
 import { originOf, idOf } from '../../helpers/utils.js';
-import { giveMode } from '../../roll-item/reasons.js';
 import { conditions } from '../conditions.js';
+import { bonusOnlyWhen } from '../bonus-only-when.js';
+import { cantUseWhile, freeUseWhile, isFreeUse, userOf } from '../use-rules.js';
+import { itemFixes } from '../item-fixes.js';
+import { patch } from '../../patch.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -28,35 +31,58 @@ const log = logger.for(import.meta.url);
  *   Reckless Attack: examples/items/reckless-attack.json. Using it (on your turn) makes you Reckless until the start of
  *                    your next turn : advantage on your attack rolls using Strength, and attack rolls against you have
  *                    advantage.
+ *   Primal Knowledge (level 3) : while raging, an Acrobatics, Intimidation, Perception, Stealth or Survival check uses
+ *                    Strength when that's better (dnd5e's roll, its dialog says so). Plutonium's always-on bonus (the
+ *                    difference, raging or not) is switched off.
+ * Hooks for the subclasses : "macro-helper.rageStart" (actor, activity) once a Rage begins, "macro-helper.rageEnd"
+ * (actor) once it ends.
  */
 export class barbarian{
   static RAGE = "rage";
   static RECKLESS = "reckless-attack";
   static DANGER_SENSE = "danger-sense";
-  static INCAPACITATED = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
+  static PRIMAL_KNOWLEDGE = "primal-knowledge";
+  static PRIMAL_SKILLS = ["acr", "itm", "prc", "ste", "sur"];
+  static ENDS = { incapacitated : "classes.barbarian.incapacitated", heavyArmor : "classes.barbarian.heavyArmor", combatEnd : "classes.barbarian.combatEnded" };
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("classRules");
-  }
+  static enabled = settings.on("classRules");
 
   static register(){
     if(game.system.id !== "dnd5e") return;
     /* Rage's and Reckless Attack's effects are put on here, not by Roll Item */
     Hooks.on(`${module.id}.selfEffects`, activity => !(this.enabled() && [this.RAGE, this.RECKLESS].includes(idOf(activity?.item))));
-    Hooks.on("dnd5e.preUseActivity", (activity, usage) => this.onPreUse(activity, usage));
+    /* Using Rage again while raging extends it, no use spent; no spells while raging; no Rage in Heavy armor */
+    freeUseWhile("rageExtend", { enabled : () => this.enabled(), uses : item => idOf(item) === this.RAGE, while : actor => this.isRaging(actor) });
+    cantUseWhile("rageSpells", { enabled : () => this.enabled(), uses : item => item.type === "spell", while : actor => this.isRaging(actor),
+      reason : actor => module.format("classes.barbarian.noSpells", { name : actor.name }) });
+    cantUseWhile("rageArmor", { enabled : () => this.enabled(), uses : item => idOf(item) === this.RAGE, while : actor => this.inHeavyArmor(actor),
+      reason : actor => module.format("classes.barbarian.noRageArmor", { name : actor.name }) });
     Hooks.on("dnd5e.postUseActivity", (activity, usage) => this.onUse(activity, usage));
-    rollModes.add("reckless", config => this.onPreRollAttack(config));
+    /* Reckless : advantage on its Strength attacks, and on attacks against it */
+    rollModeFrom(effect => effect.getFlag?.(module.id, "reckless"), {
+      by : { mode : "advantage", when : attack => attack.ability === "str", reason : () => module.i18n("reasons.reckless") },
+      against : { mode : "advantage", reason : () => module.i18n("reasons.targetReckless") },
+      enabled : () => this.enabled(), id : "reckless" });
     Hooks.on("dnd5e.rollAttackV2", (rolls, { subject } = {}) => this.onAttack(subject, rolls?.[0]));
-    Hooks.on("dnd5e.preRollDamageV2", config => this.rageDamage(config));
-    Hooks.on("dnd5e.preRollSavingThrowV2", config => this.dangerSense(config));
-    Hooks.on(`${module.id}.saveHint`, (message, actor, ability, { ignore }) => this.dangerSenseHint(actor, ability, ignore));
+    /* Rage's damage bonus is for attacks made with Strength (a thrown weapon too, 2024), never another ability : dnd5e
+       adds it to every melee weapon attack */
+    bonusOnlyWhen(effect => this.isRageEffect(effect), ["system.bonuses.mwak.damage", "system.rolls.damage.mwak.bonus"],
+      attack => attack.weapon && (attack.ability === "str"), { enabled : () => this.enabled(), id : "rageDamage" });
+    /* Danger Sense : its DEX save advantage switched off while Incapacitated */
+    bonusOnlyWhen(this.DANGER_SENSE, "system.abilities.dex.save.roll.mode", actor => !isIncapacitated(actor),
+      { enabled : () => this.enabled(), id : "dangerSense" });
     Hooks.on("createChatMessage", message => this.onCard(message));
     Hooks.on("combatTurnChange", (combat, prior, current) => this.onTurnEnd(combat, prior, current));
-    Hooks.on("createActiveEffect", effect => this.onStatus(effect));
-    Hooks.on("updateActiveEffect", effect => this.onStatus(effect));
-    Hooks.on("updateItem", (item, changes) => this.onArmor(item, foundry.utils.getProperty(changes ?? {}, "system.equipped")));
-    Hooks.on("createItem", item => this.onArmor(item, item.system?.equipped));
-    Hooks.on("deleteCombat", combat => this.onCombatEnd(combat));
+    /* Ends early : Incapacitated, Heavy armor on, the combat over */
+    conditions.endsWhen(effect => this.enabled() && this.isRageEffect(effect), { incapacitated : true, heavyArmor : true, combatEnd : true,
+      end : (actor, effects, why) => this.endRage(actor, module.i18n(this.ENDS[why])) });
+    /* Primal Knowledge : Plutonium's bonus is on whether raging or not */
+    itemFixes.add({ name : "Primal Knowledge", where : "owned", plan : item => this.primalFix(item) });
+    const self = this;
+    patch.wrap("CONFIG.Actor.documentClass.prototype.rollSkill", function(wrapped, config = {}, ...rest){
+      try { config = self.primalKnowledge(this, config); } catch(error){ log.error(error); }
+      return wrapped(config, ...rest);
+    });
   }
 
 
@@ -93,24 +119,7 @@ export class barbarian{
 
   /* The token's own actor (an unlinked token's), for anything it does */
   static actorFor(activity){
-    return activity.getUsageToken?.()?.actor ?? tokenOf(activity.actor)?.actor ?? activity.actor;
-  }
-
-  /* Before a use : extending a Rage spends nothing; spells can't be cast while raging */
-  static onPreUse(activity, usage){
-    if(!this.enabled()) return;
-    const actor = this.actorFor(activity);
-    if((activity.item?.type === "spell") && this.isRaging(actor)){
-      if(!limits.allow(module.format("classes.barbarian.noSpells", { name : actor.name }), { who : actor.name, what : activity.item.name })) return false;
-    }
-    if((idOf(activity.item) === this.RAGE) && this.isRaging(actor)){
-      usage.consume = false;
-      usage[module.id] = { ...(usage[module.id] ?? {}), rageExtend : true };
-    }
-    /* "if you aren't wearing Heavy armor" */
-    else if((idOf(activity.item) === this.RAGE) && this.inHeavyArmor(actor)){
-      if(!limits.allow(module.format("classes.barbarian.noRageArmor", { name : actor.name }), { who : actor.name, what : activity.item.name })) return false;
-    }
+    return userOf(activity);
   }
 
   static async onUse(activity, usage){
@@ -118,7 +127,7 @@ export class barbarian{
     const id = idOf(activity.item);
     try {
       if(id === this.RAGE){
-        if(usage?.[module.id]?.rageExtend) return await this.keep(this.actorFor(activity), "bonus");
+        if(isFreeUse(usage, "rageExtend")) return await this.keep(this.actorFor(activity), "bonus");
         return await this.startRage(activity);
       }
       if(id === this.RECKLESS) return await this.reckless(activity);
@@ -134,24 +143,15 @@ export class barbarian{
     const item = activity.item;
     const kept = this.now();
     if(!this.rageEffects(actor).length){
-      const id = activity.effects?.[0]?._id;
-      const effect = (id && item.effects.get(id)) ?? item.effects.find(e => e.transfer) ?? item.effects.contents?.[0];
+      /* The item's effect on, its 10 minutes from now */
+      const effect = await itemEffectOn(item, { on : actor, activity, data : { flags : { [module.id] : { rage : { kept } } } } });
       if(!effect) return ui.notifications.warn(module.format("classes.barbarian.noEffect", { item : item.name }));
-      /* Its 10 minutes count from now (v14 : start.time / round / turn) */
-      const start = { time : game.time.worldTime };
-      if(game.combat?.started) Object.assign(start, { combat : game.combat.id, round : game.combat.round, turn : game.combat.turn ?? 0 });
-      if(effect.transfer && (item.parent === actor)) await effect.update({ disabled : false, start, [`flags.${module.id}.rage`] : { kept } });
-      else {
-        const data = foundry.utils.mergeObject(effect.toObject(), { disabled : false, transfer : false, origin : item.uuid,
-          start, flags : { [module.id] : { rage : { kept } } } });
-        delete data._id;
-        await actor.createEmbeddedDocuments("ActiveEffect", [data]);
-      }
     }
-    else await this.keep(actor, "start");
+    else return await this.keep(actor, "start");
     /* No Concentration while raging */
     if(actor.concentration?.effects?.size) await actor.endConcentration?.();
     log.debug("Rage", actor.name);
+    Hooks.callAll(`${module.id}.rageStart`, actor, activity);
   }
 
   /* Rage kept going this turn (an attack, a forced save, the bonus action) */
@@ -211,31 +211,6 @@ export class barbarian{
     if(kept.round < prior.round) await this.endRage(actor, module.i18n("classes.barbarian.notKept"));
   }
 
-  /* The combat is over : its Barbarians' Rages end */
-  static async onCombatEnd(combat){
-    if(!this.enabled() || !game.users.activeGM?.isSelf) return;
-    for(const combatant of combat?.combatants ?? []){
-      const actor = combatant.actor;
-      if(actor && this.rageEffects(actor).length) await this.endRage(actor, module.i18n("classes.barbarian.combatEnded"));
-    }
-  }
-
-  /* Incapacitated : the Rage ends */
-  static async onStatus(effect){
-    if(!this.enabled() || !game.users.activeGM?.isSelf) return;
-    const actor = (effect?.parent?.documentName === "Actor") ? effect.parent : effect?.parent?.actor;
-    if(!actor || !this.INCAPACITATED.some(s => actor.statuses?.has(s)) || !this.rageEffects(actor).length) return;
-    await this.endRage(actor, module.i18n("classes.barbarian.incapacitated"));
-  }
-
-  /* Heavy armor on : the Rage ends */
-  static async onArmor(item, equipped){
-    if(!this.enabled() || !game.users.activeGM?.isSelf || !equipped) return;
-    if((item?.type !== "equipment") || (item.system?.type?.value !== "heavy")) return;
-    const actor = item.actor;
-    if(this.rageEffects(actor).length) await this.endRage(actor, module.i18n("classes.barbarian.heavyArmor"));
-  }
-
   static async endRage(actor, reason){
     const effects = this.rageEffects(actor);
     if(!effects.length || this.#ending.has(actor.uuid)) return;
@@ -247,49 +222,13 @@ export class barbarian{
   static #ending = new Set();
 
   static async #endRage(actor, effects, reason){
-    for(const effect of effects){
-      if(effect.parent?.documentName === "Item") await effect.update({ disabled : true, [`flags.${module.id}.rage`] : globalThis._del ?? new foundry.data.operators.ForcedDeletion() });
-      else await effect.delete();
-    }
+    await itemEffectOff(actor, e => effects.includes(e), { data : { [`flags.${module.id}.rage`] : new foundry.data.operators.ForcedDeletion() } });
     await ChatMessage.implementation.create({
       speaker : ChatMessage.implementation.getSpeaker({ actor }),
       content : `<p><i class="fa-solid fa-face-angry" inert></i> ${module.format("classes.barbarian.ends", { name : foundry.utils.escapeHTML(actor.name), reason })}</p>`,
     });
     log.debug("Rage ends", actor.name, reason);
-  }
-
-  /* Rage damage : only attacks using Strength. dnd5e adds it to every melee weapon attack (DEX finesse too) and to no
-     ranged one (STR thrown) : take it off / put it on in the damage formula */
-  static rageDamage(config){
-    const activity = config?.subject;
-    if((activity?.type !== "attack") || (activity.item?.type !== "weapon")) return;
-    const actor = activity.actor;
-    if(!this.isRaging(actor)) return;
-    const change = this.rageEffects(actor).flatMap(e => [...(e.system?.changes ?? e.changes ?? [])])
-      .find(c => ["system.bonuses.mwak.damage", "system.rolls.damage.mwak.bonus"].includes(c.key));
-    const bonus = String(change?.value ?? "").replace(/^\s*\+\s*/, "").trim();
-    if(!bonus) return;
-    const ability = config.ability ?? config.rolls?.[0]?.options?.ability ?? activity.ability;
-    const action = String(activity.getActionType?.(config.attackMode) ?? "");
-    const roll = config.rolls?.[0];
-    if(!roll) return;
-    if(action.startsWith("m") && (ability !== "str")) roll.parts = this.withoutBonus(roll.parts ?? [], bonus);
-    else if(action.startsWith("r") && (ability === "str")) roll.parts = [...(roll.parts ?? []), bonus];
-  }
-
-  /* The parts without Rage's bonus : dnd5e adds the melee damage bonus as one part (Rage's, maybe with others) */
-  static withoutBonus(parts, bonus){
-    const flat = s => String(s).replace(/\s+/g, "");
-    const target = flat(bonus).replace(/^\+/, "");
-    for(let i = 0; i < parts.length; i++){
-      const part = flat(parts[i]);
-      if(!part.includes(target)) continue;
-      const rest = part.replace(`+${target}`, "").replace(target, "").replace(/^\+/, "");
-      const copy = [...parts];
-      if(rest) copy[i] = rest; else copy.splice(i, 1);
-      return copy;
-    }
-    return [...parts, `-(${bonus})`];   // not found : cancel it instead
+    Hooks.callAll(`${module.id}.rageEnd`, actor);
   }
 
   /* Wearing heavy armor */
@@ -297,28 +236,25 @@ export class barbarian{
     return !!actor?.items?.some?.(i => (i.type === "equipment") && i.system?.equipped && (i.system?.type?.value === "heavy"));
   }
 
-  /* ---------- Danger Sense ---------- */
+  /* ---------- Primal Knowledge ---------- */
 
-  /* Incapacitated : no DEX save advantage from it (when it's the only advantage) */
-  static dangerSense(config){
-    if(!this.enabled() || (config?.ability !== "dex")) return;
-    const actor = config.subject;
-    if(!this.INCAPACITATED.some(s => actor?.statuses?.has(s)) || !findItem(actor, this.DANGER_SENSE)) return;
-    const sources = [...(actor.appliedEffects ?? [])].filter(e => [...(e.system?.changes ?? e.changes ?? [])]
-      .some(c => (c.key === "system.abilities.dex.save.roll.mode") && (Number(c.value) > 0)));
-    const onlyDangerSense = sources.length && sources.every(e => /danger sense/i.test(e.name) || (idOf(e.parent) === this.DANGER_SENSE));
-    if(!onlyDangerSense) return;
-    for(const roll of config.rolls ?? []) if(roll.options) roll.options.advantage = false;
-    config.advantage = false;
-    log.debug("Danger Sense : no advantage while Incapacitated", actor.name);
+  /* Plutonium's effect adds STR's lead over the skill's ability always : switched off (the rule only works raging) */
+  static primalFix(item){
+    if((idOf(item) !== this.PRIMAL_KNOWLEDGE) || !item.actor) return null;
+    const updateEffects = [...(item.effects ?? [])].filter(e => !e.disabled && [...(e.changes ?? e.system?.changes ?? [])]
+      .some(c => /^system\.skills\.\w+\.bonuses\.check$/.test(c.key) && /abilities\.str\.mod/.test(String(c.value)))).map(e => ({ _id : e.id, disabled : true }));
+    return updateEffects.length ? { updateEffects } : null;
   }
 
-  /* Roll Item's save hint : Danger Sense's effect isn't named as advantage while Incapacitated */
-  static dangerSenseHint(actor, ability, ignore){
-    if(!this.enabled() || (ability !== "dex") || !this.INCAPACITATED.some(s => actor?.statuses?.has(s))) return;
-    for(const effect of actor.appliedEffects ?? []){
-      if(/danger sense/i.test(effect.name ?? "") || (idOf(effect.parent) === this.DANGER_SENSE)) ignore.add(effect);
-    }
+  /* Raging, one of its skills : rolled with Strength when that's the better ability */
+  static primalKnowledge(actor, config){
+    if(!this.enabled() || config?.ability || !this.PRIMAL_SKILLS.includes(config?.skill)) return config;
+    if(!findItem(actor, this.PRIMAL_KNOWLEDGE) || !this.isRaging(actor)) return config;
+    const own = actor.system?.skills?.[config.skill]?.ability;
+    const mod = key => Number(actor.system?.abilities?.[key]?.mod) || 0;
+    if(!own || (mod("str") <= mod(own))) return config;
+    log.debug("Primal Knowledge : STR", actor.name, config.skill);
+    return { ...config, ability : "str" };
   }
 
   /* ---------- Reckless Attack ---------- */
@@ -329,7 +265,7 @@ export class barbarian{
     const actor = this.actorFor(activity);
     if(game.combat?.started && !this.isTurnOf(actor) && !limits.allow(module.format("classes.barbarian.recklessTurn", { name : actor.name }), { who : actor.name, what : activity.item.name })) return;
     if(this.isReckless(actor)) return;
-    await addTimedEffect(actor, {
+    await giveEffect(actor, {
       name : module.i18n("classes.barbarian.reckless"), img : this.RECKLESS_IMG,
       flags : { [module.id] : { reckless : true } },
     }, { until : "turnStart" });
@@ -339,16 +275,4 @@ export class barbarian{
     return [...(actor?.appliedEffects ?? actor?.effects ?? [])].some(e => e.getFlag?.(module.id, "reckless"));
   }
 
-  /* Your STR attacks : advantage. Attacks against you : advantage */
-  static onPreRollAttack(config){
-    if(!this.enabled()) return;
-    const roll = config.rolls?.[0];
-    const attacker = config.subject?.actor;
-    if(!roll || !attacker) return;
-    roll.options ??= {};
-    const ability = config.ability ?? config.subject?.ability;
-    if(this.isReckless(attacker) && (ability === "str")) giveMode(roll, "advantage", module.i18n("reasons.reckless"));
-    const target = conditions.targetOf(config);
-    if(target?.actor && this.isReckless(target.actor)) giveMode(roll, "advantage", module.i18n("reasons.targetReckless"));
-  }
 }

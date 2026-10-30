@@ -1,27 +1,68 @@
+import { rollOptionRange } from '../roll-item/roll-options.js';
 import { module } from '../module.js';
+import { gm } from '../gm.js';
 
 /**
  * Token / distance helpers. Distances are measured between token footprints on the grid :
  * adjacent squares (sides or diagonals) are 5 ft (one grid unit), whatever the token art looks like.
- * Further out, the Helpers "Range Shape" setting decides :
- *   circle (default) : true distance, so a range reaches its full length north / east / south / west and less on the diagonals
- *   square (5e rules) : every diagonal step counts as 5 ft, so a range is a square
+ * Further out, the scene's diagonal rule decides, as Foundry's ruler measures it (core setting Square Grid Diagonals) :
+ *   Equidistant (dnd5e's default, the 2024 rule) : every diagonal step is 5 ft, so a range is a square
+ *   Exact / Approximate : a diagonal step is 1.41 / 1.5 squares; Alternating : 5 / 10 / 5 ft (or 10 / 5 / 10)
+ *   Rectilinear / Illegal : no diagonals; a gridless scene : true distance
  */
 
-/* Round ranges (true distance) unless the Helpers setting asks for 5e's square ones */
-export function isCircular(){
-  try { return game.settings.get(module.id, "rangeShape") !== "square"; }
-  catch { return true; }
+/* Foundry's diagonal rule for the scene, null on a gridless one (true distance) */
+function diagonalRule(){
+  if(canvas.grid?.isGridless) return null;
+  return canvas.grid?.diagonals ?? CONST.GRID_DIAGONALS.EQUIDISTANT;
+}
+
+/* Diagonal steps count as straight ones (the 2024 rule) : ranges are squares */
+export function isEquidistant(){
+  return diagonalRule() === CONST.GRID_DIAGONALS.EQUIDISTANT;
 }
 
 /**
- * Distance in grid steps for a gap of gx columns and gy rows between two footprints (0, 0 = adjacent) : 1 = adjacent.
+ * What a move of gx columns, gy rows and gz grid steps up costs in grid steps, by the scene's diagonal rule
+ * (Foundry's own formulas : SquareGrid#_measurePath).
  * @param {number} gx
  * @param {number} gy
+ * @param {number} [gz=0]
+ * @returns {number}
+ */
+export function gridCost(gx, gy, gz = 0){
+  const [a, b, c] = [Math.abs(gx), Math.abs(gy), Math.abs(gz)].sort((x, y) => y - x);
+  const D = CONST.GRID_DIAGONALS;
+  switch(diagonalRule()){
+    case null : return Math.hypot(a, b, c);
+    case D.EQUIDISTANT : return a;
+    case D.EXACT : return a + ((Math.SQRT2 - 1) * (b - c)) + ((Math.sqrt(3) - 1) * c);
+    case D.APPROXIMATE : return a + (0.5 * (b - c)) + (0.75 * c);
+    /* 5 / 10 / 5 : every second diagonal costs one more; 10 / 5 / 10 : the first one already does */
+    case D.ALTERNATING_1 : return a + Math.floor((b + (0.5 * c)) / 2);
+    case D.ALTERNATING_2 : return a + Math.floor((b + (0.5 * c) + 1.5) / 2);
+    default : return a + b + c;
+  }
+}
+
+/**
+ * Distance in grid steps between two footprints, from the gap between them on each axis : the free squares between
+ * (0 = touching, below 0 = overlapping on that axis). Adjacent (diagonals too) = 1. Further out it's the ruler's count
+ * from square to square (a gap of 3 diagonally is 4 diagonal steps). gz : the height gap in squares (0 = level).
+ * @param {number} gx
+ * @param {number} gy
+ * @param {number} [gz=0]
  * @returns {number}
  */
 export function gridSteps(gx, gy, gz = 0){
-  return (isCircular() ? Math.hypot(gx, gy, gz) : Math.max(gx, gy, gz)) + 1;
+  const ox = Math.max(0, gx + 1), oy = Math.max(0, gy + 1), oz = (gz > 0) ? (gz + 1) : 0;
+  if(Math.max(ox, oy, oz) <= 1) return 1;
+  return gridCost(ox, oy, oz);
+}
+
+/* The gap between two footprints (cells()) on each axis, for gridSteps */
+export function cellGap(a, b){
+  return { gx : Math.max(b.left - a.right, a.left - b.right), gy : Math.max(b.top - a.bottom, a.top - b.bottom) };
 }
 
 /**
@@ -35,6 +76,39 @@ export function tokenOf(thing){
   if(thing.documentName === "Token") return thing.object ?? null;           // TokenDocument
   const actor = thing.documentName === "Actor" ? thing : thing.actor;       // Actor, or Item / Activity
   return actor?.token?.object ?? actor?.getActiveTokens?.()[0] ?? null;
+}
+
+/**
+ * The token a use acts from (its usage's `from`, set by actFrom : Invoke Duplicity's illusion), on the scene being
+ * viewed; null : its user's own token.
+ * @param {object} usage   an activity's use config
+ * @returns {Token|null}
+ */
+export function actingFrom(usage){
+  const uuid = usage?.[module.id]?.from;
+  const token = uuid ? fromUuidSync(uuid, { strict : false })?.object : null;
+  return (token?.document?.parent === canvas.scene) ? token : null;
+}
+
+/* While a use made from another token's space runs (actFrom), the picks inside it measure from there : creature uuid -> token */
+const actingNow = new Map();
+
+/**
+ * The token a creature's use under way acts from (actFrom), or null. Picks (pickTargets, pickSpace) measure from it.
+ * @param {Token|TokenDocument|Actor} thing   the user
+ * @returns {Token|null}
+ */
+export function actingNowFrom(thing){
+  const actor = actorOf(tokenOf(thing) ?? thing);
+  const token = actor ? actingNow.get(actor.uuid) : null;
+  return (token?.document?.parent === canvas.scene) && !token.document.isDeleted ? token : null;
+}
+
+/* Set (a token) or cleared (null) while its use runs : the actFrom step */
+export function setActingNow(actor, token){
+  if(!actor) return;
+  if(token) actingNow.set(actor.uuid, tokenOf(token));
+  else actingNow.delete(actor.uuid);
 }
 
 /**
@@ -58,17 +132,15 @@ export function cells(token){
 
 /**
  * Distance between two tokens' footprints, in scene units (feet). Adjacent (sides or diagonals) = one grid unit (5 ft).
- * Beyond that it follows the Range Shape setting (see the top of this file). Not rounded : 2 squares diagonally is ~12.07 ft.
+ * Beyond that it follows the scene's diagonal rule (see the top of this file). Not rounded : with Exact, 2 squares diagonally is ~12.07 ft.
  * @param {Token|TokenDocument} a
  * @param {Token|TokenDocument} b
  * @returns {number}
  */
 export function distanceBetween(a, b){
   const ta = tokenOf(a) ?? a, tb = tokenOf(b) ?? b;
-  const ca = cells(ta), cb = cells(tb);
-  const gapX = Math.max(0, cb.left - ca.right, ca.left - cb.right);
-  const gapY = Math.max(0, cb.top - ca.bottom, ca.top - cb.bottom);
-  return gridSteps(gapX, gapY, heightGap(ta, tb)) * canvas.scene.grid.distance;
+  const { gx, gy } = cellGap(cells(ta), cells(tb));
+  return gridSteps(gx, gy, heightGap(ta, tb)) * canvas.scene.grid.distance;
 }
 
 /**
@@ -105,9 +177,13 @@ export function getRange(thing, { long = false, thrown = false } = {}){
   const item = isItem ? thing : thing?.item;
   const activity = isItem ? (item.system.activities?.getByType("attack")[0] ?? item.system.activities?.contents[0]) : thing;
   if(!item) return 0;
+  /* item.roll({ range }) : instead of the item's */
+  const given = rollOptionRange(activity);
+  if(given) return given;
 
-  /* Activities that set their own range override the item's */
-  const range = activity?.range?.override ? activity.range : (item.system.range ?? {});
+  /* Activities that set their own range override the item's; an item with no range of its own (a feature) : the activity's */
+  const own = item.system.range;
+  const range = (activity?.range?.override || (!own?.units && activity?.range?.units)) ? activity.range : (own ?? {});
   const units = range.units || "ft";
   const toScene = value => {
     const sceneUnits = canvas.scene?.grid.units || "ft";
@@ -117,7 +193,14 @@ export function getRange(thing, { long = false, thrown = false } = {}){
   /* Weapons : reach for melee, range for ranged (and thrown on request) */
   if(item.type === "weapon"){
     const melee = item.system.attackType !== "ranged";
-    if(melee && !(thrown && range.value)) return toScene(item.system.range.reach ?? 5);
+    /* Its reach : item.roll({ reach }), else the weapon's */
+    const reach = rollOptionRange(activity, "reach") ?? item.system.range.reach ?? 5;
+    /* Rules that lengthen it (Elemental Attunement : the Unarmed Strike's reach +10 ft) : Hooks "macro-helper.reach" (item, { feet }) */
+    if(melee && !(thrown && range.value)){
+      const more = { feet : 0 };
+      Hooks.callAll(`${module.id}.reach`, item, more);
+      return toScene(reach + (Number(more.feet) || 0));
+    }
     return toScene(long ? (range.long || range.value || 0) : (range.value || 0));
   }
 
@@ -128,7 +211,10 @@ export function getRange(thing, { long = false, thrown = false } = {}){
     case "spec" : return Infinity;
   }
   if(range.reach && !range.value) return toScene(range.reach);
-  return toScene(long ? (range.long || range.value || 0) : (range.value || 0));
+  /* Rules that lengthen a spell's or feature's range (Improved Illusions : +60 ft) : Hooks "macro-helper.range" (item, { feet }) */
+  const more = { feet : 0 };
+  Hooks.callAll(`${module.id}.range`, item, more);
+  return toScene((long ? (range.long || range.value || 0) : (range.value || 0)) + (Number(more.feet) || 0));
 }
 
 /* Colours of the map highlights */
@@ -177,12 +263,13 @@ export function highlightRange(origin, feet, { normal, tokens = [], selected = [
 
   /**
    * The squares of a row within `steps` grid steps of the footprint, as [first, last + 1) columns, or null.
-   * Same measure as distanceBetween, so every square shown in range is one a token could be picked in.
+   * gy : the row's gap from the footprint (below 0 : one of its own rows). Same measure as distanceBetween, so every
+   * square shown in range is one a token could be picked in.
    */
   const span = (c, gy, steps) => {
-    const k = steps - 1;                                            // largest gap allowed (0 = adjacent only)
-    if((k < 0) || (gy > k)) return null;
-    const gx = isCircular() ? Math.floor(Math.sqrt((k * k) - (gy * gy)) + 1e-9) : k;
+    if((steps < 1) || (gridSteps(-1, gy) > steps + 1e-9)) return null;
+    let gx = steps - 1;                                             // free squares between the footprint and the row's last
+    while((gx >= 0) && (gridSteps(gx, gy) > steps + 1e-9)) gx--;
     return [c.left - 1 - gx, c.right + gx + 1];
   };
 
@@ -195,7 +282,7 @@ export function highlightRange(origin, feet, { normal, tokens = [], selected = [
       const outer = Math.floor(feet / unit);
       const inner = Number.isFinite(normal) ? Math.min(outer, Math.max(0, Math.floor(normal / unit))) : outer;
       for(let j = c.top - outer; j < c.bottom + outer; j++){
-        const gy = (j < c.top) ? (c.top - 1 - j) : (j >= c.bottom) ? (j - c.bottom) : 0;
+        const gy = (j < c.top) ? (c.top - 1 - j) : (j >= c.bottom) ? (j - c.bottom) : -1;
         const inRow = (j >= c.top) && (j < c.bottom);
         const long = span(c, gy, outer), near = span(c, gy, inner);
         const y0 = j * grid, y1 = y0 + grid;
@@ -231,30 +318,35 @@ export function highlightRange(origin, feet, { normal, tokens = [], selected = [
 /**
  * Where a push would leave a token : straight away from `from`, up to `feet`, square by square, stopping at walls
  * and at other creatures (a square another token stands in blocks it, like a wall).
- * Measured like everything else here (Range Shape) : with Square, a diagonal square is 5 ft, so 10 ft is 2 diagonal squares.
+ * Measured like everything else here (the scene's diagonal rule) : with Equidistant, a diagonal square is 5 ft, so 10 ft is 2 diagonal squares.
  * @param {Token|TokenDocument|Actor} thing   who is pushed
- * @param {Token|TokenDocument|Actor} from    who pushes
+ * @param {Token|TokenDocument|Actor|{x : number, y : number}} from   who pushes, or a point on the map (canvas pixels)
  * @param {number} [feet=10]
  * @returns {{ x : number, y : number, feet : number }|null}  the token's new top-left position and how far that is,
  *          null if it can't move at all
  */
-export function pushDestination(thing, from, feet = 10){
-  const token = tokenOf(thing), source = tokenOf(from);
-  if(!token || !source || (token === source)) return null;
+export function pushDestination(thing, from, feet = 10, { toward = false } = {}){
+  const token = tokenOf(thing), origin = pointOf(from);
+  if(!token || !origin || (isPoint(from) ? false : (tokenOf(from) === token))) return null;
 
   const start = token.center;
-  let dx = start.x - source.center.x, dy = start.y - source.center.y;
-  const norm = isCircular() ? Math.hypot(dx, dy) : Math.max(Math.abs(dx), Math.abs(dy));
+  let dx = start.x - origin.x, dy = start.y - origin.y;
+  /* A pull : straight toward the source instead (stops at the first creature : the source itself at the latest) */
+  if(toward){ dx = -dx; dy = -dy; }
+  const norm = isEquidistant() ? Math.max(Math.abs(dx), Math.abs(dy)) : Math.hypot(dx, dy);
   if(!norm) return null;
   dx /= norm; dy /= norm;
 
   const grid = canvas.grid.size;
   const steps = Math.floor(feet / canvas.scene.grid.distance);
   const { x : x0, y : y0 } = token.document;
+  const rect = canvas.dimensions?.sceneRect;
   let best = null;
   for(let k = 1; k <= steps; k++){
     let x = x0 + (dx * k * grid), y = y0 + (dy * k * grid);
     if(!canvas.grid.isGridless){ x = Math.round(x / grid) * grid; y = Math.round(y / grid) * grid; }
+    /* The map's edge stops it like a wall */
+    if(rect && ((x < rect.x) || (y < rect.y) || (x + token.w > rect.x + rect.width) || (y + token.h > rect.y + rect.height))) break;
     const center = { x : x + (token.w / 2), y : y + (token.h / 2) };
     let blocked = false;
     try { blocked = !!CONFIG.Canvas.polygonBackends.move.testCollision(start, center, { type : "move", mode : "any" }); }
@@ -294,14 +386,17 @@ export function isSpaceFree(x, y, size = 1, { height, ignore } = {}){
  * @param {Token|TokenDocument|Actor} thing
  * @param {number} width   in squares
  * @param {number} height  in squares
+ * @param {object} [options]
+ * @param {{ width : number, height : number }} [options.from]  the space it covers now, when its token already shows
+ *                                                              the new size (dnd5e's token size sync)
  * @returns {{ x : number, y : number }|null}  the new top-left corner, null if it can't fit here
  */
-export function fitSpace(thing, width, height = width){
+export function fitSpace(thing, width, height = width, { from = null } = {}){
   const token = tokenOf(thing);
   if(!token) return null;
   const grid = canvas.grid.size;
   const { x, y } = token.document;
-  const w0 = Math.max(1, Math.round(token.document.width)), h0 = Math.max(1, Math.round(token.document.height));
+  const w0 = Math.max(1, Math.round(from?.width ?? token.document.width)), h0 = Math.max(1, Math.round(from?.height ?? token.document.height));
   const W = Math.max(1, Math.round(width)), H = Math.max(1, Math.round(height));
   if((W <= w0) && (H <= h0)) return { x, y };
   const offsets = [];
@@ -342,20 +437,96 @@ function occupied(token, x, y){
   });
 }
 
+/* A plain { x, y } point on the map (canvas pixels), not a token */
+function isPoint(thing){
+  return (foundry.utils.getType(thing) === "Object") && Number.isFinite(thing.x) && Number.isFinite(thing.y) && !thing.documentName;
+}
+
+/* The point something stands at : a point as it is, a token (or its actor) at its centre */
+function pointOf(thing){
+  if(isPoint(thing)) return { x : thing.x, y : thing.y };
+  return thing ? (tokenOf(thing)?.center ?? null) : null;
+}
+
 /**
- * Push a token straight away from another (Shove, the Push mastery, Thunderwave...), see pushDestination.
- * Needs permission to move the token (its owner or the GM).
- * @param {Token|TokenDocument|Actor} thing
- * @param {Token|TokenDocument|Actor} from
- * @param {number} [feet=10]
- * @returns {Promise<number>}  how far it moved, in feet : 0 if it couldn't move at all (a wall right behind it)
+ * Forced movement : a creature moved straight away from (push) or toward (pull) a creature or a point, up to `feet`,
+ * square by square, stopping at walls and creatures (see pushDestination). Every push and pull goes through here : the
+ * Push mastery, Shove, smites, spells, card buttons, macros.
+ * Afterwards Hooks "macro-helper.pushed" (token, moved, wanted, item, { direction, name }) : `wanted` is how far it
+ * should have gone (a pull only up to the space beside the one pulling), so a shorter move hit something (Homebrew :
+ * Push Into Obstacles).
+ * A creature that isn't the user's own (gm.mine) asks the GM : a chat card with the GM's button.
+ *   await MacroHelper.forcedMove(target, { from : token, feet : 10, name : "Repelling Blast" })
+ *   await MacroHelper.forcedMove(target, { direction : "toward", from : { x, y }, feet : 15 })    toward a point
+ * @param {Token|TokenDocument|Actor} thing   who is moved
+ * @param {object} options
+ * @param {"away"|"toward"} [options.direction="away"]
+ * @param {number} [options.feet=10]
+ * @param {Token|TokenDocument|Actor|{x : number, y : number}} options.from   who (or where) it moves away from / toward
+ * @param {Item} [options.item]    what moved it (a collision's chat line names it)
+ * @param {string} [options.name]  its name, without an item (default : the item's)
+ * @param {boolean} [options.confirmed=false]  the GM's button : move it now
+ * @returns {Promise<number|null>}  how far it moved, in feet (0 : it couldn't move); null : the GM was asked
  */
-export async function pushAway(thing, from, feet = 10){
-  const token = tokenOf(thing);
-  const destination = pushDestination(token, from, feet);
-  if(!destination || !token.document.canUserModify(game.user, "update")) return 0;
-  await token.document.update({ x : destination.x, y : destination.y });
-  return destination.feet;
+export async function forcedMove(thing, { direction = "away", feet = 10, from = null, item = null, name = null, confirmed = false } = {}){
+  const token = tokenOf(thing), origin = pointOf(from);
+  if(!token?.actor || !origin) return 0;
+  const toward = direction === "toward";
+  const label = name ?? item?.name ?? "";
+  if(!confirmed && !gm.mine(token.actor)){
+    const source = isPoint(from) ? { x : origin.x, y : origin.y } : (tokenOf(from)?.document?.uuid ?? null);
+    await gm.ask("forcedMove", { token : token.document.uuid, direction, feet, from : source, item : item?.uuid ?? null, name : label },
+      { actor : tokenOf(isPoint(from) ? null : from)?.actor ?? null, text : module.format(toward ? "tokens.pullAsk" : "tokens.pushAsk", { name : token.name, feet, item : label }),
+        label : module.format(toward ? "tokens.pullButton" : "tokens.pushButton", { name : token.name, feet }) });
+    return null;
+  }
+
+  /* A pull stops beside the one pulling (or on the point) : that's as far as it should go */
+  let wanted = Number(feet) || 0;
+  if(toward){
+    const source = isPoint(from) ? null : tokenOf(from);
+    const gap = source ? Math.max(0, distanceBetween(token, source) - canvas.scene.grid.distance)
+      : Math.floor(Math.hypot(token.center.x - origin.x, token.center.y - origin.y) / canvas.grid.size) * canvas.scene.grid.distance;
+    wanted = Math.min(wanted, gap);
+  }
+  const destination = wanted ? pushDestination(token, from, wanted, { toward }) : null;
+  if(destination) await token.document.update({ x : destination.x, y : destination.y });
+  const moved = destination?.feet ?? 0;
+  Hooks.callAll(`${module.id}.pushed`, token, moved, wanted, item, { direction, name : label });
+  return moved;
+}
+
+/* The GM's button on a forcedMove card */
+export async function forcedMoveAsGM({ token : uuid, direction, feet, from, item : itemUuid, name } = {}){
+  const token = fromUuidSync(uuid ?? "", { strict : false })?.object;
+  const source = isPoint(from) ? from : fromUuidSync(from ?? "", { strict : false });
+  const item = itemUuid ? fromUuidSync(itemUuid, { strict : false }) : null;
+  if(!token || !source) return false;
+  return (await forcedMove(token, { direction, feet, from : source, item, name, confirmed : true })) !== null;
+}
+
+/**
+ * Push a token straight away from another (Shove, the Push mastery, Thunderwave...) : forcedMove away from `from`.
+ * @param {Token|TokenDocument|Actor} thing
+ * @param {Token|TokenDocument|Actor|{x : number, y : number}} from
+ * @param {number} [feet=10]
+ * @param {object} [options]   forcedMove's item / name
+ * @returns {Promise<number|null>}  how far it moved, in feet : 0 if it couldn't move at all (a wall right behind it)
+ */
+export async function pushAway(thing, from, feet = 10, options = {}){
+  return forcedMove(thing, { ...options, direction : "away", from, feet });
+}
+
+/**
+ * Pull a token straight toward another (Thorn Whip) : forcedMove toward `toward`, at the latest beside it.
+ * @param {Token|TokenDocument|Actor} thing   what's pulled
+ * @param {Token|TokenDocument|Actor|{x : number, y : number}} toward  who (or where) pulls
+ * @param {number} [feet=10]
+ * @param {object} [options]   forcedMove's item / name
+ * @returns {Promise<number|null>}  the feet it moved (0 : blocked or already there)
+ */
+export async function pullToward(thing, toward, feet = 10, options = {}){
+  return forcedMove(thing, { ...options, direction : "toward", from : toward, feet });
 }
 
 /* ---------- Areas (templates) ---------- */
@@ -439,6 +610,126 @@ export function hasLight(thing, key = "light"){
   return !!tokenDocOf(thing)?.getFlag(module.id, `lights.${key}`);
 }
 
+/* ---------- Pool bars (Arcane Ward, homebrew pools : points shown as a bar on the token) ---------- */
+
+/* Pools from code : key -> { color, read : actor => { value, max } | null } */
+const POOLS = new Map();
+
+/**
+ * A pool every creature can have, read by code (Arcane Ward). Shown as a bar on its tokens while it has points.
+ * @param {string} key
+ * @param {object} options
+ * @param {string|number} [options.color]   the bar's colour ("#3b82f6")
+ * @param {Function} options.read           actor => { value, max }, or null when it has no such pool
+ */
+export function registerPool(key, { color = "#3b82f6", read } = {}){
+  POOLS.set(key, { color, read });
+  redrawPoolBars();
+}
+
+/**
+ * Show a pool of points as a bar on the creature's tokens (its own PIXI bar : Foundry's two bars only read
+ * actor.system). The pool is an item's uses, or a number in the actor's flags. The bar hides while the pool is empty.
+ * Saved on the actor, so it stays after a reload. Needs permission to change the actor.
+ * @param {Token|TokenDocument|Actor} thing
+ * @param {string} key                      the pool's name ("ward", "grit"...)
+ * @param {object} options
+ * @param {string} [options.item]           an item's identifier, name or id : its uses are the pool
+ * @param {string} [options.flag]           or a flag on the actor, "scope.path" ("world.grit") : a number, or { value, max }
+ * @param {number} [options.max]            the most a numeric flag holds
+ * @param {string|number} [options.color]   the bar's colour (default blue)
+ * @returns {Promise<boolean>}
+ */
+export async function poolBar(thing, key, { item, flag, max, color = "#3b82f6" } = {}){
+  const actor = actorOf(thing);
+  if(!actor?.isOwner || !key || (!item && !flag)) return false;
+  await actor.setFlag(module.id, `poolBars.${key}`, { item : item ?? null, flag : flag ?? null, max : max ?? null, color });
+  return true;
+}
+
+/**
+ * Take a pool's bar off the creature (see poolBar).
+ * @param {Token|TokenDocument|Actor} thing
+ * @param {string} key
+ * @returns {Promise<boolean>}
+ */
+export async function removePoolBar(thing, key){
+  const actor = actorOf(thing);
+  if(!actor?.isOwner || !actor.getFlag(module.id, `poolBars.${key}`)) return false;
+  await actor.unsetFlag(module.id, `poolBars.${key}`);
+  return true;
+}
+
+/**
+ * The creature's pools with points in them, as drawn : [{ key, value, max, color }].
+ * @param {Token|TokenDocument|Actor} thing
+ * @returns {object[]}
+ */
+export function poolsOf(thing){
+  const actor = actorOf(thing);
+  if(!actor) return [];
+  const pools = [];
+  for(const [key, pool] of POOLS){
+    const read = (() => { try { return pool.read?.(actor); } catch(error){ console.error(`${module.title} |`, error); return null; } })();
+    if(read) pools.push({ key, color : pool.color, ...read });
+  }
+  for(const [key, pool] of Object.entries(actor.getFlag(module.id, "poolBars") ?? {})){
+    if(!pool) continue;
+    let read = null;
+    if(pool.item){
+      const item = actor.items.find(i => (i.system?.identifier === pool.item) || (i.id === pool.item))
+        ?? actor.items.find(i => i.name.toLowerCase() === String(pool.item).toLowerCase());
+      if(item?.system?.uses?.max) read = { value : Number(item.system.uses.value) || 0, max : Number(item.system.uses.max) || 0 };
+    }
+    else if(pool.flag){
+      const [scope, ...path] = String(pool.flag).split(".");
+      const found = foundry.utils.getProperty(actor.flags?.[scope] ?? {}, path.join("."));
+      read = (typeof found === "object") ? { value : Number(found?.value) || 0, max : Number(found?.max) || 0 } : { value : Number(found) || 0, max : Number(pool.max) || 0 };
+    }
+    if(read) pools.push({ key, color : pool.color, ...read });
+  }
+  return pools.filter(p => (p.value > 0) && (p.max > 0));
+}
+
+/* Draw the pools under Foundry's bottom bar, inside its bars (so they show when its bars do) */
+function drawPoolBars(token){
+  const bars = token?.bars;
+  if(!bars || bars.destroyed) return;
+  let layer = bars.children.find(c => c.name === `${module.id}-pools`);
+  const pools = token.actor ? poolsOf(token.actor) : [];
+  if(!pools.length){ if(layer) layer.visible = false; return; }
+  if(!layer){ layer = bars.addChild(new PIXI.Graphics()); layer.name = `${module.id}-pools`; }
+  const { width, height } = token.document.getSize();
+  const s = canvas.dimensions.uiScale ?? 1;
+  const bh = 8 * ((token.document.height >= 2) ? 1.5 : 1) * s;
+  let y = height - (bars.bar1?.visible ? 2 : 1) * bh;
+  layer.clear();
+  for(const pool of pools){
+    const pct = Math.clamp(pool.value, 0, pool.max) / pool.max;
+    layer.lineStyle(s, 0x000000, 1.0);
+    layer.beginFill(0x000000, 0.5).drawRoundedRect(0, y, width, bh, 3 * s);
+    layer.beginFill(foundry.utils.Color.from(pool.color), 1.0).drawRoundedRect(0, y, pct * width, bh, 2 * s);
+    layer.endFill();
+    y -= bh;
+  }
+  layer.visible = true;
+}
+
+function redrawPoolBars(actor = null){
+  for(const token of canvas?.tokens?.placeables ?? []){
+    if(!actor || (token.actor === actor) || (token.actor?.id === actor.id)) drawPoolBars(token);
+  }
+}
+
+/* Hooks : drawn with Foundry's bars, again when an actor or its items change */
+export function registerPoolBars(){
+  Hooks.on("refreshToken", (token, flags) => { if(flags?.refreshBars || flags?.refreshSize) drawPoolBars(token); });
+  Hooks.on("drawToken", token => drawPoolBars(token));
+  Hooks.on("updateActor", actor => redrawPoolBars(actor));
+  Hooks.on("updateSetting", () => redrawPoolBars());
+  for(const hook of ["createItem", "updateItem", "deleteItem"]) Hooks.on(hook, item => { if(item.parent?.documentName === "Actor") redrawPoolBars(item.parent); });
+}
+
 /* A token's document : a TokenDocument as it is (on any scene), else the token on the canvas (tokenOf) */
 function tokenDocOf(thing){
   return (thing?.documentName === "Token") ? thing : (tokenOf(thing)?.document ?? null);
@@ -467,6 +758,19 @@ export function isOutOfAction(token){
   if(isDown(token)) return true;
   const actor = token?.actor, hp = actor?.system?.attributes?.hp;
   return (actor?.type === "character") && (Number(hp?.max) > 0) && ((Number(hp?.value) || 0) <= 0);
+}
+
+/* The conditions that leave a creature Incapacitated (theirs include it) */
+export const INCAPACITATING = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
+
+/**
+ * Incapacitated : the condition, or one that includes it (Paralyzed, Petrified, Stunned, Unconscious), or Dead.
+ * @param {Actor|Token|TokenDocument} thing
+ * @returns {boolean}
+ */
+export function isIncapacitated(thing){
+  const actor = actorOf(thing);
+  return INCAPACITATING.some(s => actor?.statuses?.has?.(s));
 }
 
 /**
@@ -514,17 +818,78 @@ const warnedSight = new Set();
  * @param {Token|TokenDocument|Actor} target
  * @returns {boolean}
  */
-export function canSee(viewer, target){
-  const v = tokenOf(viewer), t = tokenOf(target);
-  if(!v || !t || (v === t)) return true;
-  /* Vision setting : off, conditions only (Blinded / Invisible, no walls or light), full sight */
-  let mode = "full";
+/**
+ * Is the line between two tokens through a heavily obscured area (a region flagged macro-helper.obscured : Fog Cloud),
+ * or is either of them inside one ?
+ * @returns {boolean}
+ */
+export function obscuredBetween(a, b){
+  const ta = tokenOf(a), tb = tokenOf(b);
+  const scene = ta?.document?.parent;
+  const areas = scene?.regions?.filter?.(r => r.getFlag(module.id, "obscured")) ?? [];
+  if(!areas.length || !tb) return false;
+  const from = ta.center, to = tb.center;
+  const steps = Math.max(2, Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / ((canvas.grid?.size ?? 100) / 4)));
+  const elevation = ta.document.elevation ?? 0;
+  for(let i = 0; i <= steps; i++){
+    const point = { x : from.x + ((to.x - from.x) * i / steps), y : from.y + ((to.y - from.y) * i / steps), elevation };
+    if(areas.some(r => r.testPoint(point))) return true;
+  }
+  return false;
+}
+
+/* The vision setting : "off", "conditions" (Blinded / Invisible only) or "full" (walls, light, senses) */
+function visionMode(){
   let enabled = true;
   /* A rule : System Automation's switch (not Roll Item's) turns it off */
   try { enabled = game.settings.get(module.id, "automationEnabled") !== false; } catch { enabled = true; }
-  try { mode = enabled ? game.settings.get(module.id, "vision") : "off"; }
-  catch { try { mode = game.settings.get(module.id, "visionRules") ? "full" : "off"; } catch { mode = "off"; } }
+  try { return enabled ? game.settings.get(module.id, "vision") : "off"; }
+  catch { try { return game.settings.get(module.id, "visionRules") ? "full" : "off"; } catch { return "off"; } }
+}
+
+/* Whether the viewer's senses (not sight while Blinded) find these points; object : the token there, if any */
+function detects(v, points, { object = null, tolerance = 2 } = {}){
+  const blinded = !!v.actor?.statuses?.has("blinded");
+  let source = v.vision?.active ? v.vision : null;
+  const temporary = !source;
+  if(temporary){
+    source = new CONFIG.Canvas.visionSourceClass({ sourceId : `${v.sourceId}.${module.id}`, object : v });
+    const states = v._getVisionBlindedStates?.() ?? {};
+    for(const state in states) source.blinded[state] = states[state];
+    source.initialize(v._getVisionSourceData());
+  }
+  try {
+    const config = canvas.visibility._createVisibilityTestConfig(points, { tolerance, object });
+    const modes = CONFIG.Canvas.detectionModes;
+    const SIGHT = foundry.canvas?.perception?.DetectionMode?.DETECTION_TYPES?.SIGHT ?? 0;
+    for(const [id, mode] of Object.entries(v.document.detectionModes ?? {})){
+      if(blinded && ((modes[id]?.type ?? SIGHT) === SIGHT)) continue;
+      if(modes[id]?.testVisibility(source, mode, config)) return true;
+    }
+    return false;
+  } finally {
+    if(temporary) source.destroy();
+  }
+}
+
+/**
+ * Can the viewer see a creature (its own sight : walls, light, darkvision, Blinded, Invisible), or a point on the map
+ * (a space to teleport to : { x, y } canvas pixels).
+ * @param {Token|TokenDocument|Actor} viewer
+ * @param {Token|TokenDocument|Actor|{x : number, y : number}} target
+ * @returns {boolean}
+ */
+export function canSee(viewer, target){
+  if(isPoint(target)) return seesPoint(viewer, target);
+  const v = tokenOf(viewer), t = tokenOf(target);
+  if(!v || !t || (v === t)) return true;
+  /* Vision setting : off, conditions only (Blinded / Invisible, no walls or light), full sight */
+  const mode = visionMode();
   if(mode === "off") return true;
+  /* A heavily obscured area (Fog Cloud) in the way, or either inside one : no sight through it */
+  if(obscuredBetween(v, t)) return false;
+  /* Unconscious (or dead) : unaware, it sees nothing */
+  if(sightless(v)) return false;
   /* Blinded : only senses that aren't sight (blindsight, tremorsense...) can still find it */
   const blinded = !!v.actor?.statuses?.has("blinded");
   /* Without sight to work it out (vision off on the token or the scene), the conditions still count :
@@ -536,26 +901,65 @@ export function canSee(viewer, target){
     if(!warnedSight.has(v.id)){ warnedSight.add(v.id); console.warn(`${module.title} | ${v.name} has no vision : it sees everything.`); }
     return true;
   }
+  return detects(v, [t.center], { object : t, tolerance : Math.max(2, Math.floor(Math.min(t.w, t.h) / 4)) });
+}
 
-  let source = v.vision?.active ? v.vision : null;
-  const temporary = !source;
-  if(temporary){
-    source = new CONFIG.Canvas.visionSourceClass({ sourceId : `${v.sourceId}.${module.id}`, object : v });
-    const blinded = v._getVisionBlindedStates?.() ?? {};
-    for(const state in blinded) source.blinded[state] = blinded[state];
-    source.initialize(v._getVisionSourceData());
-  }
+/* Unaware of everything around it : Unconscious, or dead */
+function sightless(token){
+  return ["unconscious", "dead"].some(s => token?.actor?.statuses?.has?.(s));
+}
+
+/* canSee for a place instead of a creature */
+function seesPoint(viewer, point){
+  const v = tokenOf(viewer);
+  if(!v || !point) return true;
+  const mode = visionMode();
+  if(mode === "off") return true;
+  if(sightless(v)) return false;
+  const blinded = !!v.actor?.statuses?.has("blinded");
+  if((mode === "conditions") || !canvas.ready || !canvas.visibility?.tokenVision || !v.document.sight?.enabled) return !blinded;
+  return detects(v, [{ x : point.x, y : point.y, elevation : v.document.elevation ?? 0 }]);
+}
+
+/**
+ * Feet it has moved this turn (Foundry clears a token's movement history when a turn starts); teleports (Misty Step,
+ * token.teleport) don't count. Orc Bloodrunner's Spiked Shield : token.movedThisTurn() >= 10.
+ * @param {Token|TokenDocument|Actor} thing
+ * @returns {number}
+ */
+export function movedThisTurn(thing){
+  const doc = tokenOf(thing)?.document ?? thing?.document ?? thing;
+  const history = doc?.movementHistory ?? [];
+  if(history.length < 2) return 0;
+  const teleport = action => !!CONFIG.Token.movement?.actions?.[action]?.teleport;
   try {
-    const size = Math.min(t.w, t.h);
-    const config = canvas.visibility._createVisibilityTestConfig([t.center], { tolerance : Math.max(2, Math.floor(size / 4)), object : t });
-    const modes = CONFIG.Canvas.detectionModes;
-    const SIGHT = foundry.canvas?.perception?.DetectionMode?.DETECTION_TYPES?.SIGHT ?? 0;
-    for(const [id, mode] of Object.entries(v.document.detectionModes ?? {})){
-      if(blinded && ((modes[id]?.type ?? SIGHT) === SIGHT)) continue;
-      if(modes[id]?.testVisibility(source, mode, config)) return true;
+    if(!history.some(w => teleport(w.action))) return Math.round(doc.measureMovementPath(history).cost ?? 0);
+    let cost = 0;
+    for(let i = 1; i < history.length; i++){
+      if(teleport(history[i].action)) continue;
+      cost += doc.measureMovementPath([history[i - 1], history[i]]).cost ?? 0;
     }
-    return false;
-  } finally {
-    if(temporary) source.destroy();
+    return Math.round(cost);
   }
+  catch { return 0; }
+}
+
+/**
+ * Is there a line from one token to any part of another that no sight-blocking wall cuts (not total cover) ? Walls only :
+ * darkness, Invisible or Blinded don't matter here (an attack can go at a creature you can't see, at disadvantage).
+ * From the viewer's centre to the other's centre and the four corners of its space (pulled in a little).
+ * @param {Token|TokenDocument|Actor} viewer
+ * @param {Token|TokenDocument|Actor} target
+ * @returns {boolean}
+ */
+export function hasLineOfSight(viewer, target){
+  const v = tokenOf(viewer), t = tokenOf(target);
+  const backend = CONFIG.Canvas.polygonBackends?.sight;
+  if(!v || !t || (v === t) || !backend) return true;
+  const from = v.center;
+  const { x, y } = t.document;
+  const w = t.w ?? (t.document.width * canvas.grid.size), h = t.h ?? (t.document.height * canvas.grid.size);
+  const inset = Math.min(w, h) * 0.15;
+  const points = [t.center, { x : x + inset, y : y + inset }, { x : x + w - inset, y : y + inset }, { x : x + inset, y : y + h - inset }, { x : x + w - inset, y : y + h - inset }];
+  return points.some(p => !backend.testCollision(from, p, { type : "sight", mode : "any" }));
 }

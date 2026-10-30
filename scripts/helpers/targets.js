@@ -1,5 +1,6 @@
 import { module } from '../module.js';
-import { tokenOf, distanceBetween, getRange, getTokensWithin, highlightRange, isOutOfAction, canSee, isSpaceFree, HIGHLIGHT } from './tokens.js';
+import { warned } from './utils.js';
+import { tokenOf, distanceBetween, getRange, getTokensWithin, highlightRange, isOutOfAction, isIncapacitated, canSee, isSpaceFree, HIGHLIGHT, actingNowFrom } from './tokens.js';
 
 /* Opposite dispositions (hostile vs friendly) */
 export function isEnemy(a, b){
@@ -12,7 +13,68 @@ export function isAlly(a, b){
 }
 
 /* dnd5e conditions that stop a creature threatening anyone (all of them include Incapacitated) */
-const INCAPACITATED = ["incapacitated", "unconscious", "paralyzed", "petrified", "stunned", "dead"];
+
+/**
+ * The allies of a creature within `feet` of a target, nearest first (Sneak Attack's "an ally within 5 ft of it", Pack
+ * Tactics). Neither the creature nor the target counts, nor an ally that's Incapacitated, dead or at 0 HP.
+ * @param {Token|TokenDocument|Actor} target
+ * @param {Token|TokenDocument|Actor} of       whose allies
+ * @param {object} [options]
+ * @param {number} [options.feet=5]
+ * @param {boolean} [options.includeIncapacitated=false]
+ * @param {Function} [options.filter]          extra (token) => boolean
+ * @returns {Token[]}
+ */
+export function alliesNear(target, of, { feet = 5, includeIncapacitated = false, filter } = {}){
+  const t = tokenOf(target), a = tokenOf(of);
+  if(!t || !a) return [];
+  return getTokensWithin(t, feet, { filter : ally => (ally !== a) && isAlly(ally, a)
+    && (includeIncapacitated || !isIncapacitated(ally))
+    && (!filter || filter(ally)) });
+}
+
+/* ---------- Targets an item can't have ---------- */
+
+const exclusions = [];
+let exclusionsHooked = false;
+
+/**
+ * Creatures an item can't be used on, dropped from its targets as they're picked or found in an area, with a notice
+ * saying why (Bardic Inspiration : "another creature", not one already Inspired; a monster's "each creature other than
+ * itself", "Undead only").
+ *
+ *   MacroHelper.excludeTargets("bardic", { applies : activity => idOf(activity.item) === "bardic-inspiration", self : true,
+ *     exclude : (token, activity) => hasInspiration(token.actor) ? `${token.name} is already Inspired.` : false });
+ *
+ * @param {string} id   the same id again replaces the rule (a macro)
+ * @param {object} rule
+ * @param {(activity : Activity) => boolean} rule.applies   the uses it's for
+ * @param {boolean} [rule.self=false]                       the user's own token is dropped (no notice)
+ * @param {(token : Token, activity : Activity) => string|boolean} [rule.exclude]   true or a notice : dropped
+ */
+export function excludeTargets(id, rule){
+  const old = exclusions.findIndex(r => r.id === id);
+  if(old >= 0) exclusions[old] = { id, ...rule };
+  else exclusions.push({ id, ...rule });
+  if(exclusionsHooked) return;
+  exclusionsHooked = true;
+  Hooks.on(`${module.id}.targets`, (activity, tokens) => {
+    for(const rule of exclusions){
+      try {
+        if((rule.enabled && !rule.enabled()) || !rule.applies(activity)) continue;
+        const me = tokenOf(activity.getUsageToken?.() ?? activity.actor);
+        for(let i = tokens.length - 1; i >= 0; i--){
+          const t = tokens[i];
+          if(rule.self && (t === me)){ tokens.splice(i, 1); continue; }
+          const why = rule.exclude?.(t, activity);
+          if(!why) continue;
+          if(typeof why === "string") ui.notifications.info(why);
+          tokens.splice(i, 1);
+        }
+      } catch(error){ console.error("Macro Helper | excludeTargets", rule.id, error); }
+    }
+  });
+}
 
 /**
  * Enemies (opposite disposition) within `range` feet of a token, nearest first : who is threatening it.
@@ -31,7 +93,7 @@ export function getThreats(thing, { range = 5, includeIncapacitated = false, inc
     disposition : "nonAlly",
     includeHidden,
     /* 2024 : an enemy who can see you and isn't Incapacitated */
-    filter : t => (includeIncapacitated || !INCAPACITATED.some(status => t.actor.statuses?.has(status))) && canSee(t, token),
+    filter : t => (includeIncapacitated || !isIncapacitated(t)) && canSee(t, token),
   });
 }
 
@@ -247,49 +309,66 @@ export function setTargets(tokens){
  * @param {boolean} [options.includeSelf=false]      the origin's own token can be picked too (Healing Hands, Mage Armor)
  * @param {boolean} [options.sight=true]             only tokens the origin's token can see (Vision Rules setting); false : any
  * @param {Function} [options.tokenColor]          (token) => "advantage" | "normal5e" | "disadvantage" : a colour per candidate (attacks)
+ * @param {Function} [options.tokenWhy]            (token) => { mode, advantage : [], disadvantage : [] } : shown hovering it
  * @param {boolean} [options.long] [options.thrown]  passed to getRange
+ * @param {Token|TokenDocument} [options.from]     range measured from this token's space instead (actFrom : Invoke
+ *                                                   Duplicity's illusion); sight stays the origin's own, and `from` itself
+ *                                                   is never a candidate
+ * @param {Token[]} [options.picked]                candidates picked already as it opens (click one to unpick it)
+ * @param {*} [options.cancelled=[]]                what Esc gives back (null : tell a cancel from no picks)
  * @returns {Promise<Token[]>}  the picks, empty if cancelled or nothing in range
  */
 export async function pickTargets(origin, { count = 1, range, disposition = "enemy", numberAllowed = Infinity, within = Infinity,
   confirm = "auto", setTargets : target = true, useTargets = true, repeat = false, long = false, thrown = false, normalRange, notice = "", filter : only, includeSelf = false,
-  sight = true, tokenColor } = {}){
+  sight = true, tokenColor, tokenWhy, from : place = null, picked = [], cancelled = [] } = {}){
   const from = tokenOf(origin);
-  if(!from) return warn(module.i18n("helpers.pick.noToken"));
+  if(!from) return warned(module.i18n("helpers.pick.noToken"));
+  /* Where it's measured from : the origin's token, or the space it acts from (given, or its use's : actFrom) */
+  const at = (place && tokenOf(place)) || actingNowFrom(from) || from;
   if(!useTargets) canvas.tokens.setTargets([]);
   /* Only what the picker can see (Vision Rules) */
   const filter = sight ? (t => canSee(from, t) && (!only || only(t))) : only;
 
   const isItem = (origin?.documentName === "Item") || !!origin?.item;
   const feet = range ?? (isItem ? getRange(origin, { long, thrown }) : Infinity);
-  const candidates = getTokensWithin(from, feet, { disposition, filter, includeSelf });
-  if(!candidates.length) return warn(module.i18n("helpers.pick.none"));
+  /* Sides are the origin's; distance from where it acts */
+  const candidates = (at === from) ? getTokensWithin(from, feet, { disposition, filter, includeSelf })
+    : getTokensWithin(from, Infinity, { disposition, filter, includeSelf }).filter(t => (t !== at) && (distanceBetween(at, t) <= feet))
+      .sort((a, b) => distanceBetween(at, a) - distanceBetween(at, b));
+  if(!candidates.length) return warned(module.i18n("helpers.pick.none"));
 
   /* Your own targets in range win, nothing to ask */
   const targeted = useTargets
-    ? [...game.user.targets].filter(t => ((t !== from) || includeSelf) && (distanceBetween(from, t) <= feet) && (!filter || filter(t)))
+    ? [...game.user.targets].filter(t => ((t !== from) || includeSelf) && ((t !== at) || (at === from)) && (distanceBetween(at, t) <= feet) && (!filter || filter(t)))
     : [];
   if(targeted.length){
-    if(!repeat || (targeted.length >= count)) return targeted.slice(0, count);
-    return Array.from({ length : count }, (_, i) => targeted[Math.floor(i * targeted.length / count)]);
+    /* Your own targets follow the same group rules as a pick (how many, within how far of each other) : else you pick */
+    const rules = (typeof numberAllowed === "function") || Number.isFinite(numberAllowed) || Number.isFinite(within);
+    const allowed = Math.min(count, typeof numberAllowed === "function" ? numberAllowed(targeted) : numberAllowed);
+    const fits = !rules || ((targeted.length <= allowed) && (!Number.isFinite(within) || isValidGroup(targeted, { within }).valid));
+    if(fits && (!repeat || (targeted.length >= count))) return targeted.slice(0, count);
+    if(!fits) ui.notifications.info(module.i18n("helpers.pick.targetsDontFit"));
+    else return Array.from({ length : count }, (_, i) => targeted[Math.floor(i * targeted.length / count)]);
   }
 
-  const picks = await pickOnMap(from, feet, candidates, { count, numberAllowed, within, confirm, repeat, normalRange, notice, includeSelf, tokenColor });
+  const picks = await pickOnMap(at, feet, candidates, { count, numberAllowed, within, confirm, repeat, normalRange, notice, includeSelf, tokenColor, tokenWhy,
+    picked : picked.filter(t => candidates.includes(t)) });
+  if(picks === null) return cancelled;
   if(target && picks.length) setTargets(picks);
   return picks;
 }
 
-function warn(message){
-  ui.notifications.warn(message);
-  return [];
-}
-
 /* The clicking itself : overlay, banner, click + key listeners, all removed at the end */
-function pickOnMap(from, feet, candidates, { count, numberAllowed, within, confirm, repeat = false, normalRange, notice = "", includeSelf = false, tokenColor }){
+function pickOnMap(from, feet, candidates, { count, numberAllowed, within, confirm, repeat = false, normalRange, notice = "", includeSelf = false, tokenColor, tokenWhy, picked = [] }){
   const allowed = picks => Math.min(count, typeof numberAllowed === "function" ? numberAllowed(picks) : numberAllowed);
   const highlight = highlightRange(from, feet, { tokens : candidates, normal : normalRange, showSelf : includeSelf, tokenColor });
   const hasLong = Number.isFinite(normalRange) && (normalRange < feet);
   const view = canvas.app.view;
-  const picks = [];
+  const picks = [...picked];
+  if(picks.length){
+    highlight.select(picks);
+    canvas.tokens.setTargets(picks.map(t => t.id));
+  }
 
   const banner = document.createElement("div");
   banner.className = `${module.id}-pick-banner`;
@@ -306,7 +385,31 @@ function pickOnMap(from, feet, candidates, { count, numberAllowed, within, confi
         + (message ? `<span class="warning">${message}</span>` : "");
     };
 
+    /* Hovering a candidate : why it's green or red (advantage, disadvantage and their reasons) */
+    const tip = document.createElement("div");
+    tip.className = `${module.id}-pick-tip`;
+    tip.hidden = true;
+    if(tokenWhy) document.body.append(tip);
+    const onHover = event => {
+      if(!tokenWhy) return;
+      const point = onMap(event.target) ? canvas.canvasCoordinatesFromClient({ x : event.clientX, y : event.clientY }) : null;
+      const token = point ? candidates.find(t => t.bounds.contains(point.x, point.y)) : null;
+      const why = token ? tokenWhy(token) : null;
+      const lines = why ? [
+        ...(why.advantage?.length ? [`<div class="adv">${Handlebars.escapeExpression(module.i18n("helpers.pick.advantage"))} : ${why.advantage.map(r => Handlebars.escapeExpression(r)).join(" · ")}</div>`] : []),
+        ...(why.disadvantage?.length ? [`<div class="dis">${Handlebars.escapeExpression(module.i18n("helpers.pick.disadvantage"))} : ${why.disadvantage.map(r => Handlebars.escapeExpression(r)).join(" · ")}</div>`] : []),
+      ] : [];
+      if(!lines.length){ tip.hidden = true; return; }
+      if((why.mode === "normal5e") && why.advantage?.length && why.disadvantage?.length) lines.push(`<div>${Handlebars.escapeExpression(module.i18n("helpers.pick.cancel"))}</div>`);
+      tip.innerHTML = `<strong>${Handlebars.escapeExpression(token.name)}</strong>${lines.join("")}`;
+      tip.style.left = `${event.clientX + 16}px`;
+      tip.style.top = `${event.clientY + 16}px`;
+      tip.hidden = false;
+    };
+
     const finish = result => {
+      window.removeEventListener("pointermove", onHover, true);
+      tip.remove();
       window.removeEventListener("pointerdown", onPointer, true);
       window.removeEventListener("contextmenu", onMenu, true);
       window.removeEventListener("keydown", onKey, true);
@@ -360,7 +463,7 @@ function pickOnMap(from, feet, candidates, { count, numberAllowed, within, confi
       else if(event.key === "Escape"){
         event.preventDefault(); event.stopPropagation();
         canvas.tokens.setTargets([]);
-        finish([]);
+        finish(null);
       }
     };
 
@@ -370,6 +473,7 @@ function pickOnMap(from, feet, candidates, { count, numberAllowed, within, confi
     };
 
     window.addEventListener("pointerdown", onPointer, true);
+    window.addEventListener("pointermove", onHover, true);
     window.addEventListener("contextmenu", onMenu, true);
     window.addEventListener("keydown", onKey, true);
     status();
@@ -389,11 +493,15 @@ function pickOnMap(from, feet, candidates, { count, numberAllowed, within, confi
  * @param {(space : {x : number, y : number}) => string} [options.check]  why else a space won't do ("" : it will)
  * @param {string} [options.banner]  the banner's title, keys (another wording : "Click where the light goes")
  * @param {string} [options.keys]
+ * @param {boolean} [options.seen=false]  a space it can see (a teleport) : its sight (walls that block sight, light, its senses,
+ *   Blinded) instead of walls that block movement
  * @returns {Promise<{x : number, y : number}|null>}  the space's top-left corner (canvas pixels), null if cancelled
  */
-export async function pickSpace(origin, { range = 5, size = 1, notice = "", occupied = false, check = null, banner : title = null, keys = null } = {}){
-  const from = tokenOf(origin);
-  if(!from) return warn(module.i18n("helpers.pick.noToken")) && null;
+export async function pickSpace(origin, { range = 5, size = 1, notice = "", occupied = false, check = null, banner : title = null, keys = null, seen = false } = {}){
+  const eyes = tokenOf(origin);
+  if(!eyes) return warned(module.i18n("helpers.pick.noToken")) && null;
+  /* Measured from the space its use acts from (actFrom), seen with its own eyes */
+  const from = actingNowFrom(eyes) || eyes;
   const highlight = highlightRange(from, range, { showSelf : false });
   const view = canvas.app.view;
   const grid = canvas.grid.size;
@@ -424,6 +532,7 @@ export async function pickSpace(origin, { range = 5, size = 1, notice = "", occu
     if(other) return other;
     const center = { x : x + (size * grid / 2), y : y + (size * grid / 2) };
     let blocked = false;
+    if(seen) return canSee(eyes, center) ? "" : module.i18n("helpers.space.unseen");
     try { blocked = !!CONFIG.Canvas.polygonBackends.move.testCollision(from.center, center, { type : "move", mode : "any" }); }
     catch { blocked = false; }
     return blocked ? module.i18n("helpers.space.wall") : "";
@@ -519,12 +628,15 @@ export function getFlanker(attacker, target){
   const opposite = (p, q) => (crosses(p, q, { x : x0, y0, y1 }) && crosses(p, q, { x : x1, y0, y1 }))
     || (crosses(p, q, {}, { y : y0, x0, x1 }) && crosses(p, q, {}, { y : y1, x0, x1 }));
 
+  /* Where the tokens are, not where their move animation has got to (an attack right after moving) */
+  const size = canvas.grid.size;
+  const centre = tok => { const d = tok.document; return { x : d.x + ((Number(d.width) || 1) * size / 2), y : d.y + ((Number(d.height) || 1) * size / 2) }; };
   return canvas.tokens.placeables.find(ally => (ally !== a) && (ally !== t) && ally.actor
     && isAlly(ally, a)
     && !isOutOfAction(ally)
-    && !INCAPACITATED.some(status => ally.actor.statuses?.has(status))
+    && !isIncapacitated(ally)
     && (distanceBetween(ally, t) <= reach)
-    && opposite(a.center, ally.center)) ?? null;
+    && opposite(centre(a), centre(ally))) ?? null;
 }
 
 /**

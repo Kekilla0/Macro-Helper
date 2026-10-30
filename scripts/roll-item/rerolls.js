@@ -1,20 +1,24 @@
 import { module } from '../module.js';
-import { buttonRow, addButton, makeButton } from '../helpers/utils.js';
+import { buttonRow, addButton, makeButton, esc } from '../helpers/utils.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
+import { spendUses } from '../helpers/items.js';
 const log = logger.for(import.meta.url);
 
 /**
- * A die added to a roll already made (Bardic Inspiration) : the same roll, with "+ 1d6" rolled onto its end.
+ * A die added to a roll already made (Bardic Inspiration) : the same roll, with "+ 1d6" rolled onto its end; with
+ * subtract, "- 1d6" (Cutting Words). A number ("4") adds that, already rolled elsewhere.
  * @param {Roll} roll
  * @param {string} formula   "1d6"
+ * @param {object} [options]
+ * @param {boolean} [options.subtract=false]
  * @returns {Promise<{ updated : Roll, extra : Roll }>}
  */
-export async function addDie(roll, formula){
-  const extra = await new Roll(formula).evaluate();
-  const updated = roll.constructor.fromData(roll.toJSON());
+export async function addDie(roll, formula, { subtract = false } = {}){
+  const extra = await new Roll(String(formula)).evaluate();
+  const updated = roll.constructor.fromData(foundry.utils.deepClone(roll.toJSON()));
   const { RollTerm } = foundry.dice.terms;
-  updated.terms.push(RollTerm.fromData({ class : "OperatorTerm", operator : "+", evaluated : true }));
+  updated.terms.push(RollTerm.fromData({ class : "OperatorTerm", operator : subtract ? "-" : "+", evaluated : true }));
   for(const term of extra.terms) updated.terms.push(RollTerm.fromData(term.toJSON()));
   updated._formula = updated.constructor.getFormula(updated.terms);
   updated._total = updated._evaluateTotal();
@@ -37,19 +41,23 @@ export async function extraD20(roll, keep){
   const mode = Number(roll.options?.advantageMode ?? 0);
   if(mode === want) return { status : "same", updated : null, extra : null };
 
-  const updated = roll.constructor.fromData(roll.toJSON());
+  const updated = roll.constructor.fromData(foundry.utils.deepClone(roll.toJSON()));
   const d20 = updated.dice[0];
   let extra = null;
   if(mode === -want){
     /* The opposite : they cancel, a straight roll on the first d20 */
-    d20.modifiers = (d20.modifiers ?? []).filter(m => !/^k[hl]/i.test(m));
+    d20.modifiers = (d20.modifiers ?? []).filter(m => !/^(k[hl]|adv|dis)/i.test(m));
     d20.results.forEach((r, i) => { r.active = (i === 0); r.discarded = (i !== 0); });
+    /* One d20 counts ("1d20"); the other stays on the roll, discarded */
+    d20.number = 1;
     updated.options.advantageMode = 0;
   }
   else {
     extra = await new Roll("1d20").evaluate();
-    d20.number = (d20.number ?? 1) + 1;
-    d20.modifiers = [...(d20.modifiers ?? []).filter(m => !/^k[hl]/i.test(m)), keep];
+    /* Made straight before (advantage and disadvantage cancelled) : the d20 it kept and the new one */
+    d20.results = d20.results.filter(r => r.active);
+    d20.number = d20.results.length + 1;
+    d20.modifiers = [...(d20.modifiers ?? []).filter(m => !/^(k[hl]|adv|dis)/i.test(m)), keep];
     d20.results.push({ result : extra.total, active : true });
     const active = d20.results.filter(r => r.active);
     const best = (keep === "kh") ? Math.max(...active.map(r => r.result)) : Math.min(...active.map(r => r.result));
@@ -61,6 +69,7 @@ export async function extraD20(roll, keep){
     }
     updated.options.advantageMode = want;
   }
+  updated.resetFormula();
   updated._total = updated._evaluateTotal();
   return { status : extra ? "applied" : "cancelled", updated, extra };
 }
@@ -84,6 +93,12 @@ export class rerolls{
     if(game.system.id !== "dnd5e") return;
     /* dnd5e rebuilds its roll messages after core's render hook : add the buttons once it's done */
     Hooks.on("dnd5e.renderChatMessage", (message, html) => this.addButtons(message, html));
+    /* Debug (the GM, Debug setting) : the d20 set to 20 or 1, small icons by the reroll (save card rows too) */
+    Hooks.on(`${module.id}.rerollButtons`, (message, buttons) => {
+      if(!game.user.isGM || !settings.value("debug")) return;
+      buttons.push({ id : "debug20", icon : "fa-bug", label : module.i18n("rollItem.debug.nat20"), iconOnly : true, run : () => this.force(message, 20) });
+      buttons.push({ id : "debug1", icon : "fa-bug-slash", label : module.i18n("rollItem.debug.nat1"), iconOnly : true, run : () => this.force(message, 1) });
+    });
     for(const hook of ["AbilityCheck", "SavingThrow", "DeathSave", "Concentration"]){
       Hooks.on(`dnd5e.preRoll${hook}V2`, (config, dialog) => this.skipDialog(config, dialog));
     }
@@ -153,17 +168,13 @@ export class rerolls{
     const buttons = [];
     if(reroll) buttons.push({ id : "reroll", icon : "fa-rotate", label : module.i18n("rerolls.reroll"), run : event => this.reroll(message, event) });
     buttons.push(...added);
-    /* Debug (the GM, Debug setting) : the d20 set to 20 or 1 */
-    if(game.user.isGM && settings.value("debug")){
-      buttons.push({ id : "debug20", icon : "fa-bug", label : module.i18n("rollItem.debug.nat20"), run : () => this.force(message, 20) });
-      buttons.push({ id : "debug1", icon : "fa-bug-slash", label : module.i18n("rollItem.debug.nat1"), run : () => this.force(message, 1) });
-    }
     if(!buttons.length) return;
 
     const row = buttonRow(html, { key : `${module.id}-rerolls`, layout : "icons" });
     for(const b of buttons){
-      /* Words on the button, not just an icon : easy to miss otherwise */
-      addButton(row, makeButton({ icon : b.icon, label : b.label, text : b.short ?? b.label, className : `${module.id}-labelled`,
+      /* Words on the button, not just an icon : easy to miss otherwise (the GM's debug ones : just the icon) */
+      if(b.iconOnly) addButton(row, makeButton({ icon : b.icon, label : b.label, className : "icon", onClick : event => b.run(event) }));
+      else addButton(row, makeButton({ icon : b.icon, label : b.label, text : b.short ?? b.label, className : `${module.id}-labelled`,
         onClick : event => b.run(event) }));
     }
   }
@@ -196,7 +207,7 @@ export class rerolls{
   static async force(message, value){
     const [roll] = message.rolls;
     if(!roll || !game.user.isGM) return;
-    const updated = Roll.fromData(roll.toJSON());
+    const updated = Roll.fromData(foundry.utils.deepClone(roll.toJSON()));
     const d20 = updated.dice?.[0];
     if(!d20) return;
     d20.results = d20.results.map(r => ({ ...r, result : value }));
@@ -212,4 +223,125 @@ export class rerolls{
       if(combatant?.isOwner) await combatant.update({ initiative : total });
     }
   }
+}
+
+/* ---------- The failed-test lego ---------- */
+
+const failRules = [];
+let failHooked = false;
+
+/**
+ * The failed-test lego : a die a creature adds to one of its D20 Tests that failed (Bardic Inspiration), said once. Its
+ * owner gets a button on the failed roll : a missed attack on a card, or a failed save or check (its message, and the
+ * card rows that link it; not initiative). The die is rolled onto that roll (the card re-judges it), once per roll.
+ *
+ *   onFailedTest({
+ *     id : "bardic",                          its key (the roll's flag)
+ *     tests : ["attack", "save", "check"],    which D20 Tests (default : all three)
+ *     source : actor => ({ die }) | null,     what the creature can add now (null : no button)
+ *     formula : source => "1d6",
+ *     label : source => "Use Bardic Inspiration (1d6)", icon : "fa-music",
+ *     after : (actor, source, message) => {}, once it's added (the die used up)
+ *     cost : (actor, source) => item,         an item one use of which pays for it (Second Wind); none : nothing spent
+ *     pay : "use" | "success",                when `cost` is spent : on the button (default), or only if the roll
+ *                                             then succeeds (Tactical Mind); a save or check with no DC known : the
+ *                                             GM's Spend button on its message
+ *     when : ({ actor, message, roll, ability }) => true,   which failed saves or checks (Guarded Mind : INT, WIS, CHA saves)
+ *     succeed : true,                         no die : the save or check succeeds instead (what it was short of its DC is
+ *                                             added; with no DC known, it's said in chat)
+ *   })
+ * A roll with no DC or AC known counts as failed (its owner judges).
+ */
+export function onFailedTest(rule){
+  if(!rule?.id || failRules.some(r => r.id === rule.id)) return;
+  failRules.push(rule);
+  if(failHooked) return;
+  failHooked = true;
+  Hooks.on(`${module.id}.rerollButtons`, (message, buttons, { actor, roll }) => failTestButtons(message, buttons, actor, roll));
+  Hooks.on(`${module.id}.cardButtons`, (message, buttons, { ray } = {}) => failAttackButtons(message, buttons, ray ?? null));
+  Hooks.on(`${module.id}.cardButton`, (message, id, { ray } = {}) => {
+    if(String(id).startsWith("failedTest|")) failAttackClicked(message, String(id).slice(11), ray ?? null);
+  });
+}
+
+/* A D20 Test that failed : below its DC / AC, or with none known */
+export function failedRoll(roll){
+  if(!roll) return false;
+  const target = roll.options?.target;
+  return !Number.isFinite(target) || (roll.total < target);
+}
+
+const testsOf = rule => rule.tests ?? ["attack", "save", "check"];
+const rayKey = ray => Number.isInteger(ray) ? String(ray) : "single";
+
+/* A save / check message : its owner's button, once; the GM's Spend button while the result isn't known */
+function failTestButtons(message, buttons, actor, roll){
+  if(!actor?.isOwner || message.getFlag?.("core", "initiativeRoll")) return;
+  for(const rule of failRules){
+    const done = message.getFlag?.(module.id, rule.id);
+    if(game.user.isGM && rule.cost && (done?.pay === "unknown")){
+      const item = rule.cost(actor, null);
+      if(item) buttons.push({ id : `${rule.id}Spend`, icon : "fa-heart-crack", label : module.format("rerolls.spend", { item : item.name }), run : async () => {
+        if(message.getFlag(module.id, rule.id)?.pay !== "unknown") return;
+        await spendUses(item, 1, { warn : true });
+        await message.setFlag(module.id, `${rule.id}.pay`, "spent");
+      } });
+    }
+    if(!failedRoll(roll) || !testsOf(rule).includes(message.type) || done) continue;
+    const ability = message.system?.ability ?? roll?.options?.ability ?? message.flags?.dnd5e?.roll?.ability ?? null;
+    try { if(rule.when && !rule.when({ actor, message, roll, ability })) continue; } catch(error){ log.error("Failed test rule", rule.id, error); continue; }
+    const source = rule.source(actor);
+    if(!source) continue;
+    buttons.push({ id : rule.id, icon : rule.icon ?? "fa-dice", label : rule.label(source), run : async () => {
+      const now = rule.source(actor);
+      if(!now || !message.isOwner || message.getFlag?.(module.id, rule.id)) return;
+      const dc = message.rolls[0]?.options?.target;
+      if(rule.succeed && !Number.isFinite(dc)){
+        await ChatMessage.implementation.create({ speaker : ChatMessage.implementation.getSpeaker({ actor }),
+          content : `<p>${esc(module.format("rerolls.succeeds", { name : actor.name, source : rule.label(now) }))}</p>` });
+        await message.setFlag(module.id, rule.id, { pay : await payFor(rule, actor, now, true) });
+        await rule.after?.(actor, now, message);
+        return;
+      }
+      const formula = rule.succeed ? String(Math.max(0, dc - message.rolls[0].total)) : rule.formula(now);
+      const { updated, extra } = await addDie(message.rolls[0], formula);
+      await rerolls.replace(message, updated, [extra]);
+      const target = updated.options?.target;
+      const pay = await payFor(rule, actor, now, Number.isFinite(target) ? (updated.total >= target) : null);
+      await message.setFlag(module.id, rule.id, { pay });
+      await rule.after?.(actor, now, message);
+    } });
+  }
+}
+
+/* The rule's cost, by its `pay` : "spent", "none" (it failed anyway, or nothing to pay) or "unknown" (the GM's button) */
+async function payFor(rule, actor, source, success){
+  const item = rule.cost?.(actor, source);
+  if(!item) return "none";
+  if((rule.pay === "success") && (success !== true)) return (success === false) ? "none" : "unknown";
+  await spendUses(item, 1, { warn : true });
+  return "spent";
+}
+
+/* A missed attack on a card : the attacker's owner's button, once per attack */
+function failAttackButtons(message, buttons, ray){
+  if(typeof message.system?.addBonus !== "function") return;
+  const attacker = message.getAssociatedActor?.();
+  if(!attacker?.isOwner || !message.system.attackOf?.(ray) || message.system.isHitOn?.(ray)) return;
+  for(const rule of failRules){
+    if(!testsOf(rule).includes("attack") || message.getFlag?.(module.id, `${rule.id}.${rayKey(ray)}`)) continue;
+    const source = rule.source(attacker);
+    if(source) buttons.push({ id : `failedTest|${rule.id}`, label : rule.label(source), icon : rule.icon ?? "fa-dice" });
+  }
+}
+
+async function failAttackClicked(message, id, ray){
+  const rule = failRules.find(r => r.id === id);
+  const attacker = message.getAssociatedActor?.();
+  const source = rule && attacker && rule.source(attacker);
+  if(!source || !message.isOwner || message.getFlag?.(module.id, `${rule.id}.${rayKey(ray)}`)) return;
+  if(!await message.system.addBonus(ray, rule.formula(source))) return;
+  await message.setFlag(module.id, `${rule.id}.${rayKey(ray)}`, true);
+  await payFor(rule, attacker, source, !!message.system.isHitOn?.(ray));
+  await rule.after?.(attacker, source, message);
 }

@@ -30,9 +30,7 @@ export class dancingLights{
   /* The actor's icon in the sidebar (the tokens show nothing but their light) */
   static ICON = "icons/svg/light.svg";
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("spellRules");
-  }
+  static enabled = settings.on("spellRules");
 
   static register(){
     if(game.system.id !== "dnd5e") return;

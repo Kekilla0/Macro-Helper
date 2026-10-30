@@ -3,14 +3,24 @@ import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { uses } from '../uses.js';
 import { idOf } from '../helpers/utils.js';
-import { tokenOf, getRange, distanceBetween } from '../helpers/tokens.js';
+import { tokenOf, getRange, distanceBetween, actingFrom } from '../helpers/tokens.js';
 import { limits } from './limits.js';
 import { conditions } from './conditions.js';
 import { actions } from './actions.js';
 import { itemFixes } from './item-fixes.js';
 import { patch } from '../patch.js';
-import { chooseOption } from '../helpers/utils.js';
+import { chooseOption, plainText } from '../helpers/utils.js';
 import { TYPES } from '../roll-item/message.js';
+import { isClassSpell, spendUses } from '../helpers/items.js';
+import { originItem } from '../helpers/utils.js';
+import { rollModeFrom } from './roll-modes.js';
+import { onMiss } from '../roll-item/miss-damage.js';
+import { willingSave } from './willing.js';
+import { onlyTypes } from './target-types.js';
+import { sharesDamage } from '../roll-item/card-builder.js';
+import { hitBecomesMiss } from '../roll-item/hit-becomes-miss.js';
+import { lends } from './lend-item.js';
+import { zone } from './zones.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -44,20 +54,78 @@ const log = logger.for(import.meta.url);
  *                     creature for each spell slot level above N" in its text adds those targets (Bless, Command...),
  *                     with or without a pick; with no pick, more targets than that follow Rule Limits.
  *   Rituals         : a spell with the Ritual tag you have prepared : cast normally (a slot, a higher level allowed) or
- *                     as a Ritual (10 minutes longer, no slot, its own level). A Wizard with Ritual Adept casts the
+ *                     as a Ritual (10 minutes longer, no slot, its own level), asked only when it's a real choice : a
+ *                     spell that takes 1 minute or more (Find Familiar), or with no slot left, is just cast as a Ritual.
+ *                     A quickRitual source with a use left (Ritual Caster's Quick Ritual) adds a third way : its
+ *                     normal time, no slot, the source's use spent.
+ *   Material cost   : a spell whose material says "worth 10+ GP" but has no cost in its data (Find Familiar) gets it. A Wizard with Ritual Adept casts the
  *                     rituals in its spellbook (its Wizard spells) without preparing them : as a Ritual only. The card
  *                     notes it (flags.ritual for the action tracker).
+ *   Blur            : attack rolls against the caster have disadvantage, unless the attacker has Blindsight or
+ *                     Truesight reaching it (its Concentration is the effect).
+ *   Mirror Image    : each duplicate is one of its effects on the caster (Plutonium's Duplicate A-C; the cast's own
+ *                     roll, which reads a flag nothing sets, is taken off). An attack that
+ *                     hits the caster : the GM's d6 for each duplicate left, a 3 or higher turns it into a miss and
+ *                     destroys one (its effect deleted; the spell ends with the last). Not against an attacker that is
+ *                     Blinded or has Blindsight or Truesight. Cast again : three new duplicates.
+ *   Invisibility    : ends just after its creature makes an attack roll or casts a spell.
+ *   Melf's Acid Arrow : a miss deals half the attack's damage (no acid later); a hit's acid at the end of the target's
+ *                     next turn is a repeating effect (automation/repeating.js).
+ *   Warding Bond    : each time the bonded creature takes damage, its caster takes the same amount (no type : its
+ *                     resistances don't cut it). The bond ends when the caster drops to 0 HP, when they're more than
+ *                     60 ft apart, or when the spell is cast again on either of them.
+ *   Dragon's Breath : cast, the caster picks the damage type, and the creature touched gets a feature of its own : the
+ *                     exhale (a Magic action), with the caster's save DC, the slot level's dice and that type only,
+ *                     gone with the Concentration (the lend lego). The spell's own exhale is hidden.
+ *   Zones           : Cloud of Daggers, Moonbeam, Grease : a creature entering the area or ending its turn there gets
+ *                     the spell's damage / save card again (no slot); Cloud of Daggers and Moonbeam once a turn (the
+ *                     zone lego, automation/zones.js).
  *   Range           : Rule Limits on and no target pick (Pick Targets off, or Roll Item off) : a spell aimed at
  *                     creatures out of its range (Distant Spell's doubled range, Touch 30 ft) follows Rule Limits.
  */
 export class spells{
   static BLADE_WARD = "blade-ward";
   static RAY_OF_SICKNESS = "ray-of-sickness";
+  static BLUR = "blur";
+  static INVISIBILITY = "invisibility";
+  static ACID_ARROW = "melfs-acid-arrow";
+  static ENLARGE_REDUCE = "enlarge-reduce";
+  static WARDING_BOND = "warding-bond";
+  static MIRROR_IMAGE = "mirror-image";
+  static DRAGONS_BREATH = "dragons-breath";
+  /* Zones : the spell's own activity again at a creature entering the area, moving in it, or starting / ending its turn
+     there; Difficult Terrain; an effect while inside */
+  static ZONES = {
+    "cloud-of-daggers" : { enter : true, end : true, oncePerTurn : true },
+    "moonbeam" : { enter : true, end : true, oncePerTurn : true, moves : 60 },
+    "grease" : { enter : true, end : true },
+    "spike-growth" : { move : true, terrain : true, cast : false },
+    /* Not again while the webs already hold it */
+    "web" : { enter : true, start : true, firstOnTurn : true, terrain : true, whileInside : true, cast : false,
+      filter : (token, item) => !token.actor?.effects?.some?.(e => !e.disabled && String(e.origin ?? "").startsWith(item.uuid)) },
+    "silence" : { effect : true, cast : false },
+    /* Round the caster wherever it goes : the caster and its side get the +10 while inside (user : allies, no pick) */
+    "pass-without-trace" : { effect : true, who : "ally", cast : false },
+  };
+  /* Spells that work on those creature types only : another target "succeeds" (2024 : Invalid Targets) */
+  static ONLY_TYPES = {
+    "animal-friendship" : ["beast"], "dominate-beast" : ["beast"],
+    "calm-emotions" : ["humanoid"], "charm-person" : ["humanoid"], "crown-of-madness" : ["humanoid"],
+    "dominate-person" : ["humanoid"], "friends" : ["humanoid"], "hold-person" : ["humanoid"],
+    "planar-binding" : ["celestial", "elemental", "fey", "fiend"],
+  };
   /* The effects the fixes add (16-character ids, so a fix can tell it's done) */
   static EFFECT_IDS = { "blade-ward" : "mhBladeWardWard1", "ray-of-sickness" : "mhRaySicknessPsn" };
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("spellRules");
+  static enabled = settings.on("spellRules");
+
+  /* Does one of these senses of the attacker reach the target (its range, in feet) */
+  static sensesReach(actor, target, senses){
+    const ranges = actor?.system?.attributes?.senses?.ranges ?? {};
+    const best = Math.max(0, ...senses.map(s => Number(ranges[s]) || 0));
+    if(!best) return false;
+    const from = tokenOf(actor);
+    return !from || !target || (distanceBetween(from, target) <= best);
   }
 
   /* Fixes are for 2024 items (a 2014 copy of the spell or creature is left as it is) */
@@ -72,9 +140,21 @@ export class spells{
     itemFixes.add({ name : "Venomous Spew", where : "owned", plan : item => this.spewFix(item) });
     itemFixes.add({ name : "Chill Touch", where : "owned", plan : item => this.chillTouchFix(item) });
     itemFixes.add({ name : "Mind Sliver", where : "owned", plan : item => this.mindSliverFix(item) });
+    itemFixes.add({ name : "Produce Flame", where : "owned", plan : item => this.produceFlameFix(item) });
+    itemFixes.add({ name : "Jump", where : "owned", plan : item => this.jumpFix(item) });
+    itemFixes.add({ name : "Grease", where : "owned", plan : item => this.greaseFix(item) });
+    itemFixes.add({ name : "Web", where : "owned", plan : item => this.webFix(item) });
+    itemFixes.add({ name : "Spike Growth", where : "owned", plan : item => this.spikeGrowthFix(item) });
+    itemFixes.add({ name : "Mirror Image", where : "owned", plan : item => this.mirrorImageFix(item) });
+    itemFixes.add({ name : "Pass without Trace", where : "owned", plan : item => this.passWithoutTraceFix(item) });
+    itemFixes.add({ name : "Material cost", where : "owned", plan : item => this.materialCostFix(item) });
     Hooks.on("dnd5e.rollSavingThrow", (rolls, data) => this.nextSaveUsed(data?.subject ?? rolls?.[0]?.data?.actor ?? null));
     Hooks.on("dnd5e.preApplyDamage", (actor, amount) => this.blockHealing(actor, amount));
     itemFixes.add({ name : "Giant Insect", where : "owned", plan : item => this.giantInsectFix(item) });
+    itemFixes.add({ name : "Enlarge/Reduce", where : "owned", plan : item => this.enlargeReduceFix(item) });
+    for(const [id, types] of Object.entries(this.ONLY_TYPES)) onlyTypes(id, { types, enabled : () => this.enabled() });
+    /* Enlarge/Reduce : only an unwilling target saves (the GM says which) */
+    willingSave({ id : this.ENLARGE_REDUCE, enabled : () => this.enabled(), applies : activity => idOf(activity?.item) === this.ENLARGE_REDUCE });
     /* Blade Ward's die is the attacker's : Roll Item doesn't roll it on a card */
     Hooks.on(`${module.id}.preRollItem`, activity => !(this.enabled() && (idOf(activity?.item) === this.BLADE_WARD)));
     Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.onCast(activity, results));
@@ -96,6 +176,31 @@ export class spells{
     Hooks.on(`${module.id}.targetCount`, (activity, usage, data) => { data.count += this.upcastTargets(activity, usage); });
     Hooks.on("dnd5e.postUseActivity", (activity, usage) => this.agathysCast(activity, usage));
     Hooks.on("updateActor", (actor, changes) => this.agathysGone(actor, changes));
+    /* Blur : not against an attacker whose Blindsight or Truesight reaches it */
+    rollModeFrom(this.BLUR, { against : { mode : "disadvantage", when : (attack, target) => !this.sensesReach(attack.actor, target, ["blindsight", "truesight"]),
+      reason : () => module.i18n("spells.blurred") }, enabled : () => this.enabled(), id : this.BLUR });
+    conditions.endsWhen(effect => this.enabled() && (idOf(originItem(effect)) === this.INVISIBILITY), { attacks : true, casts : true });
+    /* Mirror Image : a d6 per duplicate, any 3+ and a duplicate is hit instead (and destroyed) */
+    hitBecomesMiss(this.MIRROR_IMAGE, { enabled : () => this.enabled(),
+      unaffected : ({ attacker }) => !!attacker?.statuses?.has?.("blinded") || ["blindsight", "truesight"].some(s => Number(attacker?.system?.attributes?.senses?.ranges?.[s]) > 0),
+      formula : ({ effects }) => `${effects.length}d6`,
+      turns : ({ roll }) => roll.dice[0].results.some(r => r.result >= 3),
+      flavor : ({ turned, target, effects }) => module.format(`spells.mirrorImage.${turned ? "turned" : "stands"}`, { name : target.name, left : effects.length - (turned ? 1 : 0) }),
+      /* An effect the item carries (Plutonium's, transferred) is turned off, not deleted : the next cast needs it */
+      onTurned : ({ effects }) => { const e = effects.at(-1); return (e.parent instanceof Item) ? e.update({ disabled : true }) : e.delete(); } });
+    /* Cast again : three new duplicates, the ones left go (Roll Item puts the new ones on a moment later) */
+    Hooks.on("dnd5e.postUseActivity", activity => this.mirrorImageRecast(activity));
+    /* Warding Bond : its caster takes the same damage as the bonded creature; ends at 0 HP, beyond 60 ft, or cast again */
+    sharesDamage(effect => this.enabled() && (idOf(originItem(effect)) === this.WARDING_BOND), { fraction : 1, keep : true });
+    conditions.endsWhen(effect => this.enabled() && (idOf(originItem(effect)) === this.WARDING_BOND), { sourceZeroHP : true, apart : 60, recast : true });
+    /* Dragon's Breath : the creature touched gets its exhale (the caster's DC, the slot's dice, the type chosen) */
+    lends(this.DRAGONS_BREATH, { enabled : () => this.enabled(), activity : item => item.system.activities?.find?.(a => a.type === "save") ?? null });
+    /* Areas that act on whoever enters them or ends a turn in them (the zone lego) */
+    for(const [id, rule] of Object.entries(this.ZONES)) zone(id, { ...rule, enabled : () => this.enabled() });
+    /* Melf's Acid Arrow : half the attack's damage on a miss */
+    onMiss({ id : "melfsAcidArrow", enabled : () => this.enabled(), when : miss => idOf(miss.item) === this.ACID_ARROW,
+      formula : miss => String(Math.floor(miss.damage.reduce((sum, roll) => sum + (Number(roll.total) || 0), 0) / 2)),
+      type : () => "acid", label : miss => miss.item.name });
     Hooks.on("createChatMessage", (message, options, userId) => { if(userId === game.user.id) this.agathysCard(message); });
     Hooks.on(`${module.id}.cardButtons`, (message, buttons, { ray } = {}) => this.agathysButtons(message, buttons, ray));
     Hooks.on(`${module.id}.cardButton`, (message, id, { ray } = {}) => { if(String(id).startsWith("agathys|")) this.agathysHit(message, id.split("|")[1], ray ?? null); });
@@ -245,6 +350,113 @@ export class spells{
     return updateEffects.length ? { updateEffects } : null;
   }
 
+  /* ---------- Grease : a failed save leaves it Prone (Plutonium's save has no effect to apply) ---------- */
+
+  static GREASE_PRONE = "mhGreaseProne000";
+
+  static greaseFix(item){
+    if(!this.enabled() || this.is2014(item) || (item?.type !== "spell") || (idOf(item) !== "grease")) return null;
+    const save = [...(item.system?.activities ?? [])].find(a => a.type === "save");
+    if(!save || item.effects?.get?.(this.GREASE_PRONE)) return null;
+    const effects = (item.effects?.contents ?? []).filter(e => e.statuses?.has?.("prone"));
+    if(effects.length) return null;
+    return {
+      create : { effects : [{ _id : this.GREASE_PRONE, name : game.i18n.localize(CONFIG.statusEffects.find(e => e.id === "prone")?.name ?? "Prone"),
+        img : CONFIG.statusEffects.find(e => e.id === "prone")?.img ?? "icons/svg/falling.svg", statuses : ["prone"], transfer : false }] },
+      update : { [`system.activities.${save.id}.effects`] : [...(save.toObject?.().effects ?? []), { _id : this.GREASE_PRONE, onSave : false }] },
+    };
+  }
+
+  /* ---------- Web : a failed save is Restrained (broken free of with Athletics); Plutonium's save also deals the
+     burning webs' Fire (left to the GM : which webs burn) ---------- */
+
+  static WEB_RESTRAINED = "mhWebRestrained1";
+
+  static webFix(item){
+    if(!this.enabled() || this.is2014(item) || (item?.type !== "spell") || (idOf(item) !== "web")) return null;
+    const save = [...(item.system?.activities ?? [])].find(a => a.type === "save");
+    if(!save || item.effects?.get?.(this.WEB_RESTRAINED)) return null;
+    const status = CONFIG.statusEffects.find(e => e.id === "restrained");
+    return {
+      create : { effects : [{ _id : this.WEB_RESTRAINED, name : `${game.i18n.localize(status?.name ?? "Restrained")}: ${item.name}`,
+        img : status?.img ?? "icons/svg/net.svg", statuses : ["restrained"], transfer : false,
+        flags : { [module.id] : { grapple : { free : true, skill : "ath" } } } }] },
+      update : {
+        [`system.activities.${save.id}.effects`] : [...(save.toObject?.().effects ?? []), { _id : this.WEB_RESTRAINED, onSave : false }],
+        [`system.activities.${save.id}.damage.parts`] : [],
+      },
+    };
+  }
+
+  /* ---------- Spike Growth : its 2d4 doesn't grow with the slot (Plutonium scales it) ---------- */
+
+  static spikeGrowthFix(item){
+    if(!this.enabled() || this.is2014(item) || (item?.type !== "spell") || (idOf(item) !== "spike-growth")) return null;
+    const damage = [...(item.system?.activities ?? [])].find(a => a.type === "damage");
+    const parts = damage?.toObject?.().damage?.parts ?? [];
+    if(!parts.some(p => p.scaling?.number)) return null;
+    return { update : { [`system.activities.${damage.id}.damage.parts`] : parts.map(p => ({ ...p, scaling : { mode : "", number : null } })) } };
+  }
+
+  /* ---------- Pass without Trace : its 30-ft emanation (Plutonium gives it no area; the zone lego gives the effect) ---------- */
+
+  static passWithoutTraceFix(item){
+    if(!this.enabled() || this.is2014(item) || (item?.type !== "spell") || (idOf(item) !== "pass-without-trace")) return null;
+    if(item.system?.target?.template?.type) return null;
+    return { update : { "system.target.template" : { type : "radius", size : "30", units : "ft", count : "", contiguous : false, stationary : false } } };
+  }
+
+  /* ---------- Mirror Image : no roll on the cast (Plutonium's d6s read a flag nothing sets; hitBecomesMiss rolls them) ---------- */
+
+  static mirrorImageFix(item){
+    if(!this.enabled() || this.is2014(item) || (item?.type !== "spell") || (idOf(item) !== this.MIRROR_IMAGE)) return null;
+    const use = [...(item.system?.activities ?? [])].find(a => (a.type === "utility") && a.roll?.formula);
+    return use ? { update : { [`system.activities.${use.id}.roll.formula`] : "" } } : null;
+  }
+
+  static async mirrorImageRecast(activity){
+    if(!this.enabled() || (idOf(activity?.item) !== this.MIRROR_IMAGE) || !activity.actor?.isOwner) return;
+    const actor = activity.getUsageToken?.()?.actor ?? activity.actor;
+    const old = actor.effects.filter(e => (e.parent === actor) && (idOf(originItem(e)) === this.MIRROR_IMAGE)).map(e => e.id);
+    if(old.length) await actor.deleteEmbeddedDocuments("ActiveEffect", old).catch(() => {});
+  }
+
+  /* ---------- Material cost : "worth 10+ GP" in the text, no cost in the data ---------- */
+
+  static materialCostFix(item){
+    if(!this.enabled() || (item?.type !== "spell")) return null;
+    const m = item.system?.materials;
+    if(!m || (Number(m.cost) > 0)) return null;
+    const worth = String(m.value ?? "").match(/worth\s+(?:at\s+least\s+)?([\d,]+)\s*\+?\s*GP/i);
+    if(!worth) return null;
+    const update = { "system.materials.cost" : Number(worth[1].replaceAll(",", "")) };
+    if(/consume/i.test(m.value) && !m.consumed) update["system.materials.consumed"] = true;
+    return { update };
+  }
+
+  /* ---------- Jump : its effect sets the creature's jump speed to 30 ft (the token ruler's Jump action uses it), and once a
+     turn, a jump up to 30 ft for 10 ft of movement (jump.js : flags.macro-helper.jump) ---------- */
+
+  static jumpFix(item){
+    if(!this.enabled() || this.is2014(item) || (item?.type !== "spell") || (idOf(item) !== "jump")) return null;
+    const KEY = "system.attributes.movement.speeds.jump";
+    const effects = item.effects?.contents ?? [...(item.effects ?? [])];
+    const LEAP = { leap : 30, cost : 10, once : "turn" };
+    const updateEffects = effects.filter(e => !e.transfer && (!(e.changes ?? []).some(c => c.key === KEY) || !e.getFlag?.(module.id, "jump")))
+      .map(e => ({ _id : e.id, [`flags.${module.id}.jump`] : LEAP,
+        ...(!(e.changes ?? []).some(c => c.key === KEY) ? { changes : [...(e.toObject().changes ?? []), { key : KEY, type : "upgrade", mode : 4, value : "30" }] } : {}) }));
+    return updateEffects.length ? { updateEffects } : null;
+  }
+
+  /* ---------- Produce Flame : its hurl has the range of a hurl (60 ft), not the spell's Self ---------- */
+
+  static produceFlameFix(item){
+    if(!this.enabled() || this.is2014(item) || (item?.type !== "spell") || (idOf(item) !== "produce-flame")) return null;
+    const hurl = [...(item.system?.activities ?? [])].find(a => a.type === "attack");
+    if(!hurl || (hurl.range?.override && (Number(hurl.range?.value) > 0))) return null;
+    return { update : { [`system.activities.${hurl.id}.range`] : { override : true, value : "60", units : "ft" } } };
+  }
+
   /* ---------- Mind Sliver : the next save only ---------- */
 
   static MIND_SLIVER = "mind-sliver";
@@ -321,6 +533,29 @@ export class spells{
     return { update : { [`system.activities.${summon.id}.match.saves`] : true } };
   }
 
+  /* ---------- Enlarge/Reduce : a size larger or smaller, Strength checks and saves with advantage / disadvantage ---------- */
+
+  static enlargeReduceFix(item){
+    if(!this.enabled() || this.is2014(item) || (item?.type !== "spell") || (idOf(item) !== this.ENLARGE_REDUCE)) return null;
+    const MODES = ["system.abilities.str.check.roll.mode", "system.abilities.str.save.roll.mode"];
+    const updateEffects = [];
+    for(const effect of item.effects ?? []){
+      if(effect.transfer || effect.getFlag(module.id, "rule")?.size) continue;
+      const changes = [...(effect.system?.changes ?? effect.changes ?? [])].map(c => ({ ...c }));
+      /* Reduced : its damage is less (Plutonium's "- 1d4"), else by its name */
+      const smaller = changes.some(c => /^\s*-/.test(String(c.value)) && /damage$/.test(c.key)) || /reduc/i.test(effect.name);
+      const mode = smaller ? -1 : 1;
+      for(const key of MODES){
+        const change = changes.find(c => c.key === key);
+        if(change) change.value = mode;
+        else changes.push({ key, type : "add", value : mode });
+      }
+      updateEffects.push({ _id : effect.id, ...((effect.system?.changes !== undefined) ? { "system.changes" : changes } : { changes }),
+        [`flags.${module.id}.rule`] : { ...(effect.getFlag(module.id, "rule") ?? {}), size : mode } });
+    }
+    return updateEffects.length ? { updateEffects } : null;
+  }
+
   /* ---------- Rituals ---------- */
 
   static isRitual(item){
@@ -334,18 +569,60 @@ export class spells{
     const method = item.system?.method ?? "";
     if(["ritual", "innate", "atwill"].includes(method)) return null;
     if(Number(item.system?.prepared) >= 1) return "choice";
-    const wizard = (String(item.system?.sourceItem ?? "") === "class:wizard") || (item.system?.classIdentifier === "wizard");
+    const wizard = isClassSpell(item, "wizard");
     return (wizard && item.actor?.items?.some?.(i => idOf(i) === "ritual-adept")) ? "only" : null;
+  }
+
+  /* ---------- Quick Ritual (a lego) ---------- */
+
+  static #quick = new Map();
+
+  /**
+   * A Ritual spell it has prepared cast at its normal casting time with no spell slot, paid with a use of the source
+   * (Ritual Caster's Quick Ritual; a homebrew "once a day, a ritual in an instant"). The ritual choice offers it while
+   * the source has a use left.
+   *   quickRitual(match, { cost : (actor, source) => item, label : source => "...", enabled, id })
+   *   match   an item identifier the creature has (or several), or (actor) => the source; cost : the item whose use is
+   *           spent (default : the source)
+   */
+  static quickRitual(match, { cost = null, label = null, enabled = null, id = null } = {}){
+    this.#quick.set(id ?? ((typeof match === "function") ? foundry.utils.randomID() : [match].flat().join(",")), { match, cost, label, enabled });
+  }
+
+  /* The first quick ritual source with a use left : { item (what pays), label } or null */
+  static quickRitualFor(actor){
+    for(const rule of this.#quick.values()){
+      if(rule.enabled && !rule.enabled()) continue;
+      const source = (typeof rule.match === "function") ? rule.match(actor) : actor?.items?.find?.(i => [rule.match].flat().includes(idOf(i)));
+      if(!source) continue;
+      const item = rule.cost?.(actor, source) ?? ((source instanceof Item) ? source : null);
+      if(item && !(Number(item.system?.uses?.value) > 0)) continue;
+      return { item, label : rule.label?.(source) ?? source.name ?? "" };
+    }
+    return null;
   }
 
   static async ritualStep(activity, ctx, next){
     const mode = this.enabled() ? this.ritualMode(activity?.item) : null;
     if(!mode || ctx.config?.[module.id]?.ritual !== undefined) return next();
     let ritual = (mode === "only");
-    if(mode === "choice"){
-      const value = await chooseOption({ title : activity.item.name, icon : "fa-solid fa-book-open", prompt : module.i18n("spells.ritual.prompt"),
-        options : [{ value : "normal", label : module.i18n("spells.ritual.normal") }, { value : "ritual", label : module.i18n("spells.ritual.ritual") }] });
+    /* Only a real choice is asked : 1 minute or more saves just 10 minutes for a slot; no slot left, no choice */
+    const activation = activity.item.system?.activation ?? {};
+    const seconds = (Number(activation.value) || 1) * ({ minute : 60, hour : 3600, day : 86400 }[activation.type] ?? 0);
+    const level = Number(activity.item.system?.level) || 1;
+    const slotLeft = Object.values(activity.actor?.system?.spells ?? {}).some(s => (Number(s?.value) > 0) && (Number(s?.level) >= level));
+    const quick = (mode === "choice") ? this.quickRitualFor(activity.actor) : null;
+    const time = s => s ? this.timeText(s) : (CONFIG.DND5E.activityActivationTypes?.[activation.type]?.label ?? activation.type ?? "");
+    if((mode === "choice") && !quick && ((seconds >= 60) || !slotLeft)) ritual = true;
+    else if(mode === "choice"){
+      const options = [
+        ...(slotLeft ? [{ value : "normal", label : module.format("spells.ritual.normal", { time : time(seconds) }) }] : []),
+        { value : "ritual", label : module.format("spells.ritual.ritual", { time : this.timeText(seconds + 600) }) },
+        ...(quick ? [{ value : "quick", label : module.format("spells.ritual.quick", { time : time(seconds), source : quick.label }) }] : []),
+      ];
+      const value = await chooseOption({ title : activity.item.name, icon : "fa-solid fa-book-open", prompt : module.i18n("spells.ritual.prompt"), options });
       if(!value) return;
+      if(value === "quick") return this.quickCast(ctx, next, quick);
       ritual = (value === "ritual");
     }
     if(!ritual) return next();
@@ -355,6 +632,23 @@ export class spells{
     uses.mark(ctx, { ritual : true, note, cardFlags : { ritual : true } });
     uses.flag(ctx, { ritual : true, note });
     return next();
+  }
+
+  /* Quick Ritual : its normal time, no slot, its own level; the source's use spent once it's cast */
+  static async quickCast(ctx, next, quick){
+    ctx.config = { ...ctx.config, consume : { ...((typeof ctx.config?.consume === "object") ? ctx.config.consume : {}), spellSlot : false }, scaling : false };
+    const note = module.format("spells.ritual.quickNote", { source : quick.label });
+    uses.mark(ctx, { note });
+    uses.flag(ctx, { note });
+    const result = await next();
+    if(result && quick.item) await spendUses(quick.item, 1, { warn : true });
+    return result;
+  }
+
+  /* 4200 -> "1 hour 10 minutes" */
+  static timeText(seconds){
+    const h = Math.floor(seconds / 3600), m = Math.round((seconds % 3600) / 60);
+    return [h ? module.format(h === 1 ? "spells.ritual.hour" : "spells.ritual.hours", { n : h }) : "", m ? module.format(m === 1 ? "spells.ritual.minute" : "spells.ritual.minutes", { n : m }) : ""].filter(Boolean).join(" ");
   }
 
   /* ---------- Emanations ---------- */
@@ -442,6 +736,10 @@ export class spells{
         options : options.map(o => ({ value : o.key, label : o.label })), value : options[0].key });
       if(!key) return;
       this.setSlot(ctx, activity, options.find(o => o.key === key));
+      /* dnd5e's window would only ask the level again : skipped, unless it has more to ask (which Concentration to end,
+         other resources to spend) */
+      const concentrating = activity.item.requiresConcentration && (activity.actor?.concentration?.effects?.size > 0);
+      if(!concentrating && !activity.consumption?.targets?.length) ctx.dialog = { ...ctx.dialog, configure : false };
     }
     else if(options.length === 1) this.setSlot(ctx, activity, options[0]);
     return next();
@@ -461,15 +759,18 @@ export class spells{
 
   /* "You can target one additional creature for each spell slot level above 1" : how many more at the level cast */
   static upcastTargets(activity, usage = {}){
-    const item = activity?.item;
-    if((item?.type !== "spell") || !(Number(item.system.level) > 0)) return 0;
-    const level = Number(activity.actor?.system?.spells?.[usage?.spell?.slot]?.level) || 0;
-    if(!level) return 0;
-    const text = String(item.system.description?.value ?? "").replace(/<[^>]+>/g, " ");
+    const rule = this.upcastRule(activity?.item);
+    const level = Number(activity?.actor?.system?.spells?.[usage?.spell?.slot]?.level) || 0;
+    if(!rule || !level) return 0;
+    return Math.max(0, level - rule.above) * rule.per;
+  }
+  /* Does a higher slot let the spell target more creatures ? { per, above } (per slot level above `above`), or null */
+  static upcastRule(item){
+    if((item?.type !== "spell") || !(Number(item.system.level) > 0)) return null;
+    const text = plainText(item.system.description?.value);
     const m = /\b(one|two|three|\d+) additional (?:[a-z]+ )?(?:creatures?|targets?|beasts?|humanoids?|undead|allies|ally)\b[^.]*?\bfor each (?:spell )?slot level above (\d+)/i.exec(text);
-    if(!m) return 0;
-    const per = { one : 1, two : 2, three : 3 }[m[1].toLowerCase()] ?? Number(m[1]);
-    return Math.max(0, level - Number(m[2])) * (per || 1);
+    if(!m) return null;
+    return { per : ({ one : 1, two : 2, three : 3 }[m[1].toLowerCase()] ?? Number(m[1])) || 1, above : Number(m[2]) };
   }
 
   /* How many creatures it may target at the level cast (its count, upcasting, Twinned Spell); null : no count */
@@ -502,13 +803,17 @@ export class spells{
 
   static async rangeStep(activity, ctx, next){
     if((limits.mode() === "off") || (activity?.item?.type !== "spell") || this.picks()) return next();
+    /* Targets a rule set itself (an area round the target, a leap) : not the caster's to hold to range or count */
+    if(ctx.config?.[module.id]?.useTargets) return next();
     /* An area : its template finds who's in it */
     if(activity.target?.template?.type || activity.item.system?.target?.template?.type) return next();
     const caster = tokenOf(activity.actor);
-    const targets = [...(game.user.targets ?? [])].filter(t => t !== caster);
+    /* Measured from where it's cast (actFrom), or the caster */
+    const at = actingFrom(ctx.config) ?? caster;
+    const targets = [...(game.user.targets ?? [])].filter(t => (t !== caster) && (t !== at));
     const range = this.rangeOf(activity, Number(ctx.config?.[module.id]?.rangeMultiplier) || 1);
     if(!caster || !targets.length || (range === null)) return next();
-    const out = targets.filter(t => distanceBetween(caster, t) > range);
+    const out = targets.filter(t => distanceBetween(at, t) > range);
     if(out.length && !limits.allow(module.format("spells.outOfRange", { spell : activity.item.name, names : out.map(t => t.name).join(", "), range }),
       { who : activity.actor.name, what : activity.item.name })) return;
     /* More creatures than the level cast allows */

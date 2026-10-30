@@ -1,7 +1,8 @@
 import { module } from './module.js';
 import { logger } from './log.js';
 import { settings } from './settings.js';
-import { esc, buttonRow, addButton, makeButton } from './helpers/utils.js';
+import { esc, buttonRow, addButton, makeButton, ownerIds, gmIds } from './helpers/utils.js';
+import { ruleArgs } from './helpers/rules.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -38,6 +39,27 @@ export class gm{
   }
 
   /**
+   * Is that creature the user's own, to change at once without the GM's button : for a player, their own character
+   * (user.character) and what it summoned, when they own it; for the GM, a creature no player owns. Anything else (another creature a
+   * player happens to own, a player's creature for the GM) goes through ask().
+   *   if(gm.mine(target)) await change(target); else await gm.ask("change", { ... }, { text, label });
+   * @param {Actor|Token|TokenDocument} thing
+   * @param {User} [user=game.user]
+   * @returns {boolean}
+   */
+  static mine(thing, user = game.user){
+    const actor = thing?.actor ?? thing;
+    if(!actor || !user) return false;
+    if(user.isGM) return !game.users.some(u => !u.isGM && actor.testUserPermission(u, "OWNER"));
+    const own = user.character;
+    if(!own || !actor.testUserPermission(user, "OWNER")) return false;
+    const same = a => !!a && ((a === own) || (a.uuid === own.uuid));
+    /* Its summon (Find Familiar, a Wild Companion) : dnd5e notes the item that summoned it */
+    const summoner = fromUuidSync(actor.getFlag?.("dnd5e", "summon.origin") ?? "", { strict : false })?.actor;
+    return same(actor) || same(summoner);
+  }
+
+  /**
    * Run a registered query as the GM : here when you are the GM, else on the active GM's client.
    * @param {string} name
    * @param {object} data   JSON-serializable
@@ -61,43 +83,141 @@ export class gm{
   /**
    * Ask the GM to make a change to a creature the player doesn't own : a chat card with the GM's button, which runs the
    * registered handler (as run() would) for the player who asked. The GM's own use gets the card too : nothing changes
-   * on another creature without the GM's click.
+   * on another creature without the GM's click. With `deny`, a Decline button beside it (both on one row).
    * @param {string} name     a registered handler
    * @param {object} data     JSON-serializable
    * @param {object} options
    * @param {string} options.text    the card's line (what's asked)
    * @param {string} options.label   the GM's button
    * @param {Actor} [options.actor]  who's asking (the card's speaker)
+   * @param {boolean} [options.deny=false]   a Decline button too
+   * @param {string[]} [options.conditions]  the conditions it gives : their rules in the button's tooltip
    * @returns {Promise<ChatMessage>}  the card
    */
-  static async ask(name, data, { text, label, actor = null } = {}){
+  static async ask(name, data, { text, label, actor = null, deny = false, conditions = [] } = {}){
     const handler = this.#handlers.get(name);
     if(!handler) throw new Error(`Macro Helper | no GM handler "${name}"`);
     return ChatMessage.implementation.create({
       speaker : actor ? ChatMessage.implementation.getSpeaker({ actor }) : { alias : module.title },
       content : `<p>${esc(text)}</p>`,
-      flags : { [module.id] : { gmAsk : { name, data, label, done : false } } },
+      flags : { [module.id] : { gmAsk : { name, data, label, deny, conditions, done : false } } },
     });
   }
 
-  /* The GM's button on an ask() card */
+  /**
+   * A use that waits for the GM's Allow (Hide : is it Heavily Obscured, out of sight ?). Call it from a use step instead
+   * of next() : nothing is used or spent yet. The card (its owners and the GM) has the GM's Allow / Decline; once
+   * allowed, the asker's client uses the activity again, with config["macro-helper"].gmAllowed (let that one through).
+   *   uses.onActivity("hide", (activity, ctx, next) => ctx.config?.["macro-helper"]?.gmAllowed ? next() : gm.askToUse(activity, ctx, { text }));
+   * @param {Activity} activity
+   * @param {object} ctx       the use step's ctx (its config is kept for the allowed use : economy...)
+   * @param {object} options
+   * @param {string} options.text    what's asked
+   * @param {string} [options.hint]  a second line (who sees them now)
+   * @param {Actor} [options.actor]  the card's speaker (default : the activity's)
+   * @returns {Promise<null>}  null : the use stops here
+   */
+  static async askToUse(activity, ctx = {}, { text, hint = "", actor = null } = {}){
+    actor ??= activity.actor;
+    const keep = foundry.utils.deepClone(ctx.config?.[module.id] ?? {});
+    for(const key of Object.keys(keep)) if(typeof keep[key] === "function") delete keep[key];
+    await ChatMessage.implementation.create({
+      speaker : ChatMessage.implementation.getSpeaker({ actor }),
+      content : `<p>${esc(text)}</p>${hint ? `<p class="hint">${esc(hint)}</p>` : ""}`,
+      whisper : [...new Set([...ownerIds(actor), ...gmIds()])],
+      flags : { [module.id] : { gmAsk : { use : activity.uuid, config : keep, label : module.format("gm.allowUse", { item : activity.item?.name ?? activity.name }), deny : true, done : false } } },
+    });
+    return null;
+  }
+
+  /* The GM's buttons on an ask() / askToUse() card : the one row, Allow (or the handler's label) and Decline */
   static #askButton(message, html){
     const ask = message.getFlag?.(module.id, "gmAsk");
-    if(!ask || !game.user.isGM) return;
+    if(!ask) return;
     const row = buttonRow(html, { key : `${module.id}-gm-ask` });
     if(row.childElementCount) return;
-    addButton(row, makeButton({ icon : "fa-gavel", text : ask.label, once : true, disabled : !!ask.done,
-      onClick : async () => {
-        const handler = this.#handlers.get(ask.name);
+    if(ask.done === "denied"){
+      const p = document.createElement("p");
+      p.textContent = module.i18n("gm.denied");
+      return row.append(p);
+    }
+    if(!game.user.isGM) return;
+    const answer = async allow => {
+      const now = message.getFlag(module.id, "gmAsk");
+      if(!now || now.done) return;
+      if(allow && now.name){
+        const handler = this.#handlers.get(now.name);
         if(!handler) return;
-        const result = await handler(ask.data, message.author ?? game.user);
+        const result = await handler(now.data, message.author ?? game.user);
         for(const note of (Array.isArray(result) ? result : [])) ui.notifications.info(note);
-        await message.setFlag(module.id, "gmAsk", { ...ask, done : true });
-      } }));
+      }
+      await message.setFlag(module.id, "gmAsk", { ...now, done : allow ? "allowed" : "denied" });
+    };
+    addButton(row, makeButton({ icon : "fa-gavel", text : ask.label, once : true, disabled : !!ask.done, conditions : ask.conditions ?? [], onClick : () => answer(true) }));
+    if(ask.deny) addButton(row, makeButton({ icon : "fa-xmark", text : module.i18n("gm.deny"), once : true, disabled : !!ask.done, onClick : () => answer(false) }));
+  }
+
+  /* An askToUse() card allowed : the asker's client uses the activity now */
+  static async #allowed(message, changes){
+    const ask = message.getFlag?.(module.id, "gmAsk");
+    if(!ask?.use || (ask.done !== "allowed") || !foundry.utils.hasProperty(changes ?? {}, `flags.${module.id}.gmAsk`)) return;
+    if(!(message.author ?? game.user).isSelf) return;
+    const activity = await fromUuid(ask.use);
+    if(!activity) return;
+    await message.setFlag(module.id, "gmAsk.done", "used");
+    await activity.use(foundry.utils.mergeObject({ [module.id] : { ...(ask.config ?? {}), gmAllowed : true } }, {}));
+  }
+
+  /* ---------- Asking a creature's player ---------- */
+
+  /**
+   * The player who should answer for a creature : an active non-GM owner, not one of the excluded users.
+   * @param {Actor} actor
+   * @param {User[]} [exclude]
+   * @returns {User|null}
+   */
+  static playerFor(actor, exclude = []){
+    const skip = new Set(exclude.filter(Boolean).map(u => u.id));
+    return game.users.find(u => u.active && !u.isGM && !skip.has(u.id) && actor?.testUserPermission(u, "OWNER")) ?? null;
+  }
+
+  /**
+   * A question with buttons, asked on this client.
+   * @param {{ title : string, icon? : string, content : string, buttons : { action : string, label : string, default? : boolean }[] }} data
+   * @returns {Promise<string|null>}  the button's action, null when closed
+   */
+  static async askHere({ title, icon, content, buttons } = {}){
+    return foundry.applications.api.DialogV2.wait({
+      window : { title, icon }, content, buttons, rejectClose : false,
+    }) ?? null;
+  }
+
+  /**
+   * Ask a creature's player (see playerFor) : on their client, or here when there is no such player (Alert's swap,
+   * Battle Medic's Hit Die).
+   * @param {Actor} actor
+   * @param {object} data   askHere's question
+   * @param {object} [options]
+   * @param {User[]} [options.exclude]       users who don't count as "its player"
+   * @param {string|null} [options.fallback] the answer when it has no player : undefined asks here instead
+   * @returns {Promise<string|null>}
+   */
+  static async askPlayer(actor, data, { exclude = [], fallback } = {}){
+    const player = this.playerFor(actor, exclude);
+    if(!player) return (fallback !== undefined) ? fallback : this.askHere(data);
+    if(player.isSelf) return this.askHere(data);
+    try {
+      return await player.query(`${module.id}.ask`, data, { timeout : 60000 });
+    } catch(error){
+      log.debug("No answer", player.name, error);
+      return null;
+    }
   }
 
   static register(){
     Hooks.on("renderChatMessageHTML", (message, html) => this.#askButton(message, html));
+    CONFIG.queries[`${module.id}.ask`] = data => this.askHere(data);
+    Hooks.on("updateChatMessage", (message, changes) => this.#allowed(message, changes).catch(error => log.error(error)));
     Hooks.on("combatTurnChange", (combat, prior, current)=> this.expire(combat, prior, current));
     Hooks.on("deleteCombat", combat => this.expireCombat(combat));
     Hooks.on("combatStart", combat => this.adoptOutOfCombat(combat));
@@ -127,7 +247,7 @@ export class gm{
   }
 
   /**
-   * A timed effect's stamp (addTimedEffect) : stamp(), or out of combat { combat : null, time } : its first turn in a
+   * A timed effect's stamp (giveEffect with until) : stamp(), or out of combat { combat : null, time } : its first turn in a
    * combat that begins (adoptOutOfCombat), else OUT_OF_COMBAT seconds of game time (expireOutOfCombat).
    * @param {Actor} actor
    * @param {"turnStart"|"turnEnd"} at
@@ -195,8 +315,9 @@ export class gm{
     const actorOf = state => combat.combatants.get(state?.combatantId)?.actor?.uuid ?? null;
     const ended = actorOf(prior), started = actorOf(current);
     const priorAt = this.#at(prior?.round, prior?.turn), currentAt = this.#at(current?.round, current?.turn);
-    /* A new round with Initiative Each Round (Homebrew) : who starts isn't known until everyone rerolls (expireStart) */
-    const waitForOrder = (current?.round > prior?.round) && settings.value("homebrewInitiative");
+    /* A new round with Initiative Each Round (Homebrew) : who starts isn't known until everyone rerolls (expireStart).
+       Not round 1 : the combat beginning keeps the order it has (homebrew rerolls from round 2) */
+    const waitForOrder = (current?.round > prior?.round) && ((prior?.round ?? 0) >= 1) && settings.value("homebrewInitiative");
     /* The combat beginning with initiative still to roll (automatic initiative) : the same */
     const toRoll = (current?.round === 1) && !((prior?.round ?? 0) >= 1) && (settings.value("initiativeMethod") === "auto")
       && combat.combatants.some(c => c.initiative === null);
@@ -244,4 +365,37 @@ export class gm{
     if(!game.users.activeGM?.isSelf) return;
     for(const effect of this.#effects(e => e.combat === combat.id)) await effect.delete();
   }
+}
+
+/**
+ * The turn-start lego : something a creature does, or that happens to it, at the start of each of its turns in combat
+ * (Unarmed Fighting's grapple damage; a monster's Regeneration, "at the start of each of its turns, it can..."). Runs
+ * once per turn on the active GM's client, when the turn order is settled (gm.turnStarted).
+ *   onTurnStart({ id, feature, enabled, run : async (actor, token, combat, combatant) => {} })
+ * feature : the item (identifier) the creature needs, or (actor) => item; the same id again replaces the rule.
+ */
+const turnRules = [];
+let turnHooked = false;
+
+export function onTurnStart(match, rule){
+  rule = ruleArgs(match, rule);
+  if(!rule.id) return;
+  const old = turnRules.findIndex(r => r.id === rule.id);
+  if(old >= 0) turnRules[old] = rule;
+  else turnRules.push(rule);
+  if(turnHooked) return;
+  turnHooked = true;
+  Hooks.on(`${module.id}.turnStart`, async (combat, combatant) => {
+    const actor = combatant?.actor;
+    if(!actor || !game.users.activeGM?.isSelf) return;
+    for(const rule of turnRules){
+      try {
+        if(rule.enabled && !rule.enabled()) continue;
+        const feature = (typeof rule.feature === "function") ? rule.feature(actor)
+          : (rule.feature ? actor.items.find(i => (i.identifier ?? i.system?.identifier) === rule.feature) : true);
+        if(!feature) continue;
+        await rule.run(actor, combatant.token?.object ?? null, combat, combatant);
+      } catch(error){ log.error("Turn start", rule.id, error); }
+    }
+  });
 }

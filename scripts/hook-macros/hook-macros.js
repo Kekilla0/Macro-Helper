@@ -17,12 +17,12 @@ const log = logger.for(import.meta.url);
 /* The hooks offered in the dropdown, by group. Any other hook can be typed in as a custom hook. */
 export const CATALOG = {
   startup : ["ready", "canvasReady"],
-  combat : ["combatStart", "combatTurnChange", "deleteCombat"],
+  combat : ["combatStart", "combatTurnChange", "macro-helper.turnStart", "macro-helper.turnEnd", "deleteCombat"],
   tokens : ["createToken", "moveToken", "updateToken", "deleteToken", "targetToken"],
   actors : ["updateActor", "createItem", "deleteItem", "createActiveEffect", "deleteActiveEffect"],
   chat : ["createChatMessage"],
   game : ["pauseGame", "updateWorldTime"],
-  macroHelper : ["macro-helper.targets", "macro-helper.preAttack", "macro-helper.attack", "macro-helper.preDamage",
+  macroHelper : ["macro-helper.zeroHP", "macro-helper.gainsCondition", "macro-helper.entersSpace", "macro-helper.entersCreatureSpace", "macro-helper.movesThrough", "macro-helper.anyTurnStart", "macro-helper.preOpportunityAttack", "macro-helper.targets", "macro-helper.preAttack", "macro-helper.attack", "macro-helper.preDamage",
     "macro-helper.damage", "macro-helper.cardButtons", "macro-helper.cardButton"],
   dnd5e : ["dnd5e.preRollAttackV2", "dnd5e.preRollSavingThrowV2", "dnd5e.rollAttack", "dnd5e.rollDamage", "dnd5e.preApplyDamage", "dnd5e.applyDamage", "dnd5e.rollInitiative",
     "dnd5e.restCompleted", "dnd5e.beginConcentrating", "dnd5e.endConcentration"],

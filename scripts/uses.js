@@ -20,42 +20,83 @@ export class uses{
   static ORDER = {
     item : [
       "castingBusy",   // Casting : a long cast under way : using anything else asks, then fails the cast
-      "wildShapeCast", // Druid : a spell while in Wild Shape (Rule Limits; Change : leave the form, then cast)
+      "cantUseInstead",// Use rules : cantUseWhile with `instead` (Druid : a spell in Wild Shape; Fix : leave the form, then cast)
       "flurry",        // Monk : Flurry of Blows uses the Unarmed Strike instead
-      "smite",         // Paladin : a smite spell from the sheet smites the latest melee hit
+      "smite",         // Cast on hit : a smite spell (or a feature casting one) from the sheet : the latest hit it fits
       "huntersMark",   // Ranger : Hunter's Mark / Favored Enemy : pay, pick, mark (or move the mark)
       "sneak",         // Rogue : Sneak Attack from the sheet : the latest qualifying hit
+      "giantAncestry", // Goliath : Fire's Burn, Frost's Chill, Hill's Tumble from the sheet : the latest hit they fit
+      "cloudsJaunt",   // Goliath : Cloud's Jaunt : the space first, then the use (a teleport)
+      "jump",          // Jump : the landing square first, then the use (its card), then the jump
       "hex",           // Warlock : Hex : pay, ability, pick, curse (or move it)
       "fontOfMagic",   // Sorcerer : Font of Magic : the conversion window
       "arcaneRecovery",// Wizard : Arcane Recovery from the sheet : the slot window
       "familiar",      // Familiars : Store / Summon New / Release, before dnd5e's choice of activity
       "itemMacro",     // Item Macro : a macro run before (or instead of) the use
       "healer",        // Feats : the Healer feat's Battle Medic
+      "byHealth",      // Spells : Toll the Dead uses its healthy / hurt activity for its target
+      "element",       // Spell actions : Elementalism : which element (its area's colour), no Beckon / Sculpt question
+      "flame",         // Spell actions : Produce Flame : you, a creature (hurl) or a square, one pick
+      "goodberry",     // Spell actions : Goodberry : who gets the berries (up to 10 picks, repeats allowed)
+      "water",         // Spell actions : Create or Destroy Water : fill containers or rain (douse flames)
+      "illusion",      // Spell actions : Disguise Self, Silent Image, Sanctuary : straight to casting (the other activity is for others); the image's space
+      "afterAttack",   // Spell actions : Ice Knife goes to its attack (its shard's save comes after)
+      "sustained",     // Spell actions : a spell again while its Concentration lasts (sustain : Witch Bolt, Heat Metal, Flame Blade)
+      "conjuredBlade", // Spell actions : Flame Blade's blade used : the spell's attack
+      "arcaneVigor",   // Spell actions : Arcane Vigor straight to its casting (its Hit Dice after)
+      "subclassItem",  // Subclasses : an item with nothing to roll does its rule (Tides of Chaos)
       "fastForward",   // Roll Item : one attack with its riders skips dnd5e's choice of activity
     ],
     activity : [
+      "endedOnDamage", // Durations : an item's effect switched off by its damage (a poison) goes before the item is used again
+      "shellToggle",   // Species : a Tortle's Shell Defense used while in its shell : it emerges instead (a Bonus Action)
       "castingBusy",   // Casting : a long cast under way : using anything else asks, then fails the cast
+      "cunningAction", // Rogue : Cunning Action's Dash / Disengage / Hide uses that Default Action, as a Bonus Action
+      "nimbleEscape",  // Creature trait : Nimble Escape's Disengage or Hide, as a Bonus Action
+      "noReactions",   // Spell effects : a Reaction while an effect forbids them (Arms of Hadar) : Rule Limits
       "offScene",      // Roll Item : no token on the scene being viewed : no targets (it can't see them)
       "itemMacro",     // Item Macro : a macro on the activity
+      "sustainedActivity", // Spell actions : a sustained spell's later activity used from the sheet : no new casting
       "ritual",        // Spells : cast as a Ritual (no slot, 10 minutes longer) or normally
       "castLevel",     // Spells : a levelled spell aimed at creatures asks its slot level first (the pick counts upcast targets)
       "longCast",      // Casting : 1 minute or more (or a Ritual) : begun with Concentration, cast from its card later
       "slotPerTurn",   // Casting : a second spell slot this turn follows Rule Limits
-      "metamagic",     // Sorcerer : Metamagic chosen and paid before a Sorcerer spell is cast (Distant : the range picked)
+      "castingChoice", // Casting choice : an option chosen as it's cast, paid once cast (Metamagic; Quickened : its economy)
+      "actionAs",      // Default Actions : a Default Action a rule lets cost a Bonus Action (Keen Mind's Study) : which one
+      "largeForm",     // Goliath : Large Form needs room to grow (Rule Limits), before anything is spent
+      "economy",       // Action Tracker : its Action / Bonus Action / Reaction (Rule Limits for a second), spent once used
       "components",    // Components : V (not Silenced), S (a free hand), M (a focus, or a pouch and a free hand) : Rule Limits
+      "actFrom",       // Act from : a place the use can be made from (Invoke Duplicity's illusion) : themself or there, before any pick
+      "moveFirst",     // Move first : its creature moves up to N ft before the use (Spiritual Weapon's force, Flaming Sphere's ram)
+      "spellCommand",  // Spell actions : Command : which command, before the targets
+      "spellChoice",   // Spell effects : Guidance's skill, Resistance's damage type, asked before the targets
+      "lendChoice",    // Lend : Dragon's Breath's damage type, before the targets (anyone can be picked)
+      "enchantProfile",// Spell actions : Shillelagh's enchantment by caster level, True Strike's by the weapon
       "flurry",        // Monk : Monk's Focus's Flurry of Blows uses the Unarmed Strike instead
-      "presetTargets", // Cleric : Turn Undead targets the Undead within 30 ft itself (no pick)
+      "presetTargets", // Emanation : every matching creature round the user is targeted (Turn Undead), no pick
       "action",        // Default Actions : choose and pick first (Help)
       "maneuver",      // Maneuvers : Grapple or Shove, for the one activity that does both
       "transform",     // Druid : Wild Shape's form, a familiar and its space
       "layOnHands",    // Paladin : Remove Poison picks the creature it touches
-      "hide",          // Rogue : Cunning Action's Hide asks the GM first; used only once allowed
+      "hide",          // Default Actions : Hide asks the GM first (gm.askToUse); used only once allowed
       "healersKit",    // Default Actions : the Healer's Kit's Stabilize picks a creature at 0 HP first
+      "featUse",       // General feats : a feat's activity that does something else (Chef's Replenishing Meal : its eaters get the effect)
       "dancingLights", // Spells : Dancing Lights : four lights or one form, where each goes
+      "spellMessage",  // Spell actions : Message : who hears it and what, from a list (no pick)
+      "placedSummon",  // Spell actions : Mage Hand : its caster picks the space, the GM makes it
+      "spellLight",    // Spell actions : Light on a token or a square, Produce Flame in hand
+      "spareTheDying", // Spell actions : Spare the Dying picks a creature at 0 HP first
+      "cure",          // Spell actions : Lesser Restoration, Protection from Poison : the creature touched, which condition ends
+      "heatMetal",     // Spell actions : Heat Metal : the creature and its metal object; Reheat : whoever holds or wears it now
+      "subclassUse",   // Subclasses : a feature that picks or divides first (Preserve Life, Invoke Duplicity's space)
       "pactWeapon",    // Warlock : Forge Pact Weapon : bond a weapon or conjure one
+      "willingPick",   // Willing : a save only an unwilling target makes (Enlarge/Reduce) : its pick offers anyone
       "pickTargets",   // Roll Item : pick targets on the map (Pick Targets)
       "spellRange",    // Spells : no pick, Rule Limits on : targets out of the spell's range follow Rule Limits
       "weaponRange",   // Weapons : no pick, Rule Limits on : targets beyond the weapon's reach / range follow Rule Limits
+      "willing",       // Willing : the GM says which targets are willing (all : no save card), once they're settled
+      "lend",          // Lend : once cast, each target gets the lent item (Dragon's Breath's exhale), tied to the Concentration
+      "economyApproval", // Action Tracker : a player's Action / Bonus Action off its turn : the GM approves (its targets picked)
     ],
   };
 

@@ -1,5 +1,4 @@
 {{!-- dnd5e usage-card.hbs, with the damage-card.hbs roll + tray added below the card face --}}
-{{> "macro-helper.cover" }}
 {{#if content}}
 {{{ content }}}
 {{else}}
@@ -64,8 +63,23 @@
 </div>
 {{/each}}
 
-{{!-- One row per target : its save (button, then the result), then its damage / healing by that result --}}
-{{#if rows.length}}{{> "macro-helper.rows" }}{{/if}}
+{{!-- One row per target, the same for every card : its save (none for a buff), its result, then on the right its damage /
+     healing and its effects to apply --}}
+{{!-- Cover (GM) : a row per target, above the saves --}}
+{{> "macro-helper.cover" }}
+{{#if targetRows.length}}{{> "macro-helper.rows" rows=targetRows }}{{/if}}
+
+{{!-- A second activity's healing (Land's Aid) : its roll, then a row for each creature it heals --}}
+{{#with healing}}
+<div class="macro-helper-healing">
+    <section class="icon-row ray-header">
+        <i class="fa-fw fa-solid fa-heart" inert></i>
+        <span class="roboto-upper">{{ label }}</span>
+    </section>
+    {{#with damage}}{{> "macro-helper.damage-rows" }}{{/with}}
+    {{> "macro-helper.rows" rows=rows }}
+</div>
+{{/with}}
 
 {{!-- Save results (dnd5e "Chat Card Summary" setting) --}}
 {{#each summaries}}
@@ -74,6 +88,9 @@
 
 {{!-- Sections rules add (macro-helper.cardSections) : Shove's Prone / Push for each target that failed --}}
 {{#each sections}}{{> (lookup . "partial") context }}{{/each}}
+
+{{!-- Buttons and notes rules add (macro-helper.saveCardButtons, cardNotes) --}}
+{{#with extras}}{{> "macro-helper.extras" }}{{/with}}
 
 {{!-- Apply damage, halves/negates for targets that saved --}}
 {{#if damage.showTray}}
@@ -87,3 +104,6 @@
     {{/each}}
 </effect-application>
 {{/if}}
+
+{{!-- Every push and pull, one button per creature (card-moves.js) --}}
+{{#if moves.length}}{{> "macro-helper.moves" }}{{/if}}

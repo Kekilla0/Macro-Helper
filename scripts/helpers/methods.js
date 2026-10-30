@@ -1,12 +1,12 @@
 import { logger } from '../log.js';
 import { settings } from '../settings.js';
 import { rollItem } from '../roll-item/roll-item.js';
-import { distanceBetween, getRange, getTokensWithin, highlightRange, pushAway, pushDestination, addLight, removeLight, hasLight, canSee } from './tokens.js';
+import { distanceBetween, getRange, getTokensWithin, highlightRange, pushAway, pushDestination, addLight, removeLight, hasLight, canSee, poolBar, removePoolBar, poolsOf } from './tokens.js';
 import { isEnemy, isAlly, getThreats, isThreatened, getEnemiesWithinRange, pickTargets, getFlanker, isFlanking } from './targets.js';
 import { getSize, setStatus, setDefeated, splitToken, damage, heal, tempHP, dropsToZero, isKilledOutright, preventDropToZero, findItem,
-  rollSave, addTimedEffect, recoverSpellSlots, usedThisTurn, markUsedThisTurn, getLastDamage, clearLastDamage, stabilize } from './actors.js';
-import { setBaseDamage, updateItem, attackModeFor, isLongRange, isRangedItem, isRangedAttack, canThrow, getAmmunition, pickAndAttack,
-  getUses, hasUses, spendUses, useActivity, useAndApply, multiattack, getHealing, pickAttack, isOtherHandFree, hasShieldEquipped } from './items.js';
+  rollSave, giveEffect, addTimedEffect, recoverSpellSlots, slotsLeft, spellSlots, addSpellSlot, usedThisTurn, markUsedThisTurn, getLastDamage, clearLastDamage, stabilize } from './actors.js';
+import { setBaseDamage, setDamage, updateItem, attackModeFor, isLongRange, isRangedItem, isRangedAttack, canThrow, getAmmunition, pickAndAttack,
+  getUses, hasUses, spendUses, useActivity, useAndApply, multiattack, getHealing, pickAttack, isOtherHandFree, hasShieldEquipped, isClassSpell, replaceItem, isMetal } from './items.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -43,17 +43,24 @@ const creature = {
   markUsedThisTurn : call(markUsedThisTurn),                        // (key) -> Promise
   getFlanker : call(getFlanker),                                    // (target) -> the ally flanking it with this creature | null
   isFlanking : call(isFlanking),                                    // (target) -> boolean
-  rollSave : call(rollSave),
-  recoverSpellSlots : call(recoverSpellSlots),                      // ({ levels, maxLevel, item, chat }) -> { level : recovered } | null                                        // (ability, dc) -> { success, total, roll } | null
-  addTimedEffect : call(addTimedEffect),                            // (effectData, { of, until : "turnStart" | "turnEnd" }) -> ActiveEffect
+  rollSave : call(rollSave),                                        // (ability, dc, { from, bonus, cover, event, dialog, secret, card }) -> { success, total, roll } | null, same as save()
+  recoverSpellSlots : call(recoverSpellSlots),                      // ({ levels, maxLevel, item, chat }) -> { level : recovered } | null
+  slotsLeft : call(slotsLeft),                                      // (minLevel = 1) -> [{ key, level, value, pact }] spell slots left
+  spellSlots : call(spellSlots),                                    // () -> [{ key, level, value, max, pact }] every slot level it has
+  addSpellSlot : call(addSpellSlot),                                // (level | "pact", amount = 1) -> Promise<slots now | null>, past the maximum (gone on a Long Rest)
+  giveEffect : call(giveEffect),                                    // (effectData, { save, dc, from, until, of, thisTurn }) -> { applied, asked, save }
+  addTimedEffect : call(addTimedEffect),                            // old form : giveEffect with until (default "turnStart")
   multiattack : call(multiattack),                                  // (plan [{ weapon, count }], { repeat, event, attack }) -> one pick + card per weapon
+  poolBar : call(poolBar),                                          // (key, { item, flag, max, color }) -> Promise<boolean>, a bar on its tokens
+  removePoolBar : call(removePoolBar),                              // (key) -> Promise<boolean>
+  poolsOf : call(poolsOf),                                          // () -> [{ key, value, max, color }] with points in them
 };
 
 const token = {
   ...creature,
   distanceTo : call(distanceBetween),                               // (other) -> feet
   split : call(splitToken),                                         // ({ copies, hp, scale, stepSize, chat })
-  pushAway : call(pushAway),                                        // (from, feet = 10) -> Promise<number> feet moved, straight away, stops at walls
+  pushAway : call(pushAway),                                        // (from, feet = 10, { item, name }) -> Promise<number> feet moved (forcedMove), straight away, stops at walls
   pushDestination : call(pushDestination),                          // (from, feet = 10) -> { x, y } | null
   addLight : call(addLight),                                        // (light, { key }) -> Promise<boolean>, remembers the light it had
   removeLight : call(removeLight),                                  // ({ key }) -> Promise<boolean>, puts it back when the last source goes
@@ -75,8 +82,8 @@ export const METHODS = {
     pickAndAttack : call(pickAndAttack),                            // ({ count, repeat, disposition, within, long, confirm, clearTargets, event }) -> Promise<result | null>
     pickAttack : call(pickAttack),                                  // ({ count, repeat, ... }) -> { attack, targets, attackMode, disadvantage } | null
     multiattack : call(multiattack),                                // (plan [{ weapon, count }], options) : its owner's Multiattack
-    useAndApply : call(useAndApply),
-    isOtherHandFree : call(isOtherHandFree),                        // () -> boolean, no shield / other weapon equipped                                // ({ activity, to, event }) -> use it, apply its healing / damage (to yourself)
+    useAndApply : call(useAndApply),                                // ({ activity, to, event }) -> use it, apply its healing / damage (to yourself)
+    isOtherHandFree : call(isOtherHandFree),                        // () -> boolean, no shield / other weapon equipped
     getHealing : call(getHealing),                                  // ({ average }) -> "11" | "3d6" | null, from its activity or description
     attackModeFor : call(attackModeFor),                            // (target, { long }) -> "thrown" | null
     isLongRange : call(isLongRange),                                // (target) -> boolean, beyond normal but within long range
@@ -85,11 +92,15 @@ export const METHODS = {
     canThrow : call(canThrow),                                      // () -> boolean
     getAmmunition : call(getAmmunition),                            // () -> the ammunition Item dnd5e would use | null
     setBaseDamage : call(setBaseDamage),                            // ({ number, denomination, types, bonus }) -> fresh item | null
+    setDamage : call(setDamage),                                    // (formula, { type }) -> fresh item | null
     updateFresh : call(updateItem),                                 // (changes) -> fresh item
     getUses : call(getUses),                                        // () -> { value, max, spent } | null
     hasUses : call(hasUses),                                        // (amount) -> boolean
     spendUses : call(spendUses),                                    // (amount, { warn }) -> fresh item | null
     useActivity : call(useActivity),                                // ({ activity, configure, event }) -> dnd5e usage results | null
+    isClassSpell : call(isClassSpell),                              // (cls) -> boolean, a spell of that class ("sorcerer")
+    isMetal : call(isMetal),                                        // () -> boolean, a metal weapon / Medium-Heavy metal armor (flag overrides)
+    replaceWith : call(replaceItem),                                // (source, { origin }) -> Promise<new Item>, in this one's place (a swap)
     rollItem : function(options){ return rollItem.roll(this, options); },
   },
 };

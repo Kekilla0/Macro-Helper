@@ -2,8 +2,8 @@ import { module } from '../module.js';
 import { settings } from '../settings.js';
 import { limits } from './limits.js';
 import { logger } from '../log.js';
-import { tokenOf, pushAway } from '../helpers/tokens.js';
-import { getSize, setStatus } from '../helpers/actors.js';
+import { getSize } from '../helpers/actors.js';
+import { giveCondition, grapple } from '../roll-item/card-builder.js';
 import { masteries } from './masteries.js';
 import { originOf } from '../helpers/utils.js';
 import { conditions } from './conditions.js';
@@ -26,9 +26,7 @@ const log = logger.for(import.meta.url);
  * on it : 2024 Grapple and Shove have no attack roll, the target only saves.
  */
 export class maneuvers{
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("rollItemManeuvers");
-  }
+  static enabled = settings.on("rollItemManeuvers");
 
   /**
    * Is this activity Grapple or Shove ?
@@ -102,10 +100,13 @@ export class maneuvers{
     Hooks.on(`${module.id}.cardButton`, (message, id, { button } = {}) => { if(id === "shove") this.shoveClicked(message, button); });
     Hooks.on(`${module.id}.preApplyEffects`, (message, actor, effects, { uuid } = {}) => {
       if(this.ofCard(message) === "shove"){ this.shoveAsGM(message, uuid); return false; }
-      return this.mayGrapple(message, actor);
+      if(this.ofCard(message) === "grapple"){ this.grappleAsGM(message, uuid); return false; }
+      return true;
     });
     /* The GM's row button : the shover's choice (nothing until it's made) */
     Hooks.on(`${module.id}.rowEffect`, (message, uuid, row, { success } = {}) => this.shoveRow(message, uuid, row, success));
+    /* The push : the GM's button at the bottom of the card with every other push (card moves) */
+    Hooks.on(`${module.id}.cardMoves`, (message, uuid, moves, { result } = {}) => this.shoveMove(message, uuid, moves, result));
     /* Grapple and Shove are alternatives to the strike's attack, never riders on it (Roll Item) */
     Hooks.on(`${module.id}.isRider`, activity => !this.isManeuver(activity));
     /* One activity for both : choose first, the card is that one */
@@ -138,44 +139,66 @@ export class maneuvers{
     return String(uuid ?? "").replaceAll(".", "-");
   }
 
-  /* The GM's row button on a Shove card : hidden until the shover chooses, then that choice ("Apply Push 5 ft") */
+  /* The GM's row button on a Shove card : hidden until the shover chooses Prone ("Apply Prone"); Push is a card move */
   static shoveRow(card, uuid, row, success){
     if(this.ofCard(card) !== "shove") return;
     const choice = card.getFlag(module.id, `shove.${this.keyOf(uuid)}`);
-    row.show = !success && !!choice;
+    row.show = !success && (choice === "prone");
     if(choice) row.names = module.i18n((choice === "push") ? "rollItem.maneuver.push" : "rollItem.maneuver.prone");
   }
 
+  /* Shove's push, once the shover chose it for a creature that failed : the GM's (card moves), size by Rule Limits */
+  static shoveMove(card, uuid, moves, result){
+    if(!this.enabled() || (this.ofCard(card) !== "shove") || (result?.success !== false)) return;
+    const key = this.keyOf(uuid);
+    if(card.getFlag(module.id, `shove.${key}`) !== "push") return;
+    const attacker = card.getAssociatedActor();
+    const target = fromUuidSync(uuid, { strict : false });
+    moves.push({ id : "shovePush", feet : 5, name : card.getAssociatedItem?.()?.name, done : !!card.getFlag(module.id, `effects.${key}`),
+      allow : () => !attacker || !target?.actor || this.fits(target.actor, attacker)
+        || limits.allow(module.format("rollItem.maneuver.tooBig", { name : target.name, action : module.i18n("rollItem.maneuver.shove") }), { who : attacker.name, what : `Shove ${target.name}` }),
+      after : () => card.setFlag(module.id, `effects.${key}`, true) });
+  }
+
   /**
-   * The GM's row button : carry out the shover's choice, once. The target must have failed its save from the card.
+   * The GM's row button : Prone, the shover's choice, once. The target must have failed its save from the card.
    * @param {ChatMessage} card
    * @param {string} uuid   the target's token uuid
    */
   static async shoveAsGM(card, uuid){
     if(!game.user.isGM || (this.ofCard(card) !== "shove") || !uuid) return;
     const key = this.keyOf(uuid);
-    const choice = card.getFlag(module.id, `shove.${key}`);
-    if(!choice) return;
+    if(card.getFlag(module.id, `shove.${key}`) !== "prone") return;
     if(card.getFlag(module.id, `effects.${key}`)) return ui.notifications.info(module.i18n("rollItem.maneuver.done"));
     if(card.system.outcomes?.get(uuid) !== "failure") return ui.notifications.info(module.i18n("rollItem.maneuver.notFailed"));
 
     const token = fromUuidSync(uuid, { strict : false })?.object;
     const attacker = card.getAssociatedActor();
-    const attackerToken = tokenOf(card.getAssociatedToken?.() ?? attacker);
     if(!token?.actor) return;
-    const notes = [];
     if(attacker && !this.fits(token.actor, attacker)
       && !limits.allow(module.format("rollItem.maneuver.tooBig", { name : token.name, action : module.i18n("rollItem.maneuver.shove") }), { who : attacker.name, what : `Shove ${token.name}` })) return;
 
-    if(choice === "push"){
-      const moved = await pushAway(token, attackerToken, 5);
-      if(settings.value("homebrewPush")) await masteries.pushCollision(token, moved, 5, card.getAssociatedItem?.());
-      else if(!moved) notes.push(module.format("rollItem.mastery.blocked", { name : token.name }));
-    }
-    else await setStatus(token.actor, "prone", true);
-
+    await giveCondition(token, "prone", { from : card.getAssociatedItem?.() ?? null, by : card.getAssociatedToken?.() ?? attacker });
     await card.setFlag(module.id, `effects.${key}`, true);
-    for(const note of notes) ui.notifications.info(note);
+  }
+
+  /**
+   * The GM's row button on a Grapple card : the grapple lego (who holds it, the card's DC to escape), once, on a
+   * creature that failed its save and no more than one size larger (Rule Limits decides past that).
+   * @param {ChatMessage} card
+   * @param {string} uuid   the target's token uuid
+   */
+  static async grappleAsGM(card, uuid){
+    if(!game.user.isGM || !uuid) return;
+    const key = this.keyOf(uuid);
+    if(card.getFlag(module.id, `effects.${key}`)) return ui.notifications.info(module.i18n("rollItem.maneuver.done"));
+    if(card.system.outcomes?.get(uuid) !== "failure") return ui.notifications.info(module.i18n("rollItem.maneuver.notFailed"));
+    const token = fromUuidSync(uuid, { strict : false });
+    if(!token?.actor || !this.mayGrapple(card, token.actor)) return;
+    const grappler = card.getAssociatedToken?.() ?? card.getAssociatedActor();
+    const { applied } = await grapple(grappler, token, { from : card.getAssociatedItem?.() ?? null,
+      escape : card.getAssociatedActivity?.()?.save?.dc?.value ?? null });
+    if(applied) await card.setFlag(module.id, `effects.${key}`, true);
   }
 
   /* Grapple : only a creature no more than one size larger than the grappler (Rule Limits decides past that) */

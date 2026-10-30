@@ -1,5 +1,5 @@
 import { module } from '../module.js';
-import { idOf, esc, gmIds } from '../helpers/utils.js';
+import { esc, gmIds } from '../helpers/utils.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
@@ -8,7 +8,12 @@ import { addDie, extraD20 } from '../roll-item/rerolls.js';
 import { bard } from '../automation/classes/bard.js';
 import { fighter } from '../automation/classes/fighter.js';
 import { spendUses } from '../helpers/items.js';
-import { findItem } from '../helpers/actors.js';
+import { findItem, itemOf } from '../helpers/actors.js';
+import { isIncapacitated } from '../helpers/tokens.js';
+import { patch } from '../patch.js';
+import { concentrationModeFor } from '../automation/roll-modes.js';
+import { wizardSchools } from '../automation/subclasses/wizard.js';
+import { subclasses } from '../automation/subclasses/common.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -25,22 +30,29 @@ const log = logger.for(import.meta.url);
  *                succeeded (a majority of the checks). The window stays open until then.
  *   DM Screen  : players see ✓ / ✗, never the DC.
  *   Messages   : Compact : the rolls go into the card; Reroll by the total (Rule Limits); Lucky / Bardic Inspiration /
- *                Tactical Mind at the card's foot for their owners. Individual : dnd5e's own roll messages, linked.
+ *                Tactical Mind / Portent at the card's foot for their owners. Individual : dnd5e's own roll messages, linked.
  *   Whisper    : the cards and the rolls only for the GM and the creatures' owners.
+ *   Concentration (Roll Item on) : dnd5e's prompt after damage becomes a card like these, one row (whispered to the
+ *                creature's owners and the GM; the DC shown). Rolled once (rerolls on the card); a failure gives a
+ *                Lose Concentration button (its owner or the GM), nothing ends by itself. Debug on : the GM's 20 / 1
+ *                buttons by each row's reroll.
  */
 export class rollRequests{
   static DIFFICULTIES = [[5, "veryEasy"], [10, "easy"], [15, "medium"], [20, "hard"], [25, "veryHard"], [30, "nearlyImpossible"]];
   static CATEGORIES = ["check", "save", "skill", "tool"];
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("requestsEnabled");
-  }
+  static enabled = settings.on("requestsEnabled");
 
   static compact(){
     return settings.value("requestsMessages") !== "individual";
   }
 
   static register(){
+    /* Concentration ended (however) : its concentration cards drop the Lose Concentration button */
+    Hooks.on("deleteActiveEffect", effect => {
+      if(!effect?.statuses?.has?.("concentrating")) return;
+      for(const m of game.messages.contents.slice(-30)) if(m.getFlag(module.id, "request")) ui.chat?.updateMessage(m);
+    });
     if(game.system.id !== "dnd5e") return;
     Hooks.on("renderHotbar", (app, html) => this.addButton(html));
     Hooks.once("ready", () => this.addButton(document.getElementById("hotbar")));
@@ -52,6 +64,31 @@ export class rollRequests{
       if(message.getFlag?.(module.id, "request")) RequestWindow.cardChanged(message.id);
     });
     gm.handle("requestStore", (data, user) => this.storeAsGM(data, user));
+    /* dnd5e's Concentration prompt : our card instead */
+    Hooks.once("setup", () => patch.wrap("CONFIG.Actor.documentClass.prototype.challengeConcentration", async function(wrapped, options = {}, ...rest){
+      if(!settings.value("rollItem") || !(this.concentration?.effects?.size > 0)) return wrapped(options, ...rest);
+      /* Down (0 HP) or unable to act : no save, its Concentration just ends (the 0 HP card says so) */
+      const out = isIncapacitated(this);
+      if(out || (Number(this.system?.attributes?.hp?.value) <= 0)){
+        if(this.isOwner) await this.endConcentration().catch(() => null);
+        return null;
+      }
+      return rollRequests.concentrationCard(this, { ...options, rollMode : options.rollMode ?? concentrationModeFor(this) });
+    }));
+    /* dnd5e's "end Concentration ?" prompt when it's Incapacitated : it just ends (the rules leave no choice) */
+    Hooks.once("setup", () => patch.wrap("CONFIG.Actor.documentClass.prototype.promptConcentrationEnd", async function(wrapped, ...args){
+      if(!settings.value("rollItem") || !(this.concentration?.effects?.size > 0)) return wrapped(...args);
+      if(this.isOwner) await this.endConcentration().catch(() => null);
+      return null;
+    }));
+  }
+
+  /* One row : the creature's Concentration save at that DC */
+  static async concentrationCard(actor, { dc = 10, ability = null, rollMode = null } = {}){
+    const token = actor.token ?? actor.getActiveTokens?.(false, true)?.[0]?.document ?? null;
+    const who = [{ actor : actor.uuid, token : token?.uuid ?? null, name : token?.name ?? actor.name, img : token?.texture?.src || actor.img, ...(rollMode?.mode ? { rollMode } : {}) }];
+    const key = (ability in CONFIG.DND5E.abilities) ? ability : "";
+    return this.request({ who, what : `concentration:${key}`, dc, whisper : true, hideDC : false, speaker : actor });
   }
 
   /* ---------- The button (GM) ---------- */
@@ -97,6 +134,7 @@ export class rollRequests{
     if(kind === "save") return module.format("requests.save", { ability : label(CONFIG.DND5E.abilities[key]) });
     if(kind === "skill") return label(CONFIG.DND5E.skills[key]);
     if(kind === "tool") return dnd5e.documents?.Trait?.keyLabel?.(key, { trait : "tool" }) ?? key;
+    if(kind === "concentration") return game.i18n.localize("DND5E.Concentration");
     return key;
   }
 
@@ -155,14 +193,16 @@ export class rollRequests{
    * @param {boolean} [options.whisper]  only the GM and the creatures' owners
    * @returns {Promise<ChatMessage>}
    */
-  static async request({ who = [], what = "skill:prc", dc = null, mode = "each", whisper = false } = {}){
-    const rows = who.map(p => ({ key : String(p.token ?? p.actor).replaceAll(".", "-"), actor : p.actor, token : p.token ?? null, name : p.name, img : p.img }));
+  static async request({ who = [], what = "skill:prc", dc = null, mode = "each", whisper = false, hideDC = null, speaker = null, label = null, outcomes = null } = {}){
+    const rows = who.map(p => ({ key : String(p.token ?? p.actor).replaceAll(".", "-"), actor : p.actor, token : p.token ?? null, name : p.name, img : p.img, ...(p.rollMode ? { rollMode : p.rollMode } : {}) }));
     const request = {
-      dc : Number.isFinite(dc) ? dc : null, hideDC : !!settings.value("requestsDmScreen"), mode : (mode === "group") ? "group" : "each", rows, results : {},
-      rounds : { 1 : this.checkFor(what, dc) }, round : 1, compact : this.compact(), whisper : !!whisper,
+      dc : Number.isFinite(dc) ? dc : null, hideDC : (hideDC ?? !!settings.value("requestsDmScreen")), mode : (mode === "group") ? "group" : "each", rows, results : {},
+      rounds : { 1 : { ...this.checkFor(what, dc), ...(label ? { label } : {}) } }, round : 1, compact : this.compact(), whisper : !!whisper,
+      /* Words for a row's result (a Study : "Sees through it" / "Fooled") */
+      ...(outcomes ? { outcomes } : {}),
     };
     return ChatMessage.implementation.create({
-      speaker : { alias : module.i18n("requests.title") },
+      speaker : speaker ? ChatMessage.implementation.getSpeaker({ actor : speaker }) : { alias : module.i18n("requests.title") },
       content : `<div class="${module.id}-request"></div>`,
       whisper : whisper ? this.whisperTo(rows) : [],
       flags : { [module.id] : { request } },
@@ -235,7 +275,9 @@ export class rollRequests{
     const summary = this.summaryOf(request);
     const feet = [];
     const rows = this.rowsHtml(request, feet);
-    const subtitle = [module.i18n(`requests.modes.${request.mode}`), request.whisper ? module.i18n("requests.whispered") : ""].filter(Boolean).join(" · ");
+    const concentration = this.checkOf(request).kind === "concentration";
+    const subtitle = concentration ? game.i18n.localize("DND5E.SavingThrow")
+      : [module.i18n(`requests.modes.${request.mode}`), request.whisper ? module.i18n("requests.whispered") : ""].filter(Boolean).join(" · ");
     const dc = this.dcText(request);
     root.innerHTML = `<div class="${module.id}-request-card">
         <header class="request-header"><i class="fa-solid fa-dice-d20" inert></i>
@@ -263,13 +305,17 @@ export class rollRequests{
       const roll = this.rollOf(entry);
       const detail = roll ? `${roll.formula} = ${roll.total}` : "";
       const resultHtml = entry ? `<span class="result ${mark}"${(detail && showTotal) ? ` data-tooltip="${esc(detail)}"` : ""}>
-          ${showTotal ? esc(entry.total) : ""} ${mark ? `<i class="fa-solid ${mark === "success" ? "fa-check" : "fa-xmark"}" inert></i>` : ""}</span>` : "";
+          ${showTotal ? esc(entry.total) : ""} ${mark ? `<i class="fa-solid ${mark === "success" ? "fa-check" : "fa-xmark"}" inert></i>` : ""}${(mark && request.outcomes?.[mark]) ? ` <span class="outcome">${esc(request.outcomes[mark])}</span>` : ""}</span>` : "";
       const reroll = (entry && request.compact && roll && (actor?.isOwner || game.user.isGM))
         ? `<button type="button" class="icon" data-request-reroll="${esc(row.key)}" data-tooltip="${esc(module.i18n("rerolls.reroll"))}"><i class="fa-solid fa-rotate" inert></i></button>` : "";
+      /* Debug (the GM) : the d20 set to 20 or 1 */
+      const debug = (entry && request.compact && roll && game.user.isGM && settings.value("debug"))
+        ? [[20, "fa-bug", "rollItem.debug.nat20"], [1, "fa-bug-slash", "rollItem.debug.nat1"]].map(([v, icon, k]) =>
+          `<button type="button" class="icon" data-request-force="${v}" data-row="${esc(row.key)}" data-tooltip="${esc(module.i18n(k))}"><i class="fa-solid ${icon}" inert></i></button>`).join("") : "";
       const rollButton = canRoll ? `<button type="button" class="save" data-request-roll="${esc(row.key)}"><i class="fa-solid fa-dice-d20" inert></i> ${esc(module.i18n("requests.roll"))}</button>`
         : !entry ? `<span class="pending"><i class="fa-solid fa-hourglass-half" inert></i></span>` : "";
       if(request.compact && entry && roll) feet.push(...this.footButtons(request, row, entry, actor, roll));
-      return `<li class="macro-helper-row"><img class="token" src="${esc(row.img)}" alt=""><span class="name">${esc(row.name)}</span>${rollButton}${resultHtml}${reroll}</li>`;
+      return `<li class="macro-helper-row"><img class="token" src="${esc(row.img)}" alt="" data-token="${esc(row.token ?? "")}"><span class="name">${esc(row.name)}</span><span class="macro-helper-row-actions">${rollButton}${resultHtml}${reroll}${debug}</span></li>`;
     }).join("");
   }
 
@@ -288,9 +334,20 @@ export class rollRequests{
       }
       const inspiration = failed && !entry.bardic && bard.inspirationOf(actor);
       if(inspiration) out.push(button("bardic", "fa-music", module.format("requests.featFor", { feat : module.format("classes.bard.use", { die : inspiration.die }), name : row.name })));
-      const tactical = failed && isCheck && !entry.tactical && fighter.enabled() && actor.items.some(i => idOf(i) === fighter.TACTICAL_MIND)
+      const tactical = failed && isCheck && !entry.tactical && fighter.enabled() && itemOf(actor, fighter.TACTICAL_MIND)
         && (Number(fighter.secondWindOf(actor)?.system?.uses?.value) > 0);
       if(tactical) out.push(button("tactical", "fa-chess-knight", module.format("requests.featFor", { feat : module.i18n("classes.fighter.tactical"), name : row.name })));
+    }
+    /* Portent : a Diviner of this user's that sees the creature replaces its d20 (once a turn) */
+    if(!entry.portent){
+      const creature = fromUuidSync(row.token ?? "", { strict : false })?.object ?? actor?.getActiveTokens?.()[0] ?? null;
+      for(const { token, index, value } of wizardSchools.portentOffers(creature)){
+        out.push(button(`portent|${token.document.uuid}|${index}`, "fa-eye", module.format("requests.featFor", { feat : module.format("subclasses.wizard.portent", { value }), name : row.name })));
+      }
+    }
+    /* Concentration failed : losing it is a button (Lucky or Bardic Inspiration may still change the roll first) */
+    if((this.checkOf(request).kind === "concentration") && (entry.success === false) && actor?.isOwner && (actor.concentration?.effects?.size > 0) && !entry.lostConcentration){
+      out.push(button("loseConcentration", "fa-heart-crack", module.i18n("requests.loseConcentration")));
     }
     if(game.user.isGM && entry.tactical && !entry.tacticalSpent && (entry.success !== false)){
       out.push(button("tacticalSpend", "fa-heart-crack", module.format("requests.featFor", { feat : module.i18n("classes.fighter.tacticalSpend"), name : row.name })));
@@ -309,6 +366,7 @@ export class rollRequests{
     on("[data-request-roll]", (b, event) => this.rollRow(message, b.dataset.requestRoll, { event }));
     on("[data-request-reroll]", b => this.reroll(message, b.dataset.requestReroll));
     on("[data-request-feat]", b => this.useFeat(message, b.dataset.row, b.dataset.requestFeat));
+    on("[data-request-force]", b => this.force(message, b.dataset.row, Number(b.dataset.requestForce)));
   }
 
   /* ---------- Rolling a row ---------- */
@@ -323,7 +381,8 @@ export class rollRequests{
     const actor = row && this.actorOf(row);
     if(!actor?.isOwner) return;
     const { kind, key } = this.checkOf(request);
-    const config = { event };
+    /* A mode the row was asked with (a Concentration save after a Mage Slayer's damage) */
+    const config = { event, ...(row.rollMode ? { [module.id] : { rollMode : row.rollMode } } : {}) };
     const dc = this.dcOf(request);
     if((dc !== null) && !request.hideDC) config.target = dc;
     const messageConfig = request.compact ? { create : false }
@@ -334,6 +393,7 @@ export class rollRequests{
     else if(kind === "tool") rolls = await actor.rollToolCheck({ ...config, tool : key }, {}, messageConfig);
     else if(kind === "check") rolls = await actor.rollAbilityCheck({ ...config, ability : key }, {}, messageConfig);
     else if(kind === "save") rolls = await actor.rollSavingThrow({ ...config, ability : key }, {}, messageConfig);
+    else if(kind === "concentration") rolls = await actor.rollConcentration({ ...config, ...(key ? { ability : key } : {}) }, {}, messageConfig);
     const roll = rolls?.[0];
     if(!request.compact || !roll) return;
     await this.showDice([roll], message);
@@ -357,6 +417,17 @@ export class rollRequests{
     await gm.run("requestStore", { message : message.id, row : rowKey, roll : fresh.toJSON(), reset : true });
   }
 
+  /* Debug (the GM) : the row's d20 set to a number */
+  static async force(message, rowKey, value){
+    const request = message.getFlag(module.id, "request");
+    const roll = this.rollOf(request?.results?.[1]?.[rowKey]);
+    const d20 = roll?.dice?.[0];
+    if(!game.user.isGM || !d20) return;
+    d20.results = d20.results.map(r => ({ ...r, result : value }));
+    roll._total = roll._evaluateTotal();
+    await gm.run("requestStore", { message : message.id, row : rowKey, roll : roll.toJSON() });
+  }
+
   /* Compact : Lucky, Bardic Inspiration, Tactical Mind on a row; the GM's Second Wind spend */
   static async useFeat(message, rowKey, feat){
     const request = message.getFlag(module.id, "request");
@@ -364,7 +435,16 @@ export class rollRequests{
     const roll = this.rollOf(request?.results?.[1]?.[rowKey]);
     const actor = row && this.actorOf(row);
     if(!roll || !actor) return;
-    const store = (updated, mark) => gm.run("requestStore", { message : message.id, row : rowKey, roll : updated.toJSON(), mark });
+    const store = (updated, mark, by) => gm.run("requestStore", { message : message.id, row : rowKey, roll : updated.toJSON(), mark, by });
+    if(feat.startsWith("portent|")){
+      const [, uuid, index] = feat.split("|");
+      const token = fromUuidSync(uuid ?? "", { strict : false })?.object;
+      if(!token?.actor?.isOwner) return;
+      const value = await wizardSchools.spendPortent(token, Number(index));
+      const updated = (value !== null) ? subclasses.setD20(roll, value) : null;
+      if(updated) await store(updated, { portent : true }, uuid);
+      return;
+    }
     if(feat === "lucky"){
       const item = findItem(actor, "lucky");
       const result = await extraD20(roll, "kh");
@@ -386,6 +466,9 @@ export class rollRequests{
       await this.showDice([extra], message);
       await store(updated, { tactical : true });
     }
+    else if(feat === "loseConcentration"){
+      if(actor.isOwner) await actor.endConcentration().catch(error => log.debug(error));
+    }
     else if((feat === "tacticalSpend") && game.user.isGM){
       const secondWind = fighter.secondWindOf(actor);
       if(secondWind) await spendUses(secondWind, 1, { warn : true });
@@ -394,12 +477,14 @@ export class rollRequests{
   }
 
   /* GM : a row's roll stored on the card (its owner sent it), judged against the DC */
-  static async storeAsGM({ message : id, row : rowKey, roll : data, mark = {}, reset = false } = {}, user){
+  static async storeAsGM({ message : id, row : rowKey, roll : data, mark = {}, reset = false, by = null } = {}, user){
     const card = game.messages.get(id);
     const request = card?.getFlag(module.id, "request");
     const row = request?.rows.find(r => r.key === rowKey);
     const actor = row && this.actorOf(row);
-    if(!row || !(user?.isGM || actor?.testUserPermission(user, "OWNER"))) return false;
+    /* Its owner, or a Diviner's owner giving it Portent */
+    const diviner = (mark.portent && by) ? fromUuidSync(by, { strict : false })?.actor : null;
+    if(!row || !(user?.isGM || actor?.testUserPermission(user, "OWNER") || diviner?.testUserPermission(user, "OWNER"))) return false;
     const total = Number(data?.total ?? Roll.fromData(data).total);
     const before = reset ? {} : (request.results?.[1]?.[rowKey] ?? {});
     const dc = this.dcOf(request);

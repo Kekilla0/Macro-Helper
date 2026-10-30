@@ -1,7 +1,7 @@
 import { module } from '../module.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
-import { esc, idOf } from '../helpers/utils.js';
+import { esc, idOf, searchList } from '../helpers/utils.js';
 import { limits } from './limits.js';
 import { restChoices } from './rest-choices.js';
 import { compendiums } from './compendiums.js';
@@ -19,7 +19,8 @@ const log = logger.for(import.meta.url);
  * (in the window or by ticking Prepared on the sheet) : Rule Limits decides.
  * Add a Spell (the window's button) : one from the class's spell list (dnd5e's spell lists) up to its highest slot level,
  * from the Item compendiums (a copy you imported before dnd5e's own; 2014 copies left out), added unprepared to tick :
- * Plutonium doesn't add the spells a new level lets you prepare.
+ * Plutonium doesn't add the spells a new level lets you prepare. A class with its own way (addVia : the Wizard's
+ * spellbook) uses that instead.
  */
 export class preparedSpells{
   static RULES = {
@@ -28,8 +29,13 @@ export class preparedSpells{
     bard : { rest : "level", swaps : 1 }, sorcerer : { rest : "level", swaps : 1 }, warlock : { rest : "level", swaps : 1 },
   };
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("classRules");
+  static #adders = new Map();
+
+  static enabled = settings.on("classRules");
+
+  /* Add a Spell for a class : its own window (the Wizard's spellbook) */
+  static addVia(cls, open){
+    this.#adders.set(cls, open);
   }
 
   static register(){
@@ -40,6 +46,7 @@ export class preparedSpells{
         applies : actor => this.enabled() && !!actor?.classes?.[cls] && ((this.spellsOf(actor, cls).length > 0) || (Number(this.maxOf(actor, cls)) > 0)),
         grant : actor => this.grant(actor, cls),
         summary : actor => this.summary(actor, cls),
+        state : actor => this.spellsOf(actor, cls).filter(s => (Number(s.system.prepared) === 1) && !this.always(s)).map(s => s.name),
         open : actor => this.choose(actor, cls),
       });
     }
@@ -125,10 +132,25 @@ export class preparedSpells{
     return Math.max(0, swaps + free - added);
   }
 
+  /* Its changes, said apart : new spells to add (room left under the maximum) and swaps (one spell for another) */
+  static changesText(actor, cls){
+    const { base, swaps } = this.stateOf(actor, cls);
+    if(swaps < 0) return module.i18n("preparedSpells.any");
+    const max = this.maxOf(actor, cls);
+    const next = this.preparedIds(actor, cls);
+    const free = (max === null) ? 0 : Math.max(0, max - base.length);
+    const added = next.filter(id => !base.includes(id)).length;
+    const toAdd = (max === null) ? 0 : Math.max(0, max - next.length);
+    const swapsLeft = Math.max(0, swaps - Math.max(0, added - free));
+    const parts = [];
+    if(toAdd) parts.push(module.format("preparedSpells.toAdd", { n : toAdd }));
+    parts.push(module.format("preparedSpells.swapsLeft", { n : swapsLeft }));
+    return parts.join(" · ");
+  }
+
   static summary(actor, cls){
-    const left = this.changesLeft(actor, cls);
     return module.format("preparedSpells.summary", { cls : actor.classes?.[cls]?.name ?? cls, count : this.preparedIds(actor, cls).length,
-      max : this.maxOf(actor, cls) ?? "—", changes : (left === "any") ? module.i18n("preparedSpells.any") : module.format("preparedSpells.left", { left }) });
+      max : this.maxOf(actor, cls) ?? "—", changes : this.changesText(actor, cls) });
   }
 
   /* ---------- The window ---------- */
@@ -181,6 +203,7 @@ export class preparedSpells{
           line.innerHTML = esc(module.format("preparedSpells.status", { count : ids.length, max : max ?? "—", left }))
             + (warning ? ` <strong class="warning">${esc(warning)}</strong>` : "");
         };
+        searchList(form, `.${module.id}-prepared-row`, { groups : `.${module.id}-prepared-column`, before : form.querySelector(`.${module.id}-prepared-columns`) });
         form.querySelector('input[name="past"]')?.addEventListener("change", () => show());
         form.querySelectorAll("input[type=checkbox]:not([name=past])").forEach(input => input.addEventListener("change", () => {
           if(!input.checked) return show();
@@ -224,6 +247,7 @@ export class preparedSpells{
 
   /* One of the class's spells (dnd5e's spell list) from the compendiums, added unprepared */
   static async addSpell(actor, cls){
+    if(this.#adders.has(cls)) return this.#adders.get(cls)(actor);
     const list = dnd5e.registry?.spellLists?.forType?.("class", cls);
     if(!list?.identifiers?.size) return ui.notifications.warn(module.format("preparedSpells.noList", { cls : actor.classes?.[cls]?.name ?? cls }));
     const top = this.maxLevel(actor, cls);

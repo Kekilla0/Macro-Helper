@@ -1,15 +1,68 @@
 import { module } from '../module.js';
-import { rollModes } from './roll-modes.js';
+import { rollModes, giveRollMode } from './roll-modes.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
 import { pickTargets } from '../helpers/targets.js';
-import { tokenOf, isDown } from '../helpers/tokens.js';
-import { addTimedEffect, stabilize } from '../helpers/actors.js';
+import { tokenOf, isDown, canSee, isIncapacitated } from '../helpers/tokens.js';
+import { giveEffect, stabilize, setStatus } from '../helpers/actors.js';
 import { giveMode } from '../roll-item/reasons.js';
 import { chooseOption, idOf } from '../helpers/utils.js';
+import { ruleSet } from '../helpers/rules.js';
 import { uses } from '../uses.js';
+import { actionTracker } from './action-tracker.js';
+import { patch } from '../patch.js';
 const log = logger.for(import.meta.url);
+
+/**
+ * Default Action legos (Charger, Speedy, Keen Mind, Observant; a monster's "when it Dashes, it can also Hide", a
+ * homebrew "you can Search as a Bonus Action") :
+ *
+ *   onDefaultAction(match, { action : "dash", run : (actor, source) => {} })   once it has taken that Default Action
+ *                                     (its own item, Cunning Action's, Step of the Wind's) : Charger's 10 ft more
+ *   actionAs(match, { action : "study", as : "bonus" })   that Default Action may cost a Bonus Action instead (on its
+ *                                     turn, both left : it chooses; only the Bonus Action left : that one)
+ *   actionRollMode(match, { action : "hide", mode : "advantage", when })   the check made as part of that Default
+ *                                     Action (Hide's Stealth, Help's Stabilize) has that mode : Skulker's Fog of War
+ *
+ *   match  an item identifier the creature has (or several), or (actor) => the item (or anything truthy) that gives it
+ *   action a Default Action's identifier (or several); enabled () => boolean, id (default : the match and the action)
+ */
+const set = name => ruleSet(name, { spells : false, when : false });
+const defaultRules = { after : set("Default action rule"), as : set("Action as"), roll : set("Action roll mode") };
+
+const ruleKey = (match, action, id) => id ?? `${(typeof match === "function") ? foundry.utils.randomID() : [match].flat().join(",")}:${[action].flat().join(",")}`;
+
+export function onDefaultAction(match, { action, run, enabled = null, id = null } = {}){
+  if(!action || (typeof run !== "function")) return;
+  defaultRules.after.add(match, { actions : [action].flat(), run, enabled }, ruleKey(match, action, id));
+}
+
+export function actionAs(match, { action, as = "bonus", enabled = null, id = null } = {}){
+  if(!action) return;
+  defaultRules.as.add(match, { actions : [action].flat(), as, enabled }, ruleKey(match, action, id));
+}
+
+/* The check made as part of a Default Action (Hide's Stealth, Help's Stabilize) has a mode : Skulker's Fog of War
+   (advantage on Hide's check in combat). when({ actor, source }); reason : a string or ({ actor, source }) => string */
+export function actionRollMode(match, { action, mode = "advantage", when = null, reason = null, enabled = null, id = null } = {}){
+  if(!action) return;
+  defaultRules.roll.add(match, { actions : [action].flat(), mode, when, reason, enabled }, ruleKey(match, action, id));
+  rollModes.add("actionChecks", config => {
+    const action = config?.[module.id]?.action;
+    if(!action || !config.subject) return;
+    for(const { rule, source } of defaultRulesFor("roll", config.subject, action)){
+      const info = { actor : config.subject, source };
+      if(rule.when && !rule.when(info)) continue;
+      giveRollMode(config, rule.mode, (typeof rule.reason === "function") ? rule.reason(info) : (rule.reason ?? source.name ?? ""));
+    }
+  }, { rolls : "check" });
+}
+
+/* The rules of a kind holding for this creature and Default Action : [{ rule, source }] */
+function defaultRulesFor(kind, actor, action){
+  return defaultRules[kind].active(actor, {}, rule => rule.actions.includes(action));
+}
 
 /**
  * The basic actions dnd5e has no automation for, from items you add to a character (examples/items : dodge.json,
@@ -26,6 +79,18 @@ const log = logger.for(import.meta.url);
  *                      Deafened). Their next ability check with it has
  *                      advantage. Ends when used, or at the start of your next turn (out of combat : when used).
  *     Stabilize      : a creature at 0 HP within 5 ft. WIS (Medicine) DC 10 : on a success it's Stable (stabilize()).
+ *   Search, Study  : a WIS (Insight, Medicine, Perception, Survival) or INT (Arcana, History, Investigation, Nature,
+ *                    Religion) check, the skill chosen on the card; the GM sets the DC.
+ *   Hide           : (2024 : Heavily Obscured or behind three-quarters / total cover, out of enemies' sight) asks the GM
+ *                    first (gm.askToUse : a card naming the enemies whose tokens see it, Allow / Decline). Nothing is
+ *                    used or spent until allowed; then DEX (Stealth) against DC 15 (a reroll counts) : Invisible on a
+ *                    success, until the GM ends it. On its own token.
+ *
+ * Every creature (characters and monsters) has Macro Helper's default actions : Dash, Disengage, Dodge, Help, Hide, Jump
+ * (jump.js) and Unarmed Strike (its Grapple and Shove), from the Actions compendium, when its token is placed, when a combat it's in starts,
+ * and (characters) when the world loads (the active GM's client). Another item with the same identifier (dnd5e's own
+ * Unarmed Strike, Plutonium's "Claw Attack") is replaced by ours, so the features that change it (a Tortle's Claws,
+ * Martial Arts) change ours.
  *
  * Help's choices and picks happen before dnd5e uses the activity (beforeUse, from Roll Item's use wrapper), so its
  * card targets who was picked and says what for. The marks it leaves go on the enemy / the ally, who the helper
@@ -38,16 +103,44 @@ export class actions{
   /* Assist Check's reach in feet : how far coaching carries (Inspiring Leader, Rally) */
   static ASSIST_CHECK_RANGE = 30;
   static HELP = "help";
+  static HIDE = "hide";
+  static HIDE_DC = 15;
+  static SEARCH = "search";
+  static STUDY = "study";
 
   /* Default Actions setting; a creature also needs the item */
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("actionRules");
-  }
+  static enabled = settings.on("actionRules");
 
   static register(){
     if(game.system.id !== "dnd5e") return;
+    /* Every creature : the default actions, when placed, when a combat starts, and (characters) once the world is ready */
+    Hooks.on("createToken", token => this.giveBasics(token.actor));
+    Hooks.on("combatStart", combat => { for(const c of combat.combatants) this.giveBasics(c.actor); });
+    /* Characters at load : a moment after (the rest of the world's load work done first), one at a time */
+    Hooks.once("ready", () => setTimeout(async () => {
+      for(const a of game.actors.filter(a => a.type === "character")) await this.giveBasics(a).catch(error => log.debug(error));
+    }, 5000));
+    /* Default Actions switched on, or to On + Favorites (its first save creates the setting) : every character at once */
+    const favoritesOn = async setting => {
+      if((setting.key !== `${module.id}.defaultActions`) || !settings.value("actionRules")) return;
+      for(const a of game.actors.filter(a => a.type === "character")) await this.giveBasics(a);
+    };
+    Hooks.on("createSetting", favoritesOn);
+    Hooks.on("updateSetting", favoritesOn);
+    this.registerSection();
     /* Dodge, Dash and Disengage mark the creature here, not through Roll Item */
-    Hooks.on(`${module.id}.selfEffects`, activity => !(this.enabled() && [this.DODGE, this.DASH, this.DISENGAGE, this.HELP].includes(idOf(activity?.item))));
+    Hooks.on(`${module.id}.selfEffects`, activity => !(this.enabled() && [this.DODGE, this.DASH, this.DISENGAGE, this.HELP, this.HIDE].includes(idOf(activity?.item))));
+    /* Hide : nothing is used until the GM allows it (a declined Hide costs nothing) */
+    uses.onActivity("hide", async (activity, ctx, next) => {
+      if(!this.enabled() || (idOf(activity?.item) !== this.HIDE) || ctx.config?.[module.id]?.gmAllowed || !activity.actor?.isOwner) return next();
+      const own = activity.getUsageToken?.()?.actor ?? activity.actor;
+      const token = tokenOf(own);
+      const seen = token ? this.seenBy(token).map(t => t.name) : [];
+      return gm.askToUse(activity, ctx, { actor : own, text : module.format("actions.hide.ask", { name : own.name }),
+        hint : seen.length ? module.format("actions.hide.seenBy", { names : seen.join(", ") }) : module.i18n("actions.hide.unseen") });
+    });
+    /* Its Stealth roll rerolled to 15+ : hidden after all */
+    Hooks.on("updateChatMessage", (message, changes, options, userId) => this.onHideReroll(message, changes, userId));
     Hooks.on("dnd5e.postUseActivity", (activity, usage, results) => this.onUse(activity, usage, results));
     Hooks.on("dnd5e.renderChatMessage", (message, html) => {
       if(message.getFlag?.(module.id, "autoApplied")) html.classList?.add(`${module.id}-auto-applied`);
@@ -56,6 +149,8 @@ export class actions{
     Hooks.on("dnd5e.rollAttackV2", rolls => this.consume(rolls?.[0]));
     Hooks.on("dnd5e.preRollSkillV2", config => this.onPreRollCheck(config, `skill:${config.skill}`));
     Hooks.on("dnd5e.preRollToolV2", config => this.onPreRollCheck(config, `tool:${config.tool}`));
+    /* A Default Action some rule lets cost a Bonus Action (Keen Mind's Study) : which one, before the tracker spends */
+    uses.onActivity("actionAs", (activity, ctx, next) => this.actionAsStep(activity, ctx, next));
     /* Help : who and what, chosen and picked before the use; the card shows them */
     uses.onActivity("action", async (activity, ctx, next) => {
       const before = await this.beforeUse(activity);
@@ -128,9 +223,14 @@ export class actions{
     try {
       /* On the token's own actor : an unlinked token opened from the sidebar would otherwise miss it */
       const own = activity.getUsageToken?.()?.actor ?? tokenOf(activity.actor)?.actor ?? activity.actor;
-      if(id === this.DODGE) return await this.dodge(own).then(() => this.autoApplied(results));
-      if(id === this.DASH) return await this.mark(own, "dash", "actions.dash.mark", "icons/skills/movement/feet-winged-boots-glowing-yellow.webp").then(() => this.autoApplied(results));
-      if(id === this.DISENGAGE) return await this.mark(own, "disengage", "actions.disengage.mark", "icons/skills/movement/arrow-upward-yellow.webp").then(() => this.autoApplied(results));
+      /* Its mark first, then the rules that follow it (Charger's 10 ft counts on the Dash's movement) */
+      const basic = !!activity.item?.getFlag?.(module.id, "basicAction") || this.BASICS.includes(id);
+      if(id === this.DODGE) await this.dodge(own).then(() => this.autoApplied(results));
+      else if(id === this.DASH) await this.mark(own, "dash", "actions.dash.mark", "icons/skills/movement/feet-winged-boots-glowing-yellow.webp").then(() => this.autoApplied(results));
+      else if(id === this.DISENGAGE) await this.mark(own, "disengage", "actions.disengage.mark", "icons/skills/movement/arrow-upward-yellow.webp").then(() => this.autoApplied(results));
+      if(basic) this.took(own, id);
+      if([this.DODGE, this.DASH, this.DISENGAGE].includes(id)) return;
+      if(id === this.HIDE) return await this.rollHide(own);
       const help = usage?.[module.id]?.before?.help;
       if((id !== this.HELP) || !help?.target) return;
       if(help.mode === "attack") return await this.assistAttack(activity, help);
@@ -140,6 +240,60 @@ export class actions{
       log.error(error);
       ui.notifications.warn(error.message);
     }
+  }
+
+  /**
+   * Use one of the creature's Default Actions (Dash, Disengage, Dodge, Hide...) as part of something else : Patient
+   * Defense's Disengage, Cunning Action's Hide. Its own item is used (its card, its mark), costing `economy` instead of
+   * its Action (default : nothing, the feature already paid). Without the item (Default Actions off) : Dash, Disengage
+   * and Dodge's marks put on straight away.
+   * @param {Actor|Token} thing
+   * @param {string} id   the Default Action's identifier
+   * @param {object} [options]
+   * @param {"free"|"action"|"bonus"|"reaction"} [options.economy="free"]
+   * @returns {Promise<object|null>}  the use's result
+   */
+  static async useDefault(thing, id, { economy = "free" } = {}){
+    const actor = thing?.actor ?? thing;
+    const item = actor?.items?.find?.(i => (idOf(i) === id) && i.getFlag(module.id, "basicAction")) ?? actor?.items?.find?.(i => idOf(i) === id);
+    if(item && this.enabled()) return item.use({ [module.id] : { economy } }, { configure : false });
+    if(id === this.DODGE) await this.dodge(actor);
+    else if(id === this.DASH) await this.mark(actor, "dash", "actions.dash.mark", "icons/skills/movement/feet-winged-boots-glowing-yellow.webp");
+    else if(id === this.DISENGAGE) await this.mark(actor, "disengage", "actions.disengage.mark", "icons/skills/movement/arrow-upward-yellow.webp");
+    if([this.DODGE, this.DASH, this.DISENGAGE].includes(id)) this.took(actor, id);
+    return null;
+  }
+
+  /* It took a Default Action : the rules that follow it (onDefaultAction) */
+  static took(actor, id){
+    if(!actor || !id) return;
+    for(const { rule, source } of defaultRulesFor("after", actor, id)){
+      Promise.resolve().then(() => rule.run(actor, source)).catch(error => log.error("Default action rule", error));
+    }
+  }
+
+  /* actionAs : a Bonus Action instead of the Action, when a rule allows it (its turn, the tracker counting) */
+  static async actionAsStep(activity, ctx, next){
+    const own = ctx.config?.[module.id] ?? {};
+    if(!this.enabled() || own.economy || !activity?.actor?.isOwner || (activity.activation?.type !== "action")) return next();
+    const actor = activity.getUsageToken?.()?.actor ?? activity.actor;
+    const id = idOf(activity.item);
+    const found = defaultRulesFor("as", actor, id)[0];
+    const st = found ? actionTracker.state(actionTracker.payerOf(actor)) : null;
+    if(!st?.mine) return next();
+    const payer = actionTracker.payerOf(actor);
+    const as = found.rule.as;
+    const action = actionTracker.left(payer, "action") > 0, other = actionTracker.left(payer, as) > 0;
+    let kind = null;
+    if(action && other){
+      kind = await chooseOption({ title : activity.item?.name ?? activity.name, icon : "fa-solid fa-stopwatch",
+        prompt : module.format("actions.as.prompt", { name : found.source.name ?? "" }),
+        options : [{ value : "action", label : actionTracker.label("action") }, { value : as, label : actionTracker.label(as) }] });
+      if(!kind) return null;
+    }
+    else if(other) kind = as;
+    if(kind && (kind !== "action")) uses.mark(ctx, { economy : kind });
+    return next();
   }
 
   /* Applied by the module : the card's effect buttons are greyed out (for its owner and the GM) */
@@ -153,7 +307,7 @@ export class actions{
   static async dodge(actor){
     if(actor.statuses?.has("dodging")) return;
     const status = CONFIG.statusEffects.find(e => e.id === "dodging");
-    await addTimedEffect(actor, {
+    await giveEffect(actor, {
       name : game.i18n.localize(status?.name ?? "Dodging"), img : status?.img, statuses : ["dodging"],
     }, { until : "turnStart" });
     log.debug("Dodging", actor.name);
@@ -165,8 +319,46 @@ export class actions{
      doesn't provoke Opportunity Attacks). The action tracker reads them. */
   static async mark(actor, key, label, img){
     if(actor.effects.some(e => e.getFlag(module.id, key))) return;
-    await addTimedEffect(actor, { name : module.i18n(label), img, flags : { [module.id] : { [key] : true } } }, { until : "turnEnd", thisTurn : true });
+    await giveEffect(actor, { name : module.i18n(label), img, flags : { [module.id] : { [key] : true } } }, { until : "turnEnd", thisTurn : true });
     log.debug(key, actor.name);
+  }
+
+  /* ---------- Hide ---------- */
+
+
+  /* Enemies whose tokens see this one (the vision rules) */
+  static seenBy(token){
+    const side = token?.document?.disposition;
+    return (canvas.tokens?.placeables ?? []).filter(t => (t !== token) && t.actor && (t.document.disposition !== side)
+      && (t.document.disposition !== CONST.TOKEN_DISPOSITIONS?.NEUTRAL) && !isIncapacitated(t) && canSee(t, token));
+  }
+
+  /* DEX (Stealth) against DC 15; a success : Invisible, until the GM ends it (found, attacked, made noise) */
+  static async rollHide(actor){
+    const [roll] = await actor.rollSkill({ skill : "ste", target : this.HIDE_DC, [module.id] : { action : this.HIDE } }, { configure : false },
+      { data : { flags : { [module.id] : { hideRoll : actor.uuid } } } }) ?? [];
+    if(roll) await this.hidden(actor, roll.total);
+  }
+
+  static async hidden(actor, total){
+    if(total >= this.HIDE_DC){
+      await setStatus(actor, "invisible", true);
+      ui.notifications.info(module.format("actions.hide.hidden", { name : actor.name }));
+      return true;
+    }
+    ui.notifications.info(module.format("actions.hide.notHidden", { name : actor.name }));
+    return false;
+  }
+
+  static async onHideReroll(message, changes, userId){
+    const uuid = message.getFlag?.(module.id, "hideRoll");
+    if(!uuid || (userId !== game.user.id) || !("rolls" in (changes ?? {})) || message.getFlag(module.id, "hid")) return;
+    const total = message.rolls?.[0]?.total ?? 0;
+    if(total < this.HIDE_DC) return;
+    const actor = fromUuidSync(uuid, { strict : false });
+    if(!actor?.isOwner) return;
+    if(message.isOwner) await message.setFlag(module.id, "hid", true);
+    await this.hidden(actor, total);
   }
 
   /* ---------- Help : Assist Attack ---------- */
@@ -263,7 +455,7 @@ export class actions{
     const name = mode === "attack"
       ? module.format("actions.help.attackMark", { name : helper.name })
       : module.format("actions.help.checkMark", { name : helper.name, check : label ?? key });
-    await addTimedEffect(target, {
+    await giveEffect(target, {
       name, img : "icons/skills/social/diplomacy-handshake.webp",
       flags : { [module.id] : { help : { mode, helper : helperUuid, name : helper.name, side, key } } },
     }, { of : helper, until : "turnStart" });
@@ -281,7 +473,7 @@ export class actions{
   static async stabilizeAction(activity, help){
     const token = fromUuidSync(help.target, { strict : false });
     if(!token?.actor) return;
-    const [roll] = await activity.actor.rollSkill({ skill : "med", target : 10 }, { configure : false },
+    const [roll] = await activity.actor.rollSkill({ skill : "med", target : 10, [module.id] : { action : this.HELP } }, { configure : false },
       { data : { flags : { [module.id] : { stabilize : token.uuid } } } }) ?? [];
     if(!roll) return;
     if(roll.total >= 10) await stabilize(token.actor);
@@ -299,6 +491,121 @@ export class actions{
   }
 
   /* A creature at 0 HP within 5 ft first (none : nothing spent), then the use, then it's Stable (no check) */
+  /* ---------- Every creature's default actions ---------- */
+
+  static BASICS = ["dash", "disengage", "dodge", "help", "hide", "search", "study", "unarmed-strike", "long-jump"];
+
+  static #giving = new Map();  // actor uuid -> the run under way
+
+  /* One run at a time per creature (a token placed as its combat starts : two runs added two of each) */
+  static async giveBasics(actor){
+    if(!actor?.uuid) return;
+    const before = this.#giving.get(actor.uuid) ?? Promise.resolve();
+    const run = before.then(() => this.#giveBasics(actor)).catch(error => log.debug("Default actions", error));
+    this.#giving.set(actor.uuid, run);
+    await run;
+    if(this.#giving.get(actor.uuid) === run) this.#giving.delete(actor.uuid);
+  }
+
+  static async #giveBasics(actor){
+    if(!this.enabled() || !game.users.activeGM?.isSelf || !["npc", "character"].includes(actor?.type)) return;
+    /* A controlled summon (Spiritual Weapon's force) acts only through its own items, with its summoner's actions */
+    if(actor.getFlag(module.id, "controlledBy")) return;
+    const ours = i => !!i.getFlag?.(module.id, "basicAction");
+    /* Extra copies of the ones it already has go : another's (a world macro's, added as ours were), a second of ours */
+    const first = new Map();
+    for(const i of actor.items) if(ours(i) && this.BASICS.includes(idOf(i)) && !first.has(idOf(i))) first.set(idOf(i), i);
+    const extra = actor.items.filter(i => this.BASICS.includes(idOf(i)) && first.has(idOf(i)) && (first.get(idOf(i)) !== i));
+    if(extra.length) await actor.deleteEmbeddedDocuments("Item", extra.map(i => i.id)).catch(error => log.debug("Default actions", error));
+    await this.#addMissing(actor, ours);
+    await this.#favorite(actor, ours);
+  }
+
+  static async #addMissing(actor, ours){
+    const missing = this.BASICS.filter(id => !actor.items.some(i => (idOf(i) === id) && ours(i)));
+    if(!missing.length) return;
+    const pack = game.packs.get(`${module.id}.actions`);
+    if(!pack) return;
+    const index = await pack.getIndex({ fields : ["system.identifier"] });
+    const docs = [];
+    for(const id of missing){
+      const entry = [...index].find(e => e.system?.identifier === id);
+      const doc = entry ? await pack.getDocument(entry._id) : null;
+      if(doc) docs.push(foundry.utils.mergeObject(doc.toObject(), { _id : null, [`flags.${module.id}.basicAction`] : true }, { inplace : false }));
+    }
+    if(!docs.length) return;
+    /* Ours first; only once they're on the creature, the other copies of those actions go (dnd5e's Unarmed Strike,
+       Plutonium's Claw Attack) : nothing is lost if adding fails */
+    const made = await actor.createEmbeddedDocuments("Item", docs.map(d => { delete d._id; return d; })).catch(error => { log.debug("Default actions", error); return []; });
+    const added = new Set((made ?? []).map(i => idOf(i)));
+    const others = actor.items.filter(i => added.has(idOf(i)) && !ours(i));
+    if(others.length) await actor.deleteEmbeddedDocuments("Item", others.map(i => i.id)).catch(error => log.debug("Default actions", error));
+  }
+
+  /* Default Actions : Favorites : a character's in its sheet's Favorites, once each (one taken out stays out) */
+  static async #favorite(actor, ours){
+    if(!settings.value("actionFavorites") || (actor.type !== "character") || !actor.system.favorites) return;
+    const items = actor.items.filter(i => ours(i) && this.BASICS.includes(idOf(i)) && !i.getFlag(module.id, "favorited"));
+    if(!items.length) return;
+    const favorites = actor.system.favorites.map(f => ({ ...f }));
+    let sort = Math.max(0, ...favorites.map(f => f.sort ?? 0));
+    for(const item of items){
+      const id = foundry.utils.buildRelativeUuid(item, actor);
+      if(!favorites.some(f => f.id === id)) favorites.push({ type : "item", id, sort : sort += CONST.SORT_INTEGER_DENSITY });
+    }
+    await actor.update({ "system.favorites" : favorites }).catch(error => log.debug("Default actions", error));
+    await actor.updateEmbeddedDocuments("Item", items.map(i => ({ _id : i.id, [`flags.${module.id}.favorited`] : true })))
+      .catch(error => log.debug("Default actions", error));
+  }
+
+
+  /* ---------- Sheets : their own section ---------- */
+
+  static SECTION = "defaultActions";
+
+  /* Character sheets (Features tab) and NPC sheets : the Default Actions in a section of their own, after the others */
+  static registerSection(){
+
+    const section = columns => ({ id : this.SECTION, label : module.i18n("actions.section"), order : 5000, items : [], columns,
+      groups : { origin : this.SECTION } });
+    const sheets = "dnd5e.applications.actor";
+    /* Once every item is prepared : ours grouped there (characters group by origin, NPCs by ctx.group); the
+       Unarmed Strike too, a weapon */
+    patch.wrap(`${sheets}.BaseActorSheet.prototype._prepareItems`, async function(wrapped, context, ...args){
+      const result = await wrapped(context, ...args);
+      if(!actions.enabled()) return result;
+      for(const item of context.items ?? []){
+        const ctx = context.itemContext?.[item.id];
+        if(!ctx || !item.getFlag?.(module.id, "basicAction")) continue;
+        ctx.groups = { ...(ctx.groups ?? {}), origin : actions.SECTION };
+        ctx.group = actions.SECTION;
+        ctx.dataset = { ...(ctx.dataset ?? {}), "group-origin" : actions.SECTION };
+      }
+      return result;
+    });
+    /* A character's Unarmed Strike (a weapon) : in its inventory, and here too */
+    patch.wrap(`${sheets}.CharacterActorSheet.prototype._assignItemCategories`, function(wrapped, item, ...args){
+      const categories = wrapped(item, ...args);
+      if(actions.enabled() && item?.getFlag?.(module.id, "basicAction") && (categories instanceof Set)) categories.add("features");
+      return categories;
+    });
+    for(const sheet of ["CharacterActorSheet", "NPCActorSheet"]){
+      patch.wrap(`${sheets}.${sheet}.prototype._prepareFeaturesContext`, async function(wrapped, context, options){
+        const result = await wrapped(context, options);
+        const sections = result?.sections;
+        if(!actions.enabled() || !Array.isArray(sections) || sections.some(s => s.id === actions.SECTION)) return result;
+        const items = (result.itemCategories?.features ?? []).filter(i => i.getFlag?.(module.id, "basicAction"));
+        if(!items.length) return result;
+        /* NPC sections hold their items (by ctx.group, which ours have no section for); Character ones group by origin */
+        const added = section(sections[0]?.columns);
+        if(sheet === "NPCActorSheet") added.items = items;
+        const Inventory = customElements.get(this.options.elements.inventory);
+        result.sections = Inventory.prepareSections([...sections, added]);
+        return result;
+      });
+    }
+  }
+
   static async healersKitStep(activity, ctx, next){
     if(!this.enabled() || !this.isKitStabilize(activity) || !activity.actor?.isOwner) return next();
     const near = canvas.scene?.grid.distance ?? 5;

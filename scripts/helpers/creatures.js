@@ -1,5 +1,5 @@
 import { module } from '../module.js';
-import { esc } from './utils.js';
+import { esc, searchList } from './utils.js';
 
 /**
  * Choosing creatures (and other things) from a grid of pictures, and whether a creature fits one of dnd5e's transform /
@@ -41,9 +41,11 @@ export function fitsProfile(actor, profile, rollData = {}){
 }
 
 
-/* A creature as a tile entry : picture, name, CR */
-function entryOf(actor){
-  return { value : actor.uuid, label : actor.name, img : actor.prototypeToken?.texture?.src || actor.img, detail : `CR ${crLabel(crOf(actor))}` };
+/* A tile entry : a creature (an actor or a compendium index entry) becomes its picture, name and CR; one with a `value`
+   is already { value, label, img, detail } */
+function entryOf(entry){
+  if(entry.value !== undefined) return entry;
+  return { value : entry.uuid, label : entry.name, img : entry.prototypeToken?.texture?.src || entry.img, detail : `CR ${crLabel(crOf(entry))}` };
 }
 
 /* One tile : picture, name, a detail line (CR, weapon type) */
@@ -57,25 +59,20 @@ function tile(entry, input, { original = false } = {}){
 }
 
 /**
- * Choose one creature from a grid of pictures.
- * @param {Actor[]} actors
+ * Choose one from a grid of tiles ({ value, label, img, detail }), or of creatures (actors or
+ * compendium index entries : picture, name, CR; the value is the uuid).
+ * @param {(object|Actor)[]} entries
  * @param {object} [options]
  * @param {string} [options.title]
  * @param {string} [options.prompt]
  * @param {string} [options.icon]
  * @param {object[]} [options.extra]   more buttons, as DialogV2 buttons ({ action, label, icon }) : their action is returned
- * @returns {Promise<string|null>}  the creature's uuid (or an extra button's action), null if closed
- */
-export async function chooseCreature(actors, options = {}){
-  return chooseOne(actors.map(entryOf), options);
-}
-
-/**
- * Choose one from a grid of tiles ({ value, label, img, detail }).
+ * @param {number} [options.columns]
  * @returns {Promise<string|null>}  the value (or an extra button's action), null if closed
  */
 export async function chooseOne(entries, { title, prompt = "", icon = "fa-solid fa-paw", extra = [], columns = null } = {}){
   if(!entries.length) return null;
+  entries = entries.map(entryOf);
   const grid = entries.map((e, i) => tile(e, `<input type="radio" name="creature" value="${esc(e.value)}"${i ? "" : " checked"}>`)).join("");
   const chosen = await foundry.applications.api.DialogV2.wait({
     window : { title, icon },
@@ -86,8 +83,9 @@ export async function chooseOne(entries, { title, prompt = "", icon = "fa-solid 
         callback : (event, button) => button.form.elements.creature?.value ?? null },
       ...extra,
     ],
-    /* A double click on a picture chooses it */
+    /* A double click on a picture chooses it; a long list gets a search box */
     render : (event, dialog) => {
+      searchList(dialog.element, `.${module.id}-creature`);
       dialog.element.querySelectorAll(`.${module.id}-creature`).forEach(el => el.addEventListener("dblclick", () => {
         el.querySelector("input").checked = true;
         dialog.element.querySelector('button[data-action="ok"]')?.click();
@@ -99,26 +97,22 @@ export async function chooseOne(entries, { title, prompt = "", icon = "fa-solid 
 }
 
 /**
- * Choose a set of creatures (Wild Shape's known forms) : up to `max`, with at most `swaps` of the current ones taken away.
- * @param {Actor[]} actors
+ * Choose a set from a grid of tiles ({ value, label, img, detail }) or of creatures (Wild Shape's known forms : the values
+ * are uuids) : up to `max`, with at most `swaps` of the current ones taken away (more when there are more than `max`
+ * already : down to `max` is free).
+ * @param {(object|Actor)[]} entries
  * @param {object} options
- * @param {string[]} options.known    uuids chosen now
+ * @param {string[]} options.known    values chosen now
  * @param {number} options.max
  * @param {number} [options.swaps=Infinity]  how many of the known ones may be replaced
  * @param {string} [options.title]
  * @param {string} [options.prompt]
- * @returns {Promise<string[]|null>}  the new set, null if closed
- */
-export async function chooseCreatures(actors, options = {}){
-  return chooseSet(actors.map(entryOf), options);
-}
-
-/**
- * Choose a set from a grid of tiles ({ value, label, img, detail }) : up to `max`, with at most `swaps` of the current
- * ones taken away (more when there are more than `max` already : down to `max` is free).
+ * @param {string} [options.icon]
+ * @param {boolean} [options.allowPast]  a box to go past the limits (the GM is told by the caller)
  * @returns {Promise<string[]|null>}  the new set, null if closed
  */
 export async function chooseSet(entries, { known = [], max, swaps = Infinity, title, prompt = "", icon = "fa-solid fa-paw", allowPast = false } = {}){
+  entries = entries.map(entryOf);
   /* Known ones no longer offered (deleted, moved out of the folder) don't count against the swaps */
   known = known.filter(value => entries.some(e => e.value === value));
   swaps += Math.max(0, known.length - max);
@@ -145,6 +139,7 @@ export async function chooseSet(entries, { known = [], max, swaps = Infinity, ti
           + (warning ? ` <strong class="warning">${esc(warning)}</strong>` : "");
       };
       const past = () => !!root.querySelector('input[name="past"]')?.checked;
+      searchList(root, `.${module.id}-creature`);
       root.querySelector('input[name="past"]')?.addEventListener("change", () => show());
       root.querySelectorAll('input[name="creature"]').forEach(input => input.addEventListener("change", () => {
         const picked = root.querySelectorAll('input[name="creature"]:checked').length;
@@ -159,4 +154,49 @@ export async function chooseSet(entries, { known = [], max, swaps = Infinity, ti
     rejectClose : false,
   });
   return Array.isArray(result) ? result : null;
+}
+
+/**
+ * Divide an amount among creatures (Preserve Life's healing, Inspiring Smite's temporary Hit Points) : a number box for
+ * each, a running total, at most `max(token)` each.
+ * @param {Token[]} tokens
+ * @param {number} total
+ * @param {object} [options]
+ * @param {(token : Token) => number} [options.max]   the most one creature can take (default : no limit)
+ * @param {string} [options.title]
+ * @param {string} [options.prompt]
+ * @param {string} [options.icon]
+ * @returns {Promise<Map<Token, number>|null>}  how much each gets (none left out : 0), null if closed
+ */
+export async function divideAmong(tokens, total, { max = () => Infinity, title, prompt = "", icon = "fa-solid fa-scale-balanced" } = {}){
+  if(!tokens.length) return null;
+  const caps = tokens.map(t => Math.max(0, Math.floor(Number(max(t))) || 0));
+  const capOf = i => Number.isFinite(caps[i]) ? caps[i] : total;
+  const rows = tokens.map((t, i) => `<div class="form-group"><label><img src="${esc(t.document?.texture?.src ?? t.actor?.img ?? "")}" width="24" height="24" style="vertical-align:middle;border:none"> ${esc(t.name)}</label>
+    <input type="number" name="n${i}" min="0" max="${capOf(i)}" step="1" value="0"><span class="hint">≤ ${capOf(i)}</span></div>`).join("");
+  const result = await foundry.applications.api.DialogV2.wait({
+    window : { title, icon },
+    content : `${prompt ? `<p>${esc(prompt)}</p>` : ""}<p class="${module.id}-divide-left">${esc(module.format("helpers.divide.left", { left : total, total }))}</p>${rows}`,
+    buttons : [{ action : "ok", label : game.i18n.localize("Confirm"), icon : "fa-solid fa-check", default : true,
+      callback : (event, button) => tokens.map((t, i) => Number(button.form.elements[`n${i}`]?.value) || 0) }],
+    render : (event, dialog) => {
+      const form = dialog.element.querySelector("form") ?? dialog.element;
+      const left = dialog.element.querySelector(`.${module.id}-divide-left`);
+      form.addEventListener("input", () => {
+        const used = tokens.reduce((sum, t, i) => sum + (Number(form.querySelector(`[name="n${i}"]`)?.value) || 0), 0);
+        if(left) left.textContent = module.format("helpers.divide.left", { left : total - used, total });
+      });
+    },
+    rejectClose : false,
+  });
+  if(!Array.isArray(result)) return null;
+  /* Each to its limit, in order, until the amount runs out */
+  const out = new Map();
+  let remaining = total;
+  tokens.forEach((t, i) => {
+    const amount = Math.max(0, Math.min(Math.floor(result[i]), capOf(i), remaining));
+    remaining -= amount;
+    out.set(t, amount);
+  });
+  return out;
 }

@@ -4,9 +4,10 @@ import { settings, GROUPS } from './settings.js';
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
 /**
- * One feature's settings, opened from its button in Configure Settings → Macro Helper.
- * World settings are read-only for players, client settings are theirs to change.
- * Usage : SettingsMenu.for("rollItem") gives the class registerMenu needs for that group.
+ * One page of settings, opened from its button in Configure Settings → Macro Helper.
+ * World settings are read-only for players, client settings are theirs to change. A setting whose Features switch
+ * is off (its part, or its page's) shows greyed, with the reason.
+ * Usage : SettingsMenu.for("rules") gives the class registerMenu needs for that page.
  */
 export class SettingsMenu extends HandlebarsApplicationMixin(ApplicationV2){
   static GROUP = null;
@@ -43,14 +44,23 @@ export class SettingsMenu extends HandlebarsApplicationMixin(ApplicationV2){
       .map(([key]) => key);
   }
 
+  /* The Features switch a setting needs (its own part, or its page's), while that's off (saved value : the page shows what's saved) */
+  static partOff(group, key){
+    const page = GROUPS[group];
+    return [page.settings[key]?.part, page.part].find(p => p && (settings.stored(p) === false)) ?? null;
+  }
+
   static config(key){
     return game.settings.settings.get(`${module.id}.${key}`);
   }
 
   async _prepareContext(options){
     const context = await super._prepareContext(options);
+    const page = GROUPS[this.constructor.GROUP];
     const all = this.keys.map(key => {
       const config = SettingsMenu.config(key);
+      const data = page.settings[key];
+      const part = SettingsMenu.partOff(this.constructor.GROUP, key);
       const isBoolean = (config.type === Boolean) || (config.type instanceof foundry.data.fields.BooleanField);
       return {
         key,
@@ -62,34 +72,17 @@ export class SettingsMenu extends HandlebarsApplicationMixin(ApplicationV2){
         isBoolean,
         choices : config.choices ?? null,
         world : config.scope === "world",
-        disabled : (config.scope === "world") && !game.user.isGM,
-        top : !!GROUPS[this.constructor.GROUP].settings[key]?.top,
+        disabled : ((config.scope === "world") && !game.user.isGM) || !!part,
+        off : part ? game.i18n.format("settings.menu.partOff", { part : game.i18n.localize(`settings.${part}.title`) }) : "",
+        homebrew : !!data.homebrew,
+        section : data.section ? `settings.${this.constructor.GROUP}.section.${data.section}` : "",
       };
     });
-    /* A page's on/off (Enable Roll Item) goes above its buttons, the rest below */
-    context.top = all.filter(s => s.top);
-    context.settings = all.filter(s => !s.top);
-    /* Buttons opening nested pages (Helpers → Methods), for those who can change them */
-    context.submenus = (GROUPS[this.constructor.GROUP]?.submenus ?? [])
-      .filter(sub => game.user.isGM || Object.values(GROUPS[sub]?.settings ?? {}).some(s => s.scope === "client"))
-      .map(sub => ({ key : sub, icon : GROUPS[sub].icon, name : `settings.${sub}.menu.title`, label : `settings.${sub}.menu.label`, hint : `settings.${sub}.menu.hint` }));
-    /* My Settings : the GM's pages, one button each (no hints) */
-    context.server = game.user.isGM ? (GROUPS[this.constructor.GROUP]?.server ?? [])
-      .map(group => ({ key : group, icon : GROUPS[group].icon, label : `settings.${group}.menu.title` })) : [];
+    context.settings = all;
     /* A player with nothing to set here (Allow Players to Edit off) */
-    context.empty = !all.length && !context.submenus.length && !context.server.length;
+    context.empty = !all.length;
     context.buttons = [{ type : "submit", icon : "fa-solid fa-floppy-disk", label : "SETTINGS.Save" }];
     return context;
-  }
-
-  _onRender(context, options){
-    super._onRender?.(context, options);
-    for(const button of this.element.querySelectorAll("[data-submenu]")){
-      button.addEventListener("click", event => {
-        event.preventDefault();
-        new (SettingsMenu.for(button.dataset.submenu))().render({ force : true });
-      });
-    }
   }
 
   /** @this {SettingsMenu} */
@@ -100,6 +93,8 @@ export class SettingsMenu extends HandlebarsApplicationMixin(ApplicationV2){
     for(const key of this.keys){
       const config = SettingsMenu.config(key);
       if((config.scope === "world") && !game.user.isGM) continue;
+      /* Greyed (its part off) : left as saved */
+      if(SettingsMenu.partOff(this.constructor.GROUP, key)) continue;
       if(!(key in data) || (data[key] === settings.stored(key))) continue;
 
       await settings.change(key, data[key]);

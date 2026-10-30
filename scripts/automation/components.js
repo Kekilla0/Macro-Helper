@@ -7,6 +7,8 @@ import { limits } from './limits.js';
 import { hands } from './hands.js';
 import { itemFixes } from './item-fixes.js';
 import { idOf } from '../helpers/utils.js';
+import { itemOf } from '../helpers/actors.js';
+import { ruleSet, ruleValue } from '../helpers/rules.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -15,9 +17,11 @@ const log = logger.for(import.meta.url);
  *
  *   Verbal (V)    : not while Silenced.
  *   Somatic (S)   : a free hand (Hands), or the hand holding the focus when the spell also has M. War Caster lifts it.
+ *                   A Versatile weapon held in both hands leaves one free (it can be held in one).
  *   Material (M)  : an equipped item with dnd5e's Focus property (any kind, for any caster : a weapon that is also a
- *                   focus, an amulet, an emblem on a shield...), or a carried Component Pouch and a free hand. The
- *                   hand holding the focus (or reaching into the pouch) also does S. The basic foci (Plutonium's and
+ *                   focus, an amulet, an emblem on a shield...), or a carried Component Pouch. A focus in a hand (or an
+ *                   emblem on the held shield) is handled by that hand; a worn one (an amulet) or the pouch needs a
+ *                   free hand to grasp it. That hand also does S. The basic foci (Plutonium's and
  *                   dnd5e's : amulet, crystal, emblem, orb, reliquary, rod, staff, wand, sprig of mistletoe, wooden
  *                   staff, yew wand) and musical instruments get the Focus property when added.
  *   Costly M      : (System Automation → Equipment → Costly Materials) a spell's material with a cost (Identify's
@@ -27,6 +31,20 @@ const log = logger.for(import.meta.url);
  * NPCs are only checked for V (2024 monster spellcasting needs no Material components). Characters with Hands off
  * aren't checked for hands, only for a focus or pouch.
  */
+/**
+ * The dropped-components lego : a creature's spells cast without some of their components (Improved Illusions : no V;
+ * Telekinetic's Mage Hand : no V or S; a monster's "casts without components").
+ *   dropsComponents(match, ["v", "s"], { when : ({ actor, item, activity, source }) => true, enabled, id })
+ *   match   an item identifier the creature has (or several), or (actor) => the source
+ */
+const drops = ruleSet("Drops components");
+
+export function dropsComponents(match, drop, options){
+  ({ value : drop, options } = ruleValue(drop, options, "drop"));
+  const { when = null, enabled = null, id = null } = options;
+  drops.add(match, { drop : [drop].flat().map(c => String(c).toLowerCase()[0]), when, enabled }, id);
+}
+
 export class components{
   static WAR_CASTER = "war-caster";
   static POUCH = "component-pouch";
@@ -63,8 +81,15 @@ export class components{
   static needs(activity, config = {}){
     const props = activity?.item?.system?.properties;
     const has = key => !!props?.has?.(key);
-    const subtle = config?.[module.id]?.metamagic === "subtle-spell";
-    return { v : has("vocal") && !subtle, s : has("somatic") && !subtle, m : has("material") };
+    /* Components a rule left out of this use (Subtle Spell) : config["macro-helper"].components = { v : false, s : false } */
+    const drop = config?.[module.id]?.components ?? {};
+    const need = { v : has("vocal") && (drop.v !== false), s : has("somatic") && (drop.s !== false), m : has("material") && (drop.m !== false) };
+    /* Rules that drop some (dropsComponents : Improved Illusions no V; Psychic Spells no V or S), and Hooks
+       "macro-helper.components" (activity, need) */
+    const actor = activity?.actor;
+    for(const { rule } of drops.active(actor, { item : activity?.item, activity })) for(const c of rule.drop) need[c] = false;
+    Hooks.callAll(`${module.id}.components`, activity, need);
+    return need;
   }
 
   static isShield(item){
@@ -88,8 +113,10 @@ export class components{
 
     const managed = hands.manages(actor);
     const held = managed ? hands.of(actor) : null;
-    const freeHand = managed ? (!held.main || !held.off) : true;
-    const warCaster = actor.items.some(i => idOf(i) === this.WAR_CASTER);
+    /* A Versatile weapon held in both hands could be held in one : a hand is free for the spell */
+    const bothHands = managed && held.main && (held.main === held.off) ? actor.items.get(held.main) : null;
+    const freeHand = managed ? (!held.main || !held.off || (!!bothHands && hands.isVersatile(bothHands) && !hands.isTwoHanded(bothHands))) : true;
+    const warCaster = !!itemOf(actor, this.WAR_CASTER);
     const foci = actor.items.filter(i => i.system?.properties?.has?.("foc") && i.system.equipped);
     /* In a hand (or an emblem on a held shield) : that hand also does S */
     const focusInHand = foci.find(i => !managed || hands.handOf(actor, i) || this.isShield(i));
@@ -98,9 +125,15 @@ export class components{
 
     let somaticDone = !need.s || warCaster;
     if(need.m){
+      /* Held (or an emblem on the held shield) : that hand handles it, and does S */
       if(focusInHand) somaticDone = true;
-      else if(pouch && freeHand) somaticDone = true;
-      else if(!focusWorn) out.push(module.format(pouch ? "components.pouchNoHand" : "components.material", { name : actor.name, spell : item.name }));
+      /* Worn (an amulet on a necklace), or the pouch : a free hand grasps it, and does S */
+      else if((focusWorn || pouch) && freeHand) somaticDone = true;
+      else {
+        out.push(module.format((focusWorn || pouch) ? "components.graspNoHand" : "components.material", { name : actor.name, spell : item.name }));
+        /* No free hand already said : not again for S */
+        if(focusWorn || pouch) somaticDone = true;
+      }
     }
     if(!somaticDone && !freeHand) out.push(module.format("components.somatic", { name : actor.name, spell : item.name }));
     out.push(...this.costlyProblems(activity));
@@ -154,6 +187,8 @@ export class components{
   /* ---------- The step and the spending ---------- */
 
   static async step(activity, ctx, next){
+    /* Not a casting (the shard of a cast Ice Knife, Witch Bolt's later turns, a leap) */
+    if(ctx.config?.[module.id]?.noCast) return next();
     const found = this.problems(activity, ctx.config);
     if(found.length && !limits.allow(found.join(" "), { who : activity.actor.name, what : activity.item.name })) return;
     return next();

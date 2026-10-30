@@ -3,6 +3,7 @@ import { idOf, whisperOwners } from '../helpers/utils.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { addLight, removeLight, hasLight } from '../helpers/tokens.js';
+import { itemOf } from '../helpers/actors.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -12,7 +13,7 @@ const log = logger.for(import.meta.url);
  *   Burn time : a lit light is an effect on the character (Lit Torch...) lasting what's left of it on the game clock
  *               (2024 : torch and candle 1 hour, lanterns and lamp 6 hours on a flask of oil). Put down early, it keeps
  *               the time left for next time. Burnt out (the clock passes its end) : a torch or candle is used up (one
- *               of the stack; the last one, gone from the hand); a lantern or lamp stays in hand, dark, and lighting
+ *               of the stack, and the hand that held it is empty); a lantern or lamp stays in hand, dark, and lighting
  *               it again (taking it in hand again) uses a flask of Oil from the inventory. Deleting the effect puts
  *               the light out; the item stays in hand.
  *   New tokens : a character's token placed (another scene, placed again) or turned back from a form gets its lit
@@ -43,13 +44,15 @@ export class heldLight{
     Hooks.on("deleteActiveEffect", (effect, options, userId) => this.onEffectDeleted(effect, options, userId));
     /* A burning torch swung at someone isn't used up (its item's attack is set to spend a use it doesn't have) */
     Hooks.on("dnd5e.preUseActivity", (activity, usage) => {
-      if((activity?.type === "attack") && this.sourceOf(activity.item)) usage.consume = false;
+      /* Nor does it place its light's radius as an area (dnd5e's torch carries it as a template) */
+      if((activity?.type === "attack") && this.sourceOf(activity.item)){ usage.consume = false; usage.create = { ...(usage.create ?? {}), measuredTemplate : false }; }
     });
   }
 
 
+  /* By identifier, or the item's own (flags["macro-helper"].light = { light } : a conjured blade's, burning as long as it lasts) */
   static sourceOf(item){
-    return this.SOURCES[idOf(item)] ?? null;
+    return this.SOURCES[idOf(item)] ?? item?.getFlag?.(module.id, "light") ?? null;
   }
 
   static key(id){
@@ -83,12 +86,12 @@ export class heldLight{
   static async lightUp(actor, item){
     const source = this.sourceOf(item);
     if(!source) return false;
-    const timed = this.mode() === "timed";
+    const timed = (this.mode() === "timed") && (Number(source.hours) > 0);
     let seconds = source.hours * 3600;
     if(timed){
       if(item.getFlag(module.id, "burnedOut")){
         if(!source.oil) return false;
-        const oil = actor.items.find(i => this.OIL.includes(idOf(i)));
+        const oil = itemOf(actor, this.OIL);
         if(!oil){
           ui.notifications.warn(module.format("hands.noOil", { item : item.name }));
           return false;
@@ -134,7 +137,7 @@ export class heldLight{
       /* Marked lit and actually lighting (a token turned back from a form can keep the mark with the form's dark light) */
       const lighting = (Number(token.light?.dim) > 0) || (Number(token.light?.bright) > 0);
       if(!source || (hasLight(token, this.key(id)) && lighting)) continue;
-      if((this.mode() === "timed") && !this.effectOf(actor, id)) continue;
+      if((this.mode() === "timed") && (Number(source.hours) > 0) && !this.effectOf(actor, id)) continue;
       await addLight(token, source.light, { key : this.key(id) });
     }
   }
@@ -179,9 +182,16 @@ export class heldLight{
     await this.putOut(actor, id);
     if(!item || !source) return;
     await item.unsetFlag(module.id, "burnLeft");
-    if(source.used) await this.useOne(item);
+    if(source.used){
+      await this.useOne(item);
+      /* The burnt one is gone : the hand that held it is empty (the rest of the stack stays in the pack) */
+      const { hands } = await import('./hands.js');
+      const held = actor.getFlag(module.id, "hands") ?? {};
+      for(const slot of Object.keys(held)) if(held[slot] === id) await hands.empty(actor, slot).catch(error => log.debug(error));
+    }
     else await item.setFlag(module.id, "burnedOut", true);
-    await whisperOwners(actor, module.format(source.used ? "hands.burntOut" : "hands.outOfOil", { name : actor.name, item : item.name }));
+    const left = actor.items.get(id) ? (Number(actor.items.get(id).system?.quantity) || 0) : 0;
+    await whisperOwners(actor, module.format(source.used ? "hands.burntOut" : "hands.outOfOil", { name : actor.name, item : item.name, left }));
   }
 
   /* The effect deleted by hand : the light goes out, the time left is kept, the item stays in hand */

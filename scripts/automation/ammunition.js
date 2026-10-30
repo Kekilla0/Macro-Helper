@@ -130,7 +130,12 @@ export class ammunition{
         const attack = system.attackOf(ray);
         return attack ? { key : Number.isInteger(ray) ? String(ray) : "single", ammunition : attack.options?.ammunition ?? null, attackMode : attack.options?.attackMode ?? system.mode ?? "" } : null;
       };
-      if(!system.isMulti) return [shot(null)].filter(Boolean);
+      /* One shot, one piece : only in the creature it was aimed at (damage applied to other selected tokens isn't a hit) */
+      if(!system.isMulti){
+        const aimed = (system.targets ?? []).map(t => dnd5e.dataModels.chatMessage.fields.TargetsField.resolve(t).actor).filter(Boolean);
+        if(aimed.length && !aimed.includes(actor)) return [];
+        return [shot(null)].filter(Boolean);
+      }
       if(part === "hits"){
         /* Every ray that hit and landed on this creature (its target, or the selected tokens for a ray without one) */
         return system.rays.map((_, i) => i).filter(i => {

@@ -4,6 +4,8 @@ import { uses } from '../uses.js';
 import { logger } from '../log.js';
 import { MacroEditor } from './editor.js';
 import { itemHooks } from './item-hooks.js';
+import { applyCondition, engulf, immunity, web, applyDisease, suppressOA, passThrough, applyEffect, attach, followUp, extraDamage, shareDamage, push, damageTypes, becameBloodied, cardBuilder } from '../roll-item/card-builder.js';
+import { limits } from '../automation/limits.js';
 const log = logger.for(import.meta.url);
 
 /* What happens when an item/activity with a macro is used */
@@ -42,7 +44,10 @@ export class itemMacro{
     const item = activity ? target.item : target;
     const actor = item?.actor ?? null;
     const token = actor?.token?.object ?? actor?.getActiveTokens()[0] ?? null;
-    return { actor, token, item, activity, hook : null, args : [], ...extra };
+    /* Card builder parts, to append to the card item.roll() returns */
+    /* ruleLimit("...") : Rule Limits for something the rules don't allow (true : go ahead) */
+    const ruleLimit = text => limits.allow(text, { who : actor?.name ?? "", what : item?.name ?? "" });
+    return { actor, token, item, activity, hook : null, args : [], applyCondition, engulf, immunity, web, applyDisease, suppressOA, passThrough, applyEffect, attach, followUp, extraDamage, shareDamage, push, damageTypes, becameBloodied, ruleLimit, ...extra };
   }
 
   static async execute(target, scope = this.scope(target)){
@@ -71,7 +76,13 @@ export class itemMacro{
     const data = this.get(target);
     if(!data || data.mode === "default") return wrapped(...args);
 
-    const result = await this.execute(target, this.scope(target, extra));
+    /* item.roll() inside it is this use (an Opportunity Attack, a readied use : their cost and target) */
+    const itemUuid = (this.isActivity(target) ? target.item : target)?.uuid;
+    const own = extra?.usage?.[module.id];
+    if(itemUuid && own) cardBuilder.inherited.set(itemUuid, own);
+    let result;
+    try { result = await this.execute(target, this.scope(target, extra)); }
+    finally { if(itemUuid && own) cardBuilder.inherited.delete(itemUuid); }
     if(data.mode === "macro" || result === false) return;
 
     return wrapped(...args);
@@ -165,6 +176,8 @@ export class itemMacro{
   }
 
   static #step(target, ctx, next){
+    /* item.roll() from the item's own macro (or a card's follow-up) : the normal use, not the macro again */
+    if(ctx.config?.[module.id]?.skipMacro) return next();
     const { config : usage, dialog, message } = ctx;
     const go = (...args) => {
       if(args.length) [ctx.config = ctx.config, ctx.dialog = ctx.dialog, ctx.message = ctx.message] = args;

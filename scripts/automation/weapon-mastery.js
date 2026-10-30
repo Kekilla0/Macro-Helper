@@ -4,7 +4,22 @@ import { logger } from '../log.js';
 import { chooseSet } from '../helpers/creatures.js';
 import { restChoices } from './rest-choices.js';
 import { limits } from './limits.js';
+import { ruleSet } from '../helpers/rules.js';
 const log = logger.for(import.meta.url);
+
+/* More masteries from a feature (extraMasteries) : { match, count, pool, enabled } */
+const extras = ruleSet("Extra masteries");
+
+/**
+ * More weapon masteries from a feature (Weapon Master; a homebrew "a second mastery"; a monster's) : `count` more kinds
+ * (a number, or (actor, source) => number) on top of its classes' count, from `pool` : "proficient" (the default : the
+ * kinds it's proficient with), "any" (Simple or Martial), "melee", "finesseLight". A creature with no class that gives
+ * Weapon Mastery gets these alone. Chosen and swapped in Rest Choices (one swap a Long Rest), as the classes' are.
+ *   match    an item identifier the creature has (or several), or (actor) => the source
+ */
+export function extraMasteries(match, { count = 1, pool = "proficient", enabled = null, id = null } = {}){
+  extras.add(match, { count, pool, enabled }, id);
+}
 
 /**
  * Weapon Mastery (Classes setting) : which kinds of weapon a character has mastered, kept where dnd5e keeps them (the
@@ -19,6 +34,8 @@ const log = logger.for(import.meta.url);
  *               A change made on the sheet that the rules don't allow follows Rule Limits.
  */
 export class weaponMastery{
+  /* Its changes left (Rest Choices' count) */
+  static SWAPS = "swaps.weaponMastery";
   /* Class identifier : which weapons, and the count by class level (the class's own "mastery" scale wins) */
   static CLASSES = {
     fighter : { pool : "any", table : { 1 : 3, 4 : 4, 10 : 5, 16 : 6 } },
@@ -28,19 +45,17 @@ export class weaponMastery{
     rogue : { pool : "finesseLight", table : { 1 : 2 } },
   };
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("classRules");
-  }
+  static enabled = settings.on("classRules");
 
   static register(){
     if(game.system.id !== "dnd5e") return;
     Hooks.on("preUpdateActor", (actor, changes, options) => this.onSheetChange(actor, changes, options));
     restChoices.add({
-      id : "weaponMastery", label : "restChoices.weaponMastery", rest : "long",
-      applies : actor => this.enabled() && (this.limitOf(actor) > 0),
-      grant : actor => actor.setFlag(module.id, "masterySwaps", 1),
+      id : "weaponMastery", label : "restChoices.weaponMastery", rest : "long", count : 1,
+      applies : actor => this.limitOf(actor) > 0,
       summary : actor => module.format("weaponMastery.summary", { known : this.knownOf(actor).length, max : this.limitOf(actor),
-        swaps : Number(actor.getFlag(module.id, "masterySwaps")) || 0 }),
+        swaps : Number(actor.getFlag(module.id, this.SWAPS)) || 0 }),
+      state : async actor => { const kinds = await this.weaponKinds(); return this.knownOf(actor).map(key => kinds.find(k => k.key === key)?.name ?? key); },
       open : actor => this.choose(actor),
     });
   }
@@ -50,8 +65,22 @@ export class weaponMastery{
     return Object.entries(actor?.classes ?? {}).filter(([id]) => this.CLASSES[id]).map(([id, item]) => ({ id, level : Number(item.system?.levels) || 0 }));
   }
 
-  /* How many kinds it may master : the highest of its classes */
+  /* The extraMasteries rules the creature has : [{ count, pool }] */
+  static extrasOf(actor){
+    const out = [];
+    for(const { rule, source } of extras.active(actor)){
+      const count = Number((typeof rule.count === "function") ? rule.count(actor, source) : rule.count) || 0;
+      if(count > 0) out.push({ count, pool : rule.pool ?? "proficient" });
+    }
+    return out;
+  }
+
+  /* How many kinds it may master : the highest of its classes, and what its features add */
   static limitOf(actor){
+    return (this.enabled() ? this.classLimitOf(actor) : 0) + this.extrasOf(actor).reduce((n, e) => n + e.count, 0);
+  }
+
+  static classLimitOf(actor){
     return Math.max(0, ...this.classesOf(actor).map(({ id, level }) => {
       const scale = actor.system?.scale?.[id] ?? {};
       const value = Number(scale.mastery?.value ?? scale["weapon-mastery"]?.value);
@@ -89,10 +118,14 @@ export class weaponMastery{
     return kinds.sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  /* Does a weapon kind fit what one of the character's classes allows ? */
-  static allows(pool, kind){
+  /* Does a weapon kind fit what one of the character's classes (or features) allows ? */
+  static allows(pool, kind, actor = null){
     if(!["simpleM", "simpleR", "martialM", "martialR"].includes(kind.type)) return false;
     if(pool === "melee") return kind.type.endsWith("M");
+    if(pool === "proficient"){
+      const prof = actor?.system?.traits?.weaponProf?.value;
+      return !!(prof?.has?.(kind.type.startsWith("simple") ? "sim" : "mar") || prof?.has?.(kind.key));
+    }
     if(pool === "finesseLight") return kind.properties.has("fin") || kind.properties.has("lgt");
     return true;
   }
@@ -103,11 +136,11 @@ export class weaponMastery{
    * @returns {Promise<string[]|null>}
    */
   static async choose(actor){
-    const pools = this.classesOf(actor).map(({ id }) => this.CLASSES[id].pool);
-    const kinds = (await this.weaponKinds()).filter(k => pools.some(p => this.allows(p, k)));
+    const pools = [...this.classesOf(actor).map(({ id }) => this.CLASSES[id].pool), ...this.extrasOf(actor).map(e => e.pool)];
+    const kinds = (await this.weaponKinds()).filter(k => pools.some(p => this.allows(p, k, actor)));
     if(!kinds.length) return null;
     const known = this.knownOf(actor);
-    const swaps = game.user.isGM ? Infinity : (Number(actor.getFlag(module.id, "masterySwaps")) || 0);
+    const swaps = restChoices.swapsLeft(actor, "weaponMastery");
     const max = this.limitOf(actor);
     const chosen = await chooseSet(kinds.map(k => ({
       value : k.key, label : k.name, img : k.img,
@@ -126,7 +159,7 @@ export class weaponMastery{
     const removed = known.filter(k => offered.has(k) && !chosen.includes(k)).length;
     const update = { "system.traits.weaponProf.mastery.value" : [...kept, ...chosen] };
     /* Allowed past the rules : the sheet check mustn't refuse it */
-    if(Number.isFinite(swaps)) update[`flags.${module.id}.masterySwaps`] = Math.max(0, swaps + Math.max(0, known.length - max) - removed);
+    if(Number.isFinite(swaps)) update[`flags.${module.id}.${this.SWAPS}`] = Math.max(0, swaps + Math.max(0, known.length - max) - removed);
     await actor.update(update, { [module.id] : { mastery : true } });
     log.debug("Weapon masteries", actor.name, chosen);
     return chosen;
@@ -142,11 +175,11 @@ export class weaponMastery{
     const before = this.knownOf(actor);
     const after = [...(next ?? [])];
     const removed = before.filter(k => !after.includes(k)).length;
-    const swaps = (Number(actor.getFlag(module.id, "masterySwaps")) || 0) + Math.max(0, before.length - max);
+    const swaps = (Number(actor.getFlag(module.id, this.SWAPS)) || 0) + Math.max(0, before.length - max);
     let problem = null;
     if(after.length > max) problem = module.format("weaponMastery.tooMany", { name : actor.name, max });
     else if(removed > swaps) problem = module.format("weaponMastery.noSwap", { name : actor.name });
     if(problem && !limits.allow(problem, { who : actor.name, what : module.i18n("weaponMastery.sheetChange") })) return false;
-    if(removed) foundry.utils.setProperty(changes, `flags.${module.id}.masterySwaps`, Math.max(0, (Number(actor.getFlag(module.id, "masterySwaps")) || 0) - removed));
+    if(removed) foundry.utils.setProperty(changes, `flags.${module.id}.${this.SWAPS}`, Math.max(0, (Number(actor.getFlag(module.id, this.SWAPS)) || 0) - removed));
   }
 }

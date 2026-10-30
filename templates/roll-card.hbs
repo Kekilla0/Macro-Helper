@@ -28,7 +28,6 @@
     </section>
     {{/if}}
     {{> "macro-helper.faces" }}
-    {{> "macro-helper.cover" }}
     {{#if note}}<p class="supplement macro-helper-note"><strong>{{ note }}</strong></p>{{/if}}
 
     {{#if mastery}}
@@ -51,7 +50,7 @@
 </div>
 
 {{!-- Reroll buttons, same markup as dnd5e's card-buttons partial --}}
-{{#if (or buttons applyHits)}}
+{{#if (or buttons applyHits countHit)}}
 <section class="icon-row">
     <i class="fa-solid fa-fw fa-circle-play" aria-label="{{ localize "DND5E.CHATMESSAGE.Row.Actions" }}"></i>
     <ul class="unlist">
@@ -87,6 +86,15 @@
             </button>
         </li>
         {{/if}}
+        {{!-- The GM's call : this miss counts as a hit --}}
+        {{#if countHit}}
+        <li>
+            <button type="button" class="icon" data-action="countHit" data-tooltip
+                    aria-label="{{ localize "rollItem.countHit" }}">
+                <i class="fa-solid fa-crosshairs" inert></i>
+            </button>
+        </li>
+        {{/if}}
     </ul>
 </section>
 {{/if}}
@@ -111,8 +119,18 @@
 </section>
 {{/if}}
 
-{{!-- Attack --}}
+{{!-- Cover (GM) : a row per target, above the attack --}}
+{{> "macro-helper.cover" }}
+
+{{!-- Attack : its box, "Attack" underneath like a damage box's type --}}
+{{#if rolls.length}}
+<div class="macro-helper-attack-box">
 {{> "dnd5e.card-rolls" }}
+<span class="damage-type-label">{{ localize "rollItem.attackLabel" }}</span>
+</div>
+{{else}}
+{{> "dnd5e.card-rolls" }}
+{{/if}}
 
 {{!-- Damage after the attack : the dice are still rolling --}}
 {{#if pending}}
@@ -128,14 +146,24 @@
     <section class="icon-row ray-header">
         <i class="fa-fw fa-solid fa-hashtag" inert></i>
         <span class="roboto-upper">{{ localize "rollItem.ray" number=number }}</span>
-        {{#if canReroll}}
+        {{#if (or canReroll countHit)}}
         <ul class="unlist">
+            {{#if canReroll}}
             <li>
                 <button type="button" class="icon" data-action="rerollRay" data-ray="{{ index }}" data-tooltip
                         aria-label="{{ localize "rollItem.reroll.ray" }}">
                     <i class="fa-solid fa-rotate" inert></i>
                 </button>
             </li>
+            {{/if}}
+            {{#if countHit}}
+            <li>
+                <button type="button" class="icon" data-action="countHit" data-ray="{{ index }}" data-tooltip
+                        aria-label="{{ localize "rollItem.countHit" }}">
+                    <i class="fa-solid fa-crosshairs" inert></i>
+                </button>
+            </li>
+            {{/if}}
         </ul>
         {{/if}}
     </section>
@@ -166,20 +194,21 @@
     {{#with damage}}{{> "macro-helper.damage-rows" }}{{/with}}
 
     {{#if showTray}}
-    <macro-helper-damage class="dnd5e2" data-ray="{{ index }}" data-part="base"></macro-helper-damage>
+    <macro-helper-damage class="dnd5e2" data-ray="{{ index }}" data-part="{{#if damage.merged}}hit{{else}}base{{/if}}"></macro-helper-damage>
     {{/if}}
 
     {{#with extras}}{{> "macro-helper.extras" }}{{/with}}
     {{#each sections}}{{> (lookup . "partial") context }}{{/each}}
+    {{#if ruleRows.length}}{{> "macro-helper.rows" rows=ruleRows }}{{/if}}
 </div>
 {{/each}}
 
-{{!-- Damage, one box per damage type --}}
+{{!-- Damage, one box per damage type (a hit's : what was added on top in it too, one Apply) --}}
 {{#with damage}}
 {{> "macro-helper.damage-rows" }}
 
 {{#if showTray}}
-<macro-helper-damage class="dnd5e2" data-part="base"></macro-helper-damage>
+<macro-helper-damage class="dnd5e2" data-part="{{#if merged}}hit{{else}}base{{/if}}"></macro-helper-damage>
 {{/if}}
 {{/with}}
 
@@ -188,6 +217,9 @@
 
 {{!-- Sections rules add (macro-helper.cardSections) : a weapon mastery's button, Graze's damage on a miss --}}
 {{#each sections}}{{> (lookup . "partial") context }}{{/each}}
+
+{{!-- What rules let you do to each creature, no save (a mastery's Topple) : a row each, like a save card's --}}
+{{#if ruleRows.length}}{{> "macro-helper.rows" rows=ruleRows }}{{/if}}
 
 {{!-- Effects the attack applies (Guiding Bolt, Ray of Frost) --}}
 {{#if effects.length}}
@@ -244,3 +276,6 @@
     {{/if}}
 </div>
 {{/with}}
+
+{{!-- Every push and pull, one button per creature (card-moves.js) --}}
+{{#if moves.length}}{{> "macro-helper.moves" }}{{/if}}

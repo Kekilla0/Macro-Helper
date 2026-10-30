@@ -105,11 +105,50 @@
   gap: 4px;
   margin-block: 6px;
 }
+/* A row : the creature on the left (picture, name), everything about it on the right, vertically centred; the right side
+   wraps onto more lines but stays right */
 .chat-message .macro-helper-row {
   display: flex;
   align-items: center;
   gap: 6px;
 }
+.chat-message .macro-helper-apply-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+.chat-message .macro-helper-row .amount {
+  font-weight: bold;
+  font-size: var(--font-size-14, 14px);
+  min-width: 1.5em;
+  text-align: end;
+}
+.chat-message .macro-helper-row .amount.damage { color: var(--dnd5e-color-failure, #c62828); }
+.chat-message .macro-helper-row .amount.healing { color: var(--dnd5e-color-success, #2e7d32); }
+.chat-message .macro-helper-row .result {
+  font-weight: bold;
+  font-size: var(--font-size-14, 14px);
+  white-space: nowrap;
+}
+.chat-message .macro-helper-row button.apply,
+.chat-message .macro-helper-row button.save {
+  padding: 0 5px;
+  font-size: var(--font-size-12, 12px);
+}
+/* [creature] [roll : save, result, rerolls] [apply : amount, Apply, effects, rule buttons] : three groups side by side,
+   each wrapping inside itself, the last against the right */
+.chat-message :is(.macro-helper-row-actions, .macro-helper-row-roll, .macro-helper-row-apply) {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 4px;
+  min-width: 0;
+}
+.chat-message .macro-helper-row-roll { justify-content: center; }
+.chat-message :is(.macro-helper-row-actions, .macro-helper-row-apply) { justify-content: flex-end; margin-left: auto; }
+.chat-message .macro-helper-row-roll:empty, .chat-message .macro-helper-row-apply:empty { display: none; }
 .chat-message .macro-helper-row img.token {
   width: 24px;
   height: 24px;
@@ -117,7 +156,8 @@
   flex: none;
 }
 .chat-message .macro-helper-row .name {
-  flex: 1;
+  flex: 1 1 6.5em;
+  min-width: 6.5em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -125,6 +165,8 @@
 .chat-message .macro-helper-row button {
   flex: none;
   width: auto;
+  max-width: 100%;
+  white-space: nowrap;
   line-height: 1.6;
   padding: 0 6px;
 }
@@ -139,7 +181,7 @@
   min-width: 2.5em;
   text-align: end;
 }
-.chat-message .targets li:has(.macro-helper-applied) { display: flex; align-items: center; gap: 4px; }
+.chat-message .targets li:has(.macro-helper-applied, .macro-helper-row-apply) { display: flex; align-items: center; gap: 4px; width: 100%; }
 .chat-message :is(.macro-helper-row .applied, .macro-helper-applied).damage { color: var(--dnd5e-color-failure, #c62828); }
 .chat-message :is(.macro-helper-row .applied, .macro-helper-applied).healing { color: var(--dnd5e-color-success, #2e7d32); }
 .chat-message .macro-helper-row .result.failure { color: var(--dnd5e-color-failure, #c62828); }
@@ -152,6 +194,34 @@
   flex: 1;
 }
 .chat-message .macro-helper-shove .card-buttons {
+  display: flex;
+  gap: 4px;
+  margin: 0;
+}
+/* A creature's picture on a card : click it to find its token (chat-pictures.js) */
+.chat-message img.token[data-token]:not([data-token=""]) {
+  cursor: pointer;
+}
+
+/* Every push and pull on a card, at its bottom : the creature's picture and name, its button */
+.chat-message .macro-helper-moves {
+  margin-block-start: 6px;
+  padding-block-start: 6px;
+  border-block-start: 1px solid var(--dnd5e-color-gold, var(--color-border));
+}
+.chat-message .macro-helper-moves .icon-row {
+  align-items: center;
+}
+.chat-message .macro-helper-moves img.token {
+  width: 24px;
+  height: 24px;
+  border: none;
+  object-fit: contain;
+}
+.chat-message .macro-helper-moves .name {
+  flex: 1;
+}
+.chat-message .macro-helper-moves .card-buttons {
   display: flex;
   gap: 4px;
   margin: 0;
@@ -202,7 +272,7 @@
   opacity: 0.5;
 }
 
-/* Settings sub-menus : the list scrolls, the Save button stays in view */
+/* Settings pages : the list scrolls, the Save button stays in view */
 .macro-helper-settings .window-content {
   max-height: 80vh;
 }
@@ -211,25 +281,27 @@
   overflow-y: auto;
   padding-inline-end: 4px;
 }
-/* My Settings : the GM's pages, two buttons a row */
-.macro-helper-settings .macro-helper-server-buttons {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
+/* A setting whose Features switch is off : greyed */
+.macro-helper-settings .macro-helper-setting-off > label,
+.macro-helper-settings .macro-helper-setting-off > .form-fields {
+  opacity: 0.5;
+}
+/* Not rules as written */
+.macro-helper-settings .macro-helper-homebrew-tag {
+  margin-inline-start: 4px;
+  padding: 0 4px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  font-size: var(--font-size-10, 10px);
+  font-weight: normal;
+  opacity: 0.75;
+  vertical-align: middle;
 }
 
 
-/* Cover chips (GM only), compact at the top of a card */
-.chat-message .macro-helper-cover {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px 8px;
-  font-size: var(--font-size-11, 11px);
-  margin: 2px 0;
-}
-.chat-message .macro-helper-cover .cover-target { display: inline-flex; align-items: center; gap: 2px; }
-.chat-message .macro-helper-cover .name { margin-right: 2px; opacity: 0.8; }
+/* Cover (GM only) : a row per target, its levels small on the right */
+.chat-message .macro-helper-cover { margin: 2px 0; }
+.chat-message .macro-helper-cover .macro-helper-row-apply { gap: 2px; font-size: var(--font-size-11, 11px); }
 .chat-message .macro-helper-cover button {
   min-width: 20px;
   height: 18px;
@@ -365,6 +437,11 @@
 .macro-helper-hand > i.fa-hand.flip { transform : scaleX(-1); }
 .macro-helper-hand.both { border-style : double; border-width : 3px; }
 .macro-helper-hand .link { position : absolute; right : 1px; bottom : 1px; font-size : 9px; color : #fff; text-shadow : 0 0 2px #000; }
+/* A creature's (NPC sheet) portrait, in its header : smaller slots on its bottom corners */
+.sheet-header .portrait:has(> .macro-helper-hands) { position : relative; }
+.sheet-header .portrait > .macro-helper-hands { left : -6px; right : -6px; top : 38%; bottom : auto; z-index : 2; }
+.sheet-header .portrait > .macro-helper-hands .macro-helper-hand { width : 30px; height : 30px; border-radius : 6px; }
+.sheet-header .portrait > .macro-helper-hands .macro-helper-hand > i.fa-hand { font-size : 13px; }
 
 /* Effects the module applied itself : the card's apply buttons greyed out */
 .chat-message.macro-helper-auto-applied effect-application .apply-button,
@@ -385,3 +462,112 @@
 /* Font of Magic window : a row of slot levels each way */
 .macro-helper-font-row { display : flex; flex-wrap : wrap; gap : 6px; margin-bottom : 8px; }
 .macro-helper-font-row button { flex : 0 0 auto; min-width : 70px; line-height : 1.2; padding : 4px 8px; }
+
+/* A spell's card for what it does to creatures with no roll (Hunter's Mark, Hex) : the header like dnd5e's cards */
+.chat-message .macro-helper-target-card .card-header { display : flex; align-items : center; gap : 6px; cursor : pointer; }
+.chat-message .macro-helper-target-card .card-header .item-icon img { width : 32px; height : 32px; border : none; flex : none; }
+.chat-message .macro-helper-target-card .card-header .name-stacked { flex : 1; display : flex; flex-direction : column; min-width : 0; }
+.chat-message .macro-helper-target-card .card-header .title { font-weight : bold; font-size : var(--font-size-14, 14px); }
+.chat-message .macro-helper-target-card .card-header .subtitle { font-size : var(--font-size-11, 11px); opacity : 0.8; }
+.chat-message .macro-helper-target-card .card-description.collapsed .collapsible-content { display : none; }
+
+/* Action Tracker : a creature's Action, Bonus Action, Reaction in the combat tracker */
+.macro-helper-economy { display: inline-flex; gap: 6px; align-items: center; margin-top: 2px; font-size: 0.8em; }
+.macro-helper-economy i { cursor: pointer; }
+.macro-helper-economy i.action { color: #3fa34d; }
+.macro-helper-economy i.bonus { color: #e08a1e; }
+.macro-helper-economy i.reaction { color: #9a6fd8; }
+.macro-helper-economy i.spent { opacity: 0.25; }
+.macro-helper-economy i.added { outline: 1px solid currentColor; outline-offset: 1px; border-radius: 50%; }
+
+/* Action Tracker : the action bar above the hotbar */
+#macro-helper-action-bar { position: relative; display: flex; align-items: center; gap: 12px; align-self: center; margin: 0 0 6px 0;
+  padding: 4px 10px; border-radius: 6px; background: rgba(20, 18, 24, 0.85); border: 1px solid #555; color: #eee; font-size: 14px; pointer-events: all; width: fit-content; }
+#macro-helper-action-bar[hidden] { display: none; }
+#macro-helper-action-bar.mine { border-color: #c9a227; }
+#macro-helper-action-bar .who { display: flex; align-items: center; gap: 6px; font-weight: bold; }
+#macro-helper-action-bar .who img { width: 26px; height: 26px; border: none; object-fit: contain; }
+#macro-helper-action-bar .pips { display: flex; align-items: center; gap: 5px; font-size: 16px; }
+#macro-helper-action-bar .pips i { cursor: pointer; }
+#macro-helper-action-bar .pips .sep { width: 6px; }
+#macro-helper-action-bar i.action { color: #3fa34d; }
+#macro-helper-action-bar i.bonus { color: #e08a1e; }
+#macro-helper-action-bar i.reaction { color: #9a6fd8; }
+#macro-helper-action-bar i.spent { opacity: 0.2; }
+#macro-helper-action-bar i.added { outline: 1px solid currentColor; outline-offset: 2px; border-radius: 50%; }
+#macro-helper-action-bar .move.over { color: #e05050; }
+#macro-helper-action-bar .object.spent { opacity: 0.35; }
+#macro-helper-action-bar .log-toggle { width: auto; height: 24px; line-height: 22px; padding: 0 6px; background: none; border: 1px solid #666; color: #eee; }
+#macro-helper-action-bar .log { position: absolute; bottom: 100%; left: 0; margin-bottom: 4px; max-height: 260px; overflow-y: auto; min-width: 320px;
+  padding: 6px 10px; border-radius: 6px; background: rgba(20, 18, 24, 0.95); border: 1px solid #555; font-size: 13px; }
+#macro-helper-action-bar .log ol { margin: 0; padding-left: 18px; }
+.macro-helper-economy-status.approved { color: #3fa34d; }
+.macro-helper-economy-status.denied, .macro-helper-economy-status.cancelled { color: #c04040; }
+#macro-helper-action-bar .end-turn { width: auto; height: 26px; line-height: 24px; padding: 0 10px; background: #3a5f2a; border: 1px solid #6c9c4f; color: #fff; font-weight: bold; }
+#macro-helper-action-bar .extras, .macro-helper-economy .legendary { display: inline-flex; gap: 4px; align-items: center; }
+#macro-helper-action-bar i.fa-crown, .macro-helper-economy i.fa-crown { color: #e0c341; }
+#macro-helper-action-bar i.lair, .macro-helper-economy i.lair { color: #6fa8d8; }
+.macro-helper-economy i.spent { opacity: 0.25; }
+#macro-helper-action-bar .ready-button, #macro-helper-action-bar .jump-button { width: auto; height: 26px; line-height: 24px; padding: 0 8px; background: none; border: 1px solid #8a7a3a; color: #eee; }
+#macro-helper-action-bar .ready-chip, .macro-helper-economy .readied { color: #e0c341; }
+
+/* Roll Requests : feat buttons (Lose Concentration, Lucky, Bardic Inspiration) sized to fit the row */
+.chat-message button[data-request-feat] { width: auto; flex: 0 0 auto; height: 24px; line-height: 22px; padding: 0 6px; font-size: 12px; white-space: nowrap; }
+#macro-helper-action-bar .ready-button:disabled, #macro-helper-action-bar .jump-button:disabled { opacity: 0.35; cursor: default; }
+#macro-helper-action-bar .big-action { position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); display: flex; gap: 10px; }
+#macro-helper-action-bar .big-action button { width: auto; white-space: nowrap; height: 44px; padding: 0 22px; font-size: 18px; font-weight: bold;
+  border-radius: 8px; color: #fff; box-shadow: 0 0 10px rgba(0, 0, 0, 0.6); }
+#macro-helper-action-bar .death-save { background: #7a1f1f; border: 2px solid #d05050; }
+#macro-helper-action-bar .stand-up { background: #2f4f7a; border: 2px solid #6f9fd8; }
+
+/* Combat log window */
+.macro-helper-combat-log .window-content { display: flex; flex-direction: column; gap: 6px; padding: 8px; }
+.macro-helper-combat-log .toolbar { display: flex; justify-content: flex-end; }
+.macro-helper-combat-log .toolbar button { width: auto; flex: 0 0 auto; }
+.macro-helper-combat-log .entries { flex: 1; overflow-y: auto; margin: 0; padding: 0; }
+.macro-helper-combat-log .entries .round { margin: 8px 0 4px; font-weight: bold; border-bottom: 1px solid var(--color-border-light-2, #888); }
+.macro-helper-combat-log .entries .entry { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+.macro-helper-combat-log .entries .entry img { width: 26px; height: 26px; border: none; object-fit: contain; flex: 0 0 auto; }
+.macro-helper-combat-log .entries .entry .name { font-weight: bold; white-space: nowrap; }
+.macro-helper-combat-log .entries .entry .name::after { content: " :"; }
+.macro-helper-combat-log .entries .empty { opacity: 0.7; font-style: italic; }
+#macro-helper-action-bar i.half, .macro-helper-economy i.half { opacity: 0.75; }
+#macro-helper-action-bar i.pie, .macro-helper-economy i.pie { display: inline-block; width: 1em; height: 1em; border-radius: 50%; vertical-align: -0.125em;
+  background: conic-gradient(currentColor var(--left), transparent 0); box-shadow: inset 0 0 0 1.5px currentColor; }
+#macro-helper-action-bar .escape { background: #6a4a1f; border: 2px solid #d0a050; }
+.chat-message button[data-action="rowRule"] img { width: 16px; height: 16px; border: none; vertical-align: middle; margin-right: 2px; }
+#macro-helper-action-bar .pull-out { background: #3f6a3a; border: 2px solid #8fd08a; }
+#macro-helper-action-bar .emerge { background: #3f5a3a; border: 2px solid #9fc08f; }
+#macro-helper-action-bar .random-move { background: #6a3f7a; border: 2px solid #c08fe0; }
+#macro-helper-action-bar .wake { background: #3a3f7a; border: 2px solid #8f96e0; }
+#macro-helper-action-bar .release { background: #2f5a3a; border: 2px solid #6fbf7f; }
+
+/* Damage boxes : each die to the right of the total, like the attack's d20; the attack box labelled "Attack" */
+.chat-message .macro-helper-damage-type .dice-roll { position: relative; }
+.chat-message .macro-helper-dice { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); display: inline-flex; gap: 2px; }
+.chat-message .macro-helper-die { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; }
+/* Like the attack's d20 : a solid grey die, its number dark and bold */
+.chat-message .macro-helper-die i { position: absolute; font-size: 16px; color: rgb(102, 102, 102); opacity: 1; }
+.chat-message .macro-helper-die .roll { position: relative; font-family: Roboto, sans-serif; font-size: 12px; font-weight: 700; color: rgb(0, 0, 0); text-shadow: none; }
+.chat-message .macro-helper-attack-box { display: flex; flex-direction: column; }
+.chat-message .macro-helper-attack-box > .damage-type-label { /* centred on the roll's box, past the row's icon (16px + 8px gap), like a damage type */
+  align-self: stretch; text-align: center; margin-left: 24px; font-family: Roboto, sans-serif; font-size: 10px; font-weight: 400;
+  text-transform: uppercase; line-height: 12.5px; color: rgb(153, 153, 153); }
+
+/* The pick map : why a candidate is green (advantage) or red (disadvantage), hovering it */
+.macro-helper-pick-tip { position: fixed; z-index: 1000; pointer-events: none; max-width: 340px; padding: 6px 10px; border-radius: 6px;
+  background: rgba(20, 18, 24, 0.95); border: 1px solid #666; color: #eee; font-size: 13px; line-height: 1.4; }
+.macro-helper-pick-tip .adv { color: #6fcf7a; }
+.macro-helper-pick-tip .dis { color: #e07070; }
+
+/* A long list's search box (helpers/utils.js searchList) */
+input.macro-helper-search { width : 100%; margin : 0 0 6px; }
+
+/* Condition tooltips (conditionTip) : the button's own line above the rules */
+#tooltip.macro-helper-rule-tip .macro-helper-tip-note {
+  margin: 0 0 0.5rem;
+  font-weight: bold;
+}
+#tooltip.macro-helper-rule-tip > section.content + section.content {
+  margin-top: 0.75rem;
+}

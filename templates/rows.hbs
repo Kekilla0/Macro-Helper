@@ -1,10 +1,12 @@
-{{!-- One row per target : its save (a button per ability for its owner / the GM, then the result), then its damage
-      or healing sized by that result. Context : rows from message.js buildRows. --}}
+{{!-- One row per target : its picture and name on the left; on the right its save (a button per ability for its owner /
+      the GM, then the result), rerolls, and its damage / healing sized by that result, then its effects and what rules
+      add (macro-helper.rowButtons). The right side wraps but stays right. Context : rows from message.js buildRows. --}}
 <ul class="unlist macro-helper-rows">
     {{#each rows}}
     <li class="macro-helper-row">
-        <img class="token" src="{{ img }}" alt="">
+        <img class="token" src="{{ img }}" alt="" data-token="{{ uuid }}">
         <span class="name">{{ name }}</span>
+        <span class="macro-helper-row-roll">
         {{#each saves}}
         <button type="button" class="save" data-action="rowSave" data-target="{{ ../uuid }}" data-ability="{{ ability }}"
                 data-tooltip="{{ hint }}" aria-label="{{ hint }}">
@@ -28,22 +30,39 @@
             <i class="fa-solid {{ icon }}" inert></i>
         </button>
         {{/each}}
+        </span>
+        <span class="macro-helper-row-apply">
         {{#with apply}}
-        <button type="button" class="apply" data-action="rowApply" data-target="{{ ../uuid }}" data-multiplier="{{ multiplier }}">
+        <span class="macro-helper-apply-group">
+        {{#if amount includeZero=true}}<span class="amount {{#if healing}}healing{{else}}damage{{/if}}" data-tooltip="{{ localize "rollItem.row.wouldApply" }}">{{ amount }}</span>{{/if}}
+        <button type="button" class="apply" data-action="rowApply" data-target="{{ ../uuid }}" data-multiplier="{{ multiplier }}"{{#if ../part}} data-part="{{ ../part }}"{{/if}}>
             <i class="fa-solid fa-reply-all fa-flip-horizontal" inert></i> {{ localize label }}
         </button>
+        </span>
         {{/with}}
         {{#with applied}}
         <span class="applied {{#if healing}}healing{{else}}damage{{/if}}" data-tooltip="{{ localize "rollItem.row.applied" }}">{{ text }}</span>
         {{/with}}
         {{#if effectApply}}
-        <button type="button" class="apply" data-action="rowEffect" data-target="{{ uuid }}">
+        <button type="button" class="apply" data-action="rowEffect" data-target="{{ uuid }}"{{#if effectConditions}} data-tooltip="{{ effectApply }}" data-macro-helper-conditions="{{ effectConditions }}"{{/if}}>
             <i class="fa-solid fa-reply-all fa-flip-horizontal" inert></i> {{ effectApply }}
         </button>
+        {{/if}}
+        {{#if effectImmune}}
+        <span class="applied immune" data-tooltip="{{ effectImmune }}"><i class="fa-solid fa-shield" inert></i> {{ effectImmune }}</span>
         {{/if}}
         {{#if effectApplied}}
         <span class="applied healing" data-tooltip="{{ localize "rollItem.row.applied" }}"><i class="fa-solid fa-check" inert></i> {{ effectApplied }}</span>
         {{/if}}
+        {{#each ruleButtons}}
+        {{#with result}}
+        <span class="result {{#if success}}success{{else}}failure{{/if}}">{{ total }} <i class="fa-solid {{#if success}}fa-check{{else}}fa-xmark{{/if}}" inert></i></span>
+        {{/with}}
+        <button type="button" class="apply" data-action="rowRule" data-target="{{ ../uuid }}" data-id="{{ id }}"{{#if tooltip}} data-tooltip="{{ tooltip }}"{{else if conditions}} data-tooltip="{{ label }}"{{/if}}{{#if conditions}} data-macro-helper-conditions="{{ conditions }}"{{/if}}{{#if disabled}} disabled{{/if}}>
+            {{#if img}}<img src="{{ img }}" alt="" inert>{{else}}<i class="fa-solid {{ icon }}" inert></i>{{/if}} {{ label }}
+        </button>
+        {{/each}}
+        </span>
     </li>
     {{/each}}
 </ul>

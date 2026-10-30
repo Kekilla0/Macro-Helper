@@ -1,6 +1,7 @@
 import { module } from '../module.js';
 import { esc } from '../helpers/utils.js';
 import { logger } from '../log.js';
+import { limits } from './limits.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -20,11 +21,23 @@ const log = logger.for(import.meta.url);
  * A choice : {
  *   id, label (i18n key), rest : "long" | "short" | "level",
  *   classes         : for "level", the class identifiers whose level-up allows it (["fighter", "paladin", "ranger"]),
+ *                     or "any" (any class : a feat that grows with the Proficiency Bonus),
  *   applies(actor)  : does the character have it,
  *   grant(actor, { levels }) : the rest / level happened : allow its change (a swap...), may be async; levels : how
  *                     many levels the class gained,
  *   summary(actor)  : one line for the window ("3 / 4 known · 1 swap"),
- *   open(actor)     : change it (its own window), async
+ *   open(actor, swap) : change it (its own window), async
+ *   count           : how many changes the rest / level allows (a number, or (actor, { levels }) => number). The window
+ *                     counts them : the rest / level sets them (before grant), and open gets `swap` :
+ *                       swap.left     changes left (the GM : Infinity, changes freely)
+ *                       swap.allow()  may one more be made : one left, or past it Rule Limits (Warn : a notice)
+ *                       swap.spend()  one made
+ *                     restChoices.swapsLeft(actor, id) / swapsText(actor, id) ("∞" for the GM) for the summary. Something free (filling up to a limit) needs
+ *                     neither.
+ *   holder(actor)   : with count, the document keeping the count (default : the actor; a Wild Shape form : its Druid)
+ *   state(actor)    : what's chosen now, as names (["Longsword", "Rapier"]), may be async. Once the window (or the
+ *                     windows in turn) is done, one chat message lists each choice's changes (+ added, − removed); a
+ *                     choice without it (Arcane Recovery : its own message) isn't listed.
  * }
  */
 export class restChoices{
@@ -32,6 +45,77 @@ export class restChoices{
 
   static add(choice){
     this.#choices.set(choice.id, choice);
+  }
+
+  /* ---------- The count of changes (choice.count) ---------- */
+
+  static #holder(actor, choice){
+    return choice?.holder?.(actor) ?? actor;
+  }
+
+  /* Changes left for this choice (the GM : Infinity) */
+  static swapsLeft(actor, id){
+    if(game.user.isGM) return Infinity;
+    const holder = this.#holder(actor, this.#choices.get(id));
+    return Number(holder?.getFlag?.(module.id, `swaps.${id}`)) || 0;
+  }
+
+  /* The same, for a summary line ("∞" for the GM) */
+  static swapsText(actor, id){
+    const n = this.swapsLeft(actor, id);
+    return Number.isFinite(n) ? String(n) : "∞";
+  }
+
+  /* What a choice's open() gets : the count, checked and spent */
+  static swapOf(actor, choice){
+    const left = this.swapsLeft(actor, choice.id);
+    return {
+      left,
+      allow : async () => (left > 0) || limits.allow(module.format("restChoices.noSwap", { name : actor.name, choice : module.i18n(choice.label) }),
+        { who : actor.name, what : module.i18n(choice.label) }),
+      spend : async () => {
+        const holder = this.#holder(actor, choice);
+        const now = this.swapsLeft(actor, choice.id);
+        if(Number.isFinite(now) && holder?.isOwner) await holder.setFlag(module.id, `swaps.${choice.id}`, Math.max(0, now - 1));
+      },
+    };
+  }
+
+  /* A choice's own window, with its count when it has one; changes (a Map) : what it held before the first time */
+  static async openChoice(actor, choice, changes = null){
+    if(changes && choice?.state && !changes.has(choice.id)) changes.set(choice.id, { choice, before : await this.stateOf(actor, choice) });
+    return choice?.open?.(actor, choice.count ? this.swapOf(actor, choice) : undefined);
+  }
+
+  static async stateOf(actor, choice){
+    try { return [...((await choice.state(actor)) ?? [])].map(String); }
+    catch(error){ log.error(choice.id, error); return []; }
+  }
+
+  /* One message : each choice's changes since its window first opened (none : no message) */
+  static async postChanges(actor, changes, { level = false } = {}){
+    const rows = [];
+    for(const { choice, before } of changes.values()){
+      const after = await this.stateOf(actor, choice);
+      const added = after.filter(n => !before.includes(n));
+      const removed = before.filter(n => !after.includes(n));
+      if(!added.length && !removed.length) continue;
+      const parts = [...added.map(n => `+ ${esc(n)}`), ...removed.map(n => `− ${esc(n)}`)];
+      rows.push(`<li><strong>${esc(module.i18n(choice.label))}</strong> : ${parts.join(" · ")}</li>`);
+    }
+    if(!rows.length) return null;
+    return ChatMessage.implementation.create({ speaker : ChatMessage.implementation.getSpeaker({ actor }),
+      content : `<p>${esc(module.format(level ? "restChoices.levelChanged" : "restChoices.changed", { name : actor.name }))}</p><ul>${rows.join("")}</ul>` });
+  }
+
+  /* The rest / level happened : its count set, then the choice's own grant */
+  static async grantChoice(actor, choice, { levels = 1 } = {}){
+    if(choice.count){
+      const n = (typeof choice.count === "function") ? choice.count(actor, { levels }) : choice.count;
+      const holder = this.#holder(actor, choice);
+      if(holder?.isOwner) await holder.setFlag(module.id, `swaps.${choice.id}`, Math.max(0, Number(n) || 0));
+    }
+    await choice.grant?.(actor, { levels });
   }
 
   static register(){
@@ -171,7 +255,7 @@ export class restChoices{
     const choices = [];
     for(const choice of this.#choices.values()){
       if(choice.rest !== "level") continue;
-      const n = gained.filter(([cls]) => (choice.classes ?? []).includes(cls)).reduce((sum, [, n]) => sum + n, 0);
+      const n = gained.filter(([cls]) => (choice.classes === "any") || (choice.classes ?? []).includes(cls)).reduce((sum, [, n]) => sum + n, 0);
       if((n > 0) && choice.applies(actor)){ choices.push(choice); levels.set(choice.id, n); }
     }
     log.debug("Level gained", actor.name, entry.before, "->", after, gained);
@@ -181,7 +265,7 @@ export class restChoices{
   static async grantAndOpen(actor, choices, { sequence = false, levels = null, level = false } = {}){
     if(!choices.length) return;
     for(const choice of choices){
-      try { await choice.grant?.(actor, { levels : levels?.get(choice.id) ?? 1 }); }
+      try { await this.grantChoice(actor, choice, { levels : levels?.get(choice.id) ?? 1 }); }
       catch(error){ log.error(choice.id, error); }
     }
     /* The player's window : here for a player; from the GM, on an owning player's client when one is online, else here */
@@ -193,10 +277,12 @@ export class restChoices{
 
   /* Each choice's own window, one after the other (the next once the last is closed) */
   static async sequence(actor, choices){
+    const changes = new Map();
     for(const choice of choices){
-      try { await choice.open?.(actor); }
+      try { await this.openChoice(actor, choice, changes); }
       catch(error){ log.error(choice.id, error); }
     }
+    await this.postChanges(actor, changes);
   }
 
   /**
@@ -206,6 +292,7 @@ export class restChoices{
    */
   static async open(actor, choices = this.choicesFor(actor), { level = false } = {}){
     if(!choices.length) return;
+    const changes = new Map();
     const rows = choices.map(c => `<div class="form-group ${module.id}-rest-choice">
         <label>${esc(module.i18n(c.label))}</label>
         <div class="form-fields"><span class="summary">${esc(c.summary(actor))}</span>
@@ -219,12 +306,13 @@ export class restChoices{
       render : (event, dialog) => {
         dialog.element.querySelectorAll("button[data-choice]").forEach(button => button.addEventListener("click", async () => {
           const choice = this.#choices.get(button.dataset.choice);
-          await choice?.open(actor);
+          await this.openChoice(actor, choice, changes);
           const summary = button.closest(".form-fields")?.querySelector(".summary");
           if(summary && choice) summary.textContent = choice.summary(actor);
         }));
       },
       rejectClose : false,
     });
+    await this.postChanges(actor, changes, { level });
   }
 }

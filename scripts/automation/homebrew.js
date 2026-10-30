@@ -4,7 +4,7 @@ import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { tokenOf } from '../helpers/tokens.js';
 import { getFlanker } from '../helpers/targets.js';
-import { giveMode } from '../roll-item/reasons.js';
+import { giveMode, noteBonus } from '../roll-item/reasons.js';
 import { conditions } from './conditions.js';
 import { initiative } from './initiative.js';
 import { gm } from '../gm.js';
@@ -14,7 +14,7 @@ const log = logger.for(import.meta.url);
  * Homebrew rules (the Homebrew settings sub-menu, all off by default) :
  *   Flanking               : melee attacks against a creature with an ally on its opposite side get advantage or +2.
  *   Initiative Each Round  : at the start of every new round, everyone rolls again and the round starts from the top.
- *   Push Into Obstacles    : part of pushing itself (masteries.pushCollision), used by Push, Shove and Tavern Brawler.
+ *   Push Into Obstacles    : part of every push and pull (forcedMove → hook pushed → masteries.pushCollision).
  */
 export class homebrew{
   static register(){
@@ -36,7 +36,9 @@ export class homebrew{
     if(!game.users.activeGM?.isSelf || !settings.value("homebrewInitiative")) return;
     const round = Number(changes.round) || 0;
     if((round <= 1) || (Number(options.direction ?? 1) <= 0)) return;
-    await initiative.roll(combat, combat.combatants.map(c => c.id), "round");
+    /* Summons sharing their summoner's initiative follow its new roll instead */
+    await initiative.linkSummons(combat);
+    await initiative.roll(combat, combat.combatants.filter(c => !initiative.leaderOf(c)).map(c => c.id), "round");
     /* Now the first turn of the round is known : its "until the start of your next turn" effects end */
     await gm.expireStart(combat);
   }
@@ -56,6 +58,7 @@ export class homebrew{
     else if(mode === "bonus"){
       roll.parts = [...(roll.parts ?? []), "@flanking"];
       roll.data = { ...(roll.data ?? {}), flanking : 2 };
+      noteBonus(roll, 2, module.format("reasons.flanking", { name : flanker.name }));
     }
     log.debug("Flanking", attacker.name, "with", flanker.name, "against", target.name, mode);
   }

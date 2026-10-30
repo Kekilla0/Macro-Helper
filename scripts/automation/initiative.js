@@ -4,7 +4,10 @@ import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
 import { rerolls, extraD20 } from '../roll-item/rerolls.js';
-import { feats } from './feats.js';
+import { initiativeSwap, swappedInitiatives } from './initiative-swap.js';
+import { idOf } from '../helpers/utils.js';
+import { itemOf } from '../helpers/actors.js';
+import { ruleArgs } from '../helpers/rules.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -95,7 +98,8 @@ export class initiative{
     const shared = settings.value("summonInitiative") === "shared";
     for(const tokenUuid of tokens){
       const token = fromUuidSync(tokenUuid, { strict : false });
-      if(!token?.parent) continue;
+      /* A controlled summon (Spiritual Weapon's force) acts with its summoner's actions : no turn of its own */
+      if(!token?.parent || token.actor?.getFlag(module.id, "controlledBy")) continue;
       const combat = game.combats.find(c => ((c.scene?.id ?? c.scene) === token.parent.id) && this.summonerIn(c, summoner))
         ?? game.combats.find(c => !c.scene && this.summonerIn(c, summoner));
       if(!combat || combat.combatants.some(c => c.tokenId === token.id)) continue;
@@ -139,6 +143,18 @@ export class initiative{
     if(updates.length) await combat.updateEmbeddedDocuments("Combatant", updates);
   }
 
+  /* Shared Initiative : every summon at its summoner's initiative, before the new order's first turn is set */
+  static async syncFollowers(combat){
+    const updates = [];
+    for(const c of combat.combatants){
+      const leader = combat.combatants.get(this.leaderOf(c) ?? "");
+      if(!leader) continue;
+      const initiative = (leader.initiative === null) ? null : (leader.initiative - this.SHARED_GAP);
+      if(c.initiative !== initiative) updates.push({ _id : c.id, initiative });
+    }
+    if(updates.length) await combat.updateEmbeddedDocuments("Combatant", updates);
+  }
+
   /* Shared Initiative : the summoner's initiative changes (rolled, rerolled, swapped), its summons follow (active GM) */
   static async followLeader(combatant, changes){
     if(!game.users.activeGM?.isSelf || !("initiative" in (changes ?? {}))) return;
@@ -154,6 +170,7 @@ export class initiative{
   static async roll(combat, ids, why){
     log.debug("Rolling initiative", why, ids.length);
     await combat.rollInitiative(ids, { updateTurn : false });
+    await this.syncFollowers(combat);
     await combat.update({ turn : 0 });
     if(why === "begin") await gm.expireStart(combat);
   }
@@ -260,13 +277,19 @@ export class initiative{
   }
 
   static #content(combat, rolls, hidden){
-    const rows = rolls
+    const rolled = rolls
       .map(roll => ({ roll, combatant : combat.combatants.get(roll.options?.[module.id]?.combatant) }))
-      .filter(r => r.combatant)
+      .filter(r => r.combatant);
+    /* dnd5e rolls once for creatures of a kind (its grouping key) : the others take that roll, without a message */
+    const keyOf = c => c.getInitiativeGroupingKey?.() ?? null;
+    const shared = combat.combatants.filter(c => !rolled.some(r => r.combatant.id === c.id) && (c.hidden === hidden) && keyOf(c))
+      .map(c => ({ combatant : c, roll : rolled.find(r => (keyOf(r.combatant) === keyOf(c)) && (r.combatant.initiative === c.initiative))?.roll }))
+      .filter(r => r.roll);
+    const rows = [...rolled, ...shared]
       .sort((a, b) => b.roll.total - a.roll.total)
       .map(({ roll, combatant }) => `
         <li class="macro-helper-row" data-combatant="${combatant.id}">
-          <img class="token" src="${esc(combatant.img)}" alt="">
+          <img class="token" src="${esc(combatant.img)}" alt="" data-token="${esc(combatant.token?.uuid ?? "")}">
           <span class="name">${esc(combatant.name)}</span>
           <span class="result" data-tooltip="${esc(`${roll.result} = ${roll.total}`)}">${roll.total}</span>
         </li>`).join("");
@@ -290,7 +313,7 @@ export class initiative{
 
   /* Where two combatants would be in the order if they traded initiative : { mine, theirs } as places (1 = first) */
   static previewSwap(combat, a, b){
-    const swapped = feats.swappedInitiatives(a, b);
+    const swapped = swappedInitiatives(a, b);
     const list = (combat.combatants.contents ?? [...combat.combatants]).filter(c => c.initiative !== null)
       .map(c => ({ id : c.id, init : (c.id === a.id) ? swapped.a : (c.id === b.id) ? swapped.b : c.initiative }));
     list.sort((x, y) => y.init - x.init);
@@ -321,24 +344,24 @@ export class initiative{
     if(list) items.sort((a, b) => (combat.combatants.get(b.dataset.combatant)?.initiative ?? -Infinity) - (combat.combatants.get(a.dataset.combatant)?.initiative ?? -Infinity))
       .forEach(li => list.append(li));
 
-    /* Alert : the owner of the Alert character gets a swap on each ally's row, and "Do not swap" on its own */
+    /* Initiative swaps (Alert) : the owner of the swapping creature gets a swap on each ally's row, and "Do not swap" on its own */
     if(!info.hidden){
-      for(const { combatant : alert } of feats.openAlerts(combat)){
+      for(const { combatant : alert, info : offer } of initiativeSwap.open(combat)){
         if(!alert.isOwner) continue;
-        const ask = ally => gm.run("alertSwap", { combat : combat.id, combatant : alert.id, ally }, { timeout : 90000 })
+        const ask = ally => gm.run("initiativeSwap", { combat : combat.id, combatant : alert.id, ally }, { timeout : 90000 })
           .then(notes => { for(const note of notes ?? []) ui.notifications.info(note); });
-        for(const ally of feats.alliesOf(alert, combat)){
+        for(const ally of initiativeSwap.allies(alert, combat)){
           const li = items.find(i => i.dataset.combatant === ally.id);
           if(!li) continue;
           const at = this.previewSwap(combat, alert, ally);
-          const label = module.format("feats.alert.preview", { a : alert.name, mine : this.ordinal(at.mine), myInit : at.a,
+          const label = module.format("initiativeSwap.preview", { feature : offer.feature ?? "", a : alert.name, mine : this.ordinal(at.mine), myInit : at.a,
             b : ally.name, theirs : this.ordinal(at.theirs), theirInit : at.b });
           li.append(this.#button("fa-right-left", label, () => {
-            ui.notifications.info("feats.alert.asking", { localize : true });
+            ui.notifications.info("initiativeSwap.asking", { localize : true });
             return ask(ally.id);
           }));
         }
-        items.find(i => i.dataset.combatant === alert.id)?.append(this.#button("fa-ban", module.i18n("feats.alert.keep"), () => ask(null)));
+        items.find(i => i.dataset.combatant === alert.id)?.append(this.#button("fa-ban", module.i18n("initiativeSwap.keep"), () => ask(null)));
       }
     }
 
@@ -371,3 +394,96 @@ export class initiative{
     await gm.run("initiativeRows", { combat : combat.id, rows : [{ combatant : combatant.id, roll : JSON.stringify(roll) }], reroll : true });
   }
 }
+
+/* ---------- The initiative-roll lego ---------- */
+
+const initRules = [];
+let initHooked = false;
+
+/**
+ * A button on a creature's initiative roll ("when you roll Initiative" : Uncanny Metabolism; a monster's "when it rolls
+ * initiative, it regains..."). For its owner and the GM, on the compact initiative card's foot (this round's) or on
+ * dnd5e's own initiative message (its latest). Shown while the feature has a use left; once used on this roll, greyed.
+ *
+ *   onInitiative({ id : "metabolism", feature : "uncanny-metabolism", icon : "fa-yin-yang", firstOnly : true });
+ *
+ * id         its key
+ * feature    the item (identifier) that gives it; its uses are what's left
+ * when       (actor, combat) => boolean : shown only while true (default : always)
+ * label      (item, name) => string (default : "<item> (<name>)")
+ * icon       the button's icon
+ * run        (actor, item) => result : what the button does (default : the item's first activity used, no dialog);
+ *            nothing returned : it didn't happen (the button stays)
+ * firstOnly  with Initiative Each Round (Homebrew), only the combat's first roll offers it (it can't be saved)
+ */
+export function onInitiative(match, rule){
+  rule = ruleArgs(match, rule);
+  if(!rule.id || !rule.feature) return;
+  const old = initRules.findIndex(r => r.id === rule.id);
+  if(old >= 0) initRules[old] = rule;
+  else initRules.push(rule);
+  if(initHooked) return;
+  initHooked = true;
+  Hooks.on(`${module.id}.initiativeFeet`, (combatant, add) => initFeet(combatant, add));
+  Hooks.on("dnd5e.renderChatMessage", (message, html) => initMessage(message, html));
+  /* Used : the cards show it greyed, on every client */
+  Hooks.on("updateItem", item => { if(initRules.some(r => idOf(item) === r.feature)) initRedraw(item.actor); });
+}
+
+/* The feature's button now : { item, used }, null : none */
+function initFound(rule, actor, key, combat){
+  if(!actor?.isOwner) return null;
+  const item = itemOf(actor, rule.feature);
+  if(!item || (rule.when && !rule.when(actor, combat))) return null;
+  if((item.getFlag(module.id, "initiativeUsed") ?? {})[rule.id] === key) return { item, used : true };
+  if(!(Number(item.system.uses?.value) > 0) && item.system.uses?.max) return null;
+  /* Initiative Each Round : only the combat's first roll */
+  if(rule.firstOnly && settings.value("homebrewInitiative") && combat && ((Number(combat.round) || 0) > 1)) return null;
+  return { item, used : false };
+}
+
+function initLabel(rule, item, name){
+  return rule.label ? rule.label(item, name) : module.format("requests.featFor", { feat : item.name, name });
+}
+
+async function initRun(rule, actor, item, key){
+  let result;
+  if(rule.run) result = await rule.run(actor, item);
+  else {
+    const activity = item.system.activities?.contents?.[0] ?? [...(item.system.activities ?? [])][0];
+    result = await (activity ? activity.use({}, { configure : false }) : item.use({}, { configure : false }));
+  }
+  if(result) await item.setFlag(module.id, `initiativeUsed.${rule.id}`, key);
+  return result;
+}
+
+function initFeet(combatant, add){
+  const combat = combatant?.combat ?? combatant?.parent;
+  const key = `${combat?.id}.${combat?.round}`;
+  for(const rule of initRules){
+    const found = initFound(rule, combatant?.actor, key, combat);
+    if(found) add(rule.icon ?? "fa-dice-d20", initLabel(rule, found.item, combatant.name), () => initRun(rule, combatant.actor, found.item, key), { disabled : found.used });
+  }
+}
+
+/* dnd5e's own initiative message (Compact Initiative off) : the creature's latest one */
+function initMessage(message, html){
+  if(!message?.getFlag?.("core", "initiativeRoll")) return;
+  const actor = ChatMessage.implementation.getSpeakerActor?.(message.speaker) ?? game.actors.get(message.speaker?.actor);
+  const latest = game.messages.contents.findLast(m => m.getFlag?.("core", "initiativeRoll") && (m.speaker?.actor === message.speaker?.actor));
+  if(!actor || (latest && (latest.id !== message.id))) return;
+  for(const rule of initRules){
+    const found = initFound(rule, actor, message.id, game.combat);
+    if(!found) continue;
+    addButton(buttonRow(html, { key : `${module.id}-initiative-feet` }),
+      initiative.footButton(rule.icon ?? "fa-dice-d20", initLabel(rule, found.item, actor.name), () => initRun(rule, actor, found.item, message.id), { disabled : found.used }));
+  }
+}
+
+/* The cards with its button drawn again (greyed) */
+function initRedraw(actor){
+  if(game.combat) initiative.redraw(game.combat);
+  const latest = game.messages.contents.findLast(m => m.getFlag?.("core", "initiativeRoll") && (m.speaker?.actor === actor?.id));
+  if(latest) ui.chat?.updateMessage(latest);
+}
+

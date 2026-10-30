@@ -4,6 +4,7 @@ import { logger } from '../log.js';
 import { gm } from '../gm.js';
 import { idOf, esc, buttonRow, addButton, makeButton } from '../helpers/utils.js';
 import { itemFixes } from './item-fixes.js';
+import { rollSave } from '../helpers/actors.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -15,9 +16,16 @@ const log = logger.for(import.meta.url);
  *     when : { at : "start" | "end", of },                   whose turn (actor uuid : the affected creature, unless the
  *                                                            spell says the caster's)
  *     damage : "1d6[fire]",                                  taken first, at that turn (Searing Smite, Ensnaring Strike)
+ *     once : true,                                           the damage once, then the effect ends (no roll : Melf's Acid
+ *                                                            Arrow's acid at the end of its next turn)
  *     onFail : "unconscious",                                a failed roll turns it into that condition for the rest
  *                                                            of its duration, with no more rolls (Sleep)
- *     endsOnDamage : true }                                  it ends when the creature takes damage (Sleep)
+ *     endsOnDamage : true,                                   it ends when the creature takes damage (Sleep)
+ *     onFailDuration, onFailEndsOn : ["damage", "wake"]      a card macro's worsening (Sleep Breath) : how long the new
+ *                                                            condition lasts, what ends it (wake : a creature within 5 ft
+ *                                                            uses its Action, from its action bar)
+ *     tempHP : 3 }                                           temporary Hit Points it gains at that turn : the caster's
+ *                                                            spellcasting modifier (Heroism); a button for its owner
  * The items carry a template (TABLE, put on their effects by an item fix), so the effect has it however it's applied
  * (a save card's row, dnd5e's effect tray); the rest is filled in as it lands on the creature. At that turn (combat),
  * the active GM posts a card : the affected creature's owner rolls (and takes the damage) from it; a success ends the
@@ -32,14 +40,18 @@ export class repeating{
     "searing-smite" : { label : "start", roll : { type : "save", ability : "con" }, damage : { die : "d6", type : "fire" } },
     "ensnaring-strike" : { label : "start", roll : { type : "check", ability : "str", skill : "ath", action : true }, damage : { die : "d6", type : "piercing" } },
     "ray-of-sickness" : { label : "time", of : "caster" },
+    "blindness-deafness" : { label : "end", roll : { type : "save", ability : "con" } },
+    "crown-of-madness" : { label : "end", roll : { type : "save", ability : "wis" } },
+    /* 2d4 Acid at the end of its next turn (count : the dice at the spell's own level) */
+    "melfs-acid-arrow" : { label : "end", damage : { die : "d4", type : "acid", count : 2 }, once : true },
     "chill-touch" : { label : "time", of : "caster" },
     /* 2024 Sleep : Incapacitated, the save again at the end of its next turn; failed : Unconscious; damage wakes it */
     "sleep" : { label : "end", roll : { type : "save", ability : "wis" }, onFail : "unconscious", endsOnDamage : true },
+    /* 2024 Heroism : temporary Hit Points equal to the caster's spellcasting modifier at the start of each of its turns */
+    "heroism" : { label : "start", tempHP : "spellcasting" },
   };
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("spellRules");
-  }
+  static enabled = settings.on("spellRules");
 
   static register(){
     if(game.system.id !== "dnd5e") return;
@@ -51,17 +63,20 @@ export class repeating{
     Hooks.on("updateWorldTime", () => this.expireTimed());
     Hooks.on("renderChatMessageHTML", (message, html) => this.render(message, html));
     Hooks.on("dnd5e.applyDamage", (actor, amount) => this.onDamaged(actor, amount));
+    /* Its later damage is the effect's (Melf's Acid Arrow's 2d4) : that damage activity isn't rolled with the attack */
+    Hooks.on(`${module.id}.isExtra`, activity => !(this.enabled() && this.TABLE[idOf(activity?.item)]?.once && this.TABLE[idOf(activity?.item)]?.damage));
   }
 
   /* ---------- The template on the item's effects ---------- */
 
   static templateFix(item){
-    if(!this.enabled() || (item?.type !== "spell") || (String(item.system?.source?.rules ?? "") === "2014")) return null;
+    /* Spells (2024), and class features listed in the table (Beguiling Magic, Nature's Wrath) */
+    if(!this.enabled() || !["spell", "feat"].includes(item?.type) || ((item.type === "spell") && (String(item.system?.source?.rules ?? "") === "2014"))) return null;
     const entry = this.TABLE[idOf(item)];
     if(!entry) return null;
     const updateEffects = (item.effects?.contents ?? [...(item.effects ?? [])]).filter(e => !e.getFlag?.(module.id, "repeat"))
       .map(e => ({ _id : e.id, [`flags.${module.id}.repeat`] : { template : true, label : entry.label, roll : entry.roll ?? null, damage : entry.damage ?? null, of : entry.of ?? "target",
-        onFail : entry.onFail ?? null, endsOnDamage : !!entry.endsOnDamage } }));
+        onFail : entry.onFail ?? null, endsOnDamage : !!entry.endsOnDamage, tempHP : entry.tempHP ?? null, once : !!entry.once } }));
     return updateEffects.length ? { updateEffects } : null;
   }
 
@@ -76,7 +91,7 @@ export class repeating{
     const dc = Number(save?.save?.dc?.value) || Number(caster?.system?.attributes?.spell?.dc) || null;
     /* The damage grows with the slot (Searing Smite +1d6 a level above its own) */
     const castLevel = Number(effect.getFlag?.("dnd5e", "spellLevel")) || Number(item?.system?.level) || 1;
-    const dice = Math.max(1, 1 + castLevel - (Number(item?.system?.level) || 1));
+    const dice = Math.max(1, (Number(repeat.damage?.count) || 1) + castLevel - (Number(item?.system?.level) || 1));
     const filled = {
       template : false,
       label : repeat.label,
@@ -86,6 +101,9 @@ export class repeating{
       damage : repeat.damage ? `${dice}${repeat.damage.die}[${repeat.damage.type}]` : null,
       onFail : repeat.onFail ?? null,
       endsOnDamage : !!repeat.endsOnDamage,
+      once : !!repeat.once,
+      /* The caster's spellcasting modifier, now (at least 1) */
+      tempHP : (repeat.tempHP === "spellcasting") ? Math.max(1, Number(caster?.system?.abilities?.[caster?.system?.attributes?.spellcasting]?.mod) || 0) : (Number(repeat.tempHP) || null),
     };
     /* Replaced whole (the template's own keys don't stay behind) */
     const flags = foundry.utils.deepClone(effect._source?.flags ?? effect.flags ?? {});
@@ -125,10 +143,14 @@ export class repeating{
     const what = [];
     if(repeat.damage) what.push(module.format("repeating.damage", { damage : repeat.damage.replace(/\[(\w+)\]/, " $1") }));
     if(repeat.roll) what.push(this.rollLabel(repeat.roll));
+    if(repeat.tempHP) what.push(module.format("repeating.tempHP", { n : repeat.tempHP }));
     return ChatMessage.implementation.create({
       speaker : ChatMessage.implementation.getSpeaker({ actor }),
-      content : `<p>${esc(module.format(`repeating.${repeat.label}`, { name : actor.name, effect : effect.name }))}${what.length ? ` ${esc(what.join(" · "))}` : ""}</p>`,
-      flags : { [module.id] : { repeatCard : { actor : actor.uuid, effect : effect.uuid, damageDone : !repeat.damage, rolled : false } } },
+      /* Another creature's turn (a Gelatinous Cube's acid on the one it engulfed) : whose */
+      content : `<p>${esc((repeat.when?.of && (repeat.when.of !== actor.uuid) && ["start", "end"].includes(repeat.label))
+        ? module.format(`repeating.${repeat.label}Of`, { name : actor.name, effect : effect.name, source : fromUuidSync(repeat.when.of, { strict : false })?.name ?? "" })
+        : module.format(`repeating.${repeat.label}`, { name : actor.name, effect : effect.name }))}${what.length ? ` ${esc(what.join(" · "))}` : ""}</p>`,
+      flags : { [module.id] : { repeatCard : { actor : actor.uuid, effect : effect.uuid, damageDone : !repeat.damage, rolled : false, tempDone : !repeat.tempHP } } },
     });
   }
 
@@ -154,6 +176,14 @@ export class repeating{
       disabled : !!data.damageDone, onClick : () => this.takeDamage(message, actor, repeat) }));
     if(repeat?.roll) addButton(row, makeButton({ icon : "fa-dice-d20", text : this.rollLabel(repeat.roll), once : true,
       disabled : !!data.rolled, onClick : () => this.roll(message, actor, effect, repeat) }));
+    /* Its owner or the GM : whichever presses it first */
+    if(repeat?.tempHP) addButton(row, makeButton({ icon : "fa-shield-heart", text : module.format("repeating.gainTempHP", { n : repeat.tempHP }), once : true,
+      disabled : !!data.tempDone, onClick : () => this.gainTempHP(message, actor, repeat) }));
+  }
+
+  static async gainTempHP(message, actor, repeat){
+    await actor.applyTempHP(Number(repeat.tempHP) || 0);
+    if(message.isOwner) await message.setFlag(module.id, "repeatCard.tempDone", true);
   }
 
   static async takeDamage(message, actor, repeat){
@@ -162,13 +192,19 @@ export class repeating{
     const type = repeat.damage.match(/\[(\w+)\]/)?.[1];
     await actor.applyDamage([{ value : roll.total, type }], { isDelta : true });
     await message.setFlag(module.id, "repeatCard.damageDone", true);
+    /* Once : the effect has done its part */
+    const effect = repeat.once ? fromUuidSync(message.getFlag(module.id, "repeatCard")?.effect ?? "", { strict : false }) : null;
+    if(effect && !effect.isDeleted) await effect.delete();
   }
 
   /* The roll : a success ends the effect on this creature */
   static async roll(message, actor, effect, repeat){
     const { type, ability, skill, dc } = repeat.roll;
     const config = { ability, skill, target : dc ?? undefined };
-    const rolls = (type === "save") ? await actor.rollSavingThrow(config)
+    /* A save : the save lego, with the bonus of what it saves against */
+    const from = repeat.from?.item ? fromUuidSync(repeat.from.item, { strict : false }) : null;
+    const rolls = (type === "save") ? (await rollSave(actor, ability, dc, { from : (from?.documentName === "Item") ? from : null, dialog : true,
+        flags : effect?.statuses?.size ? { against : [...effect.statuses] } : null }))?.roll
       : skill ? await actor.rollSkill({ skill, ability, target : dc ?? undefined }) : await actor.rollAbilityCheck(config);
     const roll = Array.isArray(rolls) ? rolls[0] : rolls;
     if(!roll) return;
@@ -180,7 +216,19 @@ export class repeating{
     }
     /* Failed, and the effect worsens (Sleep : Unconscious for the rest of it), no more rolls */
     else if(!success && repeat.onFail && effect && !effect.isDeleted){
-      await effect.update({ statuses : [repeat.onFail], [`flags.${module.id}.repeat.done`] : true });
+      const update = { statuses : [repeat.onFail], [`flags.${module.id}.repeat.done`] : true };
+      /* A card macro's (Sleep Breath) : the new condition's own name and icon, its own duration from now, what ends it */
+      if(effect.getFlag(module.id, "cardCondition")){
+        const status = CONFIG.statusEffects.find(s => s.id === repeat.onFail);
+        update.name = game.i18n.localize(status?.name ?? repeat.onFail);
+        if(status?.img) update.img = status.img;
+        if(repeat.onFailDuration) update.duration = { ...repeat.onFailDuration, startTime : game.time.worldTime,
+          startRound : game.combat?.round ?? null, startTurn : game.combat?.turn ?? null };
+        const ends = repeat.onFailEndsOn ?? [];
+        update[`flags.${module.id}.repeat.endsOnDamage`] = ends.includes("damage");
+        update[`flags.${module.id}.repeat.wake`] = ends.includes("wake");
+      }
+      await effect.update(update);
       ui.notifications.info(module.format("repeating.worsened", { name : actor.name, effect : effect.name,
         condition : game.i18n.localize(CONFIG.statusEffects.find(s => s.id === repeat.onFail)?.name ?? repeat.onFail) }));
     }

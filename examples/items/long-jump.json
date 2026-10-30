@@ -1,0 +1,91 @@
+{
+  "name": "Jump",
+  "type": "feat",
+  "img": "icons/skills/movement/figure-running-gray.webp",
+  "system": {
+    "description": {
+      "value": "<p>When you make a Long Jump, you leap horizontally a number of feet up to your Strength score if you move at least 10 feet immediately before the jump. When you make a standing Long Jump, you can leap only half that distance. Either way, each foot you jump costs a foot of movement.</p><p>If you land in Difficult Terrain, you must succeed on a DC 10 Dexterity (Acrobatics) check or have the Prone condition.</p><p><em>Macro Helper</em> : the squares you can land on show green, the ones you pass over yellow. Click a green one : a standing jump, a running jump, or a running jump with its run-up walked first, whichever gets you there. Part of your move, no action.</p>",
+      "chat": ""
+    },
+    "identifier": "long-jump",
+    "source": {
+      "rules": "2024",
+      "book": "Macro Helper"
+    },
+    "activities": {
+      "mhJumpActivity01": {
+        "type": "utility",
+        "name": "Jump",
+        "_id": "mhJumpActivity01",
+        "sort": 100000,
+        "activation": {
+          "type": "special",
+          "value": null,
+          "override": false,
+          "condition": "Part of your move"
+        },
+        "consumption": {
+          "scaling": {
+            "allowed": false
+          },
+          "spellSlot": true,
+          "targets": []
+        },
+        "description": {
+          "chatFlavor": "A Long Jump.",
+          "value": ""
+        },
+        "duration": {
+          "units": "inst",
+          "concentration": false,
+          "override": false
+        },
+        "effects": [],
+        "range": {
+          "override": true,
+          "units": "self"
+        },
+        "target": {
+          "template": {
+            "contiguous": false,
+            "units": "ft",
+            "type": ""
+          },
+          "affects": {
+            "choice": false,
+            "count": "1",
+            "type": "self",
+            "special": ""
+          },
+          "override": true,
+          "prompt": false
+        },
+        "uses": {
+          "spent": 0,
+          "recovery": [],
+          "max": ""
+        },
+        "img": "",
+        "roll": {
+          "formula": "",
+          "name": "",
+          "prompt": false,
+          "visible": false
+        }
+      }
+    },
+    "uses": {
+      "spent": 0,
+      "recovery": [],
+      "max": ""
+    },
+    "type": {
+      "value": "",
+      "subtype": ""
+    },
+    "requirements": "",
+    "properties": []
+  },
+  "effects": [],
+  "flags": {}
+}

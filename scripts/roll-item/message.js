@@ -1,8 +1,33 @@
+import { cardBuilder } from './card-builder.js';
+import { cardMoves } from './card-moves.js';
+import { damageRoll } from './extra-damage.js';
 import { module } from '../module.js';
 import { settings } from '../settings.js';
 import { rollItem } from './roll-item.js';
 import { extraD20, rerolls, addDie } from './rerolls.js';
-import { originOf, addNote } from '../helpers/utils.js';
+import { originOf, addNote, plainText, conditionTip } from '../helpers/utils.js';
+import { rollSave } from '../helpers/actors.js';
+import { gm } from '../gm.js';
+
+/* Dice So Nice still rolling a save's dice (on this client) : its result waits for them, then its card is drawn again;
+   a card's own dice (healing, damage) are waited for before anything is applied from it */
+const diceRolling = new Set();
+const diceDone = id => {
+  if(!diceRolling.delete(id)) return;
+  const origin = originOf(game.messages.get(id));
+  if(origin) ui.chat?.updateMessage?.(origin);
+};
+Hooks.on("createChatMessage", m => {
+  /* A d20 roll that belongs to a card (a save rolled from its row) */
+  if(!game.dice3d || !(m.rolls?.[0] instanceof CONFIG.Dice.D20Roll) || m.getFlag?.("dice-so-nice", "skip") || !originOf(m)) return;
+  diceRolling.add(m.id);
+  setTimeout(() => diceDone(m.id), 10000);
+});
+Hooks.on("diceSoNiceRollComplete", id => diceDone(id));
+const diceLanded = async message => {
+  if(!game.dice3d?.waitFor3DAnimationByMessageID || !message?.rolls?.length || message.getFlag?.("dice-so-nice", "skip")) return;
+  await Promise.race([game.dice3d.waitFor3DAnimationByMessageID(message.id), new Promise(resolve => setTimeout(resolve, 8000))]).catch(() => null);
+};
 
 /* Declared in module.json documentTypes.ChatMessage, Foundry prefixes them with the module id */
 export const TYPES = {
@@ -17,6 +42,11 @@ export const TYPES = {
  * @param {HTMLElement} target  the button
  * @returns {Activity|null}
  */
+/* Does the card's activity have its targets save ? Not a save card a rule took the save off (all its targets willing) */
+function hasSaves(message, activity){
+  return (activity?.type === "save") && !message?.getFlag?.(module.id, "noSave");
+}
+
 function rerollStart(card, target){
   const activity = card.parent.getAssociatedActivity({ scaled : true });
   if(!activity || !rerolls.mayReroll(card.parent.getAssociatedActor?.()?.name, activity.item?.name ?? card.parent.flavor)) return null;
@@ -37,6 +67,7 @@ export function registerMessages(){
     [`${module.id}.cover`] : `${module.path}/templates/cover.hbs`,
     [`${module.id}.faces`] : `${module.path}/templates/card-faces.hbs`,
     [`${module.id}.card-face`] : `${module.path}/templates/card-face.hbs`,
+    [`${module.id}.moves`] : `${module.path}/templates/moves.hbs`,
   });
 
   /**
@@ -113,6 +144,12 @@ export function registerMessages(){
   const saveResultsOf = message => {
     const results = new Map();
     for(const save of message.getAssociatedRolls?.("save") ?? []){
+      /* Its dice still rolling here : not known yet */
+      if(diceRolling.has(save.id)){
+        const uuid = save.getAssociatedToken()?.uuid;
+        if(uuid) results.set(uuid, { rolling : true, total : null, success : undefined, message : save });
+        continue;
+      }
       const outcome = saveOutcome(save);
       const uuid = save.getAssociatedToken()?.uuid;
       if(!outcome || !uuid) continue;
@@ -144,7 +181,7 @@ export function registerMessages(){
       if(!results.has(keyUuid(key))) results.set(keyUuid(key), { total : null, success : !!value?.success });
     }
     /* Rules can settle a row without a roll (macro-helper.rowResults : Careful Spell's automatic success) : set
-       results.set(tokenUuid, { total : null, success, auto : reason, noDamage }) */
+       results.set(tokenUuid, { total : null, success, auto : reason, noDamage, multiplier }) */
     Hooks.callAll(`${module.id}.rowResults`, message, results);
     return results;
   };
@@ -157,6 +194,10 @@ export function registerMessages(){
    * @param {string[]} [parts]
    * @returns {{ text : string, healing : boolean }|null}
    */
+  /* A player's Apply only reaches creatures they own : none of its creatures theirs, no button (no target : it goes to
+     the selected tokens) */
+  const mayApplyTo = targets => game.user.isGM || !targets.length || targets.some(t => TargetsField.resolve(t).actor?.isOwner);
+
   const appliedOn = (message, tokenUuid, parts = ["rows"]) => {
     const actor = tokenUuid ? fromUuidSync(tokenUuid, { strict : false })?.actor : null;
     const here = actor?.getFlag?.(module.id, `applied.${message.id}`) ?? {};
@@ -244,7 +285,21 @@ export function registerMessages(){
   /* A target pill behind total cover : ✕ for its AC, and a miss */
   const coverShown = t => (Number.isFinite(t?.ac) && (t.ac >= rollItem.TOTAL_COVER_AC)) ? { ac : COVER_LABELS.total, hasAC : true, isMiss : true } : {};
 
-  const coverOf = (message, uuid) => message.getFlag?.(module.id, `cover.${uuidKey(uuid)}`)?.level ?? "none";
+  /* Half and Three-Quarters Cover don't count for an item that says so (Sacred Flame); Total Cover still does. The
+     buttons stay, the GM can still set them : they're just not applied */
+  const IGNORES_COVER = /no benefit from half cover or three-quarters cover|ignores? (?:half and three-quarters |half or three-quarters )?cover/i;
+  /* Hook : a rule says its creature's attacks skip cover (Sharpshooter) : macro-helper.ignoresCover (message, answer), it sets
+     answer.ignore */
+  const ignoresCover = message => {
+    if(message.getFlag?.(module.id, "ignoreCover")) return true;
+    const answer = { ignore : false };
+    Hooks.callAll(`${module.id}.ignoresCover`, message, answer);
+    return answer.ignore || IGNORES_COVER.test(plainText(message.getAssociatedItem?.()?.system?.description?.value));
+  };
+  const coverOf = (message, uuid) => {
+    const level = message.getFlag?.(module.id, `cover.${uuidKey(uuid)}`)?.level ?? "none";
+    return (["half", "threeQuarters"].includes(level) && ignoresCover(message)) ? "none" : level;
+  };
 
   /* The chips : GM only, one group per target (named when there are several) */
   const coverContext = (message, targets = []) => {
@@ -252,9 +307,11 @@ export function registerMessages(){
     return {
       named : targets.length > 1,
       targets : targets.map(t => {
-        const level = coverOf(message, t.token);
+        /* The chip shows what the GM set, even where the item ignores it */
+        const level = message.getFlag?.(module.id, `cover.${uuidKey(t.token)}`)?.level ?? "none";
+        const shown = maskTarget(t);
         return {
-          uuid : t.token, name : t.name,
+          uuid : t.token, name : shown?.name ?? t.name, img : shown?.img ?? t.img ?? TargetsField.resolve(t).token?.texture?.src ?? "icons/svg/mystery-man.svg",
           levels : Object.keys(COVER).map(id => ({ id, label : COVER_LABELS[id], active : id === level, tooltip : module.i18n(`cover.${id}`) })),
         };
       }),
@@ -275,7 +332,9 @@ export function registerMessages(){
       const targets = foundry.utils.deepClone(message.system._source.targets ?? []);
       const target = targets.find(t => t.token === uuid);
       base = prior ? prior.base : (target?.ac ?? null);
-      const ac = (level === "total") ? rollItem.TOTAL_COVER_AC : (Number.isFinite(base) ? base + COVER[level] : base);
+      /* AC raised on this card (Shield) stays on top of the cover */
+      const bonus = Number(message.getFlag(module.id, `acBonus.${key}`)) || 0;
+      const ac = (level === "total") ? rollItem.TOTAL_COVER_AC : (Number.isFinite(base) ? base + COVER[level] + bonus : base);
       if(target) target.ac = ac;
       update["system.targets"] = targets;
       const rays = message.system.rays ?? [];
@@ -285,7 +344,7 @@ export function registerMessages(){
         const ray = roll.options?.[module.id]?.ray;
         const aimed = (Number.isInteger(ray) && rays[ray]?.target) ? (rays[ray].target === uuid) : (targets.length === 1);
         if(!aimed) return roll;
-        const copy = roll.constructor.fromData(roll.toJSON());
+        const copy = roll.constructor.fromData(foundry.utils.deepClone(roll.toJSON()));
         if(Number.isFinite(ac)) copy.options.target = ac;
         else delete copy.options.target;
         changed = true;
@@ -299,8 +358,9 @@ export function registerMessages(){
 
   /* Full damage on a failure, onSave (half / none) on a success */
   const multiplierFor = (result, onSave) => {
-    /* A rule's "no damage" (Careful Spell, where a success would take half) */
+    /* A rule's "no damage" (Careful Spell, where a success would take half), or its own share (Evasion : half on a failure) */
     if(result?.noDamage) return 0;
+    if(Number.isFinite(result?.multiplier)) return result.multiplier;
     if(!result?.success) return 1;
     return (onSave === "none") ? 0 : (onSave === "half") ? 0.5 : 1;
   };
@@ -310,7 +370,30 @@ export function registerMessages(){
    * @param {ChatMessage} message
    * @param {object} options   { targets, hasSave, abilities, dc, onSave, hasRolls, isHeal }
    */
-  const buildRows = (message, { targets = [], hasSave = false, abilities = [], dc, onSave, hasRolls = false, isHeal = false, bonus = "", effects = [] } = {}) => {
+  /* What a row's Apply would do to that creature : the card's damage sized by its save, through its resistances,
+     immunities and vulnerabilities (dnd5e's own calculation, as its tray shows it). { amount, healing } or null */
+  const rowAmount = (message, actor, rolls, multiplier) => {
+    if(!actor?.calculateDamage || !rolls?.length) return null;
+    const damages = aggregateDamageRolls(rolls, { respectProperties : true }).map(roll => ({
+      properties : new Set(roll.options.properties ?? []), type : roll.options.type, value : Math.max(0, roll.total),
+    }));
+    try {
+      const result = actor.calculateDamage(damages, { multiplier, origin : message });
+      if(!Array.isArray(result)) return null;
+      const total = result.reduce((sum, d) => sum + (Number(d.value) || 0), 0);
+      return { amount : Math.abs(Math.trunc(total)), healing : total < 0 };
+    } catch(error){ return null; }
+  };
+
+  /* A row's damage / healing Apply : nothing to apply (0 : immune, or no damage on a save) : no button */
+  const applyOf = (message, uuid, { hasRolls, owner, hasSave, result, multiplier, labelKey, hideTotal, actor, rolls, part = "rows" }) => {
+    if(!hasRolls || !owner || (hasSave && !result) || appliedOn(message, uuid, [part]) || (multiplier === 0)) return null;
+    const amount = rowAmount(message, actor, rolls, multiplier);
+    if(amount && (amount.amount === 0)) return null;
+    return { multiplier, label : labelKey, ...(hideTotal ? {} : (amount ?? {})) };
+  };
+
+  const buildRows = (message, { targets = [], hasSave = false, abilities = [], dc, onSave, hasRolls = false, rolls = [], isHeal = false, bonus = "", effects = [], part = "rows" } = {}) => {
     if(!targets.length || !message.isContentVisible) return [];
     const results = saveResultsOf(message);
     const dmScreen = settings.value("rollItemDmScreen");
@@ -319,6 +402,9 @@ export function registerMessages(){
       const { actor } = TargetsField.resolve(descriptor);
       const owner = game.user.isGM || !!actor?.isOwner;
       const result = results.get(descriptor.token) ?? null;
+      /* Its save's dice still rolling : nothing to read or apply yet */
+      if(result?.rolling) return { uuid : descriptor.token, name : shown.name, img : shown.img, saves : [], pending : false, rerollButtons : [],
+        result : { total : "…", success : null, detail : "" }, ruleButtons : [] };
       /* An NPC's save total stays behind the DM screen; whether it saved shows */
       const hideTotal = !game.user.isGM && dmScreen && !actor?.hasPlayerOwner;
       const multiplier = multiplierFor(result, onSave);
@@ -332,10 +418,12 @@ export function registerMessages(){
         uuid : descriptor.token,
         name : shown.name,
         img : shown.img,
+        /* Another part's rows (a save card's healing : Land's Aid) : its own Apply and applied amount */
+        part : (part === "rows") ? "" : part,
         saveMessage : result?.message?.id ?? "",
         canReroll : !!saveOptions?.reroll && !result?.auto,
         rerollButtons : result?.auto ? [] : (saveOptions?.buttons ?? []).map(({ id, icon, label }) => ({ id, icon, label })),
-        applied : appliedOn(message, descriptor.token, ["rows"]),
+        applied : appliedOn(message, descriptor.token, [part]),
         saves : (hasSave && !result && owner) ? abilities.map(ability => ({
           ability, label : `${String(CONFIG.DND5E.abilities[ability]?.abbreviation ?? ability).toUpperCase()} ${dc ?? ""}`.trim(),
           hint : saveHint(message, actor, ability, { dc, bonus, cover : (ability === "dex") ? COVER[cover] : 0 }),
@@ -349,46 +437,111 @@ export function registerMessages(){
           detail : (!hideTotal && result.message) ? rollDetail(result.message.rolls?.[0], result.shift ?? 0) : "",
         } : null,
         /* Once applied from this card, the amount shows instead */
-        apply : (hasRolls && owner && (!hasSave || result) && !appliedOn(message, descriptor.token, ["rows"])) ? { multiplier, label : labelKey } : null,
+        apply : applyOf(message, descriptor.token, { hasRolls, owner, hasSave, result, multiplier, labelKey, hideTotal, actor, rolls, part }),
         /* The save's effects (Turned, Paralyzed...) : the GM applies them once it's rolled, to those they apply to */
-        ...effectRow(message, descriptor.token, { hasSave, result, effects }),
+        ...effectRow(message, descriptor.token, { hasSave, result, effects, owner }),
+        /* Buttons rules add to this creature's row (a mastery's Topple) : macro-helper.rowButtons */
+        ruleButtons : ruleButtonsOf(message, descriptor.token, { result, owner }),
       };
     });
   };
 
+  /**
+   * Buttons rules add to a creature's row : Hooks "macro-helper.rowButtons" (message, tokenUuid, buttons, { result, owner, ray })
+   * push { id, label, icon, img, tooltip, disabled, result : { total, success } (a roll it made, shown beside it),
+   * conditions : [ids] (those it gives : their rules in its tooltip) };
+   * a click calls "macro-helper.rowButton" (message, tokenUuid, id, { event, button }). ray : the attack on a multi card.
+   */
+  const ruleButtonsOf = (message, uuid, { result = null, owner = false, ray = null } = {}) => {
+    const buttons = [];
+    Hooks.callAll(`${module.id}.rowButtons`, message, uuid, buttons, { result, owner, ray });
+    return buttons.filter(b => b?.id && b?.label).map(({ id, label, icon = "fa-hand-pointer", img = null, tooltip = null, disabled = false, result = null, conditions = [] }) =>
+      ({ id, label, icon, img, tooltip, disabled, result, conditions : conditionTip(conditions) }));
+  };
+  /* A push / pull button at the bottom of the card (card-moves.js) */
+  const cardMove = (event, button) => {
+    const message = game.messages.get(button.closest("[data-message-id]")?.dataset.messageId);
+    if(message) cardMoves.click(message, button.dataset.key, button);
+  };
+  const rowRule = (event, button) => {
+    const message = game.messages.get(button.closest("[data-message-id]")?.dataset.messageId);
+    if(message) Hooks.callAll(`${module.id}.rowButton`, message, button.dataset.target, button.dataset.id, { event, button });
+  };
+
   /* A row's effect button (GM) : on a failure all of them, on a success those that apply anyway; applied once */
-  const effectRow = (message, uuid, { hasSave, result, effects }) => {
-    if(!game.user.isGM || !hasSave || !result) return {};
-    const due = effects.filter(e => !result.success || e.onSave);
+  /* The effects a row applies : a save's (all on a failure, those that apply anyway on a success), or with no save all
+     of them (a buff : Bless); a choice spell's only the chosen one (Guidance's skill : the card's spellChoice) */
+  const dueEffects = (message, effects, { hasSave, result }) => {
+    const chosen = message.getFlag?.(module.id, "spellChoice");
+    /* Not those a card macro took off (card.remove) */
+    return effects.filter(e => (!hasSave || !result?.success || e.onSave) && (!chosen || (e.doc?.id === chosen)) && cardBuilder.keeps(message, e.doc));
+  };
+
+  /* An effect whose conditions the creature is immune to (a Ghoul and Poisoned) : it isn't applied */
+  const immuneTo = (actor, effect) => {
+    const immunities = actor?.system?.traits?.ci?.value;
+    const statuses = [...(effect?.doc?.statuses ?? effect?.statuses ?? [])];
+    return !!immunities && statuses.length > 0 && statuses.every(s => immunities.has?.(s));
+  };
+
+  const effectRow = (message, uuid, { hasSave, result, effects, owner = false }) => {
+    /* With a save : the GM's, once rolled. Without (a buff) : the creature's owner or the GM */
+    if(hasSave ? (!game.user.isGM || !result) : !(game.user.isGM || owner)) return {};
+    const actor = TargetsField.resolve({ token : uuid }).actor;
+    const all = dueEffects(message, effects, { hasSave, result });
+    const due = all.filter(e => !immuneTo(actor, e));
+    const immune = all.filter(e => immuneTo(actor, e)).map(e => e.doc.name);
     const names = due.map(e => e.doc.name).join(", ");
-    /* Rules can change the GM's button (macro-helper.rowEffect : Shove shows the shover's choice, nothing until then) */
-    const row = { show : due.length > 0, names, done : !!message.getFlag(module.id, `effects.${uuidKey(uuid)}`) };
-    Hooks.callAll(`${module.id}.rowEffect`, message, uuid, row, { success : !!result.success, effects : due.map(e => e.doc) });
-    if(!row.show) return {};
+    /* Rules can change the GM's button (macro-helper.rowEffect : Shove shows the shover's choice, nothing until then);
+       conditions : those it gives, their rules in its tooltip */
+    const row = { show : due.length > 0, names, done : !!message.getFlag(module.id, `effects.${uuidKey(uuid)}`),
+      conditions : [...new Set(due.flatMap(e => [...(e.doc.statuses ?? [])]))] };
+    Hooks.callAll(`${module.id}.rowEffect`, message, uuid, row, { success : !!result?.success, effects : due.map(e => e.doc) });
+    if(!row.show) return immune.length ? { effectImmune : module.format("rollItem.row.immune", { names : immune.join(", ") }) } : {};
     if(row.done) return { effectApplied : row.names };
-    return { effectApply : module.format("rollItem.row.applyEffect", { names : row.names }) };
+    return { effectApply : module.format("rollItem.row.applyEffect", { names : row.names }), effectConditions : conditionTip(row.conditions) };
   };
 
   /* The GM applies a row's effects to its creature */
   const applyRowEffects = async (message, button, { activity, targets = [] } = {}) => {
-    if(!game.user.isGM) return;
     const uuid = button.dataset.target;
     const descriptor = targets.find(t => t.token === uuid) ?? { token : uuid };
     const { actor } = TargetsField.resolve(descriptor);
+    const hasSave = hasSaves(message, activity);
     const result = saveResultsOf(message).get(uuid);
-    if(!actor || !result) return;
-    const due = effectsOf(activity).filter(e => !result.success || e.onSave);
+    if(!actor || (hasSave && (!game.user.isGM || !result)) || (!hasSave && !(game.user.isGM || actor.isOwner))) return;
+    const due = dueEffects(message, effectsOf(activity), { hasSave, result }).filter(e => !immuneTo(actor, e));
     /* Rules may stop it or do it themselves (macro-helper.preApplyEffects : Grapple on a creature too big; Shove) */
     if(Hooks.call(`${module.id}.preApplyEffects`, message, actor, due.map(e => e.doc), { uuid, button }) === false) return;
     if(!due.length) return;
+    const origin = activity.item?.uuid;
+    /* The activity's duration when the effect has none of its own (Bless : 1 minute) */
+    const duration = activity.duration?.getEffectData?.() ?? null;
     const data = due.map(({ doc }) => {
-      const d = foundry.utils.mergeObject(doc.toObject(), { origin : activity.item?.uuid ?? doc.parent?.uuid, transfer : false, disabled : false,
-        start : { time : game.time.worldTime, ...(game.combat?.started ? { combat : game.combat.id, round : game.combat.round, turn : game.combat.turn ?? 0 } : {}) },
+      const d = foundry.utils.mergeObject(doc.toObject(), { origin : origin ?? doc.parent?.uuid, transfer : false, disabled : false,
+        /* Core's start (its combatant too : "until the start of your next turn" counts the caster's turns, not the
+           target's) */
+        start : CONFIG.ActiveEffect.documentClass.getEffectStart?.() ?? { time : game.time.worldTime },
         flags : { [module.id] : { fromCard : message.id } } });
+      if(duration && !(doc.duration?.seconds || doc.duration?.rounds || doc.duration?.turns || doc.duration?.value)) d.duration = duration;
+      /* An enchantment's rider copied onto the weapon : on the creature it isn't anyone's rider */
+      if(d.flags?.dnd5e?.dependentOn) delete d.flags.dnd5e.dependentOn;
+      /* Until the start or end of the card's creature's next turn (flags["macro-helper"].until : "turnStart" | "turnEnd") */
+      const until = doc.getFlag?.(module.id, "until");
+      if(["turnStart", "turnEnd"].includes(until) && activity.actor) foundry.utils.setProperty(d, `flags.${module.id}.expires`, gm.timedStamp(activity.actor, until));
+      /* A plain condition (one condition, no changes : Plutonium's Prone, Poisoned with the item's picture) : the
+         condition's own icon and name, like every condition the module applies */
+      const statuses = [...(d.statuses ?? [])];
+      const condition = (statuses.length === 1) && !(d.changes?.length) ? CONFIG.statusEffects.find(c => c.id === statuses[0]) : null;
+      if(condition){ d.img = condition.img; d.name = game.i18n.localize(condition.name); }
       delete d._id;
       return d;
     });
     button.disabled = true;
+    /* The same effect from the same spell already on it (cast again) : replaced, never twice */
+    const names = new Set(data.map(d => d.name));
+    const old = actor.effects.filter(e => names.has(e.name) && origin && String(e.origin ?? "").startsWith(origin));
+    if(old.length) await actor.deleteEmbeddedDocuments("ActiveEffect", old.map(e => e.id)).catch(() => {});
     await actor.createEmbeddedDocuments("ActiveEffect", data);
     await message.setFlag(module.id, `effects.${uuidKey(uuid)}`, true);
   };
@@ -403,25 +556,11 @@ export function registerMessages(){
     const { actor, token } = TargetsField.resolve(descriptor);
     if(!actor?.isOwner || !activity) return;
 
-    const config = { event, ability, target : dc };
-    const bonus = CONFIG.Dice.BasicRoll.replaceFormulaData(activity.save?.bonus ?? "", activity.getRollData(), { missing : 0 });
     /* Cover the GM set on the card : +2 / +5 to a DEX save */
     const cover = (ability === "dex") ? (COVER[coverOf(message, uuid)] || 0) : 0;
-    const bonusData = CONFIG.Dice.BasicRoll.constructParts({ activityBonus : bonus, cover : cover || "" });
-    if(bonusData.parts.length) config.rolls = [bonusData];
-
-    const secret = settings.value("rollItemDmScreen") && !actor.hasPlayerOwner;
-    const speaker = ChatMessage.implementation.getSpeaker({ actor, scene : canvas.scene, token : token?.document });
-    const messageConfig = { data : { speaker, system : { ...activity.messageSources, origin : message.id },
-      flags : { [module.id] : { row : { ability, cover } } } } };
-    if(secret) messageConfig.rollMode = "gm";
-
     button.disabled = true;
     try {
-      const [roll] = (await actor.rollSavingThrow(config, { configure : false }, messageConfig)) ?? [];
-      if(roll && secret && game.user.isGM && Number.isFinite(dc)){
-        await message.setFlag(module.id, `saves.${uuidKey(uuid)}`, { success : roll.total >= dc });
-      }
+      await rollSave(token ?? actor, ability, dc, { from : activity, cover, event, card : message, flags : { row : { ability, cover } } });
     } finally {
       button.disabled = false;
     }
@@ -441,7 +580,9 @@ export function registerMessages(){
   }
 
   /* A row's damage / healing : only the target's owner (or the GM) can apply it, sized by its save */
-  const applyRow = async (message, button, { rolls = [], targets = [] } = {}) => {
+  const applyRow = async (message, button, { rolls = [], targets = [], part = "rows" } = {}) => {
+    /* Not before its dice have landed (healing applied while its die still rolled) */
+    await diceLanded(message);
     const uuid = button.dataset.target;
     const descriptor = targets.find(t => t.token === uuid) ?? { token : uuid };
     const { actor } = TargetsField.resolve(descriptor);
@@ -450,12 +591,16 @@ export function registerMessages(){
     /* Hook : a rule can add to applying (Battle Medic spends the target's Hit Die) or stop it (return false) */
     if(Hooks.call(`${module.id}.preApplyRow`, message, actor, { multiplier }) === false) return;
     button.disabled = true;
-    await applyDamageRolls(message, actor, rolls, { multiplier, part : "rows" });
+    await applyDamageRolls(message, actor, rolls, { multiplier, part });
   };
 
   /* Does an attack roll hit this AC : crits always, fumbles never, no AC known counts as a hit */
-  const hitsAC = (roll, ac) => {
+  const hitsAC = (roll, ac, uuid = null) => {
     if(!roll) return false;
+    /* A rule turned its hit on that creature into a miss (Mirror Image's duplicate hit instead) */
+    if(rollItem.missedOn(roll, uuid)) return false;
+    /* The GM counted it as a hit (Count as hit) */
+    if(roll.options?.[module.id]?.forcedHit) return true;
     if(Number.isFinite(ac) && (ac >= rollItem.TOTAL_COVER_AC)) return false;
     if(roll.isCritical) return true;
     if(roll.isFumble) return false;
@@ -480,11 +625,16 @@ export function registerMessages(){
       const config = CONFIG.DND5E.damageTypes[part.type] ?? CONFIG.DND5E.healingTypes[part.type] ?? null;
       part.config = config;
       part.label = config?.labelShort ?? config?.label ?? "";
+      /* Its dice, shown to the right of the total like the attack's d20 (a d6 as a d6, kept results only) */
+      const FACES = { 4 : "fa-dice-d4", 6 : "fa-dice-d6", 8 : "fa-dice-d8", 10 : "fa-dice-d10", 12 : "fa-dice-d12", 20 : "fa-dice-d20" };
+      const dice = (roll.dice ?? []).flatMap(d => (d.results ?? []).filter(r => r.active !== false && !r.discarded)
+        .map(r => ({ value : r.result, icon : FACES[d.faces] ?? "fa-square" }))).slice(0, 8);
       return {
         type : part.type,
         label : config?.label ? game.i18n.localize(config.label) : "",
         icon : config?.icon ?? "",
         total : Math.max(0, roll.total),
+        dice,
         parts : [part],
       };
     });
@@ -501,8 +651,19 @@ export function registerMessages(){
    * @param {object} [changes.system]
    */
   const replaceRolls = async (message, { rolls, shown, system = {} }) => {
-    await rollItem.showDice(shown, message);
-    return message.update({ rolls : rolls.filter(Boolean).map(r => JSON.stringify(r)), system });
+    const { held, flags } = holdOutcomes(message, shown);
+    await rollItem.showDice(shown.filter(r => !held.includes(r)), message);
+    return message.update({ rolls : rolls.filter(Boolean).map(r => JSON.stringify(r)), system, ...flags });
+  };
+
+  /* An attack card's new rolls that wait on its result (a hit's damage, Graze's) : not played now, marked unplayed, so
+     the card plays them once its result calls for them (rollItem.playOutcomes) */
+  const holdOutcomes = (message, rolls) => {
+    if(!game.dice3d || (message.type !== TYPES.attack)) return { held : [], flags : {} };
+    const card = { rider : message.system.rider, rays : message.system.rays };
+    const held = rolls.filter(r => rollItem.outcomeKey(r, card));
+    const flags = Object.fromEntries(held.map(r => [`flags.${module.id}.dice.${rollItem.outcomeKey(r, card)}`, false]));
+    return { held, flags };
   };
 
   /**
@@ -520,7 +681,7 @@ export function registerMessages(){
     entries.sort((a, b) => a.value - b.value);
     const chosen = entries.slice(0, Math.max(0, n));
     if(!chosen.length) return 0;
-    const updated = rolls.map(r => r.constructor.fromData(r.toJSON()));
+    const updated = rolls.map(r => r.constructor.fromData(foundry.utils.deepClone(r.toJSON())));
     const shown = [];
     for(const e of chosen){
       const again = await new Roll(`1d${e.faces}`).evaluate();
@@ -538,6 +699,33 @@ export function registerMessages(){
   /* A flag key for one attack : its index on a multi card, "single" otherwise */
   const rayKey = ray => Number.isInteger(ray) ? String(ray) : "single";
   const tag = (rolls, data) => { for(const roll of rolls) roll.options[module.id] = { ...tagOf(roll), ...data }; return rolls; };
+
+  /* A critical hit's damage made normal again (Restore Balance) : each die keeps the old rolls' results (the same
+     faces, in order), the critical's extra dice dropped. Rolls paired one to one when both have as many, else pooled.
+     false : some die had no old result left (it keeps its new one) */
+  const keepResults = (from, to) => {
+    const poolOf = rolls => {
+      const pool = new Map();
+      for(const roll of rolls) for(const die of roll.dice ?? []){
+        if(!pool.has(die.faces)) pool.set(die.faces, []);
+        pool.get(die.faces).push(...die.results.filter(r => r.active).map(r => r.result));
+      }
+      return pool;
+    };
+    const paired = from.length === to.length;
+    const shared = paired ? null : poolOf(from);
+    let all = true;
+    to.forEach((roll, i) => {
+      const pool = shared ?? poolOf([from[i]]);
+      for(const die of roll.dice ?? []){
+        const left = pool.get(die.faces) ?? [];
+        if(left.length < die.number){ all = false; continue; }
+        die.results = left.splice(0, die.number).map(result => ({ result, active : true }));
+      }
+      roll._total = roll._evaluateTotal();
+    });
+    return all;
+  };
 
   /**
    * The ActiveEffects an activity applies, for dnd5e's <effect-application> tray (which wants full uuids).
@@ -566,16 +754,31 @@ export function registerMessages(){
     return [...new Set(actors.filter(a => a?.isOwner))];
   };
 
-  /* Same call dnd5e's damage tray makes : one entry per damage type, dnd5e applies resistances per type */
+  /* Rolls as dnd5e's damage descriptions : one entry per damage type, dnd5e applies resistances per type */
+  const damagesOf = rolls => aggregateDamageRolls(rolls, { respectProperties : true }).map(roll => ({
+    properties : new Set(roll.options.properties ?? []),
+    type : roll.options.type,
+    value : Math.max(0, roll.total),
+  }));
+
+  /* What a hit does before its damage lands (Sap, Slow, Vex) : a rule pushes its promise into `waits` */
+  const beforeDamage = async (message, actor) => {
+    const waits = [];
+    Hooks.callAll(`${module.id}.beforeApplyDamage`, message, actor, waits);
+    await Promise.allSettled(waits);
+  };
+
+  /* Same call dnd5e's damage tray makes */
   const applyDamageRolls = async (message, actor, rolls, { multiplier = 1, part = "hits" } = {}) => {
     if(!rolls.length) return;
-    const damages = aggregateDamageRolls(rolls, { respectProperties : true }).map(roll => ({
-      properties : new Set(roll.options.properties ?? []),
-      type : roll.options.type,
-      value : Math.max(0, roll.total),
-    }));
-    await actor.applyDamage(damages, { isDelta : true, multiplier, origin : message, [module.id] : { part } });
+    await beforeDamage(message, actor);
+    await actor.applyDamage(damagesOf(rolls), { isDelta : true, multiplier, origin : message, [module.id] : { part } });
   };
+
+  /* A damage box's key, the part of the card it applies : "tray-base", "tray-extra-sneak-2" (ray 2)... A creature's
+     flags.macro-helper.applied.<card>.<key> holds what it took from it */
+  const boxKey = (part, key, ray) => ["tray", part, key, Number.isInteger(ray) ? String(ray) : ray]
+    .filter(v => (v !== undefined) && (v !== null) && (v !== "")).join("-").replace(/\./g, "-");
 
   /* Flag keys can't hold dots : token uuids are stored with dashes (ids never contain one) */
   const uuidKey = uuid => uuid.replaceAll(".", "-");
@@ -585,7 +788,9 @@ export function registerMessages(){
    * dnd5e's damage tray, limited to one part of the card (dnd5e's own applies every damage roll on the message).
    *  data-part="base" | "save" | "graze"  the attack's damage, the on-hit save's damage (halved for targets that saved),
  *                             or the Graze mastery's damage for a miss
-   *  data-ray="n"               one ray of a multi attack card
+   *  data-part="hit"            a hit's damage in one box : the attack's own (or the alternative data-key) and every part
+   *                             added on top (Sneak Attack, a smite); each creature is dealt only the parts it hasn't had
+   *  data-ray="n"              one ray of a multi attack card
    * The parent fills `damages` and `chatMessage` when it connects; here `damages` always reads this part's rolls,
    * and for the save part `chatMessage.system` exposes the save's onSave + outcomes, which the parent uses for its save multiplier.
    */
@@ -613,7 +818,29 @@ export function registerMessages(){
        Graze, the save's... (dnd5e's tray would record them all as one "tray" : the first would block the rest) */
     get partKey(){
       const { part = "base", key, ray } = this.dataset;
-      return ["tray", part, key, ray].filter(v => (v !== undefined) && (v !== "")).join("-").replace(/\./g, "-");
+      return boxKey(part, key, ray);
+    }
+
+    get ray(){
+      return ("ray" in this.dataset) ? Number(this.dataset.ray) : null;
+    }
+
+    /* The hit box's parts (message.system.hitParts), those a creature hasn't been dealt yet when given one */
+    hitParts(actor = null){
+      const message = this.#message;
+      const parts = message?.system?.hitParts?.(this.ray, this.dataset.key || null) ?? [];
+      if(!actor) return parts;
+      const done = actor.getFlag?.(module.id, `applied.${message.id}`) ?? {};
+      return parts.filter(p => !Number.isFinite(done[p.box]));
+    }
+
+    /* The hit box shows each creature what it still has to take (a smite added after the hit was applied : the smite) */
+    #for = null;
+    calculateDamage(actor, options){
+      if(this.dataset.part !== "hit") return super.calculateDamage(actor, options);
+      this.#for = actor;
+      try { return super.calculateDamage(actor, options); }
+      finally { this.#for = null; }
     }
 
     /* Applied to every target the card has (for this box) : open, its numbers showing, the Apply button done. Another
@@ -623,11 +850,12 @@ export function registerMessages(){
       const message = this.#message;
       const button = this.applyButton;
       if(!message?.system || !button) return;
-      const ray = ("ray" in this.dataset) ? Number(this.dataset.ray) : null;
+      const ray = this.ray;
       const targets = (Number.isInteger(ray) && message.system.rayTarget) ? [message.system.rayTarget(ray)].filter(Boolean) : (message.system.targets ?? []);
       if(!targets.length) return;
       const done = targets.every(t => {
         const actor = TargetsField.resolve(t).actor;
+        if(this.dataset.part === "hit") return !!actor && !this.hitParts(actor).length;
         return Number.isFinite(actor?.getFlag?.(module.id, `applied.${message.id}.${this.partKey}`));
       });
       if(!done) return;
@@ -635,6 +863,16 @@ export function registerMessages(){
       button.disabled = true;
       const label = button.querySelector("span");
       if(label) label.textContent = module.i18n("rollItem.apply.applied");
+    }
+
+    /* A ray's box lists only that ray's creature (dnd5e's lists every creature on the card) */
+    buildTargetListEntry(targetList, entry){
+      /* A creature since removed (its token being deleted : no actor left) : not listed */
+      if(!fromUuidSync(entry?.uuid ?? "", { strict : false })?.actor) return;
+      const ray = this.ray;
+      const target = (Number.isInteger(ray) && (targetList.targetingMode === "targeted")) ? this.#message?.system?.rayTarget?.(ray) : null;
+      if(target && (target.token !== entry.uuid)) return;
+      return super.buildTargetListEntry(targetList, entry);
     }
 
     getMergedOptions(uuid){
@@ -646,13 +884,43 @@ export function registerMessages(){
     /* Extra damage added as an alternative (Savage Attacker's second roll) : applying the first roll or the
        alternative keeps that one, the other goes away */
     async _onApplyDamage(event){
-      await super._onApplyDamage(event);
       const message = this.#message;
       const part = this.dataset.part || "base";
-      if(!message?.isOwner || !["base", "extra"].includes(part) || !message.system?.alternativesOf) return;
-      const ray = ("ray" in this.dataset) ? Number(this.dataset.ray) : null;
+      if(message && (part === "hit")) await this.#applyHit(event, message);
+      else {
+        /* The hit's own damage : what a hit does before it lands (Sap, Slow, Vex), as the row's Apply does */
+        if(message && (part === "base")){
+          for(const option of this.targetList?.querySelectorAll?.("option") ?? []){
+            const actor = fromUuidSync(option.value, { strict : false })?.actor;
+            if(actor?.isOwner) await beforeDamage(message, actor);
+          }
+        }
+        await super._onApplyDamage(event);
+      }
+      if(!message?.isOwner || !["base", "extra", "hit"].includes(part) || !message.system?.alternativesOf) return;
+      const ray = this.ray;
       if(!message.system.alternativesOf(ray).length) return;
-      await message.setFlag(module.id, `choice.${rayKey(ray)}`, (part === "extra") ? this.dataset.key : "base");
+      await message.setFlag(module.id, `choice.${rayKey(ray)}`, this.dataset.key || "base");
+    }
+
+    /* The hit box : each creature in one go, only the parts it hasn't taken (one damage, one Concentration save).
+       options.macro-helper : part (this box), parts (each part's own box key), withOwn (the attack's own damage is in it) */
+    async #applyHit(event, message){
+      event.preventDefault();
+      for(const option of this.targetList?.querySelectorAll?.("option") ?? []){
+        const token = fromUuidSync(option.value, { strict : false });
+        const actor = token?.actor;
+        if(!token?.isOwner || !actor) continue;
+        const parts = this.hitParts(actor);
+        /* Hook : a rule can hold a part back (Sneak Attack a second time in a turn) : it takes it out of `parts` */
+        Hooks.callAll(`${module.id}.applyHitParts`, message, actor, parts);
+        if(!parts.length) continue;
+        const withOwn = parts.some(p => p.own);
+        if(withOwn) await beforeDamage(message, actor);
+        await actor.applyDamage(damagesOf(parts.flatMap(p => p.rolls)), { ...this.getMergedOptions(option.value), isDelta : true, origin : message,
+          [module.id] : { part : this.partKey, parts : parts.map(p => p.box), withOwn } });
+      }
+      if(game.settings.get("dnd5e", "autoCollapseChatTrays") !== "manual") this.open = false;
     }
 
     matches(roll){
@@ -664,12 +932,8 @@ export function registerMessages(){
     }
 
     partDamages(){
-      const rolls = (this.#message?.rolls ?? []).filter(r => this.matches(r));
-      return aggregateDamageRolls(rolls, { respectProperties : true }).map(roll => ({
-        properties : new Set(roll.options.properties ?? []),
-        type : roll.options.type,
-        value : Math.max(0, roll.total),
-      }));
+      if(this.dataset.part === "hit") return damagesOf(this.hitParts(this.#for).flatMap(p => p.rolls));
+      return damagesOf((this.#message?.rolls ?? []).filter(r => this.matches(r)));
     }
 
     /* The message as the tray sees it : system.onSave is the rider's, system.origin.system.outcomes are the rider saves */
@@ -706,6 +970,7 @@ export function registerMessages(){
       template : `${module.path}/templates/roll-card.hbs`,
       actions : {
         rerollAttack : RollItemMessageData.#rerollAttack,
+        countHit : RollItemMessageData.#countHit,
         rerollDamage : RollItemMessageData.#rerollDamage,
         rerollRay : RollItemMessageData.#rerollRay,
         applyHits : RollItemMessageData.#applyHits,
@@ -717,6 +982,8 @@ export function registerMessages(){
         setCover : RollItemMessageData.#setCover,
         rowReroll : rowReroll,
         rowEffect : RowEffect,
+        rowRule : rowRule,
+        cardMove : cardMove,
       },
     }, { inplace : false }));
 
@@ -745,6 +1012,8 @@ export function registerMessages(){
           ability : new StringField({ blank : true, initial : "" }),
           dc : new NumberField({ integer : true, nullable : true, initial : null }),
           onSave : new StringField({ blank : true, nullable : true, initial : null }),
+          /* Who saves, when it isn't the creatures the attack hit (Ice Knife : everyone round the target) : token uuids */
+          targets : new ArrayField(new StringField({ blank : false }), { required : false, initial : [] }),
         }, { nullable : true, initial : null }),
       };
     }
@@ -782,6 +1051,18 @@ export function registerMessages(){
       return Number.isInteger(ray) ? this.rayAttack(ray) : this.attackRoll;
     }
 
+    /**
+     * Is this attack a critical hit : its d20, or a rule's (a hit on a Paralyzed creature from within 5 ft makes its
+     * damage a crit, not its d20). Damage added on top (Sneak Attack, a smite) doubles to match.
+     * @param {number|null} [ray=null]
+     * @returns {boolean}
+     */
+    critOf(ray = null){
+      if(this.attackOf(ray)?.isCritical) return true;
+      const base = Number.isInteger(ray) ? this.rayDamage(ray) : this.damageRolls;
+      return !!base?.some?.(r => r.isCritical);
+    }
+
     /* The mastery the attack used, as dnd5e chose it (only for actors who have mastered the weapon) */
     masteryOf(ray){
       return (Number.isInteger(ray) ? this.attackOf(ray)?.options?.mastery : this.mastery) || null;
@@ -794,14 +1075,14 @@ export function registerMessages(){
     /* Tokens the attack hit, from the card's targets */
     hitTargets(ray){
       const attack = this.attackOf(ray);
-      return this.targetsOf(ray).filter(t => hitsAC(attack, t.ac)).map(t => TargetsField.resolve(t).token).filter(Boolean);
+      return this.targetsOf(ray).filter(t => hitsAC(attack, t.ac, t.token)).map(t => TargetsField.resolve(t).token).filter(Boolean);
     }
 
     /* The targets of one attack, and those it hit (card descriptors) */
     targetHits(ray){
       const attack = this.attackOf(ray);
       const targets = this.targetsOf(ray);
-      return { targets, hits : targets.filter(t => hitsAC(attack, t.ac)) };
+      return { targets, hits : targets.filter(t => hitsAC(attack, t.ac, t.token)) };
     }
 
     /* Damage boxes for rolls, as the card draws them (for a rule's card section) */
@@ -828,7 +1109,44 @@ export function registerMessages(){
     isHitOn(ray){
       const attack = this.attackOf(ray);
       const targets = this.targetsOf(ray);
-      return targets.length ? targets.some(t => hitsAC(attack, t.ac)) : rollItem.isHit(attack);
+      return targets.length ? targets.some(t => hitsAC(attack, t.ac, t.token)) : rollItem.isHit(attack);
+    }
+
+    /**
+     * Which of an attack's results are in play : hit (it hit something), miss (it missed something), both when it
+     * can't tell (no target, no AC to judge by). A ray goes by its own roll, as its row shows it.
+     * @param {number|null} ray
+     * @returns {{ hit : boolean, miss : boolean }}
+     */
+    resultsOf(ray){
+      const attack = this.attackOf(ray);
+      if(!attack) return { hit : false, miss : false };
+      if(Number.isInteger(ray)){
+        if(!this.rayTarget(ray) && !Number.isFinite(attack.options?.target)) return { hit : true, miss : true };
+        const hit = rollItem.isHit(attack);
+        return { hit, miss : !hit };
+      }
+      const targets = this.targets;
+      if(!targets.length) return { hit : true, miss : true };
+      const hits = targets.filter(t => hitsAC(attack, t.ac, t.token)).length;
+      return { hit : hits > 0, miss : hits < targets.length };
+    }
+
+    /* Is that result's part of the card to show (its damage on a hit, Graze's on a miss) : in play, its dice played */
+    outcomeShown(ray, outcome){
+      if(!this.resultsOf(ray)[outcome]) return false;
+      return this.parent.getFlag(module.id, `dice.${rayKey(this.isMulti ? ray : null)}.${outcome}`) !== false;
+    }
+
+    /* The rolls that wait on one result of an attack */
+    outcomeRolls(ray, outcome){
+      const rolls = Number.isInteger(ray) ? this.rayRolls(ray) : this.parent.rolls;
+      return rolls.filter(r => rollItem.outcomeOf(r, this) === outcome);
+    }
+
+    /* A part's rolls are shown : each waits on nothing, or on a result that's shown */
+    rollsShown(ray, rolls){
+      return rolls.every(r => { const outcome = rollItem.outcomeOf(r, this); return !outcome || this.outcomeShown(ray, outcome); });
     }
 
     /* Extra damage on one attack (all of it, or one key's) */
@@ -841,6 +1159,44 @@ export function registerMessages(){
     /* Extra damage added as an alternative to the attack's own damage */
     alternativesOf(ray){
       return this.extraRolls(ray).filter(r => tagOf(r).alternative);
+    }
+
+    /**
+     * One attack's hit damage, as one box : its own damage (or the alternative applied instead : key) and every part
+     * added on top that has been shown (Sneak Attack, Hunter's Mark, a smite). Each part keeps its own box's key, so
+     * each creature is dealt it once.
+     * @param {number|null} ray
+     * @param {string|null} [key]   an alternative's key (Savage Attacker's second roll); null : the attack's own damage
+     * @returns {{ box : string, own : boolean, label : string, rolls : DamageRoll[] }[]}
+     */
+    hitParts(ray, key = null){
+      const extras = this.extraRolls(ray);
+      const own = key ? extras.filter(r => tagOf(r).key === key) : (Number.isInteger(ray) ? this.rayDamage(ray) : this.damageRolls);
+      const groups = new Map();
+      for(const roll of extras){
+        const { key : k, label, alternative } = tagOf(roll);
+        if(alternative) continue;
+        if(!groups.has(k)) groups.set(k, { box : boxKey("extra", k, ray), own : false, label : label ?? k, rolls : [] });
+        groups.get(k).rolls.push(roll);
+      }
+      return [
+        ...(own.length ? [{ box : boxKey(key ? "extra" : "base", key, ray), own : true, label : "", rolls : own }] : []),
+        ...[...groups.values()].filter(g => this.rollsShown(ray, g.rolls)),
+      ];
+    }
+
+    /* Its hit's damage goes in one box : it hit, it has damage of its own, and the hit's dice have played */
+    mergesHit(ray){
+      const own = Number.isInteger(ray) ? this.rayDamage(ray) : this.damageRolls;
+      return this.parent.isContentVisible && (own.length > 0) && this.isHitOn(ray) && this.outcomeShown(ray, "hit");
+    }
+
+    /* The hit box's damage, as the card draws it : one line per type, what was added on top named under it */
+    hitContext(ray, key = null, { hidden = false } = {}){
+      const parts = this.hitParts(ray, key);
+      if(!parts.length) return null;
+      const added = parts.filter(p => !p.own).map(p => p.label).filter(Boolean);
+      return { ...damageContext(this.parent, parts.flatMap(p => p.rolls), { hidden }), merged : true, added : added.join(", ") };
     }
 
     /* Which damage was applied when there are alternatives : "base", an extra key, or null while all are on offer */
@@ -884,7 +1240,7 @@ export function registerMessages(){
       if(!rolls.length) return;
       const all = this.parent.rolls.map(r => {
         if(!rolls.includes(r)) return r;
-        const copy = r.constructor.fromData(r.toJSON());
+        const copy = r.constructor.fromData(foundry.utils.deepClone(r.toJSON()));
         copy.options.type = type;
         if(copy.options.types) copy.options.types = [type];
         return copy;
@@ -898,8 +1254,8 @@ export function registerMessages(){
     }
 
     /**
-     * Add damage to an attack on this card, in its own labelled box with its own APPLY (Savage Attacker's second roll,
-     * Divine Smite, Sneak Attack...). The dice are shown first.
+     * Add damage to an attack on this card (Savage Attacker's second roll, Divine Smite, Sneak Attack...) : in the hit's box
+     * once it hits (hitParts), else in its own labelled box with its own APPLY. The dice are shown first.
      * @param {DamageRoll[]} rolls
      * @param {object} options
      * @param {string} options.key            what it is ("savage"), one box per key
@@ -913,11 +1269,37 @@ export function registerMessages(){
         roll.options[module.id] = { ...(Number.isInteger(ray) ? { ray } : {}), part : "extra", key, label : label ?? key, alternative,
           ...(onHit ? { onHit : true } : {}), ...(formula ? { formula } : {}) };
       }
-      await rollItem.showDice(rolls, this.parent);
-      const update = { rolls : [...this.parent.rolls, ...rolls].map(r => JSON.stringify(r)) };
+      const { held, flags } = holdOutcomes(this.parent, rolls);
+      await rollItem.showDice(rolls.filter(r => !held.includes(r)), this.parent);
+      const update = { rolls : [...this.parent.rolls, ...rolls].map(r => JSON.stringify(r)), ...flags };
       /* Already shown : Dice So Nice mustn't animate the added rolls a second time */
       if(game.dice3d) update["flags.dice-so-nice.skip"] = true;
       await this.parent.update(update);
+    }
+
+    /**
+     * The extra-damage lego : more damage on one attack, in the hit's box (Hunter's Mark, Hex, Sneak
+     * Attack) : card.extraDamage("1d6", { key : "hex", type : "necrotic", magical : true, ray }). Once per key per
+     * attack (a second call does nothing); doubled when that attack is a crit.
+     * @param {string} formula
+     * @param {object} options
+     * @param {string} options.key              what it is, one box per key
+     * @param {string|null} [options.type]      its damage type (default : the weapon's)
+     * @param {string} [options.label]          the box's title (default : the key)
+     * @param {number|null} [options.ray]       which attack on a multi card
+     * @param {boolean} [options.onHit=true]    its Apply only on a hit
+     * @param {boolean} [options.magical=false]
+     * @param {object} [options.rollData]       default : the card's activity's
+     * @returns {Promise<DamageRoll|null>}       null when it's already there
+     */
+    async extraDamage(formula, { key, type = null, label = null, ray = null, onHit = true, magical = false, rollData = null } = {}){
+      if(!formula || !key || this.extraRolls(ray, key).length) return null;
+      const item = this.parent.getAssociatedItem?.();
+      const kind = type ?? [...(item?.system?.damage?.base?.types ?? [])][0] ?? this.damageRolls?.[0]?.options?.type ?? null;
+      const data = rollData ?? this.parent.getAssociatedActivity?.()?.getRollData?.() ?? this.parent.getAssociatedActor?.()?.getRollData?.() ?? {};
+      const roll = await damageRoll(formula, { type : kind, crit : this.critOf(ray), magical, rollData : data });
+      await this.addDamage([roll], { key, label : label ?? key, ray, onHit, formula });
+      return roll;
     }
 
     /**
@@ -947,7 +1329,7 @@ export function registerMessages(){
     async forceD20(ray, value){
       const old = this.attackOf(ray);
       if(!old) return null;
-      const updated = Roll.fromData(old.toJSON());
+      const updated = Roll.fromData(foundry.utils.deepClone(old.toJSON()));
       const d20 = updated.dice?.[0];
       if(!d20) return null;
       d20.results = d20.results.map(r => ({ ...r, result : value }));
@@ -964,9 +1346,11 @@ export function registerMessages(){
         const base = Number.isInteger(ray) ? this.rayDamage(ray) : this.damageRolls;
         const damage = activity ? await rollItem.rollDamage(activity, updated) : [];
         if(damage.length){
+          /* No longer a critical hit : the same dice, without the extra ones */
+          const kept = old.isCritical && keepResults(base, damage);
           tag(damage, Number.isInteger(ray) ? { ray, part : "base" } : { part : "base" });
           rolls = [...rolls.filter(r => !base.includes(r)), ...damage];
-          shown.push(...damage);
+          if(!kept) shown.push(...damage);
         }
       }
       /* Extra boxes rolled from a formula (Hunter's Mark, a smite) : again, doubled or not */
@@ -977,23 +1361,60 @@ export function registerMessages(){
           if(!formula) continue;
           const again = await new DamageRoll(formula, {}, { ...roll.options, isCritical : updated.isCritical, configured : false }).evaluate();
           rolls = rolls.map(r => (r === roll) ? again : r);
-          shown.push(again);
+          if(!(old.isCritical && keepResults([roll], [again]))) shown.push(again);
         }
       }
       await replaceRolls(this.parent, { rolls, shown });
     }
 
-    /* A die added to one attack roll (Bardic Inspiration) : the card re-judges the hit */
-    async addBonus(ray, formula){
+    /* A die added to one attack roll (Bardic Inspiration), or taken off (subtract : Cutting Words) : the card re-judges
+       the hit */
+    async addBonus(ray, formula, { subtract = false } = {}){
       const old = this.attackOf(ray);
       if(!old) return false;
-      const { updated, extra } = await addDie(old, formula);
+      const { updated, extra } = await addDie(old, formula, { subtract });
       const rolls = this.parent.rolls.map(r => (r === old) ? updated : r);
       await replaceRolls(this.parent, { rolls, shown : [extra] });
       return true;
     }
 
-    /* The extra boxes for one attack, and the buttons item macros add to it (macro-helper.cardButtons) */
+    /**
+     * One target's AC raised for this card (Shield, GM) : its hits and misses follow, on top of any cover.
+     * @returns {Promise<boolean>}
+     */
+    async raiseAC(uuid, amount){
+      const message = this.parent;
+      const target = (this._source.targets ?? []).find(t => t.token === uuid);
+      if(!game.user.isGM || !target || !Number.isFinite(target.ac)) return false;
+      const key = uuidKey(uuid);
+      const cover = message.getFlag(module.id, `cover.${key}`);
+      await message.update({
+        [`flags.${module.id}.acBonus.${key}`] : (Number(message.getFlag(module.id, `acBonus.${key}`)) || 0) + (Number(amount) || 0),
+        [`flags.${module.id}.cover.${key}`] : { level : cover?.level ?? "none", base : cover ? cover.base : target.ac },
+      });
+      await setCover(message, uuid, cover?.level ?? "none", { attack : true });
+      return true;
+    }
+
+    /**
+     * One attack's hit on that creature turned into a miss (GM; hitBecomesMiss : Mirror Image's duplicate is hit
+     * instead) : its damage, Apply Hits and on-hit parts follow. The GM's Count as hit puts it back.
+     * @param {number|null} ray
+     * @param {string} uuid   the target's token uuid
+     * @returns {Promise<boolean>}
+     */
+    async turnToMiss(ray, uuid){
+      const old = this.attackOf(ray);
+      if(!game.user.isGM || !old || !uuid || rollItem.missedOn(old, uuid)) return false;
+      const updated = old.constructor.fromData(foundry.utils.deepClone(old.toJSON()));
+      const own = updated.options[module.id] ?? {};
+      updated.options[module.id] = { ...own, forcedHit : false, forcedMiss : [...(own.forcedMiss ?? []), uuid] };
+      await replaceRolls(this.parent, { rolls : this.parent.rolls.map(r => (r === old) ? updated : r), shown : [] });
+      return true;
+    }
+
+    /* The extra boxes for one attack (on a hit only the alternatives : the rest is in the hit's box), and the buttons
+       item macros add to it (macro-helper.cardButtons) */
     extrasContext(ray){
       if(!this.parent.isContentVisible) return null;
       const hasRay = Number.isInteger(ray);
@@ -1005,15 +1426,21 @@ export function registerMessages(){
         if(!groups.has(key)) groups.set(key, { key, label, rolls : [] });
         groups.get(key).rolls.push(roll);
       }
+      /* A hit : what's added on top is in the hit's box; an alternative's box is the hit's box with it instead */
+      const merged = this.mergesHit(ray);
       const extras = [...groups.values()]
         .filter(g => !choice || (choice === g.key) || !g.rolls.some(r => tagOf(r).alternative))
-        .map(g => ({ key : g.key, label : g.label, chosen : choice === g.key,
-          damage : { ...damageContext(this.parent, g.rolls), showTray : this.canApply && (!g.rolls.some(r => tagOf(r).onHit) || this.isHitOn(ray)) } }));
+        .filter(g => !merged || g.rolls.some(r => tagOf(r).alternative))
+        /* On-hit damage only once the attack hits */
+        .filter(g => this.rollsShown(ray, g.rolls))
+        .map(g => ({ key : g.key, label : g.label, chosen : choice === g.key, part : merged ? "hit" : "extra",
+          damage : { ...(merged ? this.hitContext(ray, g.key) : damageContext(this.parent, g.rolls)),
+            showTray : this.canApplyOn(ray) && (!g.rolls.some(r => tagOf(r).onHit) || this.isHitOn(ray)) } }));
 
-      /* Buttons : item macros listening to macro-helper.cardButtons push { id, label, icon, tooltip } */
+      /* Buttons : item macros listening to macro-helper.cardButtons push { id, label, icon, tooltip, conditions } */
       const buttons = [];
       Hooks.callAll(`${module.id}.cardButtons`, this.parent, buttons, { ray });
-      const valid = buttons.filter(b => b?.id && b?.label);
+      const valid = buttons.filter(b => b?.id && b?.label).map(b => ({ ...b, conditions : conditionTip(b.conditions ?? []) }));
       /* Notes : what changed the card's outcome (Interception) push { text, icon, tooltip } */
       const notes = [];
       Hooks.callAll(`${module.id}.cardNotes`, this.parent, notes, { ray });
@@ -1089,6 +1516,11 @@ export function registerMessages(){
       return this.parent.isContentVisible && (game.user.isGM || dnd5e.settings.allowPlayerDamageTray);
     }
 
+    /* An Apply for one ray's creature (null : the card's) : a player sees it only for a creature they own */
+    canApplyOn(ray = null){
+      return this.canApply && mayApplyTo(Number.isInteger(ray) ? [this.rayTarget(ray)].filter(Boolean) : this.targets);
+    }
+
     async applyRolls(actor, rolls){
       return applyDamageRolls(this.parent, actor, rolls);
     }
@@ -1099,6 +1531,9 @@ export function registerMessages(){
       const rendered = context.rolls;
       context.cover = coverContext(this.parent, this.targets);
       context.note = this.parent.getFlag(module.id, "note") ?? null;
+      /* A title a rule gave the card (Command : Halt) */
+      const title = this.parent.getFlag(module.id, "title");
+      if(title && context.item) context.item = { name : title, img : context.item.img, uuid : context.item.uuid };
       /* The item's description, as dnd5e's own cards show it (folds under the header) */
       if(this.parent.isContentVisible){
         const activity = this.parent.getAssociatedActivity?.();
@@ -1119,7 +1554,7 @@ export function registerMessages(){
       context.effects = [];
       if(canApplyEffects(this.parent)){
         const riderEffects = new Set(effectDocs(this.riderActivity).map(e => e.id));
-        context.effects = effectDocs(this.parent.getAssociatedActivity({ scaled : true })).filter(e => !riderEffects.has(e.id));
+        context.effects = effectDocs(this.parent.getAssociatedActivity({ scaled : true })).filter(e => !riderEffects.has(e.id) && cardBuilder.keeps(this.parent, e));
       }
 
       if(this.isMulti){
@@ -1141,10 +1576,15 @@ export function registerMessages(){
           const damage = this.rayDamage(i);
           const target = visible ? maskTarget(this.rayTarget(i)) : null;
           const hit = rollItem.isHit(attack);
+          /* Its damage only once it hits and its dice have played (a hidden card gives nothing away : always "?") */
+          const hitShown = !visible || this.outcomeShown(i, "hit");
           return {
             index : i,
             number : i + 1,
             canReroll,
+            hitShown,
+            /* The GM's call : this miss counts as a hit */
+            countHit : game.user.isGM && visible && !!attack && !this.resultsOf(i).hit,
             attack : (hidden && attack) ? await attack.render({ template : ROLL_TEMPLATE, isPrivate : true }) : (rendered[attackIndex] ?? ""),
             /* Hidden cards must not give away hits through the miss styling */
             hit : visible ? rollItem.isHit(attack) : true,
@@ -1156,11 +1596,15 @@ export function registerMessages(){
               ...coverShown(target),
               applied : appliedOn(this.parent, target.token, ["hits", "tray"]),
             } : null,
-            damage : (damage.length || !visible) ? damageContext(this.parent, damage, { hidden }) : null,
-            /* Damage is rolled either way; APPLY only shows on a hit (a reroll that hits brings it back) */
-            showTray : canApply && (damage.length > 0) && hit,
+            damage : ((damage.length || !visible) && hitShown) ? ((this.mergesHit(i) && this.hitContext(i, null, { hidden })) || damageContext(this.parent, damage, { hidden })) : null,
+            /* Damage is rolled either way and shows on a hit (a reroll that hits brings it, the GM can count a miss as one) */
+            showTray : this.canApplyOn(i) && (damage.length > 0) && hit && hitShown,
             sections : this.sectionsContext(i),
             extras : this.extrasContext(i),
+            /* What rules let you do to its target (a mastery) : its row */
+            ruleRows : visible ? buildRows(this.parent, { targets : [this.rayTarget(i)].filter(Boolean) })
+              .map(row => ({ ...row, ruleButtons : ruleButtonsOf(this.parent, row.uuid, { result : { hit }, owner : true, ray : i }) }))
+              .filter(row => row.ruleButtons.length) : [],
           };
         }));
         /* An alternative was the damage applied : the attack's own goes away */
@@ -1168,7 +1612,10 @@ export function registerMessages(){
           const choice = this.choiceOf(ray.index);
           if(choice && (choice !== "base")){ ray.damage = null; ray.showTray = false; }
         }
-        context.applyHits = canApply && context.rays.some(r => (r.hit && r.showTray) || r.sections.some(s => s.applies));
+        context.applyHits = canApply && context.rays.some(r => (r.hit && r.showTray) || (this.canApplyOn(r.index) && r.sections.some(s => s.applies)));
+        /* The attack's effects : once one of its attacks hits */
+        if(!context.rays.some(r => r.hitShown)) context.effects = [];
+        context.moves = cardMoves.context(this.parent);
         return this._hideUnrevealed(context);
       }
 
@@ -1177,18 +1624,38 @@ export function registerMessages(){
       context.rolls = (hidden && this.attackRoll)
         ? [await this.attackRoll.render({ template : ROLL_TEMPLATE, isPrivate : true })]
         : rendered.filter((_, i) => !(rolls[i] instanceof DamageRoll));
-      if(context.targets) context.targets = context.targets.map(t => ({ ...maskTarget(t), ...coverShown(t), applied : appliedOn(this.parent, t.token, ["hits", "tray"]) }));
+      if(context.targets) context.targets = context.targets.map(t => ({ ...maskTarget(t), ...(this.attackRoll ? { isMiss : !hitsAC(this.attackRoll, t.ac, t.token) } : {}),
+        ...coverShown(t), applied : appliedOn(this.parent, t.token, ["hits", "tray"]) }));
+      /* What rules let you do to a creature with no save (a mastery's Topple) : a row each, like a save card's */
+      if(this.parent.isContentVisible && !this.isMulti){
+        const attack = this.attackRoll;
+        context.ruleRows = buildRows(this.parent, { targets : this.targets })
+          .map((row, i) => ({ ...row, ruleButtons : ruleButtonsOf(this.parent, row.uuid, { result : { hit : hitsAC(attack, this.targets[i]?.ac, this.targets[i]?.token) }, owner : true }) }))
+          .filter(row => row.ruleButtons.length);
+      }
       const damage = this.damageRolls;
-      /* Damage is rolled either way; APPLY only shows on a hit (a reroll that hits brings it back) */
-      if(damage.length) context.damage = { ...damageContext(this.parent, damage, { hidden }), showTray : this.canApply && this.isHitOn(null) };
+      /* Damage is rolled either way and shows once the attack hits and its dice have played (a reroll that hits brings
+         it, the GM can count a miss as a hit); a hidden card gives nothing away : always "?" */
+      const visible = this.parent.isContentVisible;
+      const hitShown = !visible || this.outcomeShown(null, "hit");
+      if(damage.length && hitShown) context.damage = { ...((this.mergesHit(null) && this.hitContext(null, null, { hidden })) || damageContext(this.parent, damage, { hidden })),
+        showTray : this.canApplyOn(null) && this.isHitOn(null) };
+      if(context.buttons && !hitShown) context.buttons.damage = false;
+      if(!hitShown) context.effects = [];
+      context.countHit = game.user.isGM && visible && !!this.attackRoll && !this.resultsOf(null).hit;
 
       context.sections = this.sectionsContext(null);
       context.extras = this.extrasContext(null);
       const choice = this.choiceOf(null);
       if(choice && (choice !== "base")) context.damage = null;
 
-      if(this.rider?.id) context.rider = await this._prepareRiderContext(options);
+      /* A card macro took the save off (card.remove("save") : Haymaker against a Large creature) */
+      const noSave = (this.parent.getFlag(module.id, "cardParts")?.removed ?? []).some(r => (r === "save") || (r === "*"));
+      /* The on-hit save once it hits (a save for creatures of its own, Ice Knife's, either way) */
+      if(this.rider?.id && !noSave && (hitShown || this.rider.targets?.length)) context.rider = await this._prepareRiderContext(options);
       if(context.buttons && context.rider) context.buttons.rider = context.rider.hasDamage;
+      /* Every push and pull, at the bottom : one button per creature */
+      context.moves = cardMoves.context(this.parent);
 
       return this._hideUnrevealed(context);
     }
@@ -1207,11 +1674,13 @@ export function registerMessages(){
       context.sections = [];
       context.extras = null;
       context.rider = null;
+      context.moves = [];
       context.applyHits = false;
       context.buttons = null;
+      context.countHit = false;
       context.effects = [];
       context.rays = (context.rays ?? []).map(ray => ({
-        ...ray, damage : null, showTray : false, sections : [], extras : null, canReroll : false,
+        ...ray, damage : null, showTray : false, sections : [], extras : null, canReroll : false, countHit : false,
         ...(reveal < 1 ? { attack : "", hit : true, target : ray.target ? { ...ray.target, showResult : false } : null } : {}),
       }));
       if(reveal < 1){
@@ -1226,7 +1695,9 @@ export function registerMessages(){
       const save = this.riderActivity;
       if(!save) return [];
       const attack = this.attackRoll;
-      const targets = this.targets.filter(t => hitsAC(attack, t.ac));
+      /* Its own creatures (Ice Knife's burst, hit or miss), else those the attack hit */
+      const own = (this.rider?.targets ?? []).map(uuid => fromUuidSync(uuid, { strict : false })?.object).filter(Boolean);
+      const targets = own.length ? TargetsField.getDescriptors(own) : this.targets.filter(t => hitsAC(attack, t.ac, t.token));
       return buildRows(this.parent, {
         targets,
         hasSave : true,
@@ -1234,6 +1705,7 @@ export function registerMessages(){
         dc : Number.isFinite(this.rider.dc) ? this.rider.dc : save.save?.dc?.value,
         onSave : this.rider.onSave,
         hasRolls : this.riderRolls.length > 0,
+        rolls : this.riderRolls,
         bonus : save.save?.bonus ?? "",
         effects : effectsOf(save),
       });
@@ -1262,10 +1734,10 @@ export function registerMessages(){
       return {
         name : save?.name || game.i18n.localize("DND5E.SavingThrow"),
         label,
-        /* Faded when the attack is known to have missed, the GM can still use it */
-        miss : visible && !rollItem.isHit(this.attackRoll),
+        /* Faded when the attack is known to have missed, the GM can still use it (not when it's for others, hit or miss) */
+        miss : visible && !rollItem.isHit(this.attackRoll) && !this.rider?.targets?.length,
         hasDamage : rolls.length > 0,
-        damage : rolls.length ? { ...damageContext(this.parent, rolls, { hidden : hidesNumbers(this.parent) }), showTray : this.canApply && rollItem.isHit(this.attackRoll) } : null,
+        damage : rolls.length ? { ...damageContext(this.parent, rolls, { hidden : hidesNumbers(this.parent) }), showTray : this.canApplyOn(null) && rollItem.isHit(this.attackRoll) } : null,
         summaries,
         rows : this.riderRows(),
         /* The rows apply the save's effects (Apply effect, GM) : no tray, which would use the GM's selection */
@@ -1294,20 +1766,16 @@ export function registerMessages(){
         return replaceRolls(this.parent, { rolls : this.withRays(replaced), shown : [...replaced.values()].flat() });
       }
 
-      const attack = await rollItem.rollAttack(activity, event, {
+      /* The attack's tags stay (Cleave's extra attack), and rules' added rolls follow the new attack (Graze) */
+      const attack = await rollItem.attackStep(activity, event, {
+        target : (this.targets.length === 1) ? this.targets[0].token : null,
         ability : this.ability ?? undefined,
         attackMode : this.mode ?? undefined,
-        ...(this.disadvantage ? { disadvantage : true } : {}),
-        [module.id] : {
-          ...(this.targets.length === 1 ? { target : this.targets[0].token } : {}),
-          ...(this.disadvantage ? { reasons : [{ mode : "disadvantage", reason : rollItem.disadvantageReason(this.disadvantageWhy || true) }] } : {}),
-        },
-      }, mode);
+        disadvantage : this.disadvantage ? (this.disadvantageWhy || true) : false,
+        mode,
+        tags : this.attackRoll?.options?.[module.id]?.tags,
+      });
       if(!attack) return target.disabled = false;
-
-      /* The attack's tags stay (Cleave's extra attack), and rules' added rolls follow the new attack (Graze) */
-      const tags = this.attackRoll?.options?.[module.id]?.tags;
-      if(tags) attack.options[module.id] = { ...(attack.options[module.id] ?? {}), tags };
       const added = await rollItem.addedRolls(activity, attack, this.damageRolls);
 
       const { ability, ammunition, attackMode, mastery } = attack.options;
@@ -1316,6 +1784,22 @@ export function registerMessages(){
         shown : [attack],
         system : { ability, ammunition, mastery, mode : attackMode },
       });
+    }
+
+    /**
+     * The GM's call : a miss counts as a hit. The attack roll is marked, so everything that judges its hits follows
+     * (its damage, Apply Hits, on-hit parts and save); a new roll (a reroll) is judged again.
+     * @this {RollItemMessageData}
+     */
+    static async #countHit(event, target){
+      if(!game.user.isGM) return;
+      const ray = (target.dataset.ray === undefined) || (target.dataset.ray === "") ? null : Number(target.dataset.ray);
+      const old = this.attackOf(ray);
+      if(!old) return;
+      target.disabled = true;
+      const updated = old.constructor.fromData(foundry.utils.deepClone(old.toJSON()));
+      updated.options[module.id] = { ...(updated.options[module.id] ?? {}), forcedHit : true, forcedMiss : [] };
+      await replaceRolls(this.parent, { rolls : this.parent.rolls.map(r => (r === old) ? updated : r), shown : [] });
     }
 
     /** @this {RollItemMessageData} */
@@ -1370,21 +1854,11 @@ export function registerMessages(){
         : (game.user.character ? [{ actor : game.user.character }] : []);
       if(!rollers.length) return ui.notifications.warn("DND5E.ActionWarningNoToken", { localize : true });
 
-      const bonus = CONFIG.Dice.BasicRoll.replaceFormulaData(save.save.bonus ?? "", save.getRollData(), { missing : 0 });
-      const bonusData = CONFIG.Dice.BasicRoll.constructParts({ activityBonus : bonus });
-
+      const ability = this.rider.ability || save.save.ability.first();
+      const dc = Number.isFinite(this.rider.dc) ? this.rider.dc : save.save.dc.value;
       target.disabled = true;
       try {
-        for(const { actor, token } of rollers){
-          const speaker = ChatMessage.implementation.getSpeaker({ actor, scene : canvas.scene, token : token?.document });
-          const rollData = {
-            event,
-            ability : this.rider.ability || save.save.ability.first(),
-            target : Number.isFinite(this.rider.dc) ? this.rider.dc : save.save.dc.value,
-          };
-          if(bonusData.parts.length) rollData.rolls = [bonusData];
-          await actor.rollSavingThrow(rollData, {}, { data : { speaker, system : { ...save.messageSources, origin : this.parent.id } } });
-        }
+        for(const { actor, token } of rollers) await rollSave(token ?? actor, ability, dc, { from : save, event, dialog : true, card : this.parent });
       } finally {
         target.disabled = false;
       }
@@ -1430,26 +1904,46 @@ export function registerMessages(){
     /* Every ray that hit onto its own target, rays without a target go to the selected tokens. Misses with Graze deal that. */
     /** @this {RollItemMessageData} */
     static async #applyHits(event, target){
+      /* Each ray's boxes by their own keys (the ray's own tray uses the same) : a box a creature already took from a
+         ray's Apply isn't dealt again, and that tray sees what this dealt */
       const byActor = new Map();
+      let aimed = false;
       for(const i of this.rays.keys()){
         const hit = rollItem.isHit(this.rayAttack(i));
-        /* A miss : what rules added for one (Graze) */
-        let rolls = hit ? this.rayDamage(i) : this.addedRollsOf(i).filter(r => tagOf(r).onMiss);
+        let parts;
         if(hit){
           const choice = this.choiceOf(i);
-          const extras = this.extraRolls(i);
-          if(choice && (choice !== "base")) rolls = extras.filter(r => tagOf(r).key === choice);
-          rolls = [...rolls, ...extras.filter(r => !tagOf(r).alternative)];
+          parts = this.hitParts(i, (choice && (choice !== "base")) ? choice : null);
         }
-        if(!rolls.length) continue;
+        /* A miss : what rules added for one (Graze) */
+        else {
+          const groups = new Map();
+          for(const roll of this.addedRollsOf(i).filter(r => tagOf(r).onMiss)){
+            const box = boxKey(tagOf(roll).part, null, i);
+            if(!groups.has(box)) groups.set(box, { box, own : false, rolls : [] });
+            groups.get(box).rolls.push(roll);
+          }
+          parts = [...groups.values()];
+        }
+        if(!parts.length) continue;
         for(const actor of this.rayActors(i)){
-          byActor.set(actor, [...(byActor.get(actor) ?? []), ...rolls]);
+          aimed = true;
+          const done = actor.getFlag?.(module.id, `applied.${this.parent.id}`) ?? {};
+          const left = parts.filter(p => !Number.isFinite(done[p.box]));
+          if(left.length) byActor.set(actor, [...(byActor.get(actor) ?? []), ...left]);
         }
       }
-      if(!byActor.size) return ui.notifications.warn("rollItem.apply.noTarget", { localize : true });
+      if(!aimed) return ui.notifications.warn("rollItem.apply.noTarget", { localize : true });
 
       target.disabled = true;
-      for(const [actor, rolls] of byActor) await this.applyRolls(actor, rolls);
+      for(const [actor, parts] of byActor){
+        /* Hook : a rule can hold a part back (Sneak Attack a second time in a turn), as the hit box does */
+        Hooks.callAll(`${module.id}.applyHitParts`, this.parent, actor, parts);
+        if(!parts.length) continue;
+        if(parts.some(p => p.own)) await beforeDamage(this.parent, actor);
+        await actor.applyDamage(damagesOf(parts.flatMap(p => p.rolls)), { isDelta : true, origin : this.parent,
+          [module.id] : { part : "hits", parts : parts.map(p => p.box), withOwn : parts.some(p => p.own) } });
+      }
       target.disabled = false;
     }
   }
@@ -1473,8 +1967,21 @@ export function registerMessages(){
         setCover : RollItemSaveData.#setCover,
         rowReroll : rowReroll,
         rowEffect : RowEffect,
+        rowRule : rowRule,
+        cardMove : cardMove,
       },
     }, { inplace : false }));
+
+    /* A row's healing / damage applied without its button (temporary HP on the caster's own creature, at once) */
+    async applyRollsTo(uuid){
+      if(!this.damageRolls.length) return;
+      await applyRow(this.parent, { dataset : { target : uuid, multiplier : "1" }, disabled : false }, { rolls : this.damageRolls, targets : this.targets });
+    }
+
+    /* A row's effects applied without its button (a buff on the caster's own creature, at once) */
+    async applyEffectsTo(uuid){
+      await applyRowEffects(this.parent, { dataset : { target : uuid }, disabled : false }, { activity : this.parent.getAssociatedActivity({ scaled : true }), targets : this.targets });
+    }
 
     static defineSchema(){
       const { ArrayField, SchemaField, StringField } = foundry.data.fields;
@@ -1509,12 +2016,63 @@ export function registerMessages(){
       return rerollLowest(this.parent, this.damageRolls, n);
     }
 
+    /* Not its healing part's (healRolls) */
     get damageRolls(){
-      return this.parent.rolls.filter(r => r instanceof DamageRoll);
+      return this.parent.rolls.filter(r => (r instanceof DamageRoll) && (tagOf(r).part !== "heal"));
+    }
+
+    /**
+     * A second activity's healing on this card, under its save's rows (Land's Aid : the save and its damage, then the
+     * healing of one creature in the area) : rolled now, a row of its own for each creature it heals.
+     * @param {Activity} activity   a heal activity
+     * @param {Token[]} tokens      who it heals
+     * @returns {Promise<boolean>}
+     */
+    async addHealing(activity, tokens = []){
+      if(!this.parent.isOwner || !tokens.length) return false;
+      const rolls = tag(await rollItem.rollDamage(activity, null), { part : "heal" });
+      if(!rolls.length) return false;
+      const targets = tokens.flatMap(t => TargetsField.getDescriptors([t.object ?? t]));
+      await replaceRolls(this.parent, { rolls : [...this.parent.rolls, ...rolls], shown : rolls });
+      await this.parent.setFlag(module.id, "healing", { label : activity.name || activity.item?.name || "", targets });
+      return true;
+    }
+
+    get healRolls(){
+      return this.parent.rolls.filter(r => (r instanceof DamageRoll) && (tagOf(r).part === "heal"));
+    }
+
+    _prepareHealContext(){
+      const healing = this.parent.getFlag(module.id, "healing");
+      const rolls = this.healRolls;
+      if(!healing?.targets?.length || !rolls.length || !this.parent.isContentVisible) return null;
+      const damage = damageContext(this.parent, rolls);
+      damage.showTray = false;
+      return { label : healing.label, damage,
+        rows : buildRows(this.parent, { targets : healing.targets, hasRolls : true, rolls, isHeal : true, part : "heal" }) };
     }
 
     rayDamage(index){
       return this.damageRolls.filter(r => tagOf(r).ray === index);
+    }
+
+    /* Its rolls hurt (not healing or temporary Hit Points) : Protective Field, Psychic Spells, Empowered Spell */
+    get dealsDamage(){
+      return this.damageRolls.some(r => !(r.options?.type in (CONFIG.DND5E.healingTypes ?? {})));
+    }
+
+    /* Every damage roll's type changed (Psychic Spells), or one instance's */
+    async setDamageType(type, ray = null){
+      const rolls = Number.isInteger(ray) ? this.rayDamage(ray) : this.damageRolls;
+      if(!rolls.length) return;
+      const all = this.parent.rolls.map(r => {
+        if(!rolls.includes(r)) return r;
+        const copy = r.constructor.fromData(foundry.utils.deepClone(r.toJSON()));
+        copy.options.type = type;
+        if(copy.options.types) copy.options.types = [type];
+        return copy;
+      });
+      return this.parent.update({ rolls : all.map(r => JSON.stringify(r)) });
     }
 
     /* A utility activity's roll formula, rolled onto the card */
@@ -1545,7 +2103,7 @@ export function registerMessages(){
 
     targetRows(){
       const activity = this.parent.getAssociatedActivity({ scaled : true });
-      const hasSave = activity?.type === "save";
+      const hasSave = hasSaves(this.parent, activity);
       return buildRows(this.parent, {
         targets : this.targets,
         hasSave,
@@ -1553,16 +2111,17 @@ export function registerMessages(){
         dc : activity?.save?.dc?.value,
         onSave : this.onSave ?? activity?.damage?.onSave,
         hasRolls : this.damageRolls.length > 0,
+        rolls : this.damageRolls,
         isHeal : activity?.type === "heal",
         bonus : activity?.save?.bonus ?? "",
-        effects : hasSave ? effectsOf(activity) : [],
+        effects : effectsOf(activity),
       });
     }
 
     /* The abilities this card's saves use (automatic failures) */
     get saveAbilities(){
       const activity = this.parent.getAssociatedActivity();
-      return (activity?.type === "save") ? [...(activity.save?.ability ?? [])] : [];
+      return hasSaves(this.parent, activity) ? [...(activity.save?.ability ?? [])] : [];
     }
 
     /* Save outcomes for dnd5e's trays (and Shove's buttons) : read fresh, automatic failures fail */
@@ -1573,8 +2132,11 @@ export function registerMessages(){
     async _prepareContext(options){
       const context = await super._prepareContext(options);
       if(context.content) return context;
-      context.cover = coverContext(this.parent, this.parent.getAssociatedActivity()?.type === "save" ? this.targets : []);
+      context.cover = coverContext(this.parent, hasSaves(this.parent, this.parent.getAssociatedActivity()) ? this.targets : []);
       context.note = this.parent.getFlag(module.id, "note") ?? null;
+      /* A title a rule gave the card (Command : Halt) */
+      const title = this.parent.getFlag(module.id, "title");
+      if(title && context.item) context.item = { name : title, img : context.item.img, uuid : context.item.uuid };
       context.faces = await facesOf(this.parent);
 
       context.formula = await this._prepareFormulaContext();
@@ -1591,9 +2153,15 @@ export function registerMessages(){
             canReroll,
             target : visible ? this.rayTarget(i) : null,
             damage : damageContext(this.parent, damage),
-            showTray : canApply && damage.length > 0,
+            showTray : canApply && (damage.length > 0) && mayApplyTo([this.rayTarget(i)].filter(Boolean)),
           };
         });
+        context.extras = this.buttonsContext();
+        /* Apply All : not for a player owning none of the rays' creatures (it would do nothing) */
+        if(context.buttonGroups?.applyRays && !this.rays.some((_, i) => mayApplyTo([this.rayTarget(i)].filter(Boolean)))){
+          delete context.buttonGroups.applyRays;
+          if(foundry.utils.isEmpty(context.buttonGroups)) delete context.buttonGroups;
+        }
         return context;
       }
 
@@ -1601,12 +2169,16 @@ export function registerMessages(){
       if(damage.length) context.damage = damageContext(this.parent, damage, { hidden : hidesNumbers(this.parent) });
 
       /* A row per target replaces dnd5e's single save button summary and tray : each target saves and takes its own */
-      context.rows = this.targetRows();
-      if(context.rows.length){
+      /* Not context.rows : that's dnd5e's (the spell's level, school, components... pills) */
+      context.targetRows = this.targetRows();
+      if(context.targetRows.length){
         if(context.damage) context.damage.showTray = false;
-        if(this.parent.getAssociatedActivity()?.type === "save") context.effects = [];
+        /* The rows apply the effects (a save's, a buff's) : dnd5e's tray of every effect isn't needed */
+        context.effects = [];
         context.summaries = [];
         /* dnd5e's own save button rolls for everyone through its dialog : the rows replace it */
+        /* Its tag too ("DC 13 Charisma Saving Throw") : each row's save button already says it */
+        if(context.rows?.rollSave) delete context.rows.rollSave;
         if(context.buttonGroups){
           delete context.buttonGroups.rollSave;
           if(foundry.utils.isEmpty(context.buttonGroups)) delete context.buttonGroups;
@@ -1617,8 +2189,24 @@ export function registerMessages(){
       context.sections = [];
       if(this.parent.isContentVisible) Hooks.callAll(`${module.id}.cardSections`, this.parent, context.sections, { ray : null });
       context.sections = context.sections.filter(s => s?.partial);
+      context.healing = this._prepareHealContext();
+      context.moves = cardMoves.context(this.parent);
+      context.extras = this.buttonsContext();
 
       return context;
+    }
+
+    /* Buttons rules add to a save card (macro-helper.saveCardButtons : Protective Field, Psychic Spells, Empowered
+       Spell), and its notes (macro-helper.cardNotes, ray null : a damage cut) : the extras partial, no extra rolls */
+    buttonsContext(){
+      if(!this.parent.isContentVisible) return null;
+      const buttons = [];
+      Hooks.callAll(`${module.id}.saveCardButtons`, this.parent, buttons);
+      const valid = buttons.filter(b => b?.id && b?.label).map(b => ({ ...b, conditions : conditionTip(b.conditions ?? []) }));
+      const notes = [];
+      Hooks.callAll(`${module.id}.cardNotes`, this.parent, notes, { ray : null });
+      if(!valid.length && !notes.length) return null;
+      return { extras : [], buttons : valid, notes, ray : "", hasRay : false };
     }
 
     /* Re-roll one instance's damage, tagged with its index */
@@ -1631,7 +2219,9 @@ export function registerMessages(){
       const activity = rerollStart(this, target);
       if(!activity) return;
 
-      const keep = this.parent.rolls.filter(r => !(r instanceof DamageRoll));
+      /* Its healing part (Land's Aid) stays */
+      const old = this.damageRolls;
+      const keep = this.parent.rolls.filter(r => !old.includes(r));
       const damage = [];
       if(this.isMulti) for(const i of this.rays.keys()) damage.push(...await this._rollRay(activity, i));
       else damage.push(...await rollItem.rollDamage(activity, null));
@@ -1649,7 +2239,8 @@ export function registerMessages(){
 
       const damage = await this._rollRay(activity, index);
       if(!damage.length) return target.disabled = false;
-      const rolls = this.parent.rolls.filter(r => !(r instanceof DamageRoll) || tagOf(r).ray !== index);
+      const old = this.rayDamage(index);
+      const rolls = this.parent.rolls.filter(r => !old.includes(r));
       await replaceRolls(this.parent, { rolls : [...rolls, ...damage], shown : damage });
     }
 
@@ -1681,6 +2272,10 @@ export function registerMessages(){
     /* A target's damage / healing, from its row (applyRow) */
     /** @this {RollItemSaveData} */
     static async #rowApply(event, target){
+      if(target.dataset.part === "heal"){
+        const targets = this.parent.getFlag(module.id, "healing")?.targets ?? [];
+        return applyRow(this.parent, target, { rolls : this.healRolls, targets, part : "heal" });
+      }
       await applyRow(this.parent, target, { rolls : this.damageRolls, targets : this.targets });
     }
 

@@ -7,10 +7,12 @@ import { patch } from '../patch.js';
 import { uses } from '../uses.js';
 import { initiative } from './initiative.js';
 import { limits } from './limits.js';
-import { tokenOf, getRange } from '../helpers/tokens.js';
+import { tokenOf, getRange, distanceBetween } from '../helpers/tokens.js';
+import { actFromPlace } from './act-from.js';
 import { pickSpace } from '../helpers/targets.js';
-import { fitsProfile, chooseCreature } from '../helpers/creatures.js';
+import { fitsProfile, chooseOne } from '../helpers/creatures.js';
 import { compendiums } from './compendiums.js';
+import { summon, summonKind } from './summons.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -23,6 +25,8 @@ const log = logger.for(import.meta.url);
  *                spell). One familiar at a time : a new one replaces the last.
  *   Can't attack : the familiar's items with an attack are removed when it's summoned.
  *   0 HP       : it disappears; only casting the spell again brings one back.
+ *   Touch spells : with the familiar within 100 ft, casting a touch spell asks where from (actFrom) : from the
+ *                familiar's space, its Reaction spent (offered only while it can take one, and when a target is within its touch).
  *   Already one : using the item again asks first. With a familiar out : Store it (kept as it is now : HP,
  *                conditions...), Summon New (casts again, replacing it) or Release it. With one stored : Bring It Back
  *                (an empty space within 30 ft, exactly as it was, nothing spent) or Summon New. Storing, releasing and
@@ -40,6 +44,8 @@ export class familiars{
   /* Find Familiar's range (Wild Companion casts it), and how far a dismissed familiar can reappear */
   static RANGE = 10;
   static RETURN_RANGE = 30;
+  /* How far from its summoner a familiar can deliver a touch spell */
+  static TOUCH_RANGE = 100;
 
   static register(){
     if(game.system.id !== "dnd5e") return;
@@ -59,9 +65,16 @@ export class familiars{
       if(!familiars.enabledFor(idOf(this.item))) return wrapped(...args);
       const profile = args[0];
       const creatures = (await compendiums.entries(compendiums.FAMILIARS)).filter(a => !profile || fitsProfile(a, profile, this.getRollData?.({ deterministic : true }) ?? {}));
-      return creatures.length ? chooseCreature(creatures, { title : this.item.name, prompt : module.i18n("classes.druid.familiarPrompt") }) : wrapped(...args);
+      return creatures.length ? chooseOne(creatures, { title : this.item.name, prompt : module.i18n("classes.druid.familiarPrompt") }) : wrapped(...args);
     }));
-    gm.handle("summonFamiliar", (data, user) => this.summonAsGM(data, user));
+    /* The summon lego's rules for a familiar (the GM's client) : one of ours, one at a time, nothing to attack with */
+    summonKind("familiar", {
+      allowed : async (activity, creature) => (await compendiums.entries(compendiums.FAMILIARS)).some(a => a.uuid === creature) || await this.isSpecialForm(activity, creature),
+      before : async summoner => { await this.remove(this.tokensOf(summoner)); await this.forget(summoner); },
+      after : (created, summoner) => this.disarm(created, summoner),
+    });
+    /* A touch spell : delivered by the familiar (its Reaction, within 100 ft, a target within its touch), measured from its space */
+    actFromPlace("familiar", activity => this.deliverer(activity), { reaction : true, inRange : true });
     gm.handle("familiarStore", (data, user) => this.storeAsGM(data, user));
     gm.handle("familiarRelease", (data, user) => this.releaseAsGM(data, user));
     gm.handle("familiarReturn", (data, user) => this.returnAsGM(data, user));
@@ -113,6 +126,15 @@ export class familiars{
     return !!actor?.isPolymorphed && (actor.getFlag("dnd5e", "transformOptions")?.preset === "wildshape");
   }
 
+  /* The familiar that can deliver this touch spell for its caster (one of ours, within 100 ft), or null */
+  static deliverer(activity){
+    if((activity?.item?.type !== "spell") || (activity.range?.units !== "touch")) return null;
+    const me = tokenOf(activity.getUsageToken?.() ?? activity.actor);
+    if(!me) return null;
+    return this.tokensOf(activity.actor).map(t => tokenOf(t))
+      .find(t => t && this.enabledFor(idOf(this.originOf(t.actor))) && (distanceBetween(me, t) <= this.TOUCH_RANGE)) ?? null;
+  }
+
   /* The item that summoned a creature, if it's a familiar of ours */
   static originOf(actor){
     const origin = fromUuidSync(actor?.getFlag?.("dnd5e", "summon.origin") ?? "", { strict : false });
@@ -152,7 +174,7 @@ export class familiars{
       if(choice !== "new") return false;
     }
     /* It casts a spell, and no spells can be cast in a Wild Shape form */
-    if(this.isWildShaped(activity.actor) && !usage?.[module.id]?.shiftedAllowed && !limits.allow(module.format("classes.druid.noSpellsShifted", { name : activity.item.name }), { who : activity.actor.name, what : activity.item.name })) return false;
+    if(this.isWildShaped(activity.actor) && (usage?.[module.id]?.cantAllowed !== "wildShapeSpells") && !limits.allow(module.format("classes.druid.noSpellsShifted", { name : activity.item.name }), { who : activity.actor.name, what : activity.item.name })) return false;
     const profile = activity.availableProfiles?.find?.(p => !p.uuid) ?? activity.availableProfiles?.[0];
     const rollData = activity.getRollData?.({ deterministic : true }) ?? {};
     const creatures = (await compendiums.entries(compendiums.FAMILIARS)).filter(a => !profile || profile.uuid || fitsProfile(a, profile, rollData));
@@ -162,7 +184,7 @@ export class familiars{
       ui.notifications.warn(module.i18n("classes.druid.noFamiliars"));
       return null;
     }
-    const creature = await chooseCreature(creatures, { title : activity.item.name, prompt : module.i18n("classes.druid.familiarPrompt") });
+    const creature = await chooseOne(creatures, { title : activity.item.name, prompt : module.i18n("classes.druid.familiarPrompt") });
     if(!creature) return false;
     const actor = creatures.find(a => a.uuid === creature);
     /* A special form : its own profile when the activity has one */
@@ -188,9 +210,7 @@ export class familiars{
     const familiar = usage?.[module.id]?.familiar;
     if(!familiar?.creature || !activity?.actor?.isOwner) return;
     try {
-      const token = tokenOf(activity.actor)?.document;
-      await gm.run("summonFamiliar", { item : activity.item.uuid, activity : activity.id, ...familiar,
-        disposition : token?.disposition ?? activity.actor.prototypeToken?.disposition ?? 1 });
+      await summon(activity, familiar.creature, { space : { x : familiar.x, y : familiar.y }, profile : familiar.profile, kind : "familiar" });
     } catch(error){
       log.error(error);
       ui.notifications.warn(error.message);
@@ -202,43 +222,12 @@ export class familiars{
     return (actor?.items ?? []).filter(i => i.system?.activities?.some?.(a => a.type === "attack"));
   }
 
-  /**
-   * GM : make the familiar's token, for the summoner's owner : a creature from the Familiars compendium, in the space it
-   * picked, through dnd5e's own summon data (Fey, its flags), on the summoner's side and owned by its players, with
-   * nothing to attack with.
-   */
-  static async summonAsGM({ item : itemUuid, activity : activityId, creature, x, y, scene : sceneId, elevation = 0, profile : profileId, disposition = 1 } = {}, user){
-    const activity = fromUuidSync(itemUuid ?? "", { strict : false })?.system?.activities?.get(activityId);
-    const summoner = activity?.actor;
-    if(!summoner?.testUserPermission(user, "OWNER")) return false;
-    if(!user.isGM && !(await compendiums.entries(compendiums.FAMILIARS)).some(a => a.uuid === creature) && !(await this.isSpecialForm(activity, creature))) return false;
-    const scene = game.scenes.get(sceneId);
-    /* A world copy of the compendium's creature for its token (dnd5e's own : reused the next time) */
-    const actor = creature ? await dnd5e.documents.Actor5e.fetchExisting(creature).catch(error => { log.error(error); return null; }) : null;
-    const profile = activity.profiles.find(p => p._id === profileId) ?? activity.availableProfiles?.[0];
-    if(!scene || !actor || !profile) return false;
-
-    /* One familiar at a time : a new one replaces the last, or the one in its pocket dimension */
-    await this.remove(this.tokensOf(summoner));
-    await this.forget(summoner);
-    const options = { profile : profile._id, creatureType : activity.creatureTypes?.first?.() ?? null, creatureSize : activity.creatureSizes?.first?.() ?? null };
-    const changes = await activity.getChanges(actor, profile, options);
-    changes.tokenUpdates.disposition = disposition;
-    const owners = Object.fromEntries(game.users.filter(u => !u.isGM && summoner.testUserPermission(u, "OWNER")).map(u => [u.id, CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER]));
-    changes.actorUpdates.ownership = { ...(actor.ownership ?? {}), ...owners };
-    const config = { actor, placement : { x, y, elevation, rotation : 0 }, ...changes };
-    if(Hooks.call("dnd5e.preSummonToken", activity, profile, config, options) === false) return false;
-    const tokenData = await activity.getTokenData(config);
-    Hooks.callAll("dnd5e.summonToken", activity, profile, tokenData, options);
-    const created = await scene.createEmbeddedDocuments("Token", [tokenData], { dnd5e : { autoRollNPCHP : "no" } });
-    Hooks.callAll("dnd5e.postSummon", activity, profile, created, options);
-
-    /* A familiar can't attack (a Pact of the Chain Warlock's can) */
+  /* A familiar can't attack (a Pact of the Chain Warlock's can) */
+  static async disarm(created, summoner){
     const familiar = created?.[0]?.actor;
     const attacks = this.chainOf(summoner) ? [] : this.attackItems(familiar).map(i => i.id);
     if(attacks.length) await familiar.deleteEmbeddedDocuments("Item", attacks);
-    log.debug("Familiar", summoner.name, actor.name, "attacks removed", attacks.length);
-    return true;
+    log.debug("Familiar", summoner.name, familiar?.name, "attacks removed", attacks.length);
   }
 
   /* ---------- 0 HP ---------- */

@@ -1,0 +1,107 @@
+{
+  "name": "Study",
+  "type": "feat",
+  "img": "icons/sundries/books/book-open-purple.webp",
+  "system": {
+    "description": {
+      "value": "<p>When you take the Study action, you make an Intelligence check to study your memory, a book, a clue, or another source of knowledge and call to mind an important piece of information about it. The Areas of Knowledge table suggests which skills are applicable to various areas of knowledge.</p><p><strong>Arcana</strong> : spells, magic items, eldritch symbols, magical traditions, planes of existence, and certain creatures. <strong>History</strong> : historic events and people, ancient civilizations, wars, and certain creatures. <strong>Investigation</strong> : traps, ciphers, riddles, and gadgetry. <strong>Nature</strong> : terrain, flora, weather, and certain creatures. <strong>Religion</strong> : deities, religious hierarchies and rites, holy symbols, cults, and certain creatures.</p><p><em>Macro Helper</em> : choose the skill on the card; the GM sets the DC.</p>",
+      "chat": ""
+    },
+    "identifier": "study",
+    "source": {
+      "rules": "2024",
+      "book": "Macro Helper"
+    },
+    "activities": {
+      "mhStudyActivity1": {
+        "type": "check",
+        "name": "Study",
+        "_id": "mhStudyActivity1",
+        "sort": 100000,
+        "activation": {
+          "type": "action",
+          "value": null,
+          "override": false,
+          "condition": ""
+        },
+        "consumption": {
+          "scaling": {
+            "allowed": false
+          },
+          "spellSlot": true,
+          "targets": []
+        },
+        "description": {
+          "chatFlavor": "An Intelligence check : Arcana, History, Investigation, Nature or Religion.",
+          "value": ""
+        },
+        "duration": {
+          "units": "inst",
+          "concentration": false,
+          "override": false
+        },
+        "effects": [],
+        "range": {
+          "override": true,
+          "units": "self"
+        },
+        "target": {
+          "template": {
+            "contiguous": false,
+            "units": "ft",
+            "type": ""
+          },
+          "affects": {
+            "choice": false,
+            "count": "1",
+            "type": "self",
+            "special": ""
+          },
+          "override": true,
+          "prompt": false
+        },
+        "uses": {
+          "spent": 0,
+          "recovery": [],
+          "max": ""
+        },
+        "img": "",
+        "roll": {
+          "formula": "",
+          "name": "",
+          "prompt": false,
+          "visible": false
+        },
+        "check": {
+          "ability": "int",
+          "associated": [
+            "arc",
+            "his",
+            "inv",
+            "nat",
+            "rel"
+          ],
+          "bonus": "",
+          "dc": {
+            "calculation": "",
+            "formula": ""
+          },
+          "visible": true
+        }
+      }
+    },
+    "uses": {
+      "spent": 0,
+      "recovery": [],
+      "max": ""
+    },
+    "type": {
+      "value": "",
+      "subtype": ""
+    },
+    "requirements": "",
+    "properties": []
+  },
+  "effects": [],
+  "flags": {}
+}

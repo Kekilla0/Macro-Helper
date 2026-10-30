@@ -7,13 +7,17 @@ import { hands } from './hands.js';
 import { usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
 import { giveMode } from '../roll-item/reasons.js';
 import { uses } from '../uses.js';
-import { tokenOf, distanceBetween, getRange } from '../helpers/tokens.js';
+import { propertyIgnored } from './ignores.js';
+import { actionTracker } from './action-tracker.js';
+import { tokenOf, distanceBetween, getRange, actingFrom } from '../helpers/tokens.js';
 
 /**
  * Weapon properties, from the weapon's data and dnd5e's rules version (Modern 2024 / Legacy 2014) :
  *   Heavy        : disadvantage below STR 13 (melee) / DEX 13 (ranged) (2024), or for a Small / Tiny creature (2014)
  *   Hands        : two. A Two-Handed weapon takes both, other weapons and shields one; what's equipped must leave room
- *   Loading      : one shot per turn from that weapon, whatever the number of attacks (in combat)
+ *   Loading      : one shot from that weapon per Action, Bonus Action or Reaction that fires it, whatever the number of
+ *                  attacks (in combat; with the Action Tracker off, one a turn)
+ *   Ammunition   : loading a one-handed Ammunition weapon (Hand Crossbow, Sling) takes the other hand (Hands)
  *   Light        : an off-hand attack needs an attack with a different Light weapon first this turn (in combat)
  *   In hand      : a character's weapon must be equipped (natural weapons and Unarmed Strike always are)
  *   Range        : with no map pick (Pick Targets off, or Roll Item off), a target beyond the weapon's reach (melee),
@@ -42,6 +46,12 @@ export class weapons{
   }
   static register(){
     if(game.system.id !== "dnd5e") return;
+    /* Loading : a shot from a weapon that already fired on this Attack action starts the next Action's (Action Surge) */
+    actionTracker.NEW_ACTION.add((activity, rec, actor) => {
+      const item = activity?.item;
+      if((settings.value("weaponRules") === "off") || !item?.system?.properties?.has?.("lod") || propertyIgnored(actor, item, "lod")) return false;
+      return this.#used(actor, `loading.${item.id}.action${Number(rec.used?.action) || 0}`);
+    });
     Hooks.on("dnd5e.preRollAttackV2", config => this.onPreRollAttack(config));
     rollModes.add("heavy", config => this.heavyMode(config));
     Hooks.on("dnd5e.rollAttackV2", (rolls, { subject } = {}) => this.onRollAttack(subject, rolls?.[0]));
@@ -59,15 +69,18 @@ export class weapons{
     const item = activity?.item;
     if((limits.mode() === "off") || (activity?.type !== "attack") || (item?.type !== "weapon")) return next();
     if(settings.value("rollItem") && (settings.value("rollItemPick") !== "off")) return next();
+    /* Targets a rule or macro set itself (item.roll({ targets }) after a Trample) : not held to reach, like the spells' */
+    if(ctx?.config?.[module.id]?.useTargets) return next();
     const attacker = tokenOf(activity.actor);
-    const targets = [...(game.user.targets ?? [])].filter(t => t !== attacker);
+    const at = actingFrom(ctx.config) ?? attacker;
+    const targets = [...(game.user.targets ?? [])].filter(t => (t !== attacker) && (t !== at));
     if(!attacker || !targets.length) return next();
     const props = item.system.properties;
     const ranged = item.system.attackType === "ranged";
     const thrown = !ranged && !!props?.has?.("thr");
     const range = Math.max(getRange(item), (ranged || thrown) ? getRange(item, { long : true, thrown }) : 0);
     if(!(range > 0) || !Number.isFinite(range)) return next();
-    const out = targets.filter(t => distanceBetween(attacker, t) > range);
+    const out = targets.filter(t => distanceBetween(at, t) > range);
     if(out.length && !limits.allow(module.format("weapons.outOfRange", { weapon : item.name, names : out.map(t => t.name).join(", "), range }),
       { who : activity.actor.name, what : item.name })) return;
     return next();
@@ -147,12 +160,17 @@ export class weapons{
     const natural = (item.system.type?.value === "natural") || ((item.identifier ?? item.system.identifier) === "unarmed-strike");
     /* Hands : in a hand, not just equipped. Change puts it in (the Hands rules : Two-Handed, Versatile); a two-handed grip
        needs it in both. They can't overfill, so there's nothing to count */
+    /* A creature (NPC) : the weapon it attacks with is taken in hand, whatever Rule Fixes says (the GM's gear is
+       what it has; the swap still follows the rules : free with the attack, then its object interaction) */
     if(hands.manages(actor) && !natural){
       const held = hands.handOf(actor, item);
       if(!held){
-        if(change){
-          const slot = hands.freeHand(actor, item) ?? "main";
-          hands.put(actor, item, slot);
+        if(change || hands.isNpc(actor)){
+          const slot = attackMode.endsWith("offhand") ? "off" : (hands.freeHand(actor, item) ?? "main");
+          /* What it lets go of may cost a Utilize action (a shield) : none left, Block stops the attack */
+          const short = actionTracker.handsPlan(actor, hands.placed(actor, hands.startOf(actor), item, slot), hands.startOf(actor))?.short;
+          if(short && !limits.allow(short, { who : actor.name, what : module.i18n("actionTracker.objects") })) return false;
+          hands.put(actor, item, slot, { [module.id] : { handsChecked : true } });
           changed.push(module.format("hands.putInHand", { item : item.name }));
         }
         else fixable(module.format("hands.notInHand", { item : item.name }), { type : "hand", slot : hands.freeHand(actor, item) ?? "main" });
@@ -210,10 +228,19 @@ export class weapons{
       }
     }
 
-    if(props.has("lod") && this.#used(actor, `loading.${item.id}`)) problems.push(module.format("rules.weapon.loading", { item : item.name }));
-    /* Hands : an off-hand attack is with what the left hand holds */
-    if(attackMode.endsWith("offhand") && hands.manages(actor) && (hands.handOf(actor, item) !== "off")){
-      problems.push(module.format("hands.notOffHand", { item : item.name }));
+    if(props.has("lod") && this.#used(actor, this.loadingKey(actor, item)) && !propertyIgnored(actor, item, "lod")) problems.push(module.format("rules.weapon.loading", { item : item.name }));
+    /* Ammunition : loading a one-handed weapon (a Hand Crossbow, a Sling) takes the other hand, unless a rule skips it
+       (Crossbow Expert : ignoresProperty "amm"; Homebrew's Loading Without a Free Hand) */
+    if(hands.manages(actor) && !settings.value("homebrewLoadHand") && props.has("amm") && !props.has("two") && !thrown && !propertyIgnored(actor, item, "amm")){
+      const busy = hands.heldItems(actor).filter(i => (i.id !== item.id) && hands.canHold(i));
+      if(busy.length){
+        const names = busy.map(i => i.name).join(", ");
+        if(change){
+          for(const other of busy) other.update({ "system.equipped" : false });
+          changed.push(module.format("rules.weapon.loadHandFreed", { item : item.name, items : names }));
+        }
+        else fixable(module.format("rules.weapon.loadHand", { item : item.name, items : names }), { type : "free", ids : busy.map(i => i.id) });
+      }
     }
     if(attackMode.endsWith("offhand") && !props.has("lgt")) problems.push(module.format("rules.weapon.offhandLight", { item : item.name }));
     if(attackMode.endsWith("offhand") && game.combat?.started){
@@ -291,12 +318,19 @@ export class weapons{
     return item.system.properties?.has?.("two") ? 2 : 1;
   }
 
+  /* Loading's shot : one per Action, Bonus Action or Reaction that fires it (the Action Tracker says which paid); with
+     the tracker off, one a turn */
+  static loadingKey(actor, item){
+    const paid = actionTracker.paidBy(actor);
+    return paid ? `loading.${item.id}.${paid.replace(":", "")}` : `loading.${item.id}`;
+  }
+
   /* After a weapon attack : remember Loading's shot, and a Light weapon's main-hand attack, for the rest of the turn */
   static async onRollAttack(activity, roll){
     const item = activity?.item, actor = activity?.actor;
     if((item?.type !== "weapon") || !actor?.isOwner || (settings.value("weaponRules") === "off")) return;
     const props = item.system.properties ?? new Set();
-    if(props.has("lod")) await this.#mark(actor, `loading.${item.id}`);
+    if(props.has("lod")) await this.#mark(actor, this.loadingKey(actor, item));
     if(props.has("lgt") && !String(roll?.options?.attackMode ?? "").endsWith("offhand")){
       await this.#mark(actor, `light.${item.id}`);
       /* Out of combat there are no turns : the last Light weapon attack, for a minute */
