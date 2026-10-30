@@ -63,7 +63,7 @@ The main pieces, as methods on tokens, actors and items. Most also exist as `Mac
 | `card.system.addHealing(activity, tokens)` | A second activity's healing on a save card, under the saves, with its own row and Apply (Land's Aid). |
 | `MacroHelper.cutDamage(card, token, { amount, label })` | A card's damage to one creature made lower when applied (Interception, Deflect Attacks, Protective Field). |
 | `token.actor.save("con", 13, { from : item })` | The save lego: one save, rolled the way every rule rolls it. |
-| `token.applyCondition("prone", { save, dc, duration, repeat })`, `token.grapple(target)` | A condition, or a grapple, straight on a creature with no card. |
+| `token.giveCondition("prone", { save, dc, duration, repeat })`, `token.grapple(target)` | A condition, or a grapple, straight on a creature with no card. |
 | `token.endCondition("poisoned", { from })` | A condition taken off a creature (Lay on Hands' Remove Poison). Any creature that isn't your own (your character and its summons; the GM's: no player owns it): the GM's button. |
 | `MacroHelper.onFailedTest({ id, source, formula })` | A die a creature adds to its missed attack or failed save or check (Bardic Inspiration). |
 | `MacroHelper.markSpell({ id, spell, free, hours, damage })` | A spell that marks one creature and hurts it more on every attack, ending with Concentration (Hunter's Mark, Hex). |
@@ -81,7 +81,7 @@ The main pieces, as methods on tokens, actors and items. Most also exist as `Mac
 | `MacroHelper.concentrationModeFrom(match, { mode })`, `MacroHelper.onSaveMove({ item, feet, direction })` | A creature's damage gives the Concentration save it causes a mode (Mage Slayer); a push or pull on a failed save, one direction or a choice (Telekinetic Shove, Thunderwave). |
 | `MacroHelper.dropsComponents(match, ["v", "s"])`, `MacroHelper.quickRitual(match)`, `MacroHelper.actionRollMode(match, { action, mode })` | Spells cast without some components (Improved Illusions, Telekinetic's Mage Hand); a prepared Ritual at its normal time with no slot (Quick Ritual); a mode on a Default Action's check (Skulker's Hide). |
 | `MacroHelper.moveZone(actor, region?)` | Move a creature's movable area (Moonbeam's 60 ft): pick a space on the map, its cost spent. |
-| `MacroHelper.giveEffect(target, data, { save, dc, from, until })` | An effect on a creature, after its save; the GM's button when it isn't yours (Goaded, Seared). |
+| `MacroHelper.giveEffect(target, data, { save, dc, from, until, of, thisTurn })` | An effect on a creature, after its save, until someone's turn starts or ends; the GM's button when it isn't yours (Goaded, Seared, Sap). |
 | `MacroHelper.onMiss({ formula })`, `MacroHelper.addRow({ run, withDamage, once })` | Damage on a miss (Graze), and a GM button on a hit creature's card row (Topple, Sap, Slasher's Hamstring). |
 | `MacroHelper.conditionTip(ids)` | A button that gives a condition shows its 2024 rules on hover (every Apply button, Topple, Trip Attack); `conditions` on `makeButton`, `addRow`, `onHit`, `gm.ask`. |
 | `MacroHelper.onAttacked({ when, within, run })`, `MacroHelper.onTurnStart({ run })` | A creature's Reaction button when one near it is attacked or hit (Interception, Protection), and something at the start of its turns. |

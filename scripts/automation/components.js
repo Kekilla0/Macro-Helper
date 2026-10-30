@@ -8,6 +8,7 @@ import { hands } from './hands.js';
 import { itemFixes } from './item-fixes.js';
 import { idOf } from '../helpers/utils.js';
 import { itemOf } from '../helpers/actors.js';
+import { ruleSet, ruleValue } from '../helpers/rules.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -36,10 +37,12 @@ const log = logger.for(import.meta.url);
  *   dropsComponents(match, ["v", "s"], { when : ({ actor, item, activity, source }) => true, enabled, id })
  *   match   an item identifier the creature has (or several), or (actor) => the source
  */
-const drops = new Map();
+const drops = ruleSet("Drops components");
 
-export function dropsComponents(match, drop, { when = null, enabled = null, id = null } = {}){
-  drops.set(id ?? ((typeof match === "function") ? foundry.utils.randomID() : [match].flat().join(",")), { match, drop : [drop].flat().map(c => String(c).toLowerCase()[0]), when, enabled });
+export function dropsComponents(match, drop, options){
+  ({ value : drop, options } = ruleValue(drop, options, "drop"));
+  const { when = null, enabled = null, id = null } = options;
+  drops.add(match, { drop : [drop].flat().map(c => String(c).toLowerCase()[0]), when, enabled }, id);
 }
 
 export class components{
@@ -83,15 +86,8 @@ export class components{
     const need = { v : has("vocal") && (drop.v !== false), s : has("somatic") && (drop.s !== false), m : has("material") && (drop.m !== false) };
     /* Rules that drop some (dropsComponents : Improved Illusions no V; Psychic Spells no V or S), and Hooks
        "macro-helper.components" (activity, need) */
-    for(const rule of drops.values()){
-      if(rule.enabled && !rule.enabled()) continue;
-      try {
-        const actor = activity?.actor;
-        const source = actor && ((typeof rule.match === "function") ? rule.match(actor) : actor.items?.find?.(i => [rule.match].flat().includes(idOf(i))));
-        if(!source || (rule.when && !rule.when({ actor, item : activity.item, activity, source }))) continue;
-        for(const c of rule.drop) need[c] = false;
-      } catch(error){ log.error("Drops components", error); }
-    }
+    const actor = activity?.actor;
+    for(const { rule } of drops.active(actor, { item : activity?.item, activity })) for(const c of rule.drop) need[c] = false;
     Hooks.callAll(`${module.id}.components`, activity, need);
     return need;
   }

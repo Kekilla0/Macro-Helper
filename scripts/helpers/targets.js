@@ -1,5 +1,6 @@
 import { module } from '../module.js';
-import { tokenOf, distanceBetween, getRange, getTokensWithin, highlightRange, isOutOfAction, isIncapacitated, canSee, canSeePoint, isSpaceFree, HIGHLIGHT, actingNowFrom } from './tokens.js';
+import { warned } from './utils.js';
+import { tokenOf, distanceBetween, getRange, getTokensWithin, highlightRange, isOutOfAction, isIncapacitated, canSee, isSpaceFree, HIGHLIGHT, actingNowFrom } from './tokens.js';
 
 /* Opposite dispositions (hostile vs friendly) */
 export function isEnemy(a, b){
@@ -321,7 +322,7 @@ export async function pickTargets(origin, { count = 1, range, disposition = "ene
   confirm = "auto", setTargets : target = true, useTargets = true, repeat = false, long = false, thrown = false, normalRange, notice = "", filter : only, includeSelf = false,
   sight = true, tokenColor, tokenWhy, from : place = null, picked = [], cancelled = [] } = {}){
   const from = tokenOf(origin);
-  if(!from) return warn(module.i18n("helpers.pick.noToken"));
+  if(!from) return warned(module.i18n("helpers.pick.noToken"));
   /* Where it's measured from : the origin's token, or the space it acts from (given, or its use's : actFrom) */
   const at = (place && tokenOf(place)) || actingNowFrom(from) || from;
   if(!useTargets) canvas.tokens.setTargets([]);
@@ -334,7 +335,7 @@ export async function pickTargets(origin, { count = 1, range, disposition = "ene
   const candidates = (at === from) ? getTokensWithin(from, feet, { disposition, filter, includeSelf })
     : getTokensWithin(from, Infinity, { disposition, filter, includeSelf }).filter(t => (t !== at) && (distanceBetween(at, t) <= feet))
       .sort((a, b) => distanceBetween(at, a) - distanceBetween(at, b));
-  if(!candidates.length) return warn(module.i18n("helpers.pick.none"));
+  if(!candidates.length) return warned(module.i18n("helpers.pick.none"));
 
   /* Your own targets in range win, nothing to ask */
   const targeted = useTargets
@@ -355,11 +356,6 @@ export async function pickTargets(origin, { count = 1, range, disposition = "ene
   if(picks === null) return cancelled;
   if(target && picks.length) setTargets(picks);
   return picks;
-}
-
-function warn(message){
-  ui.notifications.warn(message);
-  return [];
 }
 
 /* The clicking itself : overlay, banner, click + key listeners, all removed at the end */
@@ -503,7 +499,7 @@ function pickOnMap(from, feet, candidates, { count, numberAllowed, within, confi
  */
 export async function pickSpace(origin, { range = 5, size = 1, notice = "", occupied = false, check = null, banner : title = null, keys = null, seen = false } = {}){
   const eyes = tokenOf(origin);
-  if(!eyes) return warn(module.i18n("helpers.pick.noToken")) && null;
+  if(!eyes) return warned(module.i18n("helpers.pick.noToken")) && null;
   /* Measured from the space its use acts from (actFrom), seen with its own eyes */
   const from = actingNowFrom(eyes) || eyes;
   const highlight = highlightRange(from, range, { showSelf : false });
@@ -536,7 +532,7 @@ export async function pickSpace(origin, { range = 5, size = 1, notice = "", occu
     if(other) return other;
     const center = { x : x + (size * grid / 2), y : y + (size * grid / 2) };
     let blocked = false;
-    if(seen) return canSeePoint(eyes, center) ? "" : module.i18n("helpers.space.unseen");
+    if(seen) return canSee(eyes, center) ? "" : module.i18n("helpers.space.unseen");
     try { blocked = !!CONFIG.Canvas.polygonBackends.move.testCollision(from.center, center, { type : "move", mode : "any" }); }
     catch { blocked = false; }
     return blocked ? module.i18n("helpers.space.wall") : "";

@@ -1,6 +1,6 @@
 import { logger } from '../log.js';
 import { patch } from '../patch.js';
-import { idOf } from '../helpers/utils.js';
+import { ruleSet } from '../helpers/rules.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -12,16 +12,10 @@ const log = logger.for(import.meta.url);
  *       Set on the worn armor before dnd5e works out AC, so the sheet's AC and its breakdown agree.
  *   match    an item identifier the creature has (or several), or (actor) => the source (anything truthy)
  */
-const rules = new Map();
+const rules = ruleSet("Armor Dexterity cap");
 
 export function acDexCap(match, { cap, armor = null, when = null, enabled = null, id = null } = {}){
-  rules.set(id ?? ((typeof match === "function") ? foundry.utils.randomID() : [match].flat().join(",")), { match, cap, armor, when, enabled });
-}
-
-function sourceOf(actor, match){
-  if(typeof match === "function") return match(actor) || null;
-  const ids = [match].flat();
-  return actor.items?.find?.(i => ids.includes(idOf(i))) ?? null;
+  rules.add(match, { cap, armor, when, enabled }, id);
 }
 
 /* The worn armor's Dexterity limit, raised by the rules that apply (its prepared data only) */
@@ -31,15 +25,10 @@ function raiseCap(actor){
   const limit = worn?.system?.armor?.dex;
   if(!worn || (limit === null) || (limit === undefined) || (worn.system.type.value === "heavy")) return;
   let best = Number(limit);
-  for(const rule of rules.values()){
-    if(rule.enabled && !rule.enabled()) continue;
-    if(rule.armor && ![rule.armor].flat().includes(worn.system.type.value)) continue;
+  const fits = rule => !rule.armor || [rule.armor].flat().includes(worn.system.type.value);
+  for(const { rule, source } of rules.active(actor, { armor : worn }, fits)){
     try {
-      const source = sourceOf(actor, rule.match);
-      if(!source) continue;
-      const info = { actor, armor : worn, source };
-      if(rule.when && !rule.when(info)) continue;
-      const cap = Number((typeof rule.cap === "function") ? rule.cap(info) : rule.cap);
+      const cap = Number((typeof rule.cap === "function") ? rule.cap({ actor, armor : worn, source }) : rule.cap);
       if(Number.isFinite(cap) && (cap > best)) best = cap;
     } catch(error){ log.error("Armor Dexterity cap", error); }
   }

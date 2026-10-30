@@ -1,6 +1,6 @@
 import { module } from '../module.js';
 import { logger } from '../log.js';
-import { idOf } from '../helpers/utils.js';
+import { ruleSet } from '../helpers/rules.js';
 import { tokenOf } from '../helpers/tokens.js';
 import { TYPES } from '../roll-item/message.js';
 const log = logger.for(import.meta.url);
@@ -22,25 +22,15 @@ const log = logger.for(import.meta.url);
  * off that damage once for each attack : a card's added box (Sneak Attack) gets only what the attack's own damage of
  * those types left of it. The same id (default : the match) replaces a rule.
  */
-const rules = new Map();
+const rules = ruleSet("Damage reduction");
 let hooked = false;
 
-const keyOf = (match, id) => id ?? [match].flat().map(String).join(",");
-
 export function reducesDamage(match, rule = {}){
-  rules.set(keyOf(match, rule.id), { ...rule, match });
+  const when = rule.when;
+  rules.add(match, { ...rule, when : when && (({ actor, source, card }) => when(actor, source, card)) }, rule.id);
   if(hooked) return;
   hooked = true;
   Hooks.on("dnd5e.calculateDamage", (actor, damages, options) => reduce(actor, damages, options));
-}
-
-function sourceOf(actor, match){
-  if(!actor) return null;
-  if(typeof match === "function"){
-    try { return match(actor) || null; } catch(error){ log.error("Damage reduction match", error); return null; }
-  }
-  const ids = [match].flat();
-  return actor.items?.find?.(i => ids.includes(idOf(i))) ?? null;
 }
 
 /* The attack on the card that hit this creature : its ray (null : a single attack), or undefined when none did */
@@ -54,17 +44,9 @@ function hitRay(card, actor){
 function reduce(actor, damages, options = {}){
   if(!Array.isArray(damages) || !rules.size) return;
   const card = options?.origin ?? options?.originatingMessage ?? null;
-  for(const rule of rules.values()){
+  const ray = hitRay(card, actor);
+  for(const { rule, source } of rules.active(actor, { card }, rule => !rule.attacks || (ray !== undefined))){
     try {
-      if(rule.enabled && !rule.enabled()) continue;
-      const source = sourceOf(actor, rule.match);
-      if(!source) continue;
-      let ray;
-      if(rule.attacks){
-        ray = hitRay(card, actor);
-        if(ray === undefined) continue;
-      }
-      if(rule.when && !rule.when(actor, source, card)) continue;
       const types = rule.types ?? null;
       const typed = d => (Number(d.value) > 0) && (!types || types.includes(d.type)) && !["healing", "temphp", "maximum"].includes(d.type);
       let left = Number((typeof rule.amount === "function") ? rule.amount(source, actor) : rule.amount) || 0;

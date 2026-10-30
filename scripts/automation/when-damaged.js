@@ -5,6 +5,7 @@ import { esc, buttonRow, addButton, makeButton, ownerIds, gmIds } from '../helpe
 import { tokenOf, distanceBetween } from '../helpers/tokens.js';
 import { findItem } from '../helpers/actors.js';
 import { hasReaction } from '../roll-item/card-builder.js';
+import { ruleArgs } from '../helpers/rules.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -13,10 +14,11 @@ const log = logger.for(import.meta.url);
  * player owns) gets a whispered card, Use / Pass, only when it can : the feature's activity ready (its uses left; a
  * Reaction : one left, not Incapacitated), and with `within`, the one who dealt it that close.
  *
- *   whenDamaged("storms-thunder", { feature : "giant-ancestry-storm", within : 60, atSource : true });
- *   whenDamaged("stones-endurance", { feature : "giant-ancestry-stone", after : (ctx, used) => ... });
+ *   whenDamaged("giant-ancestry-storm", { id : "storms-thunder", within : 60, atSource : true });
+ *   whenDamaged("giant-ancestry-stone", { id : "stones-endurance", after : (ctx, used) => ... });
  *
- *   feature   : the item it needs (identifier, name, or actor => item)
+ *   match     : the item it needs (identifier, name, or actor => item); the older form whenDamaged(id, { feature })
+ *               still works
  *   when      : ctx => boolean, does this damage count
  *   within    : feet to the one who dealt it (a card's creature; damage with no card : none, so not offered)
  *   activity  : (item, ctx) => Activity, what Use uses (default : the item's Reaction activity, else its first); its
@@ -31,9 +33,13 @@ const log = logger.for(import.meta.url);
 const rules = new Map();
 let hooked = false;
 
-export function whenDamaged(id, rule = {}){
+export function whenDamaged(match, rule = {}){
+  /* The older form : (id, { feature, ... }) */
+  if(rule.feature !== undefined) rule = { ...rule, id : rule.id ?? match };
+  else rule = ruleArgs(match, rule);
+  const id = rule.id;
   if(!id || !rule.feature) return;
-  rules.set(id, { id, ...rule });
+  rules.set(id, { ...rule, id });
   if(hooked) return;
   hooked = true;
   Hooks.on("dnd5e.applyDamage", (actor, amount, options) => offer(actor, amount, options).catch(error => log.warn("whenDamaged", error)));

@@ -31,9 +31,7 @@ export class hands{
   static SLOTS = ["main", "off"];
 
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("handsEnabled");
-  }
+  static enabled = settings.on("handsEnabled");
 
   static register(){
     if(game.system.id !== "dnd5e") return;

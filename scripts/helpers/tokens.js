@@ -872,7 +872,15 @@ function detects(v, points, { object = null, tolerance = 2 } = {}){
   }
 }
 
+/**
+ * Can the viewer see a creature (its own sight : walls, light, darkvision, Blinded, Invisible), or a point on the map
+ * (a space to teleport to : { x, y } canvas pixels).
+ * @param {Token|TokenDocument|Actor} viewer
+ * @param {Token|TokenDocument|Actor|{x : number, y : number}} target
+ * @returns {boolean}
+ */
 export function canSee(viewer, target){
+  if(isPoint(target)) return seesPoint(viewer, target);
   const v = tokenOf(viewer), t = tokenOf(target);
   if(!v || !t || (v === t)) return true;
   /* Vision setting : off, conditions only (Blinded / Invisible, no walls or light), full sight */
@@ -894,13 +902,8 @@ export function canSee(viewer, target){
   return detects(v, [t.center], { object : t, tolerance : Math.max(2, Math.floor(Math.min(t.w, t.h) / 4)) });
 }
 
-/**
- * Can the viewer see a point on the map (a space to teleport to) : like canSee, for a place instead of a creature.
- * @param {Token|TokenDocument|Actor} viewer
- * @param {{x : number, y : number}} point   canvas pixels
- * @returns {boolean}
- */
-export function canSeePoint(viewer, point){
+/* canSee for a place instead of a creature */
+function seesPoint(viewer, point){
   const v = tokenOf(viewer);
   if(!v || !point) return true;
   const mode = visionMode();

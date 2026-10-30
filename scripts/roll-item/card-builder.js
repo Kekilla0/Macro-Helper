@@ -9,7 +9,7 @@ import { rollOptions, rollOptionDamage, rollOptionD20, rollOptionDamageDice } fr
 import { disease } from '../automation/disease.js';
 import { patch } from '../patch.js';
 import { setDamage } from '../helpers/items.js';
-import { rollSave, rollSaveAsGM, setStatus, giveEffectAsGM } from '../helpers/actors.js';
+import { rollSave, rollSaveAsGM, setStatus, giveEffectAsGM, saveThenGive } from '../helpers/actors.js';
 import { damageRoll } from './extra-damage.js';
 import { onDamage } from './damage.js';
 import { noteReason } from './reasons.js';
@@ -339,8 +339,8 @@ export async function reactionMove(thing, { feet = null, noOA = true, name = nul
   const from = (noOA === true) ? true : (noOA === false) ? [] : [noOA].flat().map(t => (t?.document ?? t)?.uuid ?? t).filter(s => typeof s === "string");
   const label = module.format("cardBuilder.reactionMove", { name : name ?? module.i18n("cardBuilder.reaction"), feet : distance });
   const current = game.combat?.started ? game.combat.combatant?.actor : null;
-  const { addTimedEffect } = await import('../helpers/actors.js');
-  await addTimedEffect(actor, { name : label, img : "icons/skills/movement/feet-winged-boots-brown.webp",
+  const { giveEffect } = await import('../helpers/actors.js');
+  await giveEffect(actor, { name : label, img : "icons/skills/movement/feet-winged-boots-brown.webp",
     flags : { [module.id] : { reactionMove : { feet : distance, noOA : from, moved : 0 } } } }, { of : current ?? actor, until : "turnEnd", thisTurn : !!current });
   ui.notifications.info(label);
   return true;
@@ -487,54 +487,47 @@ export async function trample(thing, feet, { size = "medium", disengage = false,
   return entered;
 }
 
-/* A condition straight on a creature, no card (Flumph's Prone Deficiency) : applyCondition's options; from : the item,
-   by : the creature doing it (default : the item's owner). Not the user's own creature (gm.mine) : a card with the GM's
-   button (null). confirmed : on at once (a consequence of a change the GM already allowed) */
-export async function applyConditionNow(thing, spec = {}){
-  const actor = thing?.actor ?? thing;
-  const doc = thing?.document ?? ((thing?.documentName === "Token") ? thing : actor?.token ?? actor?.getActiveTokens?.(false, true)?.[0]?.document ?? null);
-  if(!actor) return false;
-  const part = applyCondition(spec);
-  const by = spec.by ? (tokenOf(spec.by)?.document ?? spec.by.actor ?? spec.by) : null;
-  const data = { actor : actor.uuid, token : doc?.uuid ?? null, part, origin : spec.from?.uuid ?? spec.from ?? null, by : by?.uuid ?? null };
-  /* Not the user's own creature : the GM's button puts it on */
-  if(!spec.confirmed && !gm.mine(actor)){
-    const status = CONFIG.statusEffects.find(s => s.id === spec.type);
-    const condition = status ? game.i18n.localize(status.name) : String(spec.type ?? "");
-    const name = (doc ?? actor).name;
-    await gm.ask("applyConditionAsk", data, { actor : by?.actor ?? (by?.documentName === "Actor" ? by : null) ?? spec.from?.actor ?? null,
-      text : module.format("cardBuilder.conditionAsk", { item : spec.from?.name ?? "", name, condition }),
-      label : module.format("cardBuilder.conditionButton", { name, condition }), conditions : [part.type, ...part.with] });
-    return null;
-  }
-  return gm.run("applyConditionNow", data);
-}
-
 /**
  * The condition lego : a creature gets a condition now, the way every rule gives one (Topple, Shove, a push into a
- * wall, a monster's Prone). Read as : target.applyCondition("prone", { save : "con", dc : 13, from : item }).
+ * wall, a monster's Prone, Flumph's Prone Deficiency). Read as : target.giveCondition("prone", { save : "con", dc : 13, from : item }).
  *   save, dc     it saves first (the ability, the DC) : a success and it doesn't get it
  *   duration     rounds, "endOfNextTurn" / "startOfNextTurn" / "endOfMyNextTurn", or Foundry's duration data
  *   repeat       "end" / "start" : it saves again (same ability and DC) at that point of each of its turns, ending it
  *   from, by     the item, and the creature doing it (default : the item's owner) : its name, its origin
+ *   confirmed    on at once (a consequence of a change the GM already allowed : Push Into Obstacles' Prone)
  *   ...          applyCondition's other options (with, escape, label, insteadOfDamage...)
  * Already under it : the harsher one stays. Done by the GM's client; on a creature that isn't the user's own (gm.mine),
- * the GM's button on a card puts it on (asked : true).
+ * the GM's button on a card puts it on (asked : true). giveCondition(thing, { type, ... }) : the older form, one spec.
  * @returns {Promise<{ applied : boolean, asked : boolean, save : { total : number, success : boolean }|null }>}
  */
-export async function giveCondition(thing, type, { save = null, dc = null, repeat = null, ...options } = {}){
+export async function giveCondition(thing, type, options = {}){
+  if(type && (typeof type === "object")) ({ type, ...options } = type);
+  const { save = null, dc = null, repeat = null, confirmed = false, ...spec } = options ?? {};
   const actor = thing?.actor ?? thing;
-  if(!actor || !type) return { applied : false, save : null };
-  let rolled = null;
-  if(save && Number.isFinite(Number(dc))){
-    rolled = await rollSave(thing, save, Number(dc), { from : options.from ?? null, flags : { against : [type] } });
-    if(!rolled) return { applied : false, save : null };
-    rolled = { total : rolled.total, success : rolled.success };
-    if(rolled.success) return { applied : false, save : rolled };
-  }
-  const again = (repeat && save && Number.isFinite(Number(dc))) ? { ability : save, dc : Number(dc), repeat } : null;
-  const result = await applyConditionNow(thing, { ...options, type, ...(again ? { save : again } : {}) });
-  return { applied : !!result, asked : result === null, save : rolled };
+  if(!actor || !type) return { applied : false, asked : false, save : null };
+  const doc = thing?.document ?? ((thing?.documentName === "Token") ? thing : actor?.token ?? actor?.getActiveTokens?.(false, true)?.[0]?.document ?? null);
+  /* save as an object (the older spec : { ability, dc, repeat }) is the condition's own repeated save */
+  const again = (save && (typeof save === "object")) ? save
+    : ((typeof repeat === "string") && save && Number.isFinite(Number(dc))) ? { ability : save, dc : Number(dc), repeat } : null;
+  /* repeat as an object ({ at, damage, type }) is applyCondition's damage each turn */
+  const part = applyCondition({ ...spec, type, ...(again ? { save : again } : {}), ...((repeat && (typeof repeat === "object")) ? { repeat } : {}) });
+  const by = spec.by ? (tokenOf(spec.by)?.document ?? spec.by.actor ?? spec.by) : null;
+  const data = { actor : actor.uuid, token : doc?.uuid ?? null, part, origin : spec.from?.uuid ?? spec.from ?? null, by : by?.uuid ?? null };
+  const status = CONFIG.statusEffects.find(s => s.id === type);
+  const condition = status ? game.i18n.localize(status.name) : String(type);
+  const name = (doc ?? actor).name;
+  const result = await saveThenGive(thing, { save : (typeof save === "string") ? save : null, dc, from : spec.from ?? null, against : [type], confirmed,
+    run : () => gm.run("applyConditionNow", data),
+    ask : () => gm.ask("applyConditionAsk", data, { actor : by?.actor ?? (by?.documentName === "Actor" ? by : null) ?? spec.from?.actor ?? null,
+      text : module.format("cardBuilder.conditionAsk", { item : spec.from?.name ?? "", name, condition }),
+      label : module.format("cardBuilder.conditionButton", { name, condition }), conditions : [part.type, ...part.with] }) });
+  const rolled = result.save ? { total : result.save.total, success : result.save.success } : null;
+  return { ...result, save : rolled };
+}
+
+/* The older name : giveCondition with one spec ({ type, ... }) */
+export function applyConditionNow(thing, spec = {}){
+  return giveCondition(thing, spec);
 }
 
 /**
@@ -967,7 +960,9 @@ export class cardBuilder{
       add(cls, "grapple", function(target, options){ return grapple(this, target, options); });
       add(cls, "attachedTo", function(){ return attachedTo(this); });
       add(cls, "save", function(ability, dc, options){ return rollSave(this, ability, dc, options); });
-      add(cls, "applyCondition", function(type, options){ return (typeof type === "string") ? giveCondition(this, type, options) : applyConditionNow(this, type); });
+      add(cls, "giveCondition", function(type, options){ return giveCondition(this, type, options); });
+      /* The older name (it clashed with the applyCondition card part) */
+      add(cls, "applyCondition", function(type, options){ return giveCondition(this, type, options); });
       add(cls, "endCondition", function(type, options){ return endCondition(this, type, options); });
       add(cls, "isType", function(type){ return isType(this, type); });
       add(cls, "isImmuneTo", function(item){ return isImmuneTo(this, item); });

@@ -50,9 +50,7 @@ export class druid{
   /* Known forms' changes left (Rest Choices' count), on the Wild Shape item */
   static SWAPS = "swaps.wildShapeForms";
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("classRules");
-  }
+  static enabled = settings.on("classRules");
 
   /* Circle of the Moon's Circle Forms : the Subclasses setting */
   static moonOn(){

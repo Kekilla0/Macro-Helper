@@ -37,9 +37,7 @@ export class pacts{
   static PACT_TYPES = ["necrotic", "psychic", "radiant"];
   static BOOK = { cantrips : 3, rituals : 2 };
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("classRules");
-  }
+  static enabled = settings.on("classRules");
 
   static is2014(item){
     return String(item?.system?.source?.rules ?? "") === "2014";

@@ -1,6 +1,6 @@
 import { module } from '../module.js';
 import { logger } from '../log.js';
-import { idOf } from '../helpers/utils.js';
+import { ruleSet } from '../helpers/rules.js';
 import { gm } from '../gm.js';
 import { limits } from './limits.js';
 import { actionTracker } from './action-tracker.js';
@@ -27,29 +27,21 @@ const log = logger.for(import.meta.url);
  *   match  an item identifier the creature has (or several), or (actor) => the item that gives it
  * The same id (default : the match) replaces a rule. The rows and their Apply follow at once.
  */
-const rules = new Map();
+const rules = ruleSet("Save damage");
 let hooked = false;
 
 const uuidKey = uuid => String(uuid).replaceAll(".", "-");
 const keyOf = (match, id) => id ?? [match].flat().map(String).join(",");
 
 export function saveDamage(match, rule = {}){
-  rules.set(keyOf(match, rule.id), { abilities : ["dex"], onlyHalf : true, success : 0, fail : null, ...rule, match, key : keyOf(match, rule.id) });
+  const key = keyOf(match, rule.id), when = rule.when;
+  rules.add(match, { abilities : ["dex"], onlyHalf : true, success : 0, fail : null, ...rule, key, when : when && (({ actor, card }) => when(actor, card)) }, key);
   if(hooked) return;
   hooked = true;
   Hooks.on(`${module.id}.rowResults`, (card, results) => rowResults(card, results));
   Hooks.on(`${module.id}.rowButtons`, (card, uuid, buttons, context = {}) => rowButtons(card, uuid, buttons, context));
   Hooks.on(`${module.id}.rowButton`, (card, uuid, id) => { if(String(id).startsWith("saveDamage|")) clicked(card, uuid, String(id).slice(11)); });
   gm.handle("saveDamageUsed", (data, user) => usedAsGM(data, user));
-}
-
-function sourceOf(actor, match){
-  if(!actor) return null;
-  if(typeof match === "function"){
-    try { return match(actor) || null; } catch(error){ log.error("Save damage match", error); return null; }
-  }
-  const ids = [match].flat();
-  return actor.items?.find?.(i => ids.includes(idOf(i))) ?? null;
 }
 
 /* The card's save : its abilities and what a success takes */
@@ -61,15 +53,8 @@ function saveOf(card){
 
 /* Does this rule hold for that creature on this card : its source item, or null */
 function holds(rule, card, actor){
-  if((rule.enabled && !rule.enabled()) || !actor) return null;
   const { abilities, onSave } = saveOf(card);
-  if(!abilities.some(a => rule.abilities.includes(a))) return null;
-  if(rule.onlyHalf && (onSave !== "half")) return null;
-  const source = sourceOf(actor, rule.match);
-  if(!source) return null;
-  try { if(rule.when && !rule.when(actor, card)) return null; }
-  catch(error){ log.error("Save damage", error); return null; }
-  return source;
+  return rules.holds(rule, actor, { card }, rule => abilities.some(a => rule.abilities.includes(a)) && (!rule.onlyHalf || (onSave === "half")));
 }
 
 const flagOf = (rule, uuid) => `saveDamage.${uuidKey(rule.key)}.${uuidKey(uuid)}`;

@@ -7,7 +7,7 @@ import { gm, onTurnStart } from '../gm.js';
 import { distanceBetween } from '../helpers/tokens.js';
 import { hasShieldEquipped, isUnarmored } from '../helpers/items.js';
 import { bonusOnlyWhen } from './bonus-only-when.js';
-import { addTimedEffect } from '../helpers/actors.js';
+import { giveEffect } from '../helpers/actors.js';
 import { giveMode } from '../roll-item/reasons.js';
 import { masteries } from './masteries.js';
 import { conditions } from './conditions.js';
@@ -46,9 +46,7 @@ const log = logger.for(import.meta.url);
  * Rule Limits decides (Warn : the button, with a notice; Block : no button).
  */
 export class fightingStyles{
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("featRules");
-  }
+  static enabled = settings.on("featRules");
 
   static register(){
     if(game.system.id !== "dnd5e") return;
@@ -187,7 +185,7 @@ export class fightingStyles{
     const result = await message.system.addD20(ray, "kl");
     await message.setFlag(module.id, key, true);
     /* On the protector (its player's own token), naming who it protects : nothing changes on the creature itself */
-    await addTimedEffect(guard.actor, {
+    await giveEffect(guard.actor, {
       name : module.format("fightingStyles.protectingMark", { name : target.name }), img : "icons/equipment/shield/heater-steel-worn.webp",
       flags : { [module.id] : { protection : { token : guard.uuid, target : target.uuid } } },
     }, { of : guard.actor, until : "turnStart" });

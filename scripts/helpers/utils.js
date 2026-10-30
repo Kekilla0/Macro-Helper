@@ -133,6 +133,12 @@ export function idOf(doc){
 
 /* ---------- Text ---------- */
 
+/* A warning shown, and an empty list (a helper that found nothing : `return warned("No token.")`) */
+export function warned(message){
+  ui.notifications.warn(message);
+  return [];
+}
+
 /**
  * Text made safe to put in HTML.
  * @param {*} value

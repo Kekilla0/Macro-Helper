@@ -34,9 +34,7 @@ const log = logger.for(import.meta.url);
 export class subclasses{
   static #runs = new Map();
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("subclassRules");
-  }
+  static enabled = settings.on("subclassRules");
 
   static register(){
     if(game.system.id !== "dnd5e") return;

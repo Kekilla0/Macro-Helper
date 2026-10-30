@@ -28,9 +28,7 @@ export class speciesLevels{
     { match : ["goliath"], items : { "large-form" : 5 } },
   ];
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("speciesRules");
-  }
+  static enabled = settings.on("speciesRules");
 
   static register(){
     if(game.system.id !== "dnd5e") return;

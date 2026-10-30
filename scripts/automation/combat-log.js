@@ -20,9 +20,7 @@ export class combatLog{
   static MAX = 600;
   static #app = null;
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && !!settings.value("actionTracker");
-  }
+  static enabled = settings.on("actionTracker");
 
   static register(){
     if(game.system.id !== "dnd5e") return;

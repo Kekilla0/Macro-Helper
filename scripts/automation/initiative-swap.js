@@ -1,5 +1,6 @@
 import { module } from '../module.js';
-import { whisperOwners, esc, idOf } from '../helpers/utils.js';
+import { whisperOwners, esc } from '../helpers/utils.js';
+import { ruleSet } from '../helpers/rules.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
@@ -22,12 +23,12 @@ const log = logger.for(import.meta.url);
  * initiativeSwap.open(combat) : the combat's open offers (Compact Initiative), [{ combatant, info, feature }]
  * initiativeSwap.allies(combatant, combat) : who it could swap with
  */
-const rules = new Map();
+const rules = ruleSet("Initiative swap", { when : false });
 let hooked = false;
 
 export function initiativeSwap(feature, rule = {}){
   if(!feature) return;
-  rules.set(feature, { ...rule, feature });
+  rules.add(feature, { ...rule, feature }, String(feature));
   if(hooked) return;
   hooked = true;
   Hooks.on("updateCombatant", (combatant, changes, options) => onInitiative(combatant, changes, options));
@@ -37,12 +38,8 @@ export function initiativeSwap(feature, rule = {}){
 
 /* The rule (and its item) a creature swaps with */
 function featureOf(actor){
-  for(const rule of rules.values()){
-    if(rule.enabled && !rule.enabled()) continue;
-    const item = actor?.items?.find?.(i => idOf(i) === rule.feature);
-    if(item) return { rule, item };
-  }
-  return null;
+  const [found] = rules.active(actor);
+  return found ? { rule : found.rule, item : found.source } : null;
 }
 
 /* A combatant's initiative was just rolled (or set) : the active GM posts the swap card */

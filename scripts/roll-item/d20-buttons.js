@@ -1,6 +1,6 @@
 import { module } from '../module.js';
 import { logger } from '../log.js';
-import { idOf } from '../helpers/utils.js';
+import { ruleSet, ruleArgs } from '../helpers/rules.js';
 import { hasUses, spendUses } from '../helpers/items.js';
 import { usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
 import { gm } from '../gm.js';
@@ -26,15 +26,16 @@ const log = logger.for(import.meta.url);
  *   })
  * Each rule is used once a roll (an attack on a multi-attack card : once each).
  */
-const rules = new Map();
+const rules = ruleSet("Extra d20");
 let hooked = false;
 
 const rayKey = ray => Number.isInteger(ray) ? String(ray) : "single";
 const want = rule => (rule.keep === "kl") ? -1 : 1;
 
-export function d20Button(rule){
-  if(!rule?.id || !["kh", "kl"].includes(rule.keep)) return;
-  rules.set(rule.id, rule);
+export function d20Button(match, rule){
+  rule = ruleArgs(match, rule);
+  if(!rule.id || !["kh", "kl"].includes(rule.keep)) return;
+  rules.add(rule.feature, rule, rule.id);
   if(hooked) return;
   hooked = true;
   Hooks.on(`${module.id}.rerollButtons`, (message, buttons, { actor, roll }) => testButtons(message, buttons, actor, roll));
@@ -45,16 +46,9 @@ export function d20Button(rule){
   gm.handle("d20Against", (data, user) => againstAsGM(data, user));
 }
 
-function featureOf(rule, actor){
-  if(!actor) return null;
-  if(typeof rule.feature === "function") return rule.feature(actor);
-  return actor.items?.find?.(i => idOf(i) === rule.feature) ?? null;
-}
-
 /* Its feature, when the rule is on, its owner may use it now and can pay */
 function usable(rule, actor){
-  if((rule.enabled && !rule.enabled()) || !actor) return null;
-  const feature = featureOf(rule, actor);
+  const feature = rules.holds(rule, actor);
   if(!feature) return null;
   if((rule.once === "turn") && usedThisTurn(actor, `d20-${rule.id}`)) return null;
   const cost = rule.cost?.(actor, feature) ?? null;
@@ -156,7 +150,7 @@ async function againstAsGM({ message : id, rule : ruleId, ray = null } = {}, use
   const result = await card.system.addD20(ray, rule.keep);
   if(result === "same") return [module.i18n("rollItem.d20.same")];
   if(!result) return [];
-  await pay(rule, actor, featureOf(rule, actor));
+  await pay(rule, actor, rules.sourceOf(actor, rule.match));
   await card.setFlag(module.id, key, true);
   return [];
 }

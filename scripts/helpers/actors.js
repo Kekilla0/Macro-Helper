@@ -2,7 +2,7 @@ import { module } from '../module.js';
 import { tokenOf, actorOf, isSpaceFree } from './tokens.js';
 import { gm } from '../gm.js';
 import { settings } from '../settings.js';
-import { idOf } from './utils.js';
+import { idOf, warned } from './utils.js';
 
 /* ---------- Hit points ----------
  * On dnd5e's own actor.applyDamage : the same path as the chat card APPLY trays, so resistances, immunities,
@@ -344,9 +344,12 @@ export async function itemEffectOn(item, { on = null, effect : id = null, activi
 }
 
 /**
- * An effect on a creature, after its save when one is given (a success : none); until "turnStart" / "turnEnd" of `of`'s
- * next turn (default : the item's owner). The GM's client puts it on; on a creature that isn't the user's own (gm.mine),
- * after the GM's button on a card (asked). A maneuver's Goaded, a smite's Seared.
+ * An effect on a creature, after its save when one is given (a success : none). With `until` : it lasts until the start
+ * or end of `of`'s next turn (default : the item's owner, else the creature itself; the active GM removes it then; made
+ * out of combat : it waits for that turn in a combat that begins, else ends after 30 seconds of game time), and the same
+ * effect (name and origin) already there lasts from now instead of being added twice. The GM's client puts it on; on a
+ * creature that isn't the user's own (gm.mine), after the GM's button on a card (asked). A maneuver's Goaded, a
+ * smite's Seared, a weapon mastery's Sap, Dash's "until the end of this turn".
  * @param {Actor|Token|TokenDocument} thing
  * @param {object} data                the effect's data
  * @param {object} [options]
@@ -355,38 +358,77 @@ export async function itemEffectOn(item, { on = null, effect : id = null, activi
  * @param {Item} [options.from]        what it comes from (its origin, picture, the save's source)
  * @param {string} [options.until]     "turnStart" | "turnEnd"
  * @param {Actor|Token} [options.of]   whose turn
+ * @param {boolean} [options.thisTurn=false]  "turnEnd" : the end of the turn going on now, not the next one
  * @returns {Promise<{ applied : boolean, asked : boolean, save : object|null }>}
  */
-export async function giveEffect(thing, data, { save = null, dc = null, from = null, until = null, of = null } = {}){
+export async function giveEffect(thing, data, { save = null, dc = null, from = null, until = null, of = null, thisTurn = false } = {}){
+  const actor = actorOf(thing);
+  if(!actor) return { applied : false, asked : false, save : null };
+  const effect = foundry.utils.mergeObject({ showIcon : CONST.ACTIVE_EFFECT_SHOW_ICON?.ALWAYS ?? 2, origin : from?.uuid ?? null, img : from?.img ?? null }, data, { inplace : false });
+  if(until){
+    const expires = gm.timedStamp(actorOf(of) ?? from?.actor ?? actor, until);
+    /* "Until the end of this turn" (Action Surge, Dash) : not the next one */
+    if(expires && thisTurn) expires.thisTurn = true;
+    foundry.utils.setProperty(effect, `flags.${module.id}.expires`, expires);
+  }
+  const payload = { actor : actor.uuid, data : effect, item : from?.uuid ?? null };
+  const name = tokenOf(thing)?.name ?? actor.name;
+  return saveThenGive(thing, { save, dc, from, against : data?.statuses ?? [],
+    /* Its own creature the user may change : here (no GM needed); else the GM's client */
+    run : () => actor.isOwner ? giveEffectAsGM(payload, game.user) : gm.run("giveEffect", payload),
+    ask : () => gm.ask("giveEffectAsk", payload, { actor : from?.actor ?? null,
+      text : module.format("giveEffect.ask", { item : from?.name ?? "", name, effect : effect.name }),
+      label : module.format("giveEffect.button", { name, effect : effect.name }), conditions : [...(effect.statuses ?? [])] }) });
+}
+
+/**
+ * The one way a rule changes a creature (giveEffect, giveCondition) : its save first, when one is given (a success :
+ * nothing), then `run()` at once on the user's own creature (gm.mine) or when `confirmed` (a consequence of a change the
+ * GM already allowed), else `ask()` : the GM's button on a card.
+ * @returns {Promise<{ applied : boolean, asked : boolean, save : object|null }>}  save : rollSave's result
+ */
+export async function saveThenGive(thing, { save = null, dc = null, from = null, against = [], confirmed = false, run, ask }){
   const actor = actorOf(thing);
   if(!actor) return { applied : false, asked : false, save : null };
   let rolled = null;
   if(save && Number.isFinite(Number(dc))){
-    rolled = await rollSave(thing, save, Number(dc), { from, flags : data?.statuses?.length ? { against : [...data.statuses] } : null });
+    rolled = await rollSave(thing, save, Number(dc), { from, flags : against?.length ? { against : [...against] } : null });
     if(!rolled || rolled.success) return { applied : false, asked : false, save : rolled };
   }
-  const effect = foundry.utils.mergeObject({ showIcon : CONST.ACTIVE_EFFECT_SHOW_ICON?.ALWAYS ?? 2, origin : from?.uuid ?? null, img : from?.img ?? null }, data, { inplace : false });
-  if(until) foundry.utils.setProperty(effect, `flags.${module.id}.expires`, gm.timedStamp(actorOf(of) ?? from?.actor ?? actor, until));
-  const payload = { actor : actor.uuid, data : effect, item : from?.uuid ?? null };
-  /* Not the user's own creature : the GM's button puts it on */
-  if(!gm.mine(actor)){
-    const name = tokenOf(thing)?.name ?? actor.name;
-    await gm.ask("giveEffectAsk", payload, { actor : from?.actor ?? null,
-      text : module.format("giveEffect.ask", { item : from?.name ?? "", name, effect : effect.name }),
-      label : module.format("giveEffect.button", { name, effect : effect.name }), conditions : [...(effect.statuses ?? [])] });
+  if(!confirmed && !gm.mine(actor)){
+    await ask();
     return { applied : false, asked : true, save : rolled };
   }
-  const applied = !!await gm.run("giveEffect", payload);
-  return { applied, asked : false, save : rolled };
+  return { applied : !!await run(), asked : false, save : rolled };
 }
 
 /* GM : giveEffect's effect put on (the ask card's button calls it with the GM as user) */
 export async function giveEffectAsGM({ actor : uuid, data } = {}, user){
   const actor = fromUuidSync(uuid ?? "", { strict : false });
   if(!actor || !data || !(user?.isGM || gm.mine(actor, user))) return false;
+  if(foundry.utils.hasProperty(data, `flags.${module.id}.expires`)) return !!await timedEffect(actor, data);
   await actor.createEmbeddedDocuments("ActiveEffect", [data]);
   return true;
 }
+
+/* A timed effect put on, one at a time per creature : two clicks at once (a player's and the GM's) find the first one
+   instead of adding twice. The same effect (name and origin) already there lasts from now instead. */
+function timedEffect(actor, data){
+  const key = actor.uuid;
+  const run = (timedQueue.get(key) ?? Promise.resolve()).then(async () => {
+    const expires = foundry.utils.getProperty(data, `flags.${module.id}.expires`);
+    const same = actor.effects.find(e => (e.name === data.name) && ((e.origin ?? null) === (data.origin ?? null)) && e.getFlag(module.id, "expires") !== undefined);
+    if(same){
+      await same.setFlag(module.id, "expires", expires);
+      return same;
+    }
+    const [created] = await actor.createEmbeddedDocuments("ActiveEffect", [data]);
+    return created ?? null;
+  });
+  timedQueue.set(key, run.catch(() => {}));
+  return run;
+}
+const timedQueue = new Map();
 
 /**
  * The effects itemEffectOn turned on, off again : an item's own switched off, a copy removed.
@@ -405,43 +447,10 @@ export async function itemEffectOff(thing, match, { data = {} } = {}){
   return effects.length;
 }
 
-/**
- * Put an effect on a creature that lasts until the start or end of someone's next turn (a weapon mastery, a spell's
- * "until the start of your next turn"). The active GM removes it then. Made out of combat : it waits for that turn in a
- * combat that begins, else ends after 30 seconds of game time. The same effect (name and origin) already there lasts
- * from now instead of being added twice. Needs permission to change the creature (its owner or the GM).
- * @param {Actor|Token|TokenDocument} thing   who gets the effect
- * @param {object} data                       ActiveEffect data (name, img, system.changes, statuses, flags...)
- * @param {object} [options]
- * @param {Actor|Token} [options.of]                    whose turn it waits for (default : the creature itself)
- * @param {"turnStart"|"turnEnd"} [options.until="turnStart"]
- * @param {boolean} [options.thisTurn=false]          "turnEnd" : the end of the turn going on now, not the next one
- * @returns {Promise<ActiveEffect|null>}
- */
-export function addTimedEffect(thing, data, { of, until = "turnStart", thisTurn = false } = {}){
-  const actor = actorOf(thing);
-  if(!actor?.isOwner) return Promise.resolve(null);
-  /* One at a time per creature : two clicks at once (a player's and the GM's) find the first one instead of adding twice */
-  const key = actor.uuid;
-  const run = (timedQueue.get(key) ?? Promise.resolve()).then(async () => {
-    const expires = gm.timedStamp(actorOf(of) ?? actor, until);
-    /* "Until the end of this turn" (Action Surge, Dash) : not the next one */
-    if(expires && thisTurn) expires.thisTurn = true;
-    /* Already there (the same effect from the same source) : it lasts from now instead, never twice */
-    const same = actor.effects.find(e => (e.name === data.name) && ((e.origin ?? null) === (data.origin ?? null)) && e.getFlag(module.id, "expires") !== undefined);
-    if(same){
-      await same.setFlag(module.id, "expires", expires);
-      return same;
-    }
-    /* Shown on the token : Foundry only shows effects with a duration unless told to */
-    const effect = foundry.utils.mergeObject({ showIcon : CONST.ACTIVE_EFFECT_SHOW_ICON?.ALWAYS ?? 2, flags : { [module.id] : { expires } } }, data, { inplace : false });
-    const [created] = await actor.createEmbeddedDocuments("ActiveEffect", [effect]);
-    return created ?? null;
-  });
-  timedQueue.set(key, run.catch(() => {}));
-  return run;
+/* The old form, for world macros : giveEffect with `until` (default "turnStart") */
+export function addTimedEffect(thing, data, { of = null, until = "turnStart", thisTurn = false } = {}){
+  return giveEffect(thing, data, { of, until, thisTurn });
 }
-const timedQueue = new Map();
 
 /* ---------- Last damage ---------- */
 
@@ -882,14 +891,14 @@ export function stepSize(key, steps = -1){
  */
 export async function splitToken(thing, { copies = 2, hp = 0.5, stepSize : step = true, scale = null, chat = true } = {}){
   const source = tokenOf(thing);
-  if(!source) return warn("Split : no token to split.");
-  if(!game.user.isGM) return warn("Split : only the GM can create and delete tokens.");
+  if(!source) return warned("Split : no token to split.");
+  if(!game.user.isGM) return warned("Split : only the GM can create and delete tokens.");
 
   const doc = source.document;
-  if(doc.actorLink) return warn(`Split : ${doc.name} is linked to its actor, the copies would share one HP pool. Unlink it first.`);
+  if(doc.actorLink) return warned(`Split : ${doc.name} is linked to its actor, the copies would share one HP pool. Unlink it first.`);
 
   const value = Math.floor((source.actor.system.attributes?.hp?.value ?? 0) * hp);
-  if(value < 1) return warn(`Split : ${doc.name} doesn't have enough HP to split.`);
+  if(value < 1) return warned(`Split : ${doc.name} doesn't have enough HP to split.`);
 
   const size = source.actor.system.traits?.size;
   const newSize = (step && size) ? stepSize(size, -1) : size;
@@ -897,7 +906,7 @@ export async function splitToken(thing, { copies = 2, hp = 0.5, stepSize : step 
   const width = tokenSize ?? doc.width * scale, height = tokenSize ?? doc.height * scale;
 
   const positions = splitSpaces(source, copies, Math.max(1, Math.round(width)), Math.max(1, Math.round(height)));
-  if(positions.length < copies) return warn(`Split : no room around ${doc.name} for ${copies} creatures.`);
+  if(positions.length < copies) return warned(`Split : no room around ${doc.name} for ${copies} creatures.`);
 
   /* What the new ones don't get : one creature's effects (Concentration, linked), and Bloodied (dnd5e judges it again) */
   const single = e => e.flags?.dnd5e?.dependentOn || e.flags?.[module.id]?.linked || (e.statuses ?? []).includes("bloodied");
@@ -971,9 +980,4 @@ function splitSpaces(token, count, w, h){
     }
   }
   return chosen.map(({ gx, gy }) => ({ x : gx * grid, y : gy * grid }));
-}
-
-function warn(message){
-  ui.notifications.warn(message);
-  return [];
 }

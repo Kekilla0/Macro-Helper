@@ -47,9 +47,7 @@ const log = logger.for(import.meta.url);
  */
 export class feats{
   /* Feats (Savage Attacker, Alert, Lucky, Tavern Brawler, Healer) */
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("featRules");
-  }
+  static enabled = settings.on("featRules");
 
   /* 2024 Tiefling : Darkvision 60 ft (any legacy) */
   static tieflingFix(item){

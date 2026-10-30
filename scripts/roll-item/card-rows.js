@@ -1,6 +1,6 @@
 import { module } from '../module.js';
 import { logger } from '../log.js';
-import { idOf } from '../helpers/utils.js';
+import { ruleSet, ruleArgs } from '../helpers/rules.js';
 import { tokenOf } from '../helpers/tokens.js';
 import { hitOf } from './hit-bonus.js';
 import { gm } from '../gm.js';
@@ -33,14 +33,13 @@ const log = logger.for(import.meta.url);
  *       mastery (the attack's weapon mastery), feature. Done once per creature per attack; greyed once done.
  * removeRow(id) takes a rule away (a macro replacing a built-in one).
  */
-const rules = [];
+const rules = ruleSet("Row rule", { when : false });
 let hooked = false;
 
-export function addRow(rule){
-  if(!rule?.id) return;
-  const old = rules.findIndex(r => r.id === rule.id);
-  if(old >= 0) rules[old] = rule;
-  else rules.push(rule);
+export function addRow(match, rule){
+  rule = ruleArgs(match, rule);
+  if(!rule.id) return;
+  rules.add(rule.feature ?? (() => true), rule, rule.id);
   if(hooked) return;
   hooked = true;
   Hooks.on(`${module.id}.rowButtons`, (message, uuid, buttons, context = {}) => rowButtons(message, uuid, buttons, context));
@@ -51,8 +50,7 @@ export function addRow(rule){
 }
 
 export function removeRow(id){
-  const index = rules.findIndex(r => r.id === id);
-  if(index >= 0) rules.splice(index, 1);
+  rules.delete(id);
 }
 
 const rayKey = ray => Number.isInteger(ray) ? String(ray) : "single";
@@ -64,19 +62,13 @@ export function rowDone(message, id, ray, uuid){
   return message?.getFlag?.(module.id, `rows.${id}.${rayKey(ray)}.${uuidKey(uuid)}`) ?? null;
 }
 
-function featureOf(rule, actor){
-  if(typeof rule.feature === "function") return rule.feature(actor);
-  return rule.feature ? (actor?.items?.find?.(i => idOf(i) === rule.feature) ?? null) : true;
-}
-
 /* The row's facts, or null when the rule doesn't apply to it */
 function rowOf(rule, message, ray, uuid){
-  if(rule.enabled && !rule.enabled()) return null;
   const hit = hitOf(message, ray);
   if(!hit) return null;
   const target = hit.targets.find(t => (t.document ?? t).uuid === uuid);
   if(!target) return null;
-  const feature = featureOf(rule, hit.actor);
+  const feature = rules.holds(rule, hit.actor);
   if(!feature) return null;
   if((rule.once === "turn") && !rowDone(message, rule.id, ray, uuid) && usedThisTurn(hit.actor, `row-${rule.id}`)) return null;
   const row = { ...hit, target, targets : [target], mastery : message.system.masteryOf?.(ray) ?? null, feature : (feature === true) ? null : feature };
@@ -85,7 +77,7 @@ function rowOf(rule, message, ray, uuid){
 
 function rowButtons(message, uuid, buttons, { result, ray = null } = {}){
   if(!game.user.isGM || !result?.hit) return;
-  for(const rule of rules){
+  for(const rule of rules.values()){
     try {
       const row = rowOf(rule, message, ray, uuid);
       if(!row) continue;
@@ -116,7 +108,7 @@ async function run(rule, message, ray, uuid, row){
 
 async function clicked(message, uuid, id, button){
   const [, ruleId, key] = id.split("|");
-  const rule = rules.find(r => r.id === ruleId);
+  const rule = rules.get(ruleId);
   const ray = (key === "single") ? null : Number(key);
   const row = rule && game.user.isGM && rowOf(rule, message, ray, uuid);
   if(!row) return;
@@ -133,7 +125,7 @@ async function withDamage(message, actor){
   const card = message?.system;
   if(!card?.hitTargets || !actor) return;
   const rays = card.rays?.length ? card.rays.map((_, i) => i) : [null];
-  for(const rule of rules.filter(r => r.withDamage)){
+  for(const rule of [...rules.values()].filter(r => r.withDamage)){
     for(const ray of rays){
       for(const token of card.hitTargets(ray).filter(t => t.actor?.uuid === actor.uuid)){
         const uuid = (tokenOf(token)?.document ?? token).uuid;

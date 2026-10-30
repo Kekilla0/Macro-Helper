@@ -10,7 +10,7 @@ Short macros that show how Macro Helper's pieces fit together. Copy a file's con
 | [group-attack.js](macros/group-attack.js) | Item Macro | A group pick on the map (`item.pickTargets` with `within` and `numberAllowed`), then `item.roll({ targets })`: one attack each. |
 | [bonus-attack.js](macros/bonus-attack.js) | Item Macro | A feature that makes an attack: `item.useActivity()` for the feature's own use, then `weapon.roll({ use: false })`. |
 | [multiattack.js](macros/multiattack.js) | Item Macro | A Multiattack written out: `actor.multiattack([{ weapon, count }])`, weapon by weapon. |
-| [frightful-presence.js](macros/frightful-presence.js) | Item Macro | Conditions straight on creatures, no card: `token.getTokensWithin()`, `target.applyCondition("frightened", { save, dc, duration, repeat })`. |
+| [frightful-presence.js](macros/frightful-presence.js) | Item Macro | Conditions straight on creatures, no card: `token.getTokensWithin()`, `target.giveCondition("frightened", { save, dc, duration, repeat })`. |
 | [grab.js](macros/grab.js) | Item Macro | `token.pickTargets()`, the save lego `target.actor.save()`, then `token.grapple()` or `token.push()`. |
 | [trample.js](macros/trample.js) | Item Macro | Movement: `token.trample()`, `token.useMovement()`, then `item.roll({ targets })`. |
 | [aura.js](macros/aura.js) | Item Macro, on a hook | A passive feature on *Its turn ends*: `hook`, `token.getTokensWithin()`, `item.roll({ targets })`. |

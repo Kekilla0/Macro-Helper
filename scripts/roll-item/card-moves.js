@@ -6,6 +6,7 @@ import { getSize, usedThisTurn, markUsedThisTurn, itemOf } from '../helpers/acto
 import { limits } from '../automation/limits.js';
 import { hitOf } from './hit-bonus.js';
 import { TYPES } from './message.js';
+import { ruleArgs } from '../helpers/rules.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -141,8 +142,9 @@ export class cardMoves {
 const moveRules = new Map();
 let movesHooked = false;
 
-export function onHitMove(rule){
-  if(!rule?.id) return;
+export function onHitMove(match, rule){
+  rule = ruleArgs(match, rule);
+  if(!rule.id) return;
   moveRules.set(rule.id, rule);
   if(movesHooked) return;
   movesHooked = true;
@@ -202,8 +204,9 @@ function hitMove(rule, message, uuid, moves, ray){
 const saveRules = new Map();
 let savesHooked = false;
 
-export function onSaveMove(rule){
-  if(!rule?.id) return;
+export function onSaveMove(match, rule){
+  rule = ruleArgs(match, rule);
+  if(!rule.id) return;
   saveRules.set(rule.id, rule);
   if(savesHooked) return;
   savesHooked = true;

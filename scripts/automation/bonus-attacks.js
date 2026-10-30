@@ -1,6 +1,6 @@
 import { module } from '../module.js';
 import { logger } from '../log.js';
-import { idOf } from '../helpers/utils.js';
+import { ruleSet } from '../helpers/rules.js';
 import { onDamage } from '../roll-item/damage.js';
 import { TYPES } from '../roll-item/message.js';
 import { actionTracker } from './action-tracker.js';
@@ -30,19 +30,10 @@ const log = logger.for(import.meta.url);
  *
  *   match  an item identifier the creature has (or several), or (actor) => the item (or anything truthy) that gives it
  */
-const rules = new Map();
+const rules = ruleSet("Bonus attack", { spells : false, when : false });
 let hooked = false;
 
 const keyOf = (match, id) => id ?? ((typeof match === "function") ? foundry.utils.randomID() : [match].flat().map(String).join(","));
-
-function sourceOf(actor, match){
-  if(!actor) return null;
-  if(typeof match === "function"){
-    try { return match(actor) || null; } catch(error){ log.error("Bonus attack match", error); return null; }
-  }
-  const ids = [match].flat();
-  return actor.items?.find?.(i => (i.type !== "spell") && ids.includes(idOf(i))) ?? null;
-}
 
 const afterOf = rule => [rule.after ?? "attackAction"].flat();
 
@@ -54,7 +45,7 @@ const afterOf = rule => [rule.after ?? "attackAction"].flat();
  */
 export function bonusAttackAfter(match, { after = "attackAction", when = null, trigger = null, damage = null, label = null, enabled = null, id = null } = {}){
   const key = keyOf(match, id);
-  rules.set(key, { id : key, match, after, when, trigger, damage, label, enabled });
+  rules.add(match, { id : key, after, when, trigger, damage, label, enabled }, key);
   hook();
   return key;
 }
@@ -73,21 +64,14 @@ export function bonusAttackRule(activity, rec, { attackAction = !!rec?.attack } 
   /* A grant first : a critical hit or a drop gave one, with that weapon */
   for(const grant of rec?.bonusGrants ?? []){
     const rule = rules.get(grant.rule);
-    if(!rule || (rule.enabled && !rule.enabled()) || (grant.item !== item.id)) continue;
-    const source = sourceOf(actor, rule.match);
+    if(!rule || (grant.item !== item.id)) continue;
+    const source = rules.holds(rule, actor);
     if(source) return { rule : rule.id, grant, text : textOf(rule, source) };
   }
   const info = { actor, item, activity, attacked : [...(rec?.attackIds ?? [])], light : [...(rec?.lightIds ?? [])] };
-  for(const rule of rules.values()){
-    if(rule.enabled && !rule.enabled()) continue;
-    const after = afterOf(rule);
-    if(!(after.includes("any") || (after.includes("attackAction") && attackAction))) continue;
-    const source = sourceOf(actor, rule.match);
-    if(!source) continue;
-    try { if(rule.when && !rule.when({ ...info, source })) continue; }
-    catch(error){ log.error("Bonus attack rule", error); continue; }
-    return { rule : rule.id, text : textOf(rule, source) };
-  }
+  const allowed = rule => { const after = afterOf(rule); return after.includes("any") || (after.includes("attackAction") && attackAction); };
+  const [found] = rules.active(actor, info, (rule, full) => allowed(rule) && (!rule.when || rule.when(full)));
+  if(found) return { rule : found.rule.id, text : textOf(found.rule, found.source) };
   return null;
 }
 
@@ -101,16 +85,7 @@ const granted = new Set();
 
 /* Rules this attack triggers : { rule, source } */
 function triggered(kind, hit){
-  const out = [];
-  for(const rule of rules.values()){
-    if((rule.enabled && !rule.enabled()) || !afterOf(rule).includes(kind)) continue;
-    const source = sourceOf(hit.actor, rule.match);
-    if(!source) continue;
-    try { if(rule.trigger && !rule.trigger({ ...hit, source })) continue; }
-    catch(error){ log.error("Bonus attack trigger", error); continue; }
-    out.push({ rule, source });
-  }
-  return out;
+  return rules.active(hit.actor, {}, (rule, { source }) => afterOf(rule).includes(kind) && (!rule.trigger || rule.trigger({ ...hit, source })));
 }
 
 /* A grant on its own turn only (a Bonus Action is), once per attack card and rule */
@@ -167,6 +142,6 @@ function hook(){
     const id = attack.tags?.bonusAttack;
     const rule = id ? rules.get(id) : null;
     if(!rule?.damage || (rule.enabled && !rule.enabled())) return;
-    rule.damage(attack, damage, { source : sourceOf(attack.actor, rule.match) });
+    rule.damage(attack, damage, { source : rules.sourceOf(attack.actor, rule.match) });
   });
 }

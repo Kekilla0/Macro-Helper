@@ -1,6 +1,6 @@
 import { module } from '../module.js';
 import { logger } from '../log.js';
-import { idOf } from '../helpers/utils.js';
+import { ruleSet } from '../helpers/rules.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -16,21 +16,13 @@ const log = logger.for(import.meta.url);
  *                              then goes (the meal eaten once). An effect that lasts until a rest : dnd5e's own
  *                              duration.expiry "shortRest" (any rest) or "longRest".
  */
-const rules = new Map();
+const rules = ruleSet("Hit die bonus");
 /* actor uuid -> the once-only effects a Hit Die roll just used */
 const usedOnce = new Map();
 
 export function hitDieBonus(match, { formula, when = null, enabled = null, id = null } = {}){
   if(!formula) return;
-  rules.set(id ?? ((typeof match === "function") ? foundry.utils.randomID() : [match].flat().join(",")), { match, formula, when, enabled });
-}
-
-function sourceOf(actor, match){
-  if(typeof match === "function"){
-    try { return match(actor) || null; } catch(error){ log.error("Hit die match", error); return null; }
-  }
-  const ids = [match].flat();
-  return actor.items?.find?.(i => ids.includes(idOf(i))) ?? null;
+  rules.add(match, { formula, when, enabled }, id);
 }
 
 const ruleOf = effect => effect?.getFlag?.(module.id, "rule") ?? null;
@@ -38,12 +30,8 @@ const ruleOf = effect => effect?.getFlag?.(module.id, "rule") ?? null;
 /* What the creature's rules and effects add to a Hit Die : ["1d8", ...], and the once-only effects used */
 export function hitDieBonuses(actor){
   const parts = [], once = [];
-  for(const rule of rules.values()){
-    if(rule.enabled && !rule.enabled()) continue;
-    const source = sourceOf(actor, rule.match);
-    if(!source) continue;
+  for(const { rule, source } of rules.active(actor)){
     try {
-      if(rule.when && !rule.when({ actor, source })) continue;
       const formula = (typeof rule.formula === "function") ? rule.formula({ actor, source }) : rule.formula;
       if(formula) parts.push(String(formula));
     } catch(error){ log.error("Hit die bonus", error); }

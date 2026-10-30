@@ -349,7 +349,7 @@ export async function pickAttack(item, { count = 1, disposition = "nonAlly", wit
       useTargets : !clearTargets,
       /* An attack can go at a creature you can't see (in fog, Invisible) : the roll gives the disadvantage, the colours show it */
       sight : false,
-      tokenColor : t => predictMode(attack, t, { attackMode : attackModeFor(item, t, { long, ...by }), disadvantage : longOrThreat(t) }),
+      tokenColor : t => predictModeWhy(attack, t, { attackMode : attackModeFor(item, t, { long, ...by }), disadvantage : longOrThreat(t) }).mode,
       /* Hovering a coloured candidate : why */
       tokenWhy : t => predictModeWhy(attack, t, { attackMode : attackModeFor(item, t, { long, ...by }), disadvantage : longOrThreat(t),
         disadvantageWhy : isLong(t) ? module.i18n("helpers.pick.whyLong") : module.i18n("helpers.pick.whyThreatened") }),
@@ -816,23 +816,16 @@ export async function setDamage(item, formula, { type } = {}){
 }
 
 /**
- * How an attack would roll against a target, before rolling : "advantage", "disadvantage" or "normal5e" (neither, or
- * both cancelling). The same rules the roll uses (conditions, sight, Dodging, flanking, Help, Sap / Vex, Heavy, Reckless),
- * plus long range / threatened. For the pick map's colours; the keys or prompt you choose aren't known yet.
+ * How an attack would roll against a target, before rolling, and why : { mode : "advantage" | "disadvantage" |
+ * "normal5e" (neither, or both cancelling), advantage : [reasons], disadvantage : [reasons] }. The same rules the roll
+ * uses (conditions, sight, Dodging, flanking, Help, Sap / Vex, Heavy, Reckless), plus long range / threatened. For the
+ * pick map's colours and hover; the keys or prompt you choose aren't known yet.
  * @param {Activity} activity   the attack
  * @param {Token} target
  * @param {object} [options]
  * @param {string} [options.attackMode]
- * @param {boolean} [options.disadvantage]  long range, ranged while threatened...
- * @returns {"advantage"|"normal5e"|"disadvantage"}
- */
-export function predictMode(activity, target, { attackMode, disadvantage = false } = {}){
-  return predictModeWhy(activity, target, { attackMode, disadvantage }).mode;
-}
-
-/**
- * predictMode with its reasons (for the pick map's hover) : { mode, advantage : [reasons], disadvantage : [reasons] }.
- * @param {string} [options.disadvantageWhy]  the reason for options.disadvantage (long range, threatened)
+ * @param {boolean} [options.disadvantage]    long range, ranged while threatened...
+ * @param {string} [options.disadvantageWhy]  the reason for options.disadvantage
  */
 export function predictModeWhy(activity, target, { attackMode, disadvantage = false, disadvantageWhy = "" } = {}){
   const roll = { options : {} };

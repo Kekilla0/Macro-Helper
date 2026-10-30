@@ -59,9 +59,7 @@ export class actionTracker{
   static MANY = 99;
   static LOG_MAX = 40;
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && !!settings.value("actionTracker");
-  }
+  static enabled = settings.on("actionTracker");
 
   static register(){
     if(game.system.id !== "dnd5e") return;

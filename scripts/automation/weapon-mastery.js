@@ -4,11 +4,11 @@ import { logger } from '../log.js';
 import { chooseSet } from '../helpers/creatures.js';
 import { restChoices } from './rest-choices.js';
 import { limits } from './limits.js';
-import { idOf } from '../helpers/utils.js';
+import { ruleSet } from '../helpers/rules.js';
 const log = logger.for(import.meta.url);
 
-/* More masteries from a feature (extraMasteries) : id -> { match, count, pool, enabled } */
-const extras = new Map();
+/* More masteries from a feature (extraMasteries) : { match, count, pool, enabled } */
+const extras = ruleSet("Extra masteries");
 
 /**
  * More weapon masteries from a feature (Weapon Master; a homebrew "a second mastery"; a monster's) : `count` more kinds
@@ -18,7 +18,7 @@ const extras = new Map();
  *   match    an item identifier the creature has (or several), or (actor) => the source
  */
 export function extraMasteries(match, { count = 1, pool = "proficient", enabled = null, id = null } = {}){
-  extras.set(id ?? ((typeof match === "function") ? foundry.utils.randomID() : [match].flat().join(",")), { match, count, pool, enabled });
+  extras.add(match, { count, pool, enabled }, id);
 }
 
 /**
@@ -45,9 +45,7 @@ export class weaponMastery{
     rogue : { pool : "finesseLight", table : { 1 : 2 } },
   };
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("classRules");
-  }
+  static enabled = settings.on("classRules");
 
   static register(){
     if(game.system.id !== "dnd5e") return;
@@ -70,10 +68,7 @@ export class weaponMastery{
   /* The extraMasteries rules the creature has : [{ count, pool }] */
   static extrasOf(actor){
     const out = [];
-    for(const rule of extras.values()){
-      if(rule.enabled && !rule.enabled()) continue;
-      const source = (typeof rule.match === "function") ? rule.match(actor) : actor?.items?.find?.(i => [rule.match].flat().includes(idOf(i)));
-      if(!source) continue;
+    for(const { rule, source } of extras.active(actor)){
       const count = Number((typeof rule.count === "function") ? rule.count(actor, source) : rule.count) || 0;
       if(count > 0) out.push({ count, pool : rule.pool ?? "proficient" });
     }

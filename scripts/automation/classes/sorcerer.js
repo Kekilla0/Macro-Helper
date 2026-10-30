@@ -63,9 +63,7 @@ export class sorcerer{
     "quickened-spell" : 2, "seeking-spell" : 1, "subtle-spell" : 1, "transmuted-spell" : 1, "twinned-spell" : 1,
   };
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("classRules");
-  }
+  static enabled = settings.on("classRules");
 
   static register(){
     if(game.system.id !== "dnd5e") return;

@@ -13,7 +13,7 @@ import { idOf, chooseOption, buttonRow, addButton, makeButton, esc, ownerIds, or
 import { conditions } from './conditions.js';
 import { rollRequests } from '../requests/requests.js';
 import { heldLight } from './held-light.js';
-import { stabilize, addTimedEffect, spendHitDice, heal, rollSave, giveEffect, itemOf } from '../helpers/actors.js';
+import { stabilize, giveEffect, spendHitDice, heal, rollSave, itemOf } from '../helpers/actors.js';
 import { itemFixes } from './item-fixes.js';
 import { conjureItem, isMetal, dropHeld, heldItems } from '../helpers/items.js';
 import { endCondition, moveFirst } from '../roll-item/card-builder.js';
@@ -887,7 +887,7 @@ export class spellActions{
   static async fleeAsGM({ actor : uuid, from, spell } = {}){
     const actor = fromUuidSync(uuid, { strict : false });
     if(!actor) return false;
-    await addTimedEffect(actor, { name : module.format("spellActions.fleeEffect", { spell }), img : "icons/svg/wingfoot.svg",
+    await giveEffect(actor, { name : module.format("spellActions.fleeEffect", { spell }), img : "icons/svg/wingfoot.svg",
       statuses : ["dashing"], flags : { [module.id] : { reactionUsed : true } } }, { of : actor, until : "turnStart" });
     await ChatMessage.implementation.create({ speaker : { alias : module.title }, whisper : game.users.filter(u => u.isGM).map(u => u.id),
       content : `<p>${module.format("spellActions.fleeGM", { name : actor.name, from })}</p>` });
@@ -925,7 +925,7 @@ export class spellActions{
     if(existing) return;
     const label = module.i18n(`spellActions.command.${word}`);
     const caster = card.getAssociatedActor?.();
-    await addTimedEffect(actor, { name : module.format("spellActions.command.effect", { word : label }), img : "icons/svg/sound.svg",
+    await giveEffect(actor, { name : module.format("spellActions.command.effect", { word : label }), img : "icons/svg/sound.svg",
       origin : card.getAssociatedItem?.()?.uuid ?? null, description : module.i18n(`spellActions.command.${word}Text`),
       flags : { [module.id] : { commanded : { card : card.id, word, caster : caster?.uuid ?? null } } } }, { of : actor, until : "turnEnd" });
     if(!game.combat?.started) await this.commandWhisper(actor, word, caster);
@@ -1562,7 +1562,7 @@ export class spellActions{
     if(!spec || !item.actor?.testUserPermission(user, "OWNER")) return false;
     for(const token of this.placedOf(item.uuid)){
       if(!token.actor) continue;
-      await addTimedEffect(token.actor, { name : module.format("spellActions.placedMoving", { feet : spec.move }), img : "icons/svg/wingfoot.svg", origin : item.uuid,
+      await giveEffect(token.actor, { name : module.format("spellActions.placedMoving", { feet : spec.move }), img : "icons/svg/wingfoot.svg", origin : item.uuid,
         changes : ["walk", "fly"].map(kind => ({ key : `system.attributes.movement.speeds.${kind}`, type : "override", mode : 5, value : String(spec.move) })) },
         { of : item.actor, until : "turnEnd" });
     }

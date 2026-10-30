@@ -32,9 +32,7 @@ export class wizard{
   static BOOK = "wizardSpellbook";
   static SAVANTS = { abjuration : "abj", conjuration : "con", divination : "div", enchantment : "enc", evocation : "evo", illusion : "ill", necromancy : "nec", transmutation : "trs" };
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("classRules");
-  }
+  static enabled = settings.on("classRules");
 
   static register(){
     if(game.system.id !== "dnd5e") return;

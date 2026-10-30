@@ -7,6 +7,7 @@ import { conditions } from './conditions.js';
 import { module } from '../module.js';
 import { getAppliedConditions } from '../helpers/items.js';
 import { idOf } from '../helpers/utils.js';
+import { ruleSet, ruleValue } from '../helpers/rules.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -14,7 +15,7 @@ const log = logger.for(import.meta.url);
  * (subject, rolls[0], attackMode, the module's target) and gives a mode with its reason (giveMode). Rules only read :
  * anything an attack uses up is spent after the roll (dnd5e.rollAttackV2).
  *
- * The same rules run for the roll (dnd5e.preRollAttackV2) and for the pick map's colours before it (predictMode), so
+ * The same rules run for the roll (dnd5e.preRollAttackV2) and for the pick map's colours before it (predictModeWhy), so
  * the map always shows what the roll will do. They run in ORDER (a rule not in it runs last).
  *
  * A rule can be for saves and checks instead (add's `rolls`) : "save" (every saving throw, Concentration's too), "check"
@@ -138,7 +139,9 @@ export function rollModeFrom(match, { by = null, against = null, enabled = null,
  * @param {string} [options.id]     its key (default : the identifiers); the same key again replaces it
  */
 const againstRules = new Map();
-export function saveModeAgainst(match, against, { mode = "advantage", enabled = null, id = null } = {}){
+export function saveModeAgainst(match, against, options){
+  ({ value : against, options } = ruleValue(against, options, "against"));
+  const { mode = "advantage", enabled = null, id = null } = options;
   const key = id ?? [match].flat().map(String).join(",");
   const added = againstRules.has(key);
   againstRules.set(key, { ids : [match].flat(), against : [against].flat(), mode, enabled });
@@ -188,12 +191,12 @@ Hooks.on(`${module.id}.saveHint`, (card, actor, ability, { adv, dis } = {}) => {
  *
  * match : an item identifier the damage dealer has (or several), or (actor) => the source (anything truthy).
  */
-const concentrationRules = new Map();
+const concentrationRules = ruleSet("Concentration mode", { when : false });
 /* target actor uuid -> { message (the damage's card id), at } : stamped as the damage is applied */
 const damagedBy = new Map();
 
 export function concentrationModeFrom(match, { mode = "disadvantage", when = null, reason = null, enabled = null, id = null } = {}){
-  concentrationRules.set(id ?? ((typeof match === "function") ? foundry.utils.randomID() : [match].flat().join(",")), { match, mode, when, reason, enabled });
+  concentrationRules.add(match, { mode, when, reason, enabled }, id);
 }
 
 /* The mode the damage just applied to this creature gives its Concentration save : { mode, reason } or null */
@@ -203,17 +206,12 @@ export function concentrationModeFor(actor){
   const message = game.messages.get(last.message);
   const attacker = message?.getAssociatedActor?.();
   if(!attacker) return null;
-  for(const rule of concentrationRules.values()){
-    if(rule.enabled && !rule.enabled()) continue;
-    try {
-      const source = (typeof rule.match === "function") ? rule.match(attacker) : attacker.items?.find?.(i => [rule.match].flat().includes(idOf(i)));
-      if(!source) continue;
-      const info = { attacker, target : actor, message, source };
-      if(rule.when && !rule.when(info)) continue;
-      return { mode : rule.mode, reason : (typeof rule.reason === "function") ? rule.reason(info) : (rule.reason ?? source.name ?? attacker.name) };
-    } catch(error){ log.error("Concentration mode", error); }
-  }
-  return null;
+  const info = { attacker, target : actor, message };
+  const [found] = concentrationRules.active(attacker, info, (rule, { source }) => !rule.when || rule.when({ ...info, source }));
+  if(!found) return null;
+  const { rule, source } = found;
+  try { return { mode : rule.mode, reason : (typeof rule.reason === "function") ? rule.reason({ ...info, source }) : (rule.reason ?? source.name ?? attacker.name) }; }
+  catch(error){ log.error("Concentration mode", error); return null; }
 }
 
 Hooks.on("dnd5e.preApplyDamage", (actor, amount, updates, options) => {

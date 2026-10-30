@@ -3,7 +3,7 @@ import { settings } from '../../settings.js';
 import { logger } from '../../log.js';
 import { onHit, useOnLatestHit } from '../../roll-item/hit-bonus.js';
 import { idOf } from '../../helpers/utils.js';
-import { addTimedEffect } from '../../helpers/actors.js';
+import { giveEffect } from '../../helpers/actors.js';
 import { tokenOf, movedThisTurn } from '../../helpers/tokens.js';
 import { alliesNear } from '../../helpers/targets.js';
 import { rollModes } from '../roll-modes.js';
@@ -34,9 +34,7 @@ export class rogue{
   static STEADY = "steady-aim";
   static KEY = "sneakAttack";
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("classRules");
-  }
+  static enabled = settings.on("classRules");
 
   static register(){
     if(game.system.id !== "dnd5e") return;
@@ -90,7 +88,7 @@ export class rogue{
     if(!this.enabled() || (idOf(activity?.item) !== this.STEADY) || !activity.actor?.isOwner) return;
     const actor = activity.getUsageToken?.()?.actor ?? activity.actor;
     if(this.steadyOf(actor)) return;
-    await addTimedEffect(actor, { name : activity.item.name, img : activity.item.img, origin : activity.item.uuid,
+    await giveEffect(actor, { name : activity.item.name, img : activity.item.img, origin : activity.item.uuid,
       changes : ["walk", "fly", "climb", "swim", "burrow"].map(kind => ({ key : `system.attributes.movement.speeds.${kind}`, type : "override", mode : 5, value : "0" })),
       flags : { [module.id] : { steadyAim : { used : false } } } }, { until : "turnEnd", thisTurn : true });
   }

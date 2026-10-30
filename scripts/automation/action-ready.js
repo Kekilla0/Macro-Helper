@@ -2,6 +2,7 @@ import { module } from '../module.js';
 import { logger } from '../log.js';
 import { gm } from '../gm.js';
 import { idOf, esc, chooseOption, waitFor } from '../helpers/utils.js';
+import { ruleSet } from '../helpers/rules.js';
 import { cells, cellGap, gridSteps, canSee, isIncapacitated } from '../helpers/tokens.js';
 import { pickTargets } from '../helpers/targets.js';
 import { actionTracker } from './action-tracker.js';
@@ -52,19 +53,12 @@ const log = logger.for(import.meta.url);
  *   })
  *   match : an item identifier the creature has (or several), or (actor) => the item (or anything truthy) that gives it
  */
-const attackRules = new Map();
-const insteadRules = new Map();
+const attackRules = ruleSet("Reaction attack rule", { spells : false, when : false });
+const insteadRules = ruleSet("Instead of an Opportunity Attack", { spells : false });
 
 const keyOf = (match, id) => id ?? ((typeof match === "function") ? foundry.utils.randomID() : [match].flat().map(String).join(","));
 
-function sourceOf(actor, match){
-  if(!actor) return null;
-  if(typeof match === "function"){
-    try { return match(actor) || null; } catch(error){ log.error("Reaction attack match", error); return null; }
-  }
-  const ids = [match].flat();
-  return actor.items?.find?.(i => (i.type !== "spell") && ids.includes(idOf(i))) ?? null;
-}
+const sourceOf = (actor, match) => attackRules.sourceOf(actor, match);
 
 /**
  * Another moment a creature may attack with its Reaction (see above).
@@ -74,7 +68,7 @@ function sourceOf(actor, match){
  */
 export function reactionAttackOn(match, { on, within = 5, weapon = null, opportunity = true, sees = false, when = null, label = null, enabled = null, id = null } = {}){
   const key = keyOf(match, id);
-  attackRules.set(key, { id : key, match, on, within, weapon, opportunity, sees, when, label, enabled });
+  attackRules.add(match, { id : key, on, within, weapon, opportunity, sees, when, label, enabled }, key);
   return key;
 }
 
@@ -86,11 +80,10 @@ export function reactionAttackOn(match, { on, within = 5, weapon = null, opportu
  */
 export function opportunityInstead(match, { label = null, icon = "fa-wand-sparkles", choices, run, enabled = null, id = null } = {}){
   const key = keyOf(match, id);
-  insteadRules.set(key, { id : key, match, label, icon, choices, run, enabled });
+  insteadRules.add(match, { id : key, label, icon, choices, run, enabled }, key);
   return key;
 }
 
-const isOn = rule => !rule.enabled || rule.enabled();
 
 export class actionReady{
   static TRIGGERS = ["enemyAttacks", "enemyComes", "enemyMoves", "enemyLeaves", "enemyHeals", "enemyStands", "allyAttacks", "allyMoves", "allyHeals", "turnStarts"];
@@ -537,18 +530,9 @@ export class actionReady{
 
   /* Its reaction attack rules for a moment : [{ rule, source }] */
   static rulesOf(t, kind, other){
-    const out = [];
-    for(const rule of attackRules.values()){
-      if((rule.on !== kind) || !isOn(rule)) continue;
-      const source = sourceOf(t.actor, rule.match);
-      if(!source) continue;
-      if(rule.sees && t.object && other.object && !canSee(t.object, other.object)) continue;
-      try { if(rule.when && !rule.when({ actor : t.actor, token : t, other, source })) continue; }
-      catch(error){ log.error("Reaction attack rule", error); continue; }
-      if(!this.ruleWeapons(t.actor, rule).length) continue;
-      out.push({ rule, source });
-    }
-    return out;
+    return attackRules.active(t.actor, { token : t, other }, (rule, info) => (rule.on === kind)
+      && !(rule.sees && t.object && other.object && !canSee(t.object, other.object))
+      && (!rule.when || rule.when(info)) && (this.ruleWeapons(t.actor, rule).length > 0));
   }
 
   /* What a rule lets it attack with : its melee weapons in hand (or body weapons) that the rule takes */
@@ -651,10 +635,7 @@ export class actionReady{
   static insteadsOf(actor, mover, row){
     if(row.rule || !actor) return [];
     const out = [];
-    for(const rule of insteadRules.values()){
-      if(!isOn(rule)) continue;
-      const source = sourceOf(actor, rule.match);
-      if(!source) continue;
+    for(const { rule, source } of insteadRules.active(actor)){
       let choices = [];
       try { choices = rule.choices?.(actor, mover) ?? []; } catch(error){ log.error("Instead of an Opportunity Attack", error); }
       if(choices.length) out.push({ rule, source, choices });

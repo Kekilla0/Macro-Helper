@@ -5,9 +5,10 @@ import { logger } from '../log.js';
 import { gm } from '../gm.js';
 import { pickTargets } from '../helpers/targets.js';
 import { tokenOf, isDown, canSee, isIncapacitated } from '../helpers/tokens.js';
-import { addTimedEffect, stabilize, setStatus } from '../helpers/actors.js';
+import { giveEffect, stabilize, setStatus } from '../helpers/actors.js';
 import { giveMode } from '../roll-item/reasons.js';
 import { chooseOption, idOf } from '../helpers/utils.js';
+import { ruleSet } from '../helpers/rules.js';
 import { uses } from '../uses.js';
 import { actionTracker } from './action-tracker.js';
 import { patch } from '../patch.js';
@@ -27,34 +28,26 @@ const log = logger.for(import.meta.url);
  *   match  an item identifier the creature has (or several), or (actor) => the item (or anything truthy) that gives it
  *   action a Default Action's identifier (or several); enabled () => boolean, id (default : the match and the action)
  */
-const defaultRules = { after : new Map(), as : new Map(), roll : new Map() };
-
-function sourceOf(actor, match){
-  if(!actor) return null;
-  if(typeof match === "function"){
-    try { return match(actor) || null; } catch(error){ log.error("Default action match", error); return null; }
-  }
-  const ids = [match].flat();
-  return actor.items?.find?.(i => (i.type !== "spell") && ids.includes(idOf(i))) ?? null;
-}
+const set = name => ruleSet(name, { spells : false, when : false });
+const defaultRules = { after : set("Default action rule"), as : set("Action as"), roll : set("Action roll mode") };
 
 const ruleKey = (match, action, id) => id ?? `${(typeof match === "function") ? foundry.utils.randomID() : [match].flat().join(",")}:${[action].flat().join(",")}`;
 
 export function onDefaultAction(match, { action, run, enabled = null, id = null } = {}){
   if(!action || (typeof run !== "function")) return;
-  defaultRules.after.set(ruleKey(match, action, id), { match, actions : [action].flat(), run, enabled });
+  defaultRules.after.add(match, { actions : [action].flat(), run, enabled }, ruleKey(match, action, id));
 }
 
 export function actionAs(match, { action, as = "bonus", enabled = null, id = null } = {}){
   if(!action) return;
-  defaultRules.as.set(ruleKey(match, action, id), { match, actions : [action].flat(), as, enabled });
+  defaultRules.as.add(match, { actions : [action].flat(), as, enabled }, ruleKey(match, action, id));
 }
 
 /* The check made as part of a Default Action (Hide's Stealth, Help's Stabilize) has a mode : Skulker's Fog of War
    (advantage on Hide's check in combat). when({ actor, source }); reason : a string or ({ actor, source }) => string */
 export function actionRollMode(match, { action, mode = "advantage", when = null, reason = null, enabled = null, id = null } = {}){
   if(!action) return;
-  defaultRules.roll.set(ruleKey(match, action, id), { match, actions : [action].flat(), mode, when, reason, enabled });
+  defaultRules.roll.add(match, { actions : [action].flat(), mode, when, reason, enabled }, ruleKey(match, action, id));
   rollModes.add("actionChecks", config => {
     const action = config?.[module.id]?.action;
     if(!action || !config.subject) return;
@@ -68,13 +61,7 @@ export function actionRollMode(match, { action, mode = "advantage", when = null,
 
 /* The rules of a kind holding for this creature and Default Action : [{ rule, source }] */
 function defaultRulesFor(kind, actor, action){
-  const found = [];
-  for(const rule of defaultRules[kind].values()){
-    if((rule.enabled && !rule.enabled()) || !rule.actions.includes(action)) continue;
-    const source = sourceOf(actor, rule.match);
-    if(source) found.push({ rule, source });
-  }
-  return found;
+  return defaultRules[kind].active(actor, {}, rule => rule.actions.includes(action));
 }
 
 /**
@@ -122,9 +109,7 @@ export class actions{
   static STUDY = "study";
 
   /* Default Actions setting; a creature also needs the item */
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("actionRules");
-  }
+  static enabled = settings.on("actionRules");
 
   static register(){
     if(game.system.id !== "dnd5e") return;
@@ -322,7 +307,7 @@ export class actions{
   static async dodge(actor){
     if(actor.statuses?.has("dodging")) return;
     const status = CONFIG.statusEffects.find(e => e.id === "dodging");
-    await addTimedEffect(actor, {
+    await giveEffect(actor, {
       name : game.i18n.localize(status?.name ?? "Dodging"), img : status?.img, statuses : ["dodging"],
     }, { until : "turnStart" });
     log.debug("Dodging", actor.name);
@@ -334,7 +319,7 @@ export class actions{
      doesn't provoke Opportunity Attacks). The action tracker reads them. */
   static async mark(actor, key, label, img){
     if(actor.effects.some(e => e.getFlag(module.id, key))) return;
-    await addTimedEffect(actor, { name : module.i18n(label), img, flags : { [module.id] : { [key] : true } } }, { until : "turnEnd", thisTurn : true });
+    await giveEffect(actor, { name : module.i18n(label), img, flags : { [module.id] : { [key] : true } } }, { until : "turnEnd", thisTurn : true });
     log.debug(key, actor.name);
   }
 
@@ -470,7 +455,7 @@ export class actions{
     const name = mode === "attack"
       ? module.format("actions.help.attackMark", { name : helper.name })
       : module.format("actions.help.checkMark", { name : helper.name, check : label ?? key });
-    await addTimedEffect(target, {
+    await giveEffect(target, {
       name, img : "icons/skills/social/diplomacy-handshake.webp",
       flags : { [module.id] : { help : { mode, helper : helperUuid, name : helper.name, side, key } } },
     }, { of : helper, until : "turnStart" });

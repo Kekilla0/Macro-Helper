@@ -10,7 +10,7 @@ import { uses } from '../../uses.js';
 import { onInitiative } from '../initiative.js';
 import { itemFixes } from '../item-fixes.js';
 import { tokenOf, isIncapacitated } from '../../helpers/tokens.js';
-import { addTimedEffect, itemOf } from '../../helpers/actors.js';
+import { giveEffect, itemOf } from '../../helpers/actors.js';
 import { pickTargets } from '../../helpers/targets.js';
 import { cutDamage, cutsOf } from '../../roll-item/damage-cuts.js';
 import { cardBuilder } from '../../roll-item/card-builder.js';
@@ -58,9 +58,7 @@ export class monk{
   static DEFLECT = "deflect-attacks";
   static DEFLECTED = ["bludgeoning", "piercing", "slashing"];
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("classRules");
-  }
+  static enabled = settings.on("classRules");
 
   static register(){
     if(game.system.id !== "dnd5e") return;
@@ -191,7 +189,7 @@ export class monk{
     await actions.useDefault(own, pair[0]);
     if(focus) await actions.useDefault(own, pair[1]);
     /* Step of the Wind with its Focus Point : its jump distance doubled for the turn (jump.js reads the flag) */
-    if(focus && (id === this.STEP)) await addTimedEffect(own, { name : module.i18n("jump.stepMark"), img : activity.item.img,
+    if(focus && (id === this.STEP)) await giveEffect(own, { name : module.i18n("jump.stepMark"), img : activity.item.img,
       flags : { [module.id] : { jump : { times : 2 } } } }, { until : "turnEnd", thisTurn : true });
     await actions.autoApplied(results);
     log.debug("Monk", activity.item.name, focus ? "Focus Point" : "free");

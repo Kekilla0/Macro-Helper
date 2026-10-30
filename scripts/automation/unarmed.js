@@ -1,5 +1,5 @@
 import { logger } from '../log.js';
-import { idOf } from '../helpers/utils.js';
+import { ruleSet } from '../helpers/rules.js';
 import { onDamage } from '../roll-item/damage.js';
 const log = logger.for(import.meta.url);
 
@@ -20,14 +20,15 @@ const log = logger.for(import.meta.url);
  *     enabled : () => true,
  *   })
  */
-const rules = new Map();
+const rules = ruleSet("Unarmed damage");
 let hooked = false;
 
 export function unarmedDamage(feature, rule = {}){
   if(!feature) return;
   const id = rule.id ?? ((typeof feature === "string") ? feature : null);
   if(!id) return;
-  rules.set(id, { ...rule, feature });
+  const when = rule.when;
+  rules.add(feature, { ...rule, feature, when : when && (({ attack }) => when(attack)) }, id);
   if(hooked) return;
   hooked = true;
   onDamage((attack, damage) => apply(attack, damage));
@@ -38,12 +39,8 @@ function apply(attack, damage){
   const base = attack.baseDamage;
   if(!base || /\d*d\d+/i.test(base)) return;
   let best = null;
-  for(const rule of rules.values()){
+  for(const { rule } of rules.active(attack.actor, { attack })){
     try {
-      if(rule.enabled && !rule.enabled()) continue;
-      const has = (typeof rule.feature === "function") ? rule.feature(attack.actor) : attack.actor.items?.some?.(i => idOf(i) === rule.feature);
-      if(!has) continue;
-      if(rule.when && !rule.when(attack)) continue;
       const faces = Number((typeof rule.die === "function") ? rule.die(attack) : rule.die) || 0;
       if((faces > 0) && (!best || (faces > best.faces))) best = { rule, faces };
     } catch(error){ log.error("Unarmed damage", rule.feature, error); }

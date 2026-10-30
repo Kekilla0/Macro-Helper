@@ -48,9 +48,7 @@ export class warlock{
   static PUSHABLE = ["tiny", "sm", "med", "lg"];
   static ABILITIES = ["str", "dex", "con", "int", "wis", "cha"];
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("classRules");
-  }
+  static enabled = settings.on("classRules");
 
   static register(){
     if(game.system.id !== "dnd5e") return;

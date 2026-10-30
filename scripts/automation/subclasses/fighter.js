@@ -2,7 +2,7 @@ import { module } from '../../module.js';
 import { logger } from '../../log.js';
 import { gm } from '../../gm.js';
 import { idOf, chooseOption, esc } from '../../helpers/utils.js';
-import { addTimedEffect, rollSave, itemOf } from '../../helpers/actors.js';
+import { giveEffect, rollSave, itemOf } from '../../helpers/actors.js';
 import { tokenOf, distanceBetween, canSee, forcedMove } from '../../helpers/tokens.js';
 import { pickTargets, pickSpace } from '../../helpers/targets.js';
 import { spendUses, heldItems, dropHeld } from '../../helpers/items.js';
@@ -232,11 +232,11 @@ export class fighterArchetypes{
     try {
       if(id === "lunging-attack"){
         await actions.mark(actor, "dash", "actions.dash.mark", "icons/skills/movement/feet-winged-boots-glowing-yellow.webp");
-        await addTimedEffect(actor, { name : activity.item.name, img : activity.item.img, flags : { [module.id] : { primed : { id } } } }, { until : "turnEnd", thisTurn : true });
+        await giveEffect(actor, { name : activity.item.name, img : activity.item.img, flags : { [module.id] : { primed : { id } } } }, { until : "turnEnd", thisTurn : true });
       }
       else if(id === "feinting-attack"){
         const [target] = await pickTargets(tokenOf(actor), { count : 1, range : 5, disposition : "nonAlly", confirm : "auto" }) ?? [];
-        if(target) await addTimedEffect(actor, { name : activity.item.name, img : activity.item.img,
+        if(target) await giveEffect(actor, { name : activity.item.name, img : activity.item.img,
           flags : { [module.id] : { primed : { id, target : target.document.uuid } } } }, { until : "turnEnd", thisTurn : true });
       }
       else if(id === "evasive-footwork"){
@@ -263,8 +263,7 @@ export class fighterArchetypes{
     const n = Number.isFinite(total) ? total : (await this.rollDie(fighter)).total;
     const data = { name : module.format("subclasses.fighter.acBonus", { item : item.name, n }), img : item.img, origin : item.uuid,
       changes : [{ key : "system.attributes.ac.bonus", type : "add", mode : 2, value : String(n) }] };
-    if(gm.mine(onto)) await addTimedEffect(onto, data, { of : fighter, until : "turnStart" });
-    else await subclasses.giveEffect(onto, data, { from : item, until : "turnStart", of : fighter });
+    await giveEffect(onto, data, { from : item, until : "turnStart", of : fighter });
   }
 
   static async baitAndSwitch(actor, item, total = null){

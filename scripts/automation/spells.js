@@ -109,9 +109,7 @@ export class spells{
   /* The effects the fixes add (16-character ids, so a fix can tell it's done) */
   static EFFECT_IDS = { "blade-ward" : "mhBladeWardWard1", "ray-of-sickness" : "mhRaySicknessPsn" };
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("spellRules");
-  }
+  static enabled = settings.on("spellRules");
 
   /* Does one of these senses of the attacker reach the target (its range, in feet) */
   static sensesReach(actor, target, senses){

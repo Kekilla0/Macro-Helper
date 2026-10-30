@@ -2,6 +2,7 @@ import { module } from './module.js';
 import { logger } from './log.js';
 import { settings } from './settings.js';
 import { esc, buttonRow, addButton, makeButton, ownerIds, gmIds } from './helpers/utils.js';
+import { ruleArgs } from './helpers/rules.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -246,7 +247,7 @@ export class gm{
   }
 
   /**
-   * A timed effect's stamp (addTimedEffect) : stamp(), or out of combat { combat : null, time } : its first turn in a
+   * A timed effect's stamp (giveEffect with until) : stamp(), or out of combat { combat : null, time } : its first turn in a
    * combat that begins (adoptOutOfCombat), else OUT_OF_COMBAT seconds of game time (expireOutOfCombat).
    * @param {Actor} actor
    * @param {"turnStart"|"turnEnd"} at
@@ -376,8 +377,9 @@ export class gm{
 const turnRules = [];
 let turnHooked = false;
 
-export function onTurnStart(rule){
-  if(!rule?.id) return;
+export function onTurnStart(match, rule){
+  rule = ruleArgs(match, rule);
+  if(!rule.id) return;
   const old = turnRules.findIndex(r => r.id === rule.id);
   if(old >= 0) turnRules[old] = rule;
   else turnRules.push(rule);

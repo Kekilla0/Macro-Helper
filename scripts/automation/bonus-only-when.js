@@ -32,7 +32,10 @@ const log = logger.for(import.meta.url);
 const rules = [];
 let hooked = false;
 
-export function bonusOnlyWhen(match, key, test, { value = null, enabled = null, id = null } = {}){
+export function bonusOnlyWhen(match, key, test, options){
+  /* One rule object : bonusOnlyWhen(match, { key, test, value, enabled, id }) */
+  if((foundry.utils.getType(key) === "Object") && (test === undefined)) ({ key, test, ...options } = key);
+  const { value = null, enabled = null, id = null } = options ?? {};
   const keys = [key].flat().filter(Boolean);
   const rule = { id : id ?? `${[match].flat().join(",")}|${keys.join(",")}`, match, keys, test, value, enabled };
   const old = rules.findIndex(r => r.id === rule.id);

@@ -31,9 +31,7 @@ export class preparedSpells{
 
   static #adders = new Map();
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("classRules");
-  }
+  static enabled = settings.on("classRules");
 
   /* Add a Spell for a class : its own window (the Wizard's spellbook) */
   static addVia(cls, open){

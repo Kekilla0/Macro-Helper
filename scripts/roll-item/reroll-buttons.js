@@ -1,6 +1,6 @@
 import { module } from '../module.js';
 import { logger } from '../log.js';
-import { idOf } from '../helpers/utils.js';
+import { ruleSet, ruleArgs } from '../helpers/rules.js';
 import { hasUses, spendUses } from '../helpers/items.js';
 import { usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
 const log = logger.for(import.meta.url);
@@ -28,14 +28,15 @@ const log = logger.for(import.meta.url);
  *     enabled : () => true,
  *   })
  */
-const rules = new Map();
+const rules = ruleSet("Reroll", { when : false });
 let hooked = false;
 
 const rayKey = ray => Number.isInteger(ray) ? String(ray) : "single";
 
-export function rerollButton(rule){
-  if(!rule?.id || !["damage", "attack", "again"].includes(rule.roll)) return;
-  rules.set(rule.id, rule);
+export function rerollButton(match, rule){
+  rule = ruleArgs(match, rule);
+  if(!rule.id || !["damage", "attack", "again"].includes(rule.roll)) return;
+  rules.add(rule.feature, rule, rule.id);
   if(hooked) return;
   hooked = true;
   Hooks.on(`${module.id}.cardButtons`, (card, buttons, { ray } = {}) => {
@@ -58,7 +59,7 @@ export function rerollButton(rule){
     const actor = card?.getAssociatedActor?.();
     for(const rule of rules.values()){
       if(!rule.face || !Object.values(card?.getFlag?.(module.id, `rerolls.${rule.id}`) ?? {}).some(Boolean)) continue;
-      const feature = actor ? featureOf(rule, actor) : null;
+      const feature = rules.sourceOf(actor, rule.match);
       faces.push({ uuid : feature?.uuid ?? null, name : feature?.name, img : feature?.img, subtitle : rule.subtitle?.(actor, feature) ?? "" });
     }
   });
@@ -69,16 +70,10 @@ export function rerolled(card, id, ray = null){
   return !!card?.getFlag?.(module.id, `rerolls.${id}.${rayKey(ray)}`);
 }
 
-function featureOf(rule, actor){
-  if(typeof rule.feature === "function") return rule.feature(actor);
-  return actor?.items?.find?.(i => idOf(i) === rule.feature) ?? null;
-}
-
 /* The button, or null : not this card, used, or not enough to pay */
 function buttonOf(rule, card, ray){
-  if(rule.enabled && !rule.enabled()) return null;
   const actor = card?.getAssociatedActor?.();
-  const feature = actor && featureOf(rule, actor);
+  const feature = rules.holds(rule, actor);
   if(!feature || !actor.isOwner || rerolled(card, rule.id, ray)) return null;
   if((rule.once === "turn") && usedThisTurn(actor, `reroll-${rule.id}`)) return null;
   if(rule.when && !rule.when(card, actor)) return null;
@@ -105,7 +100,7 @@ async function clicked(rule, card, ray){
   if(rule.once === "turn") await markUsedThisTurn(actor, `reroll-${rule.id}`);
   if(rule.roll === "attack") await card.system.rerollAttackRoll(ray);
   else if(rule.roll === "again"){
-    const feature = featureOf(rule, actor);
+    const feature = rules.sourceOf(actor, rule.match);
     const rolls = await card.system.rollDamage(ray);
     await card.system.addDamage(rolls, { key : `reroll-${rule.id}`, label : feature?.name ?? rule.id, ray, alternative : true });
   }

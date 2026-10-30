@@ -1,7 +1,7 @@
 import { module } from '../../module.js';
 import { logger } from '../../log.js';
 import { idOf, esc, ownerIds, chooseOption } from '../../helpers/utils.js';
-import { addTimedEffect, usedThisTurn, markUsedThisTurn, itemOf } from '../../helpers/actors.js';
+import { giveEffect, usedThisTurn, markUsedThisTurn, itemOf } from '../../helpers/actors.js';
 import { tokenOf, distanceBetween, getRange } from '../../helpers/tokens.js';
 import { pickTargets } from '../../helpers/targets.js';
 import { onHit } from '../../roll-item/hit-bonus.js';
@@ -83,7 +83,7 @@ export class rangerConclaves{
     if(!this.enabled() || !game.users.activeGM?.isSelf || !itemOf(actor, this.AMBUSHER)) return;
     if(combat.getFlag?.(module.id, `leap.${combatant.id}`)) return;
     await combat.setFlag(module.id, `leap.${combatant.id}`, true);
-    await addTimedEffect(actor, { name : module.i18n("subclasses.ranger.leap"), img : itemOf(actor, this.AMBUSHER).img,
+    await giveEffect(actor, { name : module.i18n("subclasses.ranger.leap"), img : itemOf(actor, this.AMBUSHER).img,
       changes : [{ key : "system.attributes.movement.speeds.walk", type : "add", mode : 2, value : "10" }] }, { until : "turnEnd", thisTurn : true });
   }
 

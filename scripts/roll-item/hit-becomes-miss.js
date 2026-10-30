@@ -1,6 +1,7 @@
 import { module } from '../module.js';
 import { logger } from '../log.js';
 import { idOf, originItem } from '../helpers/utils.js';
+import { ruleSet } from '../helpers/rules.js';
 import { TYPES } from './message.js';
 const log = logger.for(import.meta.url);
 
@@ -21,25 +22,28 @@ const log = logger.for(import.meta.url);
  *
  *   match  an item identifier (the effects that item puts on a creature) or effect => boolean
  *   info   { message, ray, attacker (actor), target (token), effects (the matched ones on it), item (their origin) }
- *          and roll, turned once rolled. enabled : () => boolean leaves the rule off.
+ *          and roll, turned once rolled. enabled : () => boolean leaves the rule off. The same id (default : an
+ *          identifier match) replaces a rule.
  */
-const rules = [];
+const rules = ruleSet("Hit becomes miss", { when : false });
 let hooked = false;
 /* Attacks being judged now (a card's create and update come close together) */
 const busy = new Set();
 
 export function hitBecomesMiss(match, rule = {}){
-  rules.push({ ...rule, match });
+  /* The rule's source on a creature : its matched effects */
+  const effects = actor => { const found = effectsOf(match, actor); return found.length ? found : null; };
+  rules.add(effects, { ...rule, effects : match }, rule.id ?? ((typeof match === "function") ? null : String(match)));
   if(hooked) return;
   hooked = true;
   Hooks.on("createChatMessage", message => check(message));
   Hooks.on("updateChatMessage", message => check(message));
 }
 
-const matches = (rule, effect) => (typeof rule.match === "function") ? rule.match(effect) : (idOf(originItem(effect)) === rule.match);
+const matches = (match, effect) => (typeof match === "function") ? match(effect) : (idOf(originItem(effect)) === match);
 
-function effectsOf(rule, actor){
-  return (actor?.effects ?? []).filter(e => !e.disabled && !e.isSuppressed && matches(rule, e));
+function effectsOf(match, actor){
+  return (actor?.effects ?? []).filter(e => !e.disabled && !e.isSuppressed && matches(match, e));
 }
 
 /* Every attack on the card (each ray, or the one roll) : the creatures it hits now */
@@ -52,7 +56,7 @@ function hitsOn(message){
 const keyOf = (ray, uuid) => `hitMiss.${Number.isInteger(ray) ? ray : "single"}.${String(uuid).replaceAll(".", "-")}`;
 
 async function check(message){
-  if(!rules.length || (message.type !== TYPES.attack) || !game.users.activeGM?.isSelf || !message.system?.attackOf) return;
+  if(!rules.size || (message.type !== TYPES.attack) || !game.users.activeGM?.isSelf || !message.system?.attackOf) return;
   for(const { ray, token } of hitsOn(message)){
     const key = keyOf(ray, token.uuid);
     const done = message.getFlag(module.id, key);
@@ -73,10 +77,7 @@ async function check(message){
 async function judge(message, ray, token, key){
   const attacker = message.getAssociatedActor?.() ?? ChatMessage.getSpeakerActor(message.speaker);
   let matched = false;
-  for(const rule of rules){
-    if(rule.enabled && !rule.enabled()) continue;
-    const effects = effectsOf(rule, token.actor);
-    if(!effects.length) continue;
+  for(const { rule, source : effects } of rules.active(token.actor)){
     matched = true;
     const info = { message, ray, attacker, target : token, effects, item : originItem(effects[0]) };
     if(rule.unaffected?.(info)) continue;

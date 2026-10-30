@@ -7,6 +7,7 @@ import { rerolls, extraD20 } from '../roll-item/rerolls.js';
 import { initiativeSwap, swappedInitiatives } from './initiative-swap.js';
 import { idOf } from '../helpers/utils.js';
 import { itemOf } from '../helpers/actors.js';
+import { ruleArgs } from '../helpers/rules.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -409,8 +410,9 @@ let initHooked = false;
  *            nothing returned : it didn't happen (the button stays)
  * firstOnly  with Initiative Each Round (Homebrew), only the combat's first roll offers it (it can't be saved)
  */
-export function onInitiative(rule){
-  if(!rule?.id || !rule.feature) return;
+export function onInitiative(match, rule){
+  rule = ruleArgs(match, rule);
+  if(!rule.id || !rule.feature) return;
   const old = initRules.findIndex(r => r.id === rule.id);
   if(old >= 0) initRules[old] = rule;
   else initRules.push(rule);

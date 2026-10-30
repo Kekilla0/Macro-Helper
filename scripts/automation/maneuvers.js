@@ -26,9 +26,7 @@ const log = logger.for(import.meta.url);
  * on it : 2024 Grapple and Shove have no attack roll, the target only saves.
  */
 export class maneuvers{
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("rollItemManeuvers");
-  }
+  static enabled = settings.on("rollItemManeuvers");
 
   /**
    * Is this activity Grapple or Shove ?

@@ -36,9 +36,7 @@ const log = logger.for(import.meta.url);
 export class creatureTraits{
   static PARRY_AC = 2;
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && !!settings.value("featRules");
-  }
+  static enabled = settings.on("featRules");
 
   /* By identifier, or by name : case and anything in parentheses ignored ("Relentless Endurance (1/Day)") */
   static has(actor, name){
@@ -182,16 +180,18 @@ let sensesPatched = false;
  * "sees invisible creatures within 30 ft"). The mode itself is Foundry's or one registered in
  * CONFIG.Canvas.detectionModes (Devil's Sight : "devilsSight"); Vision Rules count it like any sense.
  *
- *   addSense("devilsSight", { feature : "devils-sight", mode : "devilsSight", range : 120 });
- *   addSense("trueSight", { feature : actor => actor.name === "Lich", mode : "seeAll", range : 120 });
+ *   addSense("devils-sight", { mode : "devilsSight", range : 120 });
+ *   addSense(actor => actor.name === "Lich", { id : "trueSight", mode : "seeAll", range : 120 });
  *
- * feature   the item (identifier) the creature has, or (actor) => boolean
+ * match     the item (identifier) the creature has, or (actor) => boolean; the older addSense(id, { feature }) still works
  * mode      the detection mode's id
  * range     feet
  * enabled() the rule's setting
  * The same id again replaces it (a macro).
  */
-export function addSense(id, { feature, mode, range = 60, enabled = null } = {}){
+export function addSense(match, rule = {}){
+  /* The older form : (id, { feature, ... }) */
+  const { id = (rule.feature !== undefined) ? match : [match].flat().join(","), feature = match, mode, range = 60, enabled = null } = rule;
   if(!id || !feature || !mode) return;
   senses.set(id, { feature, mode, range, enabled });
   if(!sensesPatched){

@@ -2,7 +2,7 @@ import { module } from '../module.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { patch } from '../patch.js';
-import { idOf } from '../helpers/utils.js';
+import { ruleSet, ruleValue } from '../helpers/rules.js';
 import { grapplesOn } from '../roll-item/card-builder.js';
 const log = logger.for(import.meta.url);
 
@@ -35,32 +35,15 @@ const log = logger.for(import.meta.url);
  * movement costs 1 extra foot, unless each of them is Tiny or two sizes smaller than it (or a dragsFreely rule says
  * so). The ruler shows the cost; the Action Tracker counts it. Release first to leave one behind.
  */
-const rules = { speed : new Map(), stand : new Map(), drag : new Map(), jump : new Map() };
+const set = name => ruleSet(name, { spells : false });
+const rules = { speed : set("Speed rule"), stand : set("Stand-up rule"), drag : set("Drag rule"), jump : set("Jump rule") };
 
 const keyOf = (match, id) => id ?? ((typeof match === "function") ? foundry.utils.randomID() : [match].flat().map(String).join(","));
-
-/* The item on this creature that gives a rule, or null */
-function sourceOf(actor, match){
-  if(!actor) return null;
-  if(typeof match === "function"){
-    try { return match(actor) || null; } catch(error){ log.error("Movement match", error); return null; }
-  }
-  const ids = [match].flat();
-  return actor.items?.find?.(i => (i.type !== "spell") && ids.includes(idOf(i))) ?? null;
-}
+/* when(actor, source), as the rule gave it */
+const whenOf = when => when && (({ actor, source }) => when(actor, source));
 
 /* The rules of a kind holding for this creature : [{ rule, source }] */
-function holding(kind, actor){
-  const found = [];
-  for(const rule of rules[kind].values()){
-    if(rule.enabled && !rule.enabled()) continue;
-    const source = sourceOf(actor, rule.match);
-    if(!source) continue;
-    try { if(rule.when && !rule.when(actor, source)) continue; } catch(error){ log.error("Movement rule", error); continue; }
-    found.push({ rule, source });
-  }
-  return found;
-}
+const holding = (kind, actor) => rules[kind].active(actor);
 
 /**
  * A speed equal to another one (Athlete : a Climb Speed equal to its Speed). A speed already bigger stays.
@@ -69,7 +52,7 @@ function holding(kind, actor){
  */
 export function speedAs(match, { speed, as = "walk", when = null, enabled = null, id = null } = {}){
   if(!speed) return;
-  rules.speed.set(keyOf(match, id), { match, speed, as, when, enabled });
+  rules.speed.add(match, { speed, as, when : whenOf(when), enabled }, id);
 }
 
 /**
@@ -78,8 +61,10 @@ export function speedAs(match, { speed, as = "walk", when = null, enabled = null
  * @param {number|Function} feet   or (actor, source) => number
  * @param {object} [options]  { when, enabled, id }
  */
-export function standUpCost(match, feet, { when = null, enabled = null, id = null } = {}){
-  rules.stand.set(keyOf(match, id), { match, feet, when, enabled });
+export function standUpCost(match, feet, options){
+  ({ value : feet, options } = ruleValue(feet, options, "feet"));
+  const { when = null, enabled = null, id = null } = options;
+  rules.stand.add(match, { feet, when : whenOf(when), enabled }, id);
 }
 
 /**
@@ -88,7 +73,7 @@ export function standUpCost(match, feet, { when = null, enabled = null, id = nul
  * @param {object} [options]  { when : (grappler, held) => boolean, enabled, id }
  */
 export function dragsFreely(match, { when = null, enabled = null, id = null } = {}){
-  rules.drag.set(keyOf(match, id), { match, held : when, enabled });
+  rules.drag.add(match, { held : when, enabled }, id);
 }
 
 /**
@@ -97,15 +82,14 @@ export function dragsFreely(match, { when = null, enabled = null, id = null } = 
  * @param {object} [options]  { times, runUp, leap, cost = 10, once = "turn", when, enabled, id }
  */
 export function jumpRule(match, { times = null, runUp = null, leap = null, cost = 10, once = "turn", when = null, enabled = null, id = null } = {}){
-  rules.jump.set(keyOf(match, id), { key : keyOf(match, id), match, times, runUp, leap, cost, once, when, enabled });
+  const key = keyOf(match, id);
+  rules.jump.add(match, { key, times, runUp, leap, cost, once, when : whenOf(when), enabled }, key);
 }
 
 const SIZES = ["tiny", "sm", "med", "lg", "huge", "grg"];
 
 export class movement{
-  static enabled(){
-    return (game.system.id === "dnd5e") && !!settings.value("conditionAttacks");
-  }
+  static enabled = settings.on("conditionAttacks");
 
   static register(){
     if(game.system.id !== "dnd5e") return;

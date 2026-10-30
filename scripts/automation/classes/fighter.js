@@ -28,9 +28,7 @@ export class fighter{
   static STYLES = ["archery", "blind-fighting", "defense", "dueling", "great-weapon-fighting", "interception", "protection",
     "thrown-weapon-fighting", "two-weapon-fighting", "unarmed-fighting", "blessed-warrior", "druidic-warrior"];
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("classRules");
-  }
+  static enabled = settings.on("classRules");
 
   static register(){
     if(game.system.id !== "dnd5e") return;

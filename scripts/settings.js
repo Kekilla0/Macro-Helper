@@ -214,6 +214,11 @@ const LEGACY = {
 const hasClient = group => Object.values(GROUPS[group]?.settings ?? {}).some(s => s.scope === "client");
 
 export class settings{
+  /* A part's switch : () => on (dnd5e, and the setting on). `static enabled = settings.on("classRules");` */
+  static on(key){
+    return () => (game.system.id === "dnd5e") && !!settings.value(key);
+  }
+
   static value(key){
     if(VIRTUAL[key]) return VIRTUAL[key]();
     if((key in AUTOMATION_OFF) && !AUTO()) return AUTOMATION_OFF[key];

@@ -1,6 +1,6 @@
 import { module } from '../module.js';
 import { logger } from '../log.js';
-import { idOf } from '../helpers/utils.js';
+import { ruleSet, ruleArgs } from '../helpers/rules.js';
 import { rollItem } from './roll-item.js';
 const log = logger.for(import.meta.url);
 
@@ -21,24 +21,19 @@ const log = logger.for(import.meta.url);
  * miss : { activity, item, actor, roll (the attack), ability, mod (its modifier), mastery, damage (its damage rolls),
  *          weapon, melee, ranged, feature }
  */
-const rules = [];
+const rules = ruleSet("On-miss rule");
 let hooked = false;
 
-export function onMiss(rule){
-  if(!rule?.id) return;
-  const old = rules.findIndex(r => r.id === rule.id);
-  if(old >= 0) rules[old] = rule;
-  else rules.push(rule);
+export function onMiss(match, rule){
+  rule = ruleArgs(match, rule);
+  if(!rule.id) return;
+  const when = rule.when;
+  rules.add(rule.feature ?? (() => true), { ...rule, when : when && (({ miss, source }) => when({ ...miss, feature : source })) }, rule.id);
   if(hooked) return;
   hooked = true;
   foundry.applications.handlebars.loadTemplates({ [`${module.id}.on-miss`] : `${module.path}/templates/on-miss.hbs` });
   rollItem.addRolls((activity, attack, damage) => rollsFor(activity, attack, damage));
   Hooks.on(`${module.id}.cardSections`, (message, sections, { ray } = {}) => sectionsFor(message, sections, ray ?? null));
-}
-
-function featureOf(rule, actor){
-  if(typeof rule.feature === "function") return rule.feature(actor);
-  return rule.feature ? (actor?.items?.find?.(i => idOf(i) === rule.feature) ?? null) : true;
 }
 
 function missOf(activity, attack, damage = []){
@@ -58,14 +53,11 @@ const labelOf = (rule, miss) => rule.label?.(miss) ?? ((miss.feature && (miss.fe
 
 async function rollsFor(activity, attack, damage){
   const rolls = [];
-  for(const rule of rules){
+  for(const rule of rules.values()){
     try {
-      if(rule.enabled && !rule.enabled()) continue;
       const miss = missOf(activity, attack, damage);
-      const feature = featureOf(rule, miss.actor);
-      if(!feature) continue;
-      miss.feature = feature;
-      if(rule.when && !rule.when(miss)) continue;
+      miss.feature = rules.holds(rule, miss.actor, { miss });
+      if(!miss.feature) continue;
       const formula = rule.formula(miss);
       if(!formula || (String(formula).trim() === "0")) continue;
       const base = damage.find(r => r.options?.type);
@@ -87,7 +79,7 @@ function sectionsFor(message, sections, ray){
   const { targets, hits } = card.targetHits(ray);
   const missed = targets.length > hits.length;
   if(!(missed || !targets.length) || !(card.outcomeShown?.(ray, "miss") ?? true)) return;
-  for(const rule of rules){
+  for(const rule of rules.values()){
     const rolls = card.addedRollsOf(ray, rule.id);
     if(!rolls.length) continue;
     sections.push({

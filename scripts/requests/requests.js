@@ -39,9 +39,7 @@ export class rollRequests{
   static DIFFICULTIES = [[5, "veryEasy"], [10, "easy"], [15, "medium"], [20, "hard"], [25, "veryHard"], [30, "nearlyImpossible"]];
   static CATEGORIES = ["check", "save", "skill", "tool"];
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("requestsEnabled");
-  }
+  static enabled = settings.on("requestsEnabled");
 
   static compact(){
     return settings.value("requestsMessages") !== "individual";

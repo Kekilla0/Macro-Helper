@@ -170,9 +170,7 @@ export class generalFeats{
     return ["quarterstaff", "spear"].includes(base) || (!!props?.has?.("hvy") && !!props?.has?.("rch"));
   }
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("featRules");
-  }
+  static enabled = settings.on("featRules");
 
   /* A Ranged weapon (bow, crossbow, Dart, Sling), not a thrown melee weapon */
   static rangedWeapon(item){

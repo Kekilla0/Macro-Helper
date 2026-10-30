@@ -6,6 +6,7 @@ import { usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
 import { spendUses } from '../helpers/items.js';
 import { TYPES } from './message.js';
 import { actionTracker } from '../automation/action-tracker.js';
+import { ruleArgs } from '../helpers/rules.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -51,8 +52,9 @@ let hooked = false;
  * @param {object} rule  see above; also enabled() (default : on), label (hit => string; default : the feature's name),
  *                       icon (a Font Awesome class)
  */
-export function onHit(rule){
-  if(!rule?.id || rules.some(r => r.id === rule.id)) return;
+export function onHit(match, rule){
+  rule = ruleArgs(match, rule);
+  if(!rule.id || rules.some(r => r.id === rule.id)) return;
   rules.push(rule);
   if(hooked) return;
   hooked = true;

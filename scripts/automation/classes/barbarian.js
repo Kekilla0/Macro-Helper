@@ -4,7 +4,7 @@ import { settings } from '../../settings.js';
 import { limits } from '../limits.js';
 import { logger } from '../../log.js';
 import { tokenOf, isIncapacitated } from '../../helpers/tokens.js';
-import { findItem, addTimedEffect, itemEffectOn, itemEffectOff } from '../../helpers/actors.js';
+import { findItem, giveEffect, itemEffectOn, itemEffectOff } from '../../helpers/actors.js';
 import { originOf, idOf } from '../../helpers/utils.js';
 import { conditions } from '../conditions.js';
 import { bonusOnlyWhen } from '../bonus-only-when.js';
@@ -45,9 +45,7 @@ export class barbarian{
   static PRIMAL_SKILLS = ["acr", "itm", "prc", "ste", "sur"];
   static ENDS = { incapacitated : "classes.barbarian.incapacitated", heavyArmor : "classes.barbarian.heavyArmor", combatEnd : "classes.barbarian.combatEnded" };
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("classRules");
-  }
+  static enabled = settings.on("classRules");
 
   static register(){
     if(game.system.id !== "dnd5e") return;
@@ -267,7 +265,7 @@ export class barbarian{
     const actor = this.actorFor(activity);
     if(game.combat?.started && !this.isTurnOf(actor) && !limits.allow(module.format("classes.barbarian.recklessTurn", { name : actor.name }), { who : actor.name, what : activity.item.name })) return;
     if(this.isReckless(actor)) return;
-    await addTimedEffect(actor, {
+    await giveEffect(actor, {
       name : module.i18n("classes.barbarian.reckless"), img : this.RECKLESS_IMG,
       flags : { [module.id] : { reckless : true } },
     }, { until : "turnStart" });

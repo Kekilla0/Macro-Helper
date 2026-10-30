@@ -1,6 +1,6 @@
 import { module } from '../module.js';
 import { logger } from '../log.js';
-import { idOf } from '../helpers/utils.js';
+import { ruleSet, ruleArgs } from '../helpers/rules.js';
 import { tokenOf, distanceBetween, canSee, isIncapacitated } from '../helpers/tokens.js';
 import { limits } from '../automation/limits.js';
 import { actionTracker } from '../automation/action-tracker.js';
@@ -30,34 +30,28 @@ const log = logger.for(import.meta.url);
  * Guards are on the attacked creature's side, not the attacker's. A requirement unmet : Rule Limits decides (Off and
  * Warn : the button, with a notice on use; Block : no button).
  */
-const rules = [];
+const rules = ruleSet("When attacked", { when : false });
 let hooked = false;
 
-export function onAttacked(rule){
-  if(!rule?.id) return;
+export function onAttacked(match, rule){
+  rule = ruleArgs(match, rule);
+  if(!rule.id) return;
   registerRaise();
-  const old = rules.findIndex(r => r.id === rule.id);
-  if(old >= 0) rules[old] = rule;
-  else rules.push(rule);
+  rules.add(rule.feature ?? (() => true), rule, rule.id);
   if(hooked) return;
   hooked = true;
   Hooks.on(`${module.id}.cardButtons`, (message, buttons, { ray } = {}) => cardButtons(message, buttons, ray ?? null));
   Hooks.on(`${module.id}.cardButton`, (message, id, { ray } = {}) => { if(String(id).startsWith("attacked|")) clicked(message, String(id), ray ?? null); });
 }
 
-function featureOf(rule, actor){
-  if(typeof rule.feature === "function") return rule.feature(actor);
-  return rule.feature ? (actor?.items?.find?.(i => idOf(i) === rule.feature) ?? null) : true;
-}
-
 const side = t => t?.document?.disposition;
 
 /* The user's tokens that could step in for this creature */
 function guardsFor(rule, target, attacker){
-  if(rule.self) return (target?.actor?.isOwner && featureOf(rule, target.actor)) ? [target] : [];
+  if(rule.self) return (target?.actor?.isOwner && rules.holds(rule, target.actor)) ? [target] : [];
   return (canvas.tokens?.placeables ?? []).filter(t => t.actor?.isOwner && (t !== target) && (t !== attacker)
     && (side(target) === side(t)) && (!attacker || (side(attacker) !== side(t)))
-    && featureOf(rule, t.actor) && (distanceBetween(t, target) <= (rule.within ?? 5)));
+    && rules.holds(rule, t.actor) && (distanceBetween(t, target) <= (rule.within ?? 5)));
 }
 
 /* Why the guard can't, "" when it can */
@@ -91,8 +85,7 @@ function contexts(message, ray){
 
 function cardButtons(message, buttons, ray){
   if(!message.system?.attackOf?.(ray)) return;
-  for(const rule of rules){
-    if(rule.enabled && !rule.enabled()) continue;
+  for(const rule of rules.values()){
     try {
       for(const base of contexts(message, ray)){
         if((rule.when === "hit") && !base.hit) continue;
@@ -109,7 +102,7 @@ function cardButtons(message, buttons, ray){
 
 async function clicked(message, id, ray){
   const [, ruleId, guardUuid, targetUuid] = id.split("|");
-  const rule = rules.find(r => r.id === ruleId);
+  const rule = rules.get(ruleId);
   const guard = fromUuidSync(guardUuid, { strict : false })?.object;
   const base = rule && guard?.actor?.isOwner && contexts(message, ray).find(c => c.target.document.uuid === targetUuid);
   if(!base || (rule.enabled && !rule.enabled())) return;

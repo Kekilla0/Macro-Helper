@@ -1,6 +1,6 @@
 import { module } from '../module.js';
 import { logger } from '../log.js';
-import { idOf } from '../helpers/utils.js';
+import { ruleSet, ruleValue } from '../helpers/rules.js';
 import { patch } from '../patch.js';
 const log = logger.for(import.meta.url);
 
@@ -26,35 +26,12 @@ const log = logger.for(import.meta.url);
  *   types  damage types, or (source, info) => damage types (a choice kept on the feat : Elemental Adept)
  *   enabled () => boolean leaves the rule off (its setting). The same id (default : the match) replaces the rule.
  */
-const rules = { disadvantage : new Map(), cover : new Map(), property : new Map(), resistance : new Map(), terrain : new Map() };
-
-const keyOf = (match, id) => id ?? ((typeof match === "function") ? Symbol() : [match].flat().map(String).join(","));
-
-/* The item on this creature that gives a rule, or null */
-function sourceOf(actor, match){
-  if(!actor) return null;
-  if(typeof match === "function"){
-    try { return match(actor) || null; } catch(error){ log.error("Ignores match", error); return null; }
-  }
-  const ids = [match].flat();
-  return actor.items?.find?.(i => (i.type !== "spell") && ids.includes(idOf(i))) ?? null;
-}
+const RULES = { spells : false };
+const rules = { disadvantage : ruleSet("Ignores disadvantage", RULES), cover : ruleSet("Ignores cover", RULES), property : ruleSet("Ignores property", RULES),
+  resistance : ruleSet("Ignores resistance", RULES), terrain : ruleSet("Ignores terrain", RULES) };
 
 /* The first rule of a kind that holds for this info : { source, rule } or null */
-function holding(kind, info, test = () => true){
-  for(const rule of rules[kind].values()){
-    if(rule.enabled && !rule.enabled()) continue;
-    const source = sourceOf(info.actor, rule.match);
-    if(!source) continue;
-    const full = { ...info, source };
-    try {
-      if(!test(rule, full)) continue;
-      if(rule.when && !rule.when(full)) continue;
-    } catch(error){ log.error("Ignores rule", error); continue; }
-    return { source, rule };
-  }
-  return null;
-}
+const holding = (kind, info, test) => rules[kind].active(info.actor, info, test)[0] ?? null;
 
 /**
  * No disadvantage from these reasons.
@@ -62,8 +39,10 @@ function holding(kind, info, test = () => true){
  * @param {("threatened"|"longRange")[]|string} reasons
  * @param {object} [options]  { when, enabled, id }
  */
-export function ignoresDisadvantage(match, reasons, { when = null, enabled = null, id = null } = {}){
-  rules.disadvantage.set(keyOf(match, id), { match, reasons : [reasons].flat(), when, enabled });
+export function ignoresDisadvantage(match, reasons, options){
+  ({ value : reasons, options } = ruleValue(reasons, options, "reasons"));
+  const { when = null, enabled = null, id = null } = options;
+  rules.disadvantage.add(match, { reasons : [reasons].flat(), when, enabled }, id);
 }
 
 /**
@@ -72,7 +51,7 @@ export function ignoresDisadvantage(match, reasons, { when = null, enabled = nul
  * @param {object} [options]  { when, enabled, id }
  */
 export function ignoresCover(match, { when = null, enabled = null, id = null } = {}){
-  rules.cover.set(keyOf(match, id), { match, when, enabled });
+  rules.cover.add(match, { when, enabled }, id);
 }
 
 /**
@@ -81,8 +60,10 @@ export function ignoresCover(match, { when = null, enabled = null, id = null } =
  * @param {string|string[]} properties  dnd5e property keys
  * @param {object} [options]  { when, enabled, id }
  */
-export function ignoresProperty(match, properties, { when = null, enabled = null, id = null } = {}){
-  rules.property.set(keyOf(match, id), { match, properties : [properties].flat(), when, enabled });
+export function ignoresProperty(match, properties, options){
+  ({ value : properties, options } = ruleValue(properties, options, "properties"));
+  const { when = null, enabled = null, id = null } = options;
+  rules.property.add(match, { properties : [properties].flat(), when, enabled }, id);
 }
 
 /**
@@ -91,8 +72,10 @@ export function ignoresProperty(match, properties, { when = null, enabled = null
  * @param {string[]|Function} types  or (source, info) => types
  * @param {object} [options]  { when, enabled, id }
  */
-export function ignoresResistance(match, types, { when = null, enabled = null, id = null } = {}){
-  rules.resistance.set(keyOf(match, id), { match, types, when, enabled });
+export function ignoresResistance(match, types, options){
+  ({ value : types, options } = ruleValue(types, options, "types"));
+  const { when = null, enabled = null, id = null } = options;
+  rules.resistance.add(match, { types, when, enabled }, id);
 }
 
 /**
@@ -103,7 +86,7 @@ export function ignoresResistance(match, types, { when = null, enabled = null, i
  * @param {object} [options]  { types = ["all"], when, enabled, id }
  */
 export function ignoresTerrain(match, { types = ["all"], when = null, enabled = null, id = null } = {}){
-  rules.terrain.set(keyOf(match, id), { match, types : [types].flat(), when, enabled });
+  rules.terrain.add(match, { types : [types].flat(), when, enabled }, id);
 }
 
 /* ---------- Asked by the rules they skip ---------- */
@@ -138,17 +121,11 @@ function resistancesIgnored(message, target){
   if(!actor) return new Set();
   const info = { actor, item : message.getAssociatedItem?.() ?? null, activity : message.getAssociatedActivity?.() ?? null, target, message };
   const types = new Set();
-  for(const rule of rules.resistance.values()){
-    if(rule.enabled && !rule.enabled()) continue;
-    const source = sourceOf(actor, rule.match);
-    if(!source) continue;
-    const full = { ...info, source };
+  for(const { rule } of rules.resistance.active(actor, info)){
     try {
-      if(rule.when && !rule.when(full)) continue;
       /* A rule given once per copy (a repeatable feat) : each copy's types */
-      const sources = (typeof rule.match === "function") ? [source] : actor.items.filter(i => (i.type !== "spell") && [rule.match].flat().includes(idOf(i)));
-      for(const each of sources){
-        const list = (typeof rule.types === "function") ? rule.types(each, { ...full, source : each }) : rule.types;
+      for(const each of rules.resistance.sources(actor, rule.match)){
+        const list = (typeof rule.types === "function") ? rule.types(each, { ...info, actor, source : each }) : rule.types;
         for(const type of [list].flat()) if(type) types.add(type);
       }
     } catch(error){ log.error("Ignores resistance", error); }
@@ -160,13 +137,7 @@ function resistancesIgnored(message, target){
 function terrainIgnored(actor){
   const list = actor.system?.attributes?.movement?.ignoredDifficultTerrain;
   if(!(list instanceof Set)) return;
-  for(const rule of rules.terrain.values()){
-    if(rule.enabled && !rule.enabled()) continue;
-    const source = sourceOf(actor, rule.match);
-    if(!source) continue;
-    try { if(rule.when && !rule.when({ actor, source })) continue; } catch(error){ log.error("Ignores terrain", error); continue; }
-    for(const type of rule.types) list.add(type);
-  }
+  for(const { rule } of rules.terrain.active(actor)) for(const type of rule.types) list.add(type);
 }
 
 export function registerIgnores(){

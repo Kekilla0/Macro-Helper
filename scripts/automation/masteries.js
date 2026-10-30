@@ -5,7 +5,7 @@ import { settings } from '../settings.js';
 import { limits } from './limits.js';
 import { logger } from '../log.js';
 import { distanceBetween } from '../helpers/tokens.js';
-import { getSize, addTimedEffect, usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
+import { getSize, giveEffect, usedThisTurn, markUsedThisTurn } from '../helpers/actors.js';
 import { giveCondition, cardBuilder } from '../roll-item/card-builder.js';
 import { pickAttack, isRangedAttack } from '../helpers/items.js';
 import { onDamage } from '../roll-item/damage.js';
@@ -43,9 +43,7 @@ export class masteries{
     slow : "fa-hourglass-half", vex : "fa-crosshairs", cleave : "fa-axe", nick : "fa-khanda",
   };
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("rollItemMasteries");
-  }
+  static enabled = settings.on("rollItemMasteries");
 
   /* Nick : this attack's weapon gives its wielder the Nick mastery (dnd5e's masteryOptions : mastered, or a bonus one) */
   static nick(activity){
@@ -202,17 +200,17 @@ export class masteries{
       }
       case "sap" :
         await this.#replace(actor, "sap", attacker);
-        await addTimedEffect(actor, this.#effect("sap", item, attacker), { of : attacker, until : "turnStart" });
+        await giveEffect(actor, this.#effect("sap", item, attacker), { of : attacker, until : "turnStart" });
         return;
       case "slow" : {
         /* Doesn't stack : a new Slow replaces the old one, whoever's it was */
         await this.#replace(actor, "slow");
         const changes = this.#slowChanges(actor);
-        if(changes.length) await addTimedEffect(actor, this.#effect("slow", item, attacker, { system : { changes } }), { of : attacker, until : "turnStart" });
+        if(changes.length) await giveEffect(actor, this.#effect("slow", item, attacker, { system : { changes } }), { of : attacker, until : "turnStart" });
         return;
       }
       case "vex" :
-        await addTimedEffect(attacker, this.#effect("vex", item, attacker, {
+        await giveEffect(attacker, this.#effect("vex", item, attacker, {
           name : `${this.label("vex")}: ${target.name}`,
           flags : { [module.id] : { target : target.document.uuid, targetActor : actor.uuid } },
         }), { of : attacker, until : "turnEnd" });

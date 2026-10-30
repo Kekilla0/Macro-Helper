@@ -51,9 +51,7 @@ export class repeating{
     "heroism" : { label : "start", tempHP : "spellcasting" },
   };
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("spellRules");
-  }
+  static enabled = settings.on("spellRules");
 
   static register(){
     if(game.system.id !== "dnd5e") return;

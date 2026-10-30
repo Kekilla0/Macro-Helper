@@ -60,9 +60,7 @@ export class paladin{
   static DIVINE_SENSE = "divine-sense";
   static SENSED = ["celestial", "fiend", "undead"];
 
-  static enabled(){
-    return (game.system.id === "dnd5e") && settings.value("classRules");
-  }
+  static enabled = settings.on("classRules");
 
   static register(){
     if(game.system.id !== "dnd5e") return;

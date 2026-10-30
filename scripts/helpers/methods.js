@@ -4,7 +4,7 @@ import { rollItem } from '../roll-item/roll-item.js';
 import { distanceBetween, getRange, getTokensWithin, highlightRange, pushAway, pushDestination, addLight, removeLight, hasLight, canSee, poolBar, removePoolBar, poolsOf } from './tokens.js';
 import { isEnemy, isAlly, getThreats, isThreatened, getEnemiesWithinRange, pickTargets, getFlanker, isFlanking } from './targets.js';
 import { getSize, setStatus, setDefeated, splitToken, damage, heal, tempHP, dropsToZero, isKilledOutright, preventDropToZero, findItem,
-  rollSave, addTimedEffect, recoverSpellSlots, slotsLeft, spellSlots, addSpellSlot, usedThisTurn, markUsedThisTurn, getLastDamage, clearLastDamage, stabilize } from './actors.js';
+  rollSave, giveEffect, addTimedEffect, recoverSpellSlots, slotsLeft, spellSlots, addSpellSlot, usedThisTurn, markUsedThisTurn, getLastDamage, clearLastDamage, stabilize } from './actors.js';
 import { setBaseDamage, setDamage, updateItem, attackModeFor, isLongRange, isRangedItem, isRangedAttack, canThrow, getAmmunition, pickAndAttack,
   getUses, hasUses, spendUses, useActivity, useAndApply, multiattack, getHealing, pickAttack, isOtherHandFree, hasShieldEquipped, isClassSpell, replaceItem, isMetal } from './items.js';
 const log = logger.for(import.meta.url);
@@ -48,7 +48,8 @@ const creature = {
   slotsLeft : call(slotsLeft),                                      // (minLevel = 1) -> [{ key, level, value, pact }] spell slots left
   spellSlots : call(spellSlots),                                    // () -> [{ key, level, value, max, pact }] every slot level it has
   addSpellSlot : call(addSpellSlot),                                // (level | "pact", amount = 1) -> Promise<slots now | null>, past the maximum (gone on a Long Rest)
-  addTimedEffect : call(addTimedEffect),                            // (effectData, { of, until : "turnStart" | "turnEnd" }) -> ActiveEffect
+  giveEffect : call(giveEffect),                                    // (effectData, { save, dc, from, until, of, thisTurn }) -> { applied, asked, save }
+  addTimedEffect : call(addTimedEffect),                            // old form : giveEffect with until (default "turnStart")
   multiattack : call(multiattack),                                  // (plan [{ weapon, count }], { repeat, event, attack }) -> one pick + card per weapon
   poolBar : call(poolBar),                                          // (key, { item, flag, max, color }) -> Promise<boolean>, a bar on its tokens
   removePoolBar : call(removePoolBar),                              // (key) -> Promise<boolean>
