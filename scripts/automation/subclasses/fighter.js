@@ -147,10 +147,10 @@ export class fighterArchetypes{
   }
 
   /* The die rolled now (shown), for a use that isn't damage */
-  static async rollDie(actor, message = null, bonus = ""){
+  static async rollDie(actor, message = null, bonus = "", { show = true } = {}){
     const roll = await new Roll(`${this.dieOf(actor)}${bonus}`, actor.getRollData()).evaluate();
     const { rollItem } = await import('../../roll-item/roll-item.js');
-    await rollItem.showDice([roll], message);
+    if(show) await rollItem.showDice([roll], message);
     return roll;
   }
 
@@ -395,8 +395,9 @@ export class fighterArchetypes{
     const item = this.has(actor, "parry");
     if(!item || this.#done.has(`r|${key}|${token.id}`) || !await spendUses(this.diceOf(actor), 1)) return;
     this.#done.add(`r|${key}|${token.id}`);
-    const roll = await this.rollDie(actor, message, " + max(@abilities.str.mod, @abilities.dex.mod)");
-    await cutDamage(message, token, { id : "parry-maneuver", amount : roll.total, by : token.name, label : item.name, formula : roll.formula, result : roll.result });
+    /* Its dice shown by the cut (the card's damage waits for them) */
+    const roll = await this.rollDie(actor, message, " + max(@abilities.str.mod, @abilities.dex.mod)", { show : false });
+    await cutDamage(message, token, { id : "parry-maneuver", roll, by : token.name, label : item.name });
     await actionTracker.spend(actor, { kind : "reaction", what : item.name }).catch(() => null);
   }
 
@@ -469,9 +470,7 @@ export class fighterArchetypes{
     if(!await spendUses(this.psionicOf(actor), 1)) return;
     this.#done.add(`f|${key}|${target.id}`);
     const roll = await new Roll(`max(1, ${this.psionicDie(actor)} + @abilities.int.mod)`, actor.getRollData()).evaluate();
-    const { rollItem } = await import('../../roll-item/roll-item.js');
-    await rollItem.showDice([roll], message);
-    await cutDamage(message, target, { id : "protective-field", amount : roll.total, by : guard.name, label : item?.name ?? "Protective Field", formula : roll.formula, result : roll.result });
+    await cutDamage(message, target, { id : "protective-field", roll, by : guard.name, label : item?.name ?? "Protective Field" });
     await actionTracker.spend(actor, { kind : "reaction", what : item?.name ?? "" }).catch(() => null);
   }
 

@@ -738,7 +738,8 @@ export class rollItem{
     if((pick === "off") || !canvas.ready || !attacker || (attacker.document.parent !== canvas.scene)){
       if(!game.user.targets.size) return { targets : [] };
       const checked = await this.checkTargets(activity, [...game.user.targets]);
-      return (checked?.length && this.announceTargets(activity, checked)) ? { targets : checked } : null;
+      /* The rays are kept, spread over your targets (3 rays, A and B -> A A B) */
+      return (checked?.length && this.announceTargets(activity, checked)) ? { targets : checked, count : Math.max(this.countFor(activity, count), checked.length) } : null;
     }
     const n = this.countFor(activity, count);
     const rangeMultiplier = Number(usage?.[module.id]?.rangeMultiplier) || 1;

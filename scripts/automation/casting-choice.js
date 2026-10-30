@@ -41,7 +41,8 @@ export function castingChoice(rule){
   rules.set(rule.id, rule);
   if(hooked) return;
   hooked = true;
-  uses.onActivity("castingChoice", (activity, ctx, next) => step([...rules.values()], activity, ctx, next));
+  /* A later part of a cast (noCast : Chromatic Orb's leap, a zone's save) : the same casting, nothing asked again */
+  uses.onActivity("castingChoice", (activity, ctx, next) => ctx.config?.[module.id]?.noCast ? next() : step([...rules.values()], activity, ctx, next));
   Hooks.on(`${module.id}.cardFaces`, (card, faces) => {
     for(const rule of rules.values()){
       const record = castingChoiceOf(card, rule.id);

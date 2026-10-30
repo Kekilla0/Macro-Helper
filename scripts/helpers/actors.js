@@ -360,7 +360,8 @@ export async function itemEffectOn(item, { on = null, effect : id = null, activi
  * @param {Actor|Token} [options.of]   whose turn
  * @param {boolean} [options.thisTurn=false]  "turnEnd" : the end of the turn going on now, not the next one
  * @param {boolean} [options.confirmed=false] at once, no GM button : a consequence of a change already allowed, or an
- *                                            automatic part of the creature's own action on itself (Vex)
+ *                                            automatic part of the creature's own action on itself (Vex). A
+ *                                            creature's own feature on itself (its origin : Steady Aim) is always at once
  * @returns {Promise<{ applied : boolean, asked : boolean, save : object|null }>}
  */
 export async function giveEffect(thing, data, { save = null, dc = null, from = null, until = null, of = null, thisTurn = false, confirmed = false } = {}){
@@ -376,8 +377,9 @@ export async function giveEffect(thing, data, { save = null, dc = null, from = n
   const payload = { actor : actor.uuid, data : effect, item : from?.uuid ?? null };
   const name = tokenOf(thing)?.name ?? actor.name;
   /* The ask card names what it comes from : the item given, else the effect's origin */
-  const source = from?.name ?? fromUuidSync(effect.origin ?? "", { strict : false })?.name ?? "";
-  return saveThenGive(thing, { save, dc, from, confirmed, against : data?.statuses ?? [],
+  const origin = from ?? fromUuidSync(effect.origin ?? "", { strict : false });
+  const source = origin?.name ?? "";
+  return saveThenGive(thing, { save, dc, from, confirmed : confirmed || isOwnOn(origin, actor), against : data?.statuses ?? [],
     /* Its own creature the user may change : here (no GM needed); else the GM's client */
     run : () => actor.isOwner ? giveEffectAsGM(payload, game.user) : gm.run("giveEffect", payload),
     ask : () => gm.ask("giveEffectAsk", payload, { actor : from?.actor ?? null,
@@ -387,8 +389,8 @@ export async function giveEffect(thing, data, { save = null, dc = null, from = n
 
 /**
  * The one way a rule changes a creature (giveEffect, giveCondition) : its save first, when one is given (a success :
- * nothing), then `run()` at once on the user's own creature (gm.mine) or when `confirmed` (a consequence of a change the
- * GM already allowed), else `ask()` : the GM's button on a card.
+ * nothing), then `run()` at once on the user's own creature (gm.mine), from the creature's own feature on itself, or
+ * when `confirmed` (a consequence of a change the GM already allowed), else `ask()` : the GM's button on a card.
  * @returns {Promise<{ applied : boolean, asked : boolean, save : object|null }>}  save : rollSave's result
  */
 export async function saveThenGive(thing, { save = null, dc = null, from = null, against = [], confirmed = false, run, ask }){
@@ -399,11 +401,17 @@ export async function saveThenGive(thing, { save = null, dc = null, from = null,
     rolled = await rollSave(thing, save, Number(dc), { from, flags : against?.length ? { against : [...against] } : null });
     if(!rolled || rolled.success) return { applied : false, asked : false, save : rolled };
   }
-  if(!confirmed && !gm.mine(actor)){
+  if(!confirmed && !isOwnOn(from, actor) && !gm.mine(actor)){
     await ask();
     return { applied : false, asked : true, save : rolled };
   }
   return { applied : !!await run(), asked : false, save : rolled };
+}
+
+/* A creature's own feature (item, activity) on itself : nobody else is changed, so no GM button (even the GM's click) */
+function isOwnOn(from, actor){
+  const owner = from?.actor ?? from?.parent?.actor ?? null;
+  return !!owner && !!actor && (owner.uuid === actor.uuid);
 }
 
 /* GM : giveEffect's effect put on (the ask card's button calls it with the GM as user) */

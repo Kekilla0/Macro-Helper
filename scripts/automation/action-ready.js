@@ -94,6 +94,7 @@ export class actionReady{
     gm.handle("readyAnswer", (data, user) => this.readyAnswerAsGM(data, user));
     gm.handle("oaAnswer", (data, user) => this.oaAnswerAsGM(data, user));
     gm.handle("oaDamaged", (data, user) => this.oaDamagedAsGM(data, user));
+    gm.handle("oaReplaced", (data, user) => this.oaReplacedAsGM(data, user));
     /* An Opportunity Attack's damage landed : the move may go on */
     Hooks.on("dnd5e.applyDamage", (actor, amount, options) => this.onOADamage(actor, options));
     /* The reaction attack lego's moments : the Disengage action, a hit on someone else (the active GM) */
@@ -560,7 +561,8 @@ export class actionReady{
     if(!actor || !actionTracker.combatOf(actor)) return;
     const done = new Set(own.oaDone ?? []);
     /* The creatures it drags (grappled) come along : they never see it leave or come */
-    for(const t of moves.enabled() ? moves.heldBy(token) : []) done.add(t.uuid);
+    const dragged = new Set((moves.enabled() ? moves.heldBy(token) : []).map(t => t.uuid));
+    for(const uuid of dragged) done.add(uuid);
     const provoked = this.provokes(token, movement);
     const leavers = provoked ? token.parent.tokens.filter(t => this.canReact(t, token) && !done.has(t.uuid) && !provoked.spared.has(t.uuid)
       /* Can't make Opportunity Attacks (Open Hand Technique's Addle) */
@@ -573,20 +575,38 @@ export class actionReady{
     if(!leavers.length && !enterers.length) return;
     const path = this.pathOf(token, movement);
     const foot = p => ({ x : p.x, y : p.y, width : token.width, height : token.height, elevation : p.elevation });
-    let stop = -1, rows = [];
+    let stop = -1, rows = [], inReach = null;
     for(let i = 0; i < path.length - 1; i++){
       const leaving = leavers.filter(t => { const r = this.reachOf(t.actor); return (this.feet(foot(path[i]), t) <= r) && (this.feet(foot(path[i + 1]), t) > r); });
       if(leaving.length){ stop = i; rows = leaving.map(t => ({ token : t.uuid, status : "pending" })); break; }
       const entering = enterers.filter(e => (this.feet(foot(path[i]), e.t) > e.reach) && (this.feet(foot(path[i + 1]), e.t) <= e.reach));
-      if(entering.length){ stop = i + 1; rows = entering.map(e => ({ token : e.t.uuid, status : "pending", rule : e.rule.id })); break; }
+      if(entering.length){
+        stop = i + 1;
+        rows = entering.map(e => ({ token : e.t.uuid, status : "pending", rule : e.rule.id }));
+        inReach = j => entering.every(e => this.feet(foot(path[j]), e.t) <= e.reach);
+        break;
+      }
     }
     if(stop < 0) return;
+    stop = this.freeStop(token, path, stop, { inReach, foot, dragged });
     /* Each part keeps its own kind of move (a jump's run-up walked, its leap a jump) */
     const part = p => ({ x : p.x, y : p.y, elevation : p.elevation, ...(p.action ? { action : p.action } : {}) });
     const rest = path.slice(stop + 1).map(part);
     const until = path.slice(1, stop + 1).map(part);
     this.stopForOA(token, until, rest, rows, [...done]);
     return false;
+  }
+
+  /* A creature can't end its move in another's space : a stop on an occupied square moves to a free one. Entering a
+     reach : the first free square on, still in that reach; else (and leaving a reach) the last free square before */
+  static freeStop(token, path, stop, { inReach = null, foot, dragged }){
+    /* Those it drags along (grappled) aren't in its way */
+    const others = token.parent.tokens.filter(t => (t !== token) && t.actor && !t.hidden && !dragged.has(t.uuid));
+    const free = i => { const at = cells(foot(path[i])); return !others.some(t => { const { gx, gy } = cellGap(at, cells(t)); return (gx < 0) && (gy < 0); }); };
+    if(free(stop)) return stop;
+    if(inReach) for(let i = stop + 1; (i < path.length) && inReach(i); i++) if(free(i)) return i;
+    for(let i = stop - 1; i > 0; i--) if(free(i)) return i;
+    return 0;
   }
 
   /* rows : [{ token (uuid), status : "pending", rule (a reaction attack rule's id; none : an Opportunity Attack for
@@ -611,6 +631,8 @@ export class actionReady{
       for(const u of game.users) if(t?.actor?.testUserPermission(u, "OWNER")) users.add(u.id);
     }
     for(const u of game.users) if(token.actor?.testUserPermission(u, "OWNER")) users.add(u.id);
+    /* A move tried again while its card waits : the older card is closed (its move won't go on) */
+    await gm.run("oaReplaced", { mover : token.uuid });
     await ChatMessage.implementation.create({
       speaker : ChatMessage.implementation.getSpeaker({ token }),
       whisper : [...users],
@@ -696,7 +718,7 @@ export class actionReady{
       list.append(li);
     });
     const gmBox = html.querySelector(`.${module.id}-oa-gm`);
-    if(gmBox && flag.noMove) gmBox.innerHTML = "";
+    if(gmBox && flag.noMove && (flag.status !== "replaced")) gmBox.innerHTML = "";
     else if(gmBox && game.user.isGM && (flag.status === "pending")){
       const waiting = flag.waiting ? `<p><em>${esc(module.i18n("actionTracker.oa.waiting"))}</em></p>` : "";
       gmBox.innerHTML = `${waiting}<div class="card-buttons"><button type="button" data-answer="continue"><i class="fa-solid fa-play" inert></i> ${esc(module.i18n("actionTracker.oa.continue"))}</button>
@@ -732,6 +754,18 @@ export class actionReady{
       flag.status = status;
     }
     return this.oaSettle(message, flag, { forced });
+  }
+
+  /* GM : a mover's cards still waiting are closed, a newer move replaces them */
+  static async oaReplacedAsGM({ mover } = {}, user){
+    const token = fromUuidSync(mover ?? "", { strict : false });
+    if(!token || !(user?.isGM || token.actor?.testUserPermission(user, "OWNER"))) return false;
+    for(const message of game.messages.contents.slice(-50)){
+      const flag = message.getFlag(module.id, "oaStop");
+      if((flag?.mover !== mover) || (flag.status !== "pending")) continue;
+      await message.setFlag(module.id, "oaStop", { ...foundry.utils.deepClone(flag), status : "replaced" });
+    }
+    return true;
   }
 
   /* All answered (and every hit's damage in) : the move goes on, unless it's down or its Speed is 0 now (Sentinel's Halt) */

@@ -188,6 +188,8 @@ export class hands{
    * @returns {{ main : string|null, off : string|null }}  item ids; the same id in both : held in two hands
    */
   static of(actor){
+    /* A creature not using its hands yet : what the GM marked equipped (startOf) */
+    if(this.isNpc(actor) && !this.inUse(actor)) return this.startOf(actor);
     const stored = actor?.getFlag?.(module.id, "hands") ?? {};
     const has = id => (id && this.canHold(actor.items?.get?.(id))) ? id : null;
     return { main : has(stored.main), off : has(stored.off) };
@@ -216,8 +218,7 @@ export class hands{
   }
 
   /* A free hand for an item : main, then off; null when both are taken (a Two-Handed item needs both free) */
-  static freeHand(actor, item){
-    const h = this.of(actor);
+  static freeHand(actor, item, h = this.of(actor)){
     if(this.isTwoHanded(item)) return (!h.main && !h.off) ? "main" : null;
     return !h.main ? "main" : !h.off ? "off" : null;
   }
@@ -237,18 +238,29 @@ export class hands{
     return !this.isNpc(actor) || !!actor?.getFlag?.(module.id, "hands");
   }
 
-  /* A creature's first hand change : the shield the GM marked equipped goes in a hand first, free (bookkeeping, not an
-     object interaction), so picking up a one-handed weapon keeps it */
+  /* A creature's first hand change : what the GM marked equipped goes in its hands first (startOf), free (bookkeeping,
+     not an object interaction), so picking up a one-handed weapon keeps a shield */
   static async adopt(actor){
     if(!this.isNpc(actor) || this.inUse(actor)) return;
     await actor.update({ [`flags.${module.id}.hands`] : this.startOf(actor) }, { [module.id] : { handsAdopt : true } });
   }
 
-  /* The hands a change starts from : a creature not using its hands yet holds the shield the GM marked equipped */
+  /* The hands a change starts from : a creature not using its hands yet holds what the GM marked equipped, when it fits
+     in two hands (a shield in the off hand first, then the weapons); when it doesn't fit, only the shield */
   static startOf(actor){
     if(!this.isNpc(actor) || this.inUse(actor)) return this.of(actor);
-    const shield = actor.items.find(i => this.isShield(i) && i.system.equipped);
-    return { main : null, off : shield?.id ?? null };
+    if(!actor.items) return { main : null, off : null };
+    const gear = actor.items.filter(i => this.isHeldGear(i) && this.canHold(i) && i.system.equipped)
+      .sort((a, b) => (this.isShield(b) - this.isShield(a)) || (a.sort - b.sort));
+    const shield = gear.find(i => this.isShield(i));
+    const next = { main : null, off : null };
+    for(const item of gear){
+      const slot = this.isShield(item) ? (next.off ? next.main ? null : "main" : "off") : this.freeHand(actor, item, next);
+      if(!slot) return { main : null, off : shield?.id ?? null };
+      if(this.isTwoHanded(item)) next.main = next.off = item.id;
+      else next[slot] = item.id;
+    }
+    return this.normalised(actor, next);
   }
 
   static isShield(item){

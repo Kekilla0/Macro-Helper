@@ -185,12 +185,12 @@ export class bardColleges{
   static #cut = new Set();
 
   /* The die rolled, its use and the Reaction spent */
-  static async cutRoll(token, message = null){
+  static async cutRoll(token, message = null, { show = true } = {}){
     const item = this.inspirationItem(token.actor);
     if(!item || !await spendUses(item, 1)) return null;
     const roll = await new Roll(bard.dieOf(item)).evaluate();
     const { rollItem } = await import('../../roll-item/roll-item.js');
-    await rollItem.showDice([roll], message);
+    if(show) await rollItem.showDice([roll], message);
     await actionTracker.spend(token.actor, { kind : "reaction", what : itemOf(token.actor, this.CUTTING)?.name ?? "" }).catch(() => null);
     return roll;
   }
@@ -204,11 +204,12 @@ export class bardColleges{
     const attacker = tokenOf(message.getAssociatedToken?.() ?? message.getAssociatedActor?.());
     if(!this.cutters(attacker).includes(token) || this.#cut.has(`${message.id}|${ray}`)) return;
     this.#cut.add(`${message.id}|${ray}`);
-    const roll = await this.cutRoll(token, message);
+    /* A damage cut shows its own dice (the card's damage waits for them) */
+    const roll = await this.cutRoll(token, message, { show : kind !== "cutDamage" });
     if(!roll) return;
     const label = itemOf(token.actor, this.CUTTING)?.name ?? "Cutting Words";
     if(kind === "cutAttack") await subclasses.changeRoll(message, { ray, subtract : String(roll.total) }, token.actor);
-    else await cutDamage(message, "all", { id : this.CUTTING, amount : roll.total, by : token.name, label, formula : roll.formula, result : roll.result });
+    else await cutDamage(message, "all", { id : this.CUTTING, roll, by : token.name, label });
     log.debug("Cutting Words", token.name, kind, roll.total);
   }
 

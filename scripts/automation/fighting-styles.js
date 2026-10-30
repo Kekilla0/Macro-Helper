@@ -163,9 +163,7 @@ export class fightingStyles{
      the card (no chat message of its own) */
   static async intercept({ message, guard, target }){
     const roll = await new Roll("1d10 + @prof", guard.actor.getRollData()).evaluate();
-    const { rollItem } = await import('../roll-item/roll-item.js');
-    await rollItem.showDice([roll], message);
-    await cutDamage(message, target, { id : "interception", amount : roll.total, by : guard.name, label : module.i18n("fightingStyles.interceptShort"), formula : roll.formula, result : roll.result });
+    await cutDamage(message, target, { id : "interception", roll, by : guard.name, label : module.i18n("fightingStyles.interceptShort") });
   }
 
   /* Protection : the GM gives the attack Disadvantage and marks the creature Protected */

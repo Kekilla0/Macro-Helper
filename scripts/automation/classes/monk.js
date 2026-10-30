@@ -266,9 +266,7 @@ export class monk{
     const actor = token.actor;
     const item = itemOf(actor, this.DEFLECT);
     const roll = await new Roll("1d10 + @abilities.dex.mod + @classes.monk.levels", actor.getRollData()).evaluate();
-    const { rollItem } = await import('../../roll-item/roll-item.js');
-    await rollItem.showDice([roll], message);
-    if(!await cutDamage(message, token, { id : this.DEFLECT, amount : roll.total, by : token.name, label : item.name, formula : roll.formula, result : roll.result })) return;
+    if(!await cutDamage(message, token, { id : this.DEFLECT, roll, by : token.name, label : item.name })) return;
     await actionTracker.spend(actor, { kind : "reaction", what : item.name }).catch(() => null);
     const rolls = this.attackDamage(message, ray);
     const total = rolls.reduce((sum, r) => sum + (Number(r.total) || 0), 0);

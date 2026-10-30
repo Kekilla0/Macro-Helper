@@ -767,7 +767,8 @@ export class actionTracker{
     const nth = (total && (total < this.MANY - 1)) ? module.format("actionTracker.log.nth", { n : total - this.poolLeft(rec.attack), total }) : "";
     const text = plan.readied ? module.format("actionTracker.log.released", { what : name })
       : plan.oa ? module.format("actionTracker.log.oa", { what : name })
-      : plan.offTurn ? module.format("actionTracker.log.offTurn", { what : name, kind : this.label(plan.offTurn) })
+      /* A player's : the GM is asked, the answer is logged once given (approvalStep) */
+      : plan.offTurn ? module.format(plan.ask ? "actionTracker.log.offTurnAsked" : "actionTracker.log.offTurn", { what : name, kind : this.label(plan.offTurn) })
       : ((attack === "new") || (attack === "more")) && this.isAttack(activity) ? module.format(kind ? "actionTracker.log.attackOf" : "actionTracker.log.attackMore", { what : name, kind : kind ? this.label(kind) : "", nth })
       : plan.bonus?.text ? module.format("actionTracker.log.bonusAttack", { what : name, by : plan.bonus.text })
       : kind ? module.format("actionTracker.log.used", { what : name, kind : this.label(kind) })
@@ -883,7 +884,13 @@ export class actionTracker{
     const answer = await new Promise(resolve => {
       this.#waiting.set(message.id, resolve);
     });
-    if(answer !== "approved") return null;
+    const text = module.format(`actionTracker.log.offTurn${answer.capitalize()}`, { what : activity.item?.name ?? activity.name ?? "" });
+    if(answer !== "approved"){
+      await combatLog.add(actor, text).catch(error => log.debug(error));
+      return null;
+    }
+    const st = this.state(actor);
+    if(st){ this.note(st.rec, text); await this.save(actor, st.rec).catch(error => log.error(error)); }
     return next();
   }
 
