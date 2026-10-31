@@ -571,3 +571,25 @@ input.macro-helper-search { width : 100%; margin : 0 0 6px; }
 #tooltip.macro-helper-rule-tip > section.content + section.content {
   margin-top: 0.75rem;
 }
+
+/* Group Travel : the Journey card, a full-width row under dnd5e's group sheet header */
+.sheet-header:has(.macro-helper-journey) { height : auto; flex-wrap : wrap; }
+.sheet-header .movement .info .value .macro-helper-unit { margin-left : 2px; font-size : var(--font-size-10, 10px); font-weight : normal; opacity : 0.7; }
+.sheet-header .travel-pace h3.macro-helper-override { color : var(--dnd5e-color-crimson, #b03030); }
+.sheet-header .macro-helper-journey.card { width : auto; height : auto; }
+.sheet-header > .macro-helper-journey.card { flex : 0 0 100%; margin : 16px 0 12px; }
+.macro-helper-journey.card > .info { display : flex; flex-direction : row; flex-wrap : wrap; align-items : center; justify-content : center; gap : 6px 14px; padding : 6px 10px; height : auto; }
+.macro-helper-journey.card > .info > * { flex : none; flex-direction : row; height : auto; padding : 0; }
+.macro-helper-journey .clock { display : flex; align-items : center; gap : 6px; font-weight : bold; white-space : nowrap; }
+.macro-helper-journey .clock .time { font-family : var(--dnd5e-font-roboto-condensed, inherit); opacity : 0.85; }
+.macro-helper-journey .modes { display : flex; gap : 3px; }
+.macro-helper-journey .chip { padding : 1px 8px; border-radius : 10px; border : 1px solid var(--dnd5e-color-gold, #9f9275); font-size : var(--font-size-11); opacity : 0.6; }
+.macro-helper-journey .chip.active { opacity : 1; background : var(--dnd5e-color-gold, #9f9275); color : var(--dnd5e-color-black, #000); }
+.macro-helper-journey .chip.vehicle { box-shadow : 0 0 0 1px var(--dnd5e-color-crimson, #a00) inset; }
+.macro-helper-journey .weather { display : flex; align-items : center; gap : 4px; }
+.macro-helper-journey .weather select { height : 22px; width : auto; font-size : var(--font-size-11); }
+.macro-helper-journey .stealth { opacity : 0.4; }
+.macro-helper-journey .stealth.active { opacity : 1; color : var(--dnd5e-color-gold, #9f9275); }
+.macro-helper-journey .vehicle { display : flex; align-items : center; gap : 6px; font-size : var(--font-size-11); }
+.macro-helper-journey .vehicle .none { opacity : 0.6; }
+.macro-helper-journey .vehicle .over { color : var(--dnd5e-color-crimson, #c33); font-weight : bold; }
