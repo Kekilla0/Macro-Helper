@@ -15,6 +15,7 @@ import { d20Button } from '../roll-item/d20-buttons.js';
 import { onHitMove } from '../roll-item/card-moves.js';
 import { unarmedDamage } from './unarmed.js';
 import { initiativeSwap } from './initiative-swap.js';
+import { restLength } from './rest-length.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -29,6 +30,7 @@ const log = logger.for(import.meta.url);
  *                     disadvantage on DEX saves, Prone, Speed 0, no Reactions, and no Action or Bonus Action but Emerge
  *                     (Rule Limits); its action bar's Emerge button, or Shell Defense used again (a toggle), ends it
  *                     (a Bonus Action), still Prone.
+ *   Trance (Elf)    : a Long Rest in 4 hours (restLength) : a group's rest lasts 4 h when every member resting has it.
  *   Save traits     : advantage on saves against a condition (Brave : Frightened, Fey Ancestry : Charmed, Dwarven
  *                     Resilience : Poisoned), for saves rolled from a card whose activity applies it.
  * Origin feats, each built from legos the way an Item Macro would be :
@@ -92,6 +94,9 @@ export class feats{
 
     /* Tortle : Claws */
     unarmedDamage("claws", { die : 6, type : "slashing", enabled : species, when : attack => this.isTortle(attack.actor) });
+
+    /* Elf Trance : a Long Rest in 4 hours */
+    restLength("trance", { long : 4, enabled : species });
 
     for(const [id, against] of Object.entries(this.SAVE_ADVANTAGES)) saveModeAgainst(id, against, { enabled : species });
     Hooks.on("dnd5e.preUseActivity", activity => this.battleMedicKit(activity));

@@ -5,6 +5,7 @@ import { patch } from '../patch.js';
 import { gm } from '../gm.js';
 import { limits } from './limits.js';
 import { rollRequests } from '../requests/requests.js';
+import { restMinutesOf, standardRest } from './rest-length.js';
 import { buttonRow, addButton, makeButton } from '../helpers/utils.js';
 const log = logger.for(import.meta.url);
 
@@ -26,7 +27,8 @@ const log = logger.for(import.meta.url);
  *   Forced march (2024 DMG Extended Travel) : at the end of each hour past the day's travel hours, each counted member
  *   makes a Constitution save, DC 10 + 1 per hour past, or gains 1 Exhaustion : a public request card per hour (Roll all;
  *   Exhaustion +1 on a failed row). Undo deletes the cards; Exhaustion already taken stays. Rests : dnd5e's group Short /
- *   Long Rest move the clock (its calendar on); a Long Rest clears the hours.
+ *   Long Rest move the clock (its calendar on); a Long Rest clears the hours. A group rest lasts as long as the
+ *   longest rest among the members ticked (2024 Elf Trance : a Long Rest in 4 h; restLength legos), shown in its window.
  *   Travel Pace (2024 RAW) : the PHB's fixed table (Normal 3 mph / 24 miles a day, Fast 30, Slow 18), whatever the
  *   members' speeds; Water / Air only when every member has that speed. The DMG's Slower Travelers : Slow when any
  *   member walking (not aboard the primary vehicle) is slowed (dnd5e's movement.slowed : Speed half or less).
@@ -47,6 +49,8 @@ export class groupTravel{
     /* dnd5e's group rest windows : a saved empty member list rests nobody (only the clock moves) : tick everyone */
     Hooks.on("renderShortRestDialog", (app, html) => this.restTargets(app, html));
     Hooks.on("renderLongRestDialog", (app, html) => this.restTargets(app, html));
+    /* A group rest lasts as long as its longest member's (Trance : 4 h) */
+    for(const type of ["Short", "Long"]) Hooks.on(`dnd5e.pre${type}Rest`, (actor, config) => this.restLength(actor, config));
     /* A Long Rest, on the member's own sheet or the group's : their travel hours start again */
     Hooks.on("dnd5e.restCompleted", (actor, result, config) => this.restHours(actor, config));
     gm.handle("groupMember", (data, user) => this.memberAsGM(data, user));
@@ -200,8 +204,55 @@ export class groupTravel{
 
   static restTargets(app, html){
     if((app.actor?.type !== "group") || !this.enabled()) return;
-    const boxes = [...((html instanceof HTMLElement) ? html : app.element).querySelectorAll("dnd5e-checkbox[name^='targets.']")];
+    const element = (html instanceof HTMLElement) ? html : app.element;
+    const boxes = [...element.querySelectorAll("dnd5e-checkbox[name^='targets.']")];
     if(boxes.length && boxes.every(box => !box.checked)) for(const box of boxes) box.checked = true;
+    const type = app.config?.type;
+    if(!["short", "long"].includes(type)) return;
+    const ticked = () => boxes.filter(box => box.checked).map(box => box.name.slice("targets.".length));
+    const fill = () => this.restDuration(element, this.groupRest(app.actor, type, ticked()));
+    for(const box of boxes) box.addEventListener("change", fill);
+    fill();
+  }
+
+  /* How long a group rest takes : the longest rest among the members resting, each their own (Trance : a Long Rest in
+     4 h). { minutes, members : [{ actor, minutes, source }] } */
+  static groupRest(group, type, ids = null){
+    const members = this.creatures(group).filter(a => !ids || ids.includes(a.id))
+      .map(actor => ({ actor, ...restMinutesOf(actor, type) }));
+    const minutes = members.length ? Math.max(...members.map(m => m.minutes)) : standardRest(type);
+    return { minutes, members };
+  }
+
+  /* The group's rest window opens with its members' length (the GM can still type another) */
+  static restLength(actor, config){
+    if((actor?.type !== "group") || !this.enabled() || !["short", "long"].includes(config?.type)) return;
+    if(Number(config.duration) !== standardRest(config.type)) return;
+    const saved = [...(actor.getFlag("dnd5e", "restSettings")?.targets ?? [])];
+    const ids = Array.isArray(config.targets) ? config.targets : (saved.length ? saved : null);
+    config.duration = this.groupRest(actor, config.type, ids).minutes;
+  }
+
+  /* The window's Duration follows the members ticked; a line under it says who sets it */
+  static restDuration(element, { minutes, members }){
+    const value = element.querySelector("[name='duration.value']");
+    const unit = element.querySelector("[name='duration.unit']");
+    if(!value || !unit) return;
+    const hours = !(minutes % 60);
+    value.value = hours ? minutes / 60 : minutes;
+    unit.value = hours ? "hour" : "minute";
+    const field = value.closest(".form-group");
+    let note = field?.querySelector(".macro-helper-rest-length");
+    if(!note && field){
+      note = document.createElement("p");
+      note.className = "hint macro-helper-rest-length";
+      field.append(note);
+    }
+    if(!note) return;
+    const lengths = new Map();
+    for(const m of members) (lengths.get(m.minutes) ?? lengths.set(m.minutes, []).get(m.minutes)).push(m);
+    note.innerHTML = [...lengths.entries()].sort(([a], [b]) => b - a).map(([length, list]) =>
+      `${this.hm(length / 60)} : ${list.map(m => foundry.utils.escapeHTML(m.actor.name) + (m.source ? ` (${foundry.utils.escapeHTML(m.source.name)})` : "")).join(", ")}`).join(" · ");
   }
 
   static sheets(){
