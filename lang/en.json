@@ -1583,5 +1583,18 @@
   "groupTravel.plus10" : "+10 min",
   "groupTravel.plus1h" : "+1 h",
   "groupTravel.untilDawn" : "Until dawn",
-  "groupTravel.untilMidnight" : "Until midnight"
+  "groupTravel.untilMidnight" : "Until midnight",
+  "groupTravel.gear" : "Gear",
+  "groupTravel.capacity" : "Carrying capacity {max} (dragging up to {drag} : Speed 5 ft)",
+  "groupTravel.body" : "Body weight (the GM can type it)",
+  "groupTravel.bodyEstimate" : "Body weight : an estimate by size (the GM can type the real one)",
+  "groupTravel.load.drag" : "Over its carrying capacity : dragging, Speed 5 ft",
+  "groupTravel.load.stuck" : "Over twice its carrying capacity : it can't move",
+  "groupTravel.pull.line" : "Pulled {weight} / {max}",
+  "groupTravel.pull.vehicle" : "Vehicle",
+  "groupTravel.pull.cargo" : "Cargo",
+  "groupTravel.pull.aboard" : "Everyone aboard",
+  "groupTravel.problem.seats" : "{vehicle} : {seats} {taken} of {max}.",
+  "groupTravel.problem.pull" : "{vehicle} is too heavy for its team ({weight} of {max}).",
+  "groupTravel.problem.stuck" : "{name} carries more than twice its carrying capacity and can't move."
 }

@@ -29,6 +29,15 @@ const log = logger.for(import.meta.url);
  *   Exhaustion +1 on a failed row). Undo deletes the cards; Exhaustion already taken stays. Rests : dnd5e's group Short /
  *   Long Rest move the clock (its calendar on); a Long Rest clears the hours. A group rest lasts as long as the
  *   longest rest among the members ticked (2024 Elf Trance : a Long Rest in 4 h; restLength legos), shown in its window.
+ *   Weights (2024 PHB Carrying Capacity) : a member carried or riding counts on its carrier's / mount's load (its body
+ *   plus all it carries), inside dnd5e's own encumbrance, so dnd5e's Encumbrance setting decides what being over does
+ *   (Exceeding Carrying Capacity : Speed 5 ft, so the group goes Slow). Carried by is offered up to twice the carrier's
+ *   capacity (dragging), Riding up to the mount's capacity. Pulling a vehicle : each puller takes up to 5 times its
+ *   capacity left (its own load first), the team adds; the vehicle, its cargo and everyone aboard are pulled. Body
+ *   weights : the GM's typed one, the character's Weight, else an estimate by size.
+ *   Vehicles : crew and draft animals count against the vehicle's own travel hours (dnd5e's vehicle Travel Time);
+ *   seats over their number, a vehicle too heavy for its team or a member over twice its capacity : Rule Limits warns or
+ *   stops the travel.
  *   Travel Pace (2024 RAW) : the PHB's fixed table (Normal 3 mph / 24 miles a day, Fast 30, Slow 18), whatever the
  *   members' speeds; Water / Air only when every member has that speed. The DMG's Slower Travelers : Slow when any
  *   member walking (not aboard the primary vehicle) is slowed (dnd5e's movement.slowed : Speed half or less).
@@ -78,6 +87,17 @@ export class groupTravel{
       if(!self.enabled()) return pace;
       try { return self.travelPace(this, pace); } catch(err) { log.error("Travel Pace :", err); return pace; }
     });
+    /* Carried and riding members count on their carrier's encumbrance (dnd5e's, so its own Encumbrance setting applies) */
+    patch.wrap("dnd5e.dataModels.actor.AttributesFields.prepareEncumbrance", function(wrapped, ...args){
+      const result = wrapped(...args);
+      try { self.addCarried(this); } catch(err) { log.error("Group weights :", err); }
+      return result;
+    });
+    Hooks.once("ready", () => this.refreshLoads());
+    Hooks.on("updateActor", (actor, changes) => this.loadsChanged(actor, changes));
+    for(const hook of ["createItem", "updateItem", "deleteItem"]){
+      Hooks.on(hook, (item, changes) => this.gearChanged(item, (hook === "updateItem") ? changes : null));
+    }
     /* A member's speed or conditions changed : their groups' paces may too */
     Hooks.on("updateActor", actor => this.redrawGroupsOf(actor));
     for(const hook of ["createActiveEffect", "updateActiveEffect", "deleteActiveEffect"]){
@@ -423,14 +443,18 @@ export class groupTravel{
     return (this.travelOf(group, actor).by !== "draft") && !this.carriedBy(group, actor, "ride").length;
   }
 
-  /* Pulling a vehicle : Beasts; anyone else (rare) only when the GM picks it */
-  static canPull(actor, user){
-    return (this.speed(actor, "walk") > 0) && (user.isGM || (actor.system.details?.type?.value === "beast"));
+  /* Pulling a vehicle : any member on its feet with some carrying capacity left (2024 : 5 times it, the team adds) */
+  static canPull(actor){
+    if(!(this.speed(actor, "walk") > 0)) return false;
+    if(!this.weighs()) return true;
+    const { value = 0, max = 0 } = actor.system.attributes?.encumbrance ?? {};
+    return value < max;
   }
 
-  /* The ways that member can travel now : walking (a walk speed), riding a member at least one size larger that walks
-     and no one else rides (2024 : one rider), carried by a member on its own feet or riding, a crew / passenger seat on
-     each vehicle, pulling it. The current way stays listed even if it no longer fits. */
+  /* The ways that member can travel now : walking (a walk speed), riding a member at least one size larger that walks,
+     no one else rides (2024 : one rider) and can carry it, carried by a member on its own feet or riding that can at
+     least drag it (twice its capacity), a crew / passenger seat on each vehicle, pulling it. Weights only count when
+     dnd5e's Encumbrance setting is on. The current way stays listed even if it no longer fits. */
   static travelChoices(group, actor, user = game.user){
     const size = a => CONFIG.DND5E.actorSizes[a.system.traits?.size]?.numerical ?? 2;
     const others = this.creatures(group).filter(a => a !== actor);
@@ -438,15 +462,16 @@ export class groupTravel{
     if(this.speed(actor, "walk") > 0) choices.push({ value : "walk", by : "walk" });
     for(const mount of others){
       if((this.travelOf(group, mount).by !== "walk") || (size(mount) <= size(actor)) || !this.travelTypes(mount).size) continue;
+      if(!this.canCarry(mount, actor, 1)) continue;
       const taken = this.carriedBy(group, mount, "ride").some(a => a !== actor);
       choices.push({ value : `ride:${mount.id}`, by : "ride", name : mount.name, disabled : taken });
     }
     for(const carrier of others){
-      if(["walk", "ride"].includes(this.travelOf(group, carrier).by)) choices.push({ value : `carried:${carrier.id}`, by : "carried", name : carrier.name });
+      if(["walk", "ride"].includes(this.travelOf(group, carrier).by) && this.canCarry(carrier, actor, 2)) choices.push({ value : `carried:${carrier.id}`, by : "carried", name : carrier.name });
     }
     for(const vehicle of this.vehicles(group)){
       for(const by of ["crew", "passenger"]) choices.push({ value : `${by}:${vehicle.id}`, by, name : vehicle.name });
-      if(this.canPull(actor, user)) choices.push({ value : `draft:${vehicle.id}`, by : "draft", name : vehicle.name });
+      if(this.canPull(actor)) choices.push({ value : `draft:${vehicle.id}`, by : "draft", name : vehicle.name });
     }
     const now = this.travelOf(group, actor);
     const value = now.target ? `${now.by}:${now.target}` : now.by;
@@ -586,7 +611,7 @@ export class groupTravel{
     const member = this.memberOf(group, actor);
     const canEdit = game.user.isGM || actor.isOwner;
     const riders = this.carriedBy(group, actor, "ride");
-    const limit = Number(group.system.attributes?.travel?.time) || 8;
+    const limit = this.limitOf(group, actor);
     const hours = Number(actor.getFlag(module.id, "travelHours")) || 0;
     const shown = Math.round(hours * 10) / 10;
     const card = document.createElement("div");
@@ -608,10 +633,15 @@ export class groupTravel{
             ? `<input type="number" class="hours-value" min="0" step="0.1" value="${shown}">` : shown} / ${limit} h</span>
         </div>
         <div class="status">${this.statusIcons(group, actor)}</div>
-      </div>`;
+      </div>
+      ${this.weightRow(actor)}`;
     card.querySelector(".hours-value")?.addEventListener("change", event => {
       const value = Math.max(0, Number(event.target.value) || 0);
       if(value) actor.setFlag(module.id, "travelHours", value); else actor.unsetFlag(module.id, "travelHours");
+    });
+    card.querySelector(".body-weight")?.addEventListener("change", event => {
+      const value = Math.max(0, Number(event.target.value) || 0);
+      if(value) actor.setFlag(module.id, "bodyWeight", value); else actor.unsetFlag(module.id, "bodyWeight");
     });
     if(!canEdit) return card;
     card.querySelector(".job")?.addEventListener("change", event => this.change(group, actor, { job : event.target.value }));
@@ -637,6 +667,8 @@ export class groupTravel{
     if(exhaustion) icons.push(`<span data-tooltip="${CONFIG.DND5E.conditionTypes.exhaustion?.name ?? "Exhaustion"} ${exhaustion}">
       <img src="${CONFIG.DND5E.conditionTypes.exhaustion?.img ?? CONFIG.DND5E.conditionTypes.exhaustion?.icon}"><b>${exhaustion}</b></span>`);
     if(actor.system.attributes?.movement?.slowed) icons.push(`<span data-tooltip="${game.i18n.localize("DND5E.TRAVEL.Slowed.Member")}"><i class="fa-solid fa-triangle-exclamation" inert></i></span>`);
+    const load = this.loadState(actor);
+    if(load) icons.push(`<span class="over" data-tooltip="${game.i18n.localize(`groupTravel.load.${load}`)}"><i class="fa-solid ${(load === "stuck") ? "fa-ban" : "fa-weight-hanging"}" inert></i></span>`);
     const carried = this.carriedBy(group, actor, "carried");
     if(carried.length) icons.push(`<span data-tooltip="${game.i18n.localize("groupTravel.carrying")} : ${this.names(carried)}"><i class="fa-solid fa-person-carry-box" inert></i><b>${carried.length}</b></span>`);
     return icons.join("") || `<span class="none">${game.i18n.localize("groupTravel.statusOk")}</span>`;
@@ -654,8 +686,172 @@ export class groupTravel{
     };
     const card = document.createElement("div");
     card.className = "macro-helper-road vehicle card";
-    card.innerHTML = `${line("crew", "fa-people-group")}${line("passengers", "fa-chair")}${line("draft", "fa-horse")}`;
+    card.innerHTML = `${line("crew", "fa-people-group")}${line("passengers", "fa-chair")}${line("draft", "fa-horse")}${this.pullLine(vehicle)}`;
     return card;
+  }
+
+  /* ---------- Weights ---------- */
+
+  /* A body weight by size (lb) when neither the GM's typed one nor the character's Weight is known */
+  static SIZE_WEIGHTS = { tiny : 8, sm : 40, med : 150, lg : 1000, huge : 4000, grg : 16000 };
+
+  /* dnd5e's Encumbrance setting : off ("none") = weights are shown but never limit anything */
+  static weighs(){
+    return game.settings.get("dnd5e", "encumbrance") !== "none";
+  }
+
+  static weightUnit(){
+    return game.settings.get("dnd5e", "metricWeightUnits") ? "kg" : "lb";
+  }
+
+  static convert(value, from, to = this.weightUnit()){
+    try { return dnd5e.utils.convertWeight(Number(value) || 0, from, to); } catch { return Number(value) || 0; }
+  }
+
+  static weightLabel(value){
+    return `${Math.round(value * 10) / 10} ${game.i18n.localize(CONFIG.DND5E.weightUnits?.[this.weightUnit()]?.abbreviation ?? this.weightUnit())}`;
+  }
+
+  /* { value, estimate } : the GM's typed weight, the character's Weight ("150 lb", "70 kg"), else by size */
+  static bodyWeight(actor){
+    const typed = Number(actor.getFlag(module.id, "bodyWeight"));
+    if(typed > 0) return { value : typed, estimate : false };
+    const text = `${actor.system.details?.weight ?? ""}`;
+    const number = parseFloat(text.replace(",", "."));
+    if(number > 0) return { value : this.convert(number, /kg/i.test(text) ? "kg" : (/lb|pound/i.test(text) ? "lb" : this.weightUnit())), estimate : false };
+    return { value : this.convert(this.SIZE_WEIGHTS[actor.system.traits?.size] ?? 150, "lb"), estimate : true };
+  }
+
+  /* A creature's whole weight : its body and everything it carries (its gear, the members it carries) */
+  static creatureWeight(actor){
+    return this.bodyWeight(actor).value + (Number(actor.system.attributes?.encumbrance?.value) || 0);
+  }
+
+  static groupsOf(actor){
+    return game.actors?.filter(g => (g.type === "group") && g.system.members?.some(m => m.actor === actor)) ?? [];
+  }
+
+  /* The members this creature carries or is ridden by, in any of its groups : [{ actor, by, weight }] */
+  static carriedLoad(actor){
+    const list = [];
+    for(const group of this.groupsOf(actor)){
+      for(const by of ["ride", "carried"]) for(const other of this.carriedBy(group, actor, by)){
+        if(!list.some(l => l.actor === other)) list.push({ actor : other, by, weight : this.creatureWeight(other) });
+      }
+    }
+    return list;
+  }
+
+  /* dnd5e's encumbrance, plus the members carried : encumbrance.travel = { gear, carried : [{ actor, by, weight }] } */
+  static addCarried(system){
+    const actor = system.parent;
+    const encumbrance = system.attributes?.encumbrance;
+    if(!this.enabled() || !game.ready || system.isVehicle || !encumbrance || !actor?.system?.isCreature) return;
+    const carried = this.carriedLoad(actor);
+    encumbrance.travel = { gear : encumbrance.value, carried };
+    if(!carried.length) return;
+    encumbrance.value = (encumbrance.value + carried.reduce((n, c) => n + c.weight, 0)).toNearest(0.1);
+    encumbrance.pct = Math.clamp((encumbrance.value * 100) / encumbrance.max, 0, 100);
+  }
+
+  /* Can this carrier take that member (on top of what else it carries) within `times` its capacity ? */
+  static canCarry(carrier, actor, times){
+    if(!this.weighs()) return true;
+    const { value = 0, max = Infinity, travel } = carrier.system.attributes?.encumbrance ?? {};
+    const already = travel?.carried?.find(c => c.actor === actor)?.weight ?? 0;
+    return value - already + this.creatureWeight(actor) <= times * max;
+  }
+
+  /* "drag" : over its capacity (Speed 5 ft while dragging); "stuck" : over twice it (can't move); null */
+  static loadState(actor){
+    if(!this.weighs()) return null;
+    const { value = 0, max = Infinity } = actor.system.attributes?.encumbrance ?? {};
+    return (value > 2 * max) ? "stuck" : ((value > max) ? "drag" : null);
+  }
+
+  /* Its load of its capacity; the GM types its body weight */
+  static weightRow(actor){
+    const { value = 0, max = 0, travel } = actor.system.attributes?.encumbrance ?? {};
+    const body = this.bodyWeight(actor);
+    const lines = [`${game.i18n.localize("groupTravel.gear")} ${this.weightLabel(travel?.gear ?? value)}`];
+    for(const c of travel?.carried ?? []) lines.push(`${game.i18n.localize((c.by === "ride") ? "groupTravel.riddenBy" : "groupTravel.carrying")} ${foundry.utils.escapeHTML(c.actor.name)} ${this.weightLabel(c.weight)}`);
+    lines.push(game.i18n.format("groupTravel.capacity", { max : this.weightLabel(max), drag : this.weightLabel(2 * max) }));
+    const state = this.loadState(actor);
+    const bodyTip = game.i18n.localize(body.estimate ? "groupTravel.bodyEstimate" : "groupTravel.body");
+    return `<div class="row weight">
+        <div class="hours" data-tooltip="${lines.join("<br>")}">
+          <i class="fa-solid fa-weight-hanging" inert></i>
+          <div class="meter progress meter-sm" style="--bar-percentage : ${max ? Math.min(100, value / max * 100) : 0}%"></div>
+          <span class="${state ? "over" : ""}">${Math.round(value)} / ${this.weightLabel(max)}</span>
+        </div>
+        <span class="body" data-tooltip="${bodyTip}"><i class="fa-solid fa-person" inert></i>${game.user.isGM
+          ? `<input type="number" class="body-weight" min="0" step="1" value="${body.estimate ? "" : Math.round(body.value)}" placeholder="≈${Math.round(body.value)}">`
+          : `${body.estimate ? "≈" : ""}${Math.round(body.value)}`}</span>
+      </div>`;
+  }
+
+  /* What a vehicle's team pulls : the vehicle, its cargo, everyone aboard (body and gear); what the team can pull :
+     each puller 5 times its capacity left (dnd5e's draftMultiplier), added up. max null = no team (a ship). */
+  static pullOf(vehicle){
+    const unit = this.weightUnit();
+    const actors = key => [...new Set(vehicle.system[key]?.value ?? [])].map(uuid => this.actorOf(uuid)).filter(a => a?.system?.isCreature);
+    const own = vehicle.system.traits?.weight ?? {};
+    const parts = {
+      vehicle : this.convert(own.value || 0, own.units ?? unit),
+      cargo : Number(vehicle.system.attributes?.encumbrance?.value) || 0,
+      aboard : [...new Set([...actors("crew"), ...actors("passengers")])].reduce((n, a) => n + this.creatureWeight(a), 0)
+    };
+    const pullers = actors("draft");
+    const times = CONFIG.DND5E.encumbrance.draftMultiplier ?? 5;
+    const max = pullers.length ? pullers.reduce((n, a) => {
+      const { value = 0, max = 0 } = a.system.attributes?.encumbrance ?? {};
+      return n + Math.max(0, max - value) * times;
+    }, 0) : null;
+    return { weight : parts.vehicle + parts.cargo + parts.aboard, max, parts, pullers };
+  }
+
+  static pullLine(vehicle){
+    const pull = this.pullOf(vehicle);
+    if(pull.max === null) return "";
+    const over = this.weighs() && (pull.weight > pull.max);
+    const tip = ["vehicle", "cargo", "aboard"].map(k => `${game.i18n.localize(`groupTravel.pull.${k}`)} ${this.weightLabel(pull.parts[k])}`).join("<br>");
+    return `<div class="${over ? "over" : ""}" data-tooltip="${tip}"><i class="fa-solid fa-weight-hanging" inert></i>
+      ${game.i18n.format("groupTravel.pull.line", { weight : Math.round(pull.weight), max : this.weightLabel(pull.max) })}</div>`;
+  }
+
+  /* Re-prepare the members of this creature's groups (or all groups) so carriers see what they carry now; the GM's
+     client then lets dnd5e set its encumbrance statuses. Members carried by members carried... : a few passes. */
+  static refreshLoads(actor = null){
+    if(!this.enabled() || !game.ready) return;
+    const groups = actor ? ((actor.type === "group") ? [actor] : this.groupsOf(actor)) : game.actors.filter(g => g.type === "group");
+    const members = new Set(groups.flatMap(g => this.creatures(g)));
+    if(!members.size) return;
+    for(let pass = 0; pass < 3; pass++) for(const member of members) member.reset();
+    if(game.users.activeGM?.isSelf && this.weighs()) for(const member of members) member.updateEncumbrance?.({});
+    for(const app of this.sheets()) if(groups.includes(app.document)) app.render();
+    for(const member of members) if(member.sheet?.rendered) member.sheet.render();
+  }
+
+  /* Gear that weighs on someone else : a member carried, riding or aboard a vehicle; only weight changes */
+  static gearChanged(item, changes){
+    const actor = item.parent;
+    if(!this.enabled() || !(actor instanceof Actor) || !actor.system?.isCreature) return;
+    if(changes){
+      const flat = Object.keys(foundry.utils.flattenObject(changes));
+      if(!flat.some(k => ["system.quantity", "system.weight", "system.container"].some(key => k.startsWith(key)))) return;
+    }
+    const counts = this.groupsOf(actor).some(g => ["ride", "carried", "crew", "passenger"].includes(this.travelOf(g, actor).by));
+    if(counts) this.refreshLoads(actor);
+  }
+
+  /* What a carrier's load depends on : the group's ways of travel, vehicle seats, a member's weight, size, Strength */
+  static loadsChanged(actor, changes){
+    if(!this.enabled()) return;
+    const flat = Object.keys(foundry.utils.flattenObject(changes ?? {}));
+    const keys = (actor.type === "group") ? [`flags.${module.id}.members`, "system.members"]
+      : (actor.type === "vehicle") ? ["system.crew", "system.passengers", "system.draft", "system.traits.weight"]
+      : [`flags.${module.id}.bodyWeight`, `flags.${module.id}.-=bodyWeight`, "system.details.weight", "system.traits.size", "system.abilities.str", "system.currency"];
+    if(flat.some(k => keys.some(key => k.startsWith(key)))) this.refreshLoads(actor.type === "vehicle" ? null : actor);
   }
 
   /* ---------- Travel ---------- */
@@ -733,6 +929,43 @@ export class groupTravel{
     return actors;
   }
 
+  /* A member's day of travel hours : a vehicle's crew and draft animals that vehicle's own Travel Time (dnd5e : 24 h
+     unless the GM sets it), everyone else the group's */
+  static limitOf(group, actor){
+    const own = Number(group.system.attributes?.travel?.time) || 8;
+    const { by, target } = this.travelOf(group, actor);
+    let vehicle = ["crew", "draft"].includes(by) ? this.memberActor(group, target) : null;
+    const primary = group.system.primaryVehicle;
+    if(!vehicle && primary?.system?.draft?.value?.includes(actor.uuid)) vehicle = primary;
+    return Number(vehicle?.system?.attributes?.travel?.time) || own;
+  }
+
+  /* What stops the group travelling (Rule Limits) : seats over their number, a vehicle its team can't pull, a member
+     over twice its carrying capacity (weights only with dnd5e's Encumbrance setting on) */
+  static travelProblems(group){
+    const problems = [];
+    for(const vehicle of this.vehicles(group)){
+      for(const key of ["crew", "passengers"]){
+        const part = vehicle.system[key] ?? {};
+        const taken = part.value?.length ?? 0;
+        if(Number.isFinite(part.max) && (taken > part.max)) problems.push(game.i18n.format("groupTravel.problem.seats",
+          { vehicle : vehicle.name, seats : game.i18n.localize(`groupTravel.${key}`), taken, max : part.max }));
+      }
+      const pull = this.weighs() && this.pullOf(vehicle);
+      if(pull && (pull.max !== null) && (pull.weight > pull.max)) problems.push(game.i18n.format("groupTravel.problem.pull",
+        { vehicle : vehicle.name, weight : this.weightLabel(pull.weight), max : this.weightLabel(pull.max) }));
+    }
+    for(const actor of this.creatures(group)){
+      if(this.loadState(actor) === "stuck") problems.push(game.i18n.format("groupTravel.problem.stuck", { name : actor.name }));
+    }
+    return problems;
+  }
+
+  /* Each problem through Rule Limits : false = stopped (Block) */
+  static mayTravel(group){
+    return this.travelProblems(group).every(rule => limits.allow(rule, { who : group.name, what : game.i18n.localize("groupTravel.travel") }));
+  }
+
   /* Gallop (PHB Mounts) : every creature on its own feet is a ridden mount, none galloped since its last rest */
   static gallopers(group){
     if(group.system.primaryVehicle) return [];
@@ -760,16 +993,18 @@ export class groupTravel{
     return true;
   }
 
-  /* What a leg depends on besides its length : { rate, pace, gallop, used (the most hours a counted member has), limit,
-     counted }; null = no pace for the travel mode */
+  /* What a leg depends on besides its length : { rate, pace, gallop, used and limit (the member nearest its own day's
+     hours), counted, members }; null = no pace for the travel mode */
   static legBase(group, { pace = group.system.attributes.travel.pace, gallop = false } = {}){
     const { rate, pace : used } = this.hourly(group, pace);
     if(!(rate > 0)) return null;
     const counted = this.counted(group);
+    /* The member closest to (or furthest past) its own day's hours sets the leg's forced march */
+    const members = counted.map(actor => ({ actor, used : Number(actor.getFlag(module.id, "travelHours")) || 0, limit : this.limitOf(group, actor) }));
+    const worst = members.reduce((a, b) => (!a || ((b.used - b.limit) > (a.used - a.limit))) ? b : a, null);
     return {
-      rate, pace : used, gallop : !!gallop && this.canGallop(group), counted,
-      used : Math.max(0, ...counted.map(a => Number(a.getFlag(module.id, "travelHours")) || 0)),
-      limit : Number(group.system.attributes.travel.time) || 8
+      rate, pace : used, gallop : !!gallop && this.canGallop(group), counted, members,
+      used : worst?.used ?? 0, limit : worst?.limit ?? (Number(group.system.attributes.travel.time) || 8)
     };
   }
 
@@ -826,6 +1061,7 @@ export class groupTravel{
       ui.notifications.warn(game.i18n.format("groupTravel.noPace", { mode : game.i18n.localize(`DND5E.TRAVEL.Type.${this.mode(group).capitalize()}`) }));
       return false;
     }
+    if(!this.mayTravel(group)) return false;
   }
 
   /* The client that moved it : the GM's client passes the time */
@@ -846,11 +1082,10 @@ export class groupTravel{
     const armed = !!this.flag(group, "gallop");
     const leg = this.leg(group, { distance : number(distance), hours : number(hours), pace, gallop : gallop ?? armed });
     if(!leg || !(leg.seconds > 0)) return false;
-    /* [uuid, hours before] pairs : a uuid's dots would split as a flag key */
+    /* [uuid, hours before, day's hours] : a uuid's dots would split as a flag key */
     const before = [];
-    for(const actor of leg.counted){
-      const was = Number(actor.getFlag(module.id, "travelHours")) || 0;
-      before.push([actor.uuid, was]);
+    for(const { actor, used : was, limit } of leg.members){
+      before.push([actor.uuid, was, limit]);
       await actor.setFlag(module.id, "travelHours", Math.round((was + leg.hours) * 100) / 100);
     }
     const mounts = leg.gallop ? this.gallopers(group) : [];
@@ -865,14 +1100,15 @@ export class groupTravel{
     return true;
   }
 
-  /* The hours past the day's travel hours each counted member finished on this leg : { hour past : [actors] } */
+  /* The hours past its own day's travel hours each counted member finished on this leg :
+     { "past:hour" : { actors, past (hours past), hour (of the day's travel) } } */
   static marchHours(before, leg){
     const hours = {};
-    for(const [uuid, was] of before){
+    for(const [uuid, was, limit = leg.limit] of before){
       const actor = fromUuidSync(uuid, { strict : false });
       const now = was + leg.hours;
       for(let end = Math.floor(was + 1e-6) + 1; end <= Math.floor(now + 1e-6); end++){
-        if(end > leg.limit) (hours[end - leg.limit] ??= []).push(actor);
+        if(end > limit) (hours[`${end - limit}:${end}`] ??= { actors : [], past : end - limit, hour : end }).actors.push(actor);
       }
     }
     return hours;
@@ -881,11 +1117,11 @@ export class groupTravel{
   /* Forced march : a Constitution save card for each hour past, DC 10 + that hour */
   static async marchChecks(group, before, leg){
     const cards = [];
-    for(const [past, actors] of Object.entries(this.marchHours(before, leg)).sort(([a], [b]) => a - b)){
+    for(const { actors, past, hour } of Object.values(this.marchHours(before, leg)).sort((a, b) => (a.past - b.past) || (a.hour - b.hour))){
       const who = actors.filter(a => a).map(a => ({ actor : a.uuid, name : a.name, img : a.img }));
       if(!who.length) continue;
       cards.push(await rollRequests.request({ who, what : "save:con", dc : 10 + Number(past), hideDC : false, speaker : group, onFail : "exhaustion",
-        label : game.i18n.format("groupTravel.march", { save : rollRequests.labelOf("save", "con"), hour : leg.limit + Number(past) }) }));
+        label : game.i18n.format("groupTravel.march", { save : rollRequests.labelOf("save", "con"), hour }) }));
     }
     return cards;
   }
@@ -997,7 +1233,7 @@ export class groupTravel{
       ],
       rejectClose : false
     });
-    if(!result || (typeof result !== "object") || !(result.distance || result.hours)) return;
+    if(!result || (typeof result !== "object") || !(result.distance || result.hours) || !this.mayTravel(group)) return;
     await gm.run("groupLeg", { group : group.uuid, ...result });
   }
 
