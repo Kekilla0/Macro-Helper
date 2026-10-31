@@ -372,6 +372,7 @@
 .macro-helper-request-card .request-summary.success { color : var(--color-level-success, #2a7d2a); }
 .macro-helper-request-card .request-summary.failure { color : var(--color-level-error, #b22); }
 .macro-helper-request-card [data-request-next] { width : 100%; margin-top : 4px; }
+.macro-helper-request-card [data-request-roll-all] { width : 100%; margin-top : 4px; }
 .macro-helper-request-card .request-next { display : flex; gap : 4px; margin-top : 4px; }
 .macro-helper-request-card .request-next select { flex : 1; height : auto; }
 .macro-helper-request-card .request-next button { flex : 0 0 auto; width : auto; }
@@ -572,12 +573,13 @@ input.macro-helper-search { width : 100%; margin : 0 0 6px; }
   margin-top: 0.75rem;
 }
 
-/* Group Travel : the Journey card, a full-width row under dnd5e's group sheet header */
-.sheet-header:has(.macro-helper-journey) { height : auto; flex-wrap : wrap; }
+/* Group Travel : the Journey card, beside the portrait under Travel Pace / Advancement */
+.sheet-header:has(.macro-helper-journey) { height : auto; }
+.sheet-header > .right:has(> .macro-helper-journey) > .top { margin-top : -30px; }
 .sheet-header .movement .info .value .macro-helper-unit { margin-left : 2px; font-size : var(--font-size-10, 10px); font-weight : normal; opacity : 0.7; }
 .sheet-header .travel-pace h3.macro-helper-override { color : var(--dnd5e-color-crimson, #b03030); }
 .sheet-header .macro-helper-journey.card { width : auto; height : auto; }
-.sheet-header > .macro-helper-journey.card { flex : 0 0 100%; margin : 16px 0 12px; }
+.sheet-header > .right > .macro-helper-journey.card { align-self : center; width : calc(2 * 206px + 8px); margin : 0 0 12px; }
 .macro-helper-journey.card > .info { display : flex; flex-direction : row; flex-wrap : wrap; align-items : center; justify-content : center; gap : 6px 14px; padding : 6px 10px; height : auto; }
 .macro-helper-journey.card > .info > * { flex : none; flex-direction : row; height : auto; padding : 0; }
 .macro-helper-journey .clock { display : flex; align-items : center; gap : 6px; font-weight : bold; white-space : nowrap; }

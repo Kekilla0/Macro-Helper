@@ -4,6 +4,7 @@ import { logger } from '../log.js';
 import { patch } from '../patch.js';
 import { gm } from '../gm.js';
 import { limits } from './limits.js';
+import { rollRequests } from '../requests/requests.js';
 import { buttonRow, addButton, makeButton } from '../helpers/utils.js';
 const log = logger.for(import.meta.url);
 
@@ -11,7 +12,7 @@ const log = logger.for(import.meta.url);
  * Group Travel (dnd5e's Group actor) : the group sheet's header, rearranged and added to.
  *   dnd5e keeps : the portrait, name, Place Members, the group Short / Long Rest buttons, Travel Pace (its pace arrows
  *                 and Land / Water / Air paces), Advancement.
- *   added       : a Journey card, a full-width row under the header : the clock (dnd5e's Calendar, in the Calendar HUD's own date / time formats), the travel
+ *   added       : a Journey card beside the portrait, under Travel Pace / Advancement (as wide as both) : the clock (dnd5e's Calendar, in the Calendar HUD's own date / time formats), the travel
  *                 mode chips (Land / Water / Air; the primary vehicle's type marked), Weather (GM dropdown), Stealth
  *                 (toggle), the primary vehicle's crew / passenger seats; Travel and Pass Time beside the rest buttons.
  *   Everyone sees it; only the GM uses it, but Travel and Gallop are also the Leader's player's. Weather and stealth
@@ -22,6 +23,10 @@ const log = logger.for(import.meta.url);
  *   members' hours and posts a log card (the GM's Undo puts it all back). The ruler shows each leg's time and arrival,
  *   spaces past the day's travel hours red (forced march), the galloped hour yellow. The Travel window does the same
  *   off the map (miles or hours); Pass Time (GM) moves only the clock.
+ *   Forced march (2024 DMG Extended Travel) : at the end of each hour past the day's travel hours, each counted member
+ *   makes a Constitution save, DC 10 + 1 per hour past, or gains 1 Exhaustion : a public request card per hour (Roll all;
+ *   Exhaustion +1 on a failed row). Undo deletes the cards; Exhaustion already taken stays. Rests : dnd5e's group Short /
+ *   Long Rest move the clock (its calendar on); a Long Rest clears the hours.
  *   Travel Pace (2024 RAW) : the PHB's fixed table (Normal 3 mph / 24 miles a day, Fast 30, Slow 18), whatever the
  *   members' speeds; Water / Air only when every member has that speed. The DMG's Slower Travelers : Slow when any
  *   member walking (not aboard the primary vehicle) is slowed (dnd5e's movement.slowed : Speed half or less).
@@ -261,8 +266,8 @@ export class groupTravel{
         ${this.gallopButton(actor)}
         <div class="vehicle">${this.vehicleSeats(actor)}</div>
       </div>`;
-    /* A full-width row under dnd5e's header */
-    header.append(row);
+    /* Beside the portrait, under Travel Pace / Advancement */
+    (header.querySelector(":scope > .right") ?? header).append(row);
     this.fillClock(row);
     row.querySelector(".gallop:not([disabled])")?.addEventListener("click", () => gm.run("groupGallop", { group : actor.uuid }));
 
@@ -802,9 +807,36 @@ export class groupTravel{
     if(leg.gallop && armed) await group.unsetFlag(module.id, "gallop");
     const start = game.time.worldTime;
     await game.time.advance(leg.seconds);
-    await this.postLog(group, { kind : "leg", start, seconds : leg.seconds, token, from, hours : before, mounts : mounts.map(m => m.uuid), armed : leg.gallop && armed,
+    const log = await this.postLog(group, { kind : "leg", start, seconds : leg.seconds, token, from, hours : before, mounts : mounts.map(m => m.uuid), armed : leg.gallop && armed,
       distance : leg.distance, pace : leg.pace, time : leg.hours, day : leg.used + leg.hours, limit : leg.limit, over : leg.over, gallop : leg.gallop });
+    const checks = await this.marchChecks(group, before, leg);
+    if(checks.length) await log.setFlag(module.id, "groupLog.checks", checks.map(m => m.id));
     return true;
+  }
+
+  /* The hours past the day's travel hours each counted member finished on this leg : { hour past : [actors] } */
+  static marchHours(before, leg){
+    const hours = {};
+    for(const [uuid, was] of before){
+      const actor = fromUuidSync(uuid, { strict : false });
+      const now = was + leg.hours;
+      for(let end = Math.floor(was + 1e-6) + 1; end <= Math.floor(now + 1e-6); end++){
+        if(end > leg.limit) (hours[end - leg.limit] ??= []).push(actor);
+      }
+    }
+    return hours;
+  }
+
+  /* Forced march : a Constitution save card for each hour past, DC 10 + that hour */
+  static async marchChecks(group, before, leg){
+    const cards = [];
+    for(const [past, actors] of Object.entries(this.marchHours(before, leg)).sort(([a], [b]) => a - b)){
+      const who = actors.filter(a => a).map(a => ({ actor : a.uuid, name : a.name, img : a.img }));
+      if(!who.length) continue;
+      cards.push(await rollRequests.request({ who, what : "save:con", dc : 10 + Number(past), hideDC : false, speaker : group, onFail : "exhaustion",
+        label : game.i18n.format("groupTravel.march", { save : rollRequests.labelOf("save", "con"), hour : leg.limit + Number(past) }) }));
+    }
+    return cards;
   }
 
   static async passAsGM({ group, seconds, reason = "" }, user){
@@ -855,6 +887,7 @@ export class groupTravel{
     const data = message?.getFlag(module.id, "groupLog");
     if(!user.isGM || !data || data.undone) return false;
     await message.setFlag(module.id, "groupLog.undone", true);
+    for(const id of data.checks ?? []) await game.messages.get(id)?.delete();
     for(const [uuid, hours] of data.hours ?? []){
       const actor = await fromUuid(uuid);
       if(!actor) continue;

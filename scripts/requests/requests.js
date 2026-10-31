@@ -36,6 +36,9 @@ const log = logger.for(import.meta.url);
  *                creature's owners and the GM; the DC shown). Rolled once (rerolls on the card); a failure gives a
  *                Lose Concentration button (its owner or the GM), nothing ends by itself. Debug on : the GM's 20 / 1
  *                buttons by each row's reroll.
+ *   Roll all   : a user who may roll two or more rows rolls them all at once (no roll windows).
+ *   onFail     : "exhaustion" (Group Travel's forced march) : a failed row gets an Exhaustion +1 button (its owner's
+ *                own creature, or the GM), after any reroll on the card.
  */
 export class rollRequests{
   static DIFFICULTIES = [[5, "veryEasy"], [10, "easy"], [15, "medium"], [20, "hard"], [25, "veryHard"], [30, "nearlyImpossible"]];
@@ -193,19 +196,20 @@ export class rollRequests{
    * @param {boolean} [options.whisper]  only the GM and the creatures' owners
    * @returns {Promise<ChatMessage>}
    */
-  static async request({ who = [], what = "skill:prc", dc = null, mode = "each", whisper = false, hideDC = null, speaker = null, label = null, outcomes = null } = {}){
+  static async request({ who = [], what = "skill:prc", dc = null, mode = "each", whisper = false, hideDC = null, speaker = null, label = null, outcomes = null, onFail = null, flags = {} } = {}){
     const rows = who.map(p => ({ key : String(p.token ?? p.actor).replaceAll(".", "-"), actor : p.actor, token : p.token ?? null, name : p.name, img : p.img, ...(p.rollMode ? { rollMode : p.rollMode } : {}) }));
     const request = {
       dc : Number.isFinite(dc) ? dc : null, hideDC : (hideDC ?? !!settings.value("requestsDmScreen")), mode : (mode === "group") ? "group" : "each", rows, results : {},
       rounds : { 1 : { ...this.checkFor(what, dc), ...(label ? { label } : {}) } }, round : 1, compact : this.compact(), whisper : !!whisper,
       /* Words for a row's result (a Study : "Sees through it" / "Fooled") */
       ...(outcomes ? { outcomes } : {}),
+      ...(onFail ? { onFail } : {}),
     };
     return ChatMessage.implementation.create({
       speaker : speaker ? ChatMessage.implementation.getSpeaker({ actor : speaker }) : { alias : module.i18n("requests.title") },
       content : `<div class="${module.id}-request"></div>`,
       whisper : whisper ? this.whisperTo(rows) : [],
-      flags : { [module.id] : { request } },
+      flags : { [module.id] : { ...flags, request } },
     });
   }
 
@@ -279,15 +283,23 @@ export class rollRequests{
     const subtitle = concentration ? game.i18n.localize("DND5E.SavingThrow")
       : [module.i18n(`requests.modes.${request.mode}`), request.whisper ? module.i18n("requests.whispered") : ""].filter(Boolean).join(" · ");
     const dc = this.dcText(request);
+    const rollAll = (this.rollable(request).length > 1)
+      ? `<button type="button" class="roll-all" data-request-roll-all><i class="fa-solid fa-dice" inert></i> ${esc(module.i18n("requests.rollAll"))}</button>` : "";
     root.innerHTML = `<div class="${module.id}-request-card">
         <header class="request-header"><i class="fa-solid fa-dice-d20" inert></i>
           <div class="titles"><strong>${esc(this.checkOf(request).label ?? "")}</strong><span class="subtitle">${esc(subtitle)}</span></div>
           ${dc ? `<span class="dc">${esc(dc)}</span>` : ""}</header>
         <ul class="unlist macro-helper-rows">${rows}</ul>
+        ${rollAll}
         ${summary ? `<div class="request-summary ${summary.success === true ? "success" : summary.success === false ? "failure" : ""}">${esc(summary.text)}</div>` : ""}
         ${feet.length ? `<div class="card-buttons request-feet">${feet.join("")}</div>` : ""}
       </div>`;
     this.wireCard(message, root);
+  }
+
+  /* The rows this user may still roll */
+  static rollable(request){
+    return request.rows.filter(row => !request.results?.[1]?.[row.key] && this.actorOf(row)?.isOwner);
   }
 
   /* The rows : a Roll button (the owner), the result, Reroll by it (Compact); the foot's buttons collected */
@@ -349,6 +361,10 @@ export class rollRequests{
     if((this.checkOf(request).kind === "concentration") && (entry.success === false) && actor?.isOwner && (actor.concentration?.effects?.size > 0) && !entry.lostConcentration){
       out.push(button("loseConcentration", "fa-heart-crack", module.i18n("requests.loseConcentration")));
     }
+    /* A failure's cost (a forced march's Exhaustion) : the creature's own player, or the GM */
+    if((request.onFail === "exhaustion") && (entry.success === false) && !entry.exhausted && actor && (game.user.isGM || gm.mine(actor))){
+      out.push(button("exhaustion", "fa-face-tired", module.format("requests.featFor", { feat : module.i18n("requests.exhaustion"), name : row.name })));
+    }
     if(game.user.isGM && entry.tactical && !entry.tacticalSpent && (entry.success !== false)){
       out.push(button("tacticalSpend", "fa-heart-crack", module.format("requests.featFor", { feat : module.i18n("classes.fighter.tacticalSpend"), name : row.name })));
     }
@@ -364,6 +380,7 @@ export class rollRequests{
       finally { b.disabled = false; }
     }));
     on("[data-request-roll]", (b, event) => this.rollRow(message, b.dataset.requestRoll, { event }));
+    on("[data-request-roll-all]", () => this.rollAll(message));
     on("[data-request-reroll]", b => this.reroll(message, b.dataset.requestReroll));
     on("[data-request-feat]", b => this.useFeat(message, b.dataset.row, b.dataset.requestFeat));
     on("[data-request-force]", b => this.force(message, b.dataset.row, Number(b.dataset.requestForce)));
@@ -375,7 +392,7 @@ export class rollRequests{
    * Roll a row with dnd5e. Compact : the roll goes into the card (no message of its own). Individual : dnd5e's message,
    * carrying which request and row it answers. The DC goes on the roll only when players may see it.
    */
-  static async rollRow(message, rowKey, { event } = {}){
+  static async rollRow(message, rowKey, { event, fast = false } = {}){
     const request = message.getFlag(module.id, "request");
     const row = request?.rows.find(r => r.key === rowKey);
     const actor = row && this.actorOf(row);
@@ -388,16 +405,23 @@ export class rollRequests{
     const messageConfig = request.compact ? { create : false }
       : { data : { flags : { [module.id] : { requestRoll : { message : message.id, row : rowKey } } } } };
     if(request.whisper && !request.compact) messageConfig.rollMode = ("gm" in (CONFIG.ChatMessage.modes ?? {})) ? "gm" : "gmroll";
+    const dialog = fast ? { configure : false } : {};
     let rolls = null;
-    if(kind === "skill") rolls = await actor.rollSkill({ ...config, skill : key }, {}, messageConfig);
-    else if(kind === "tool") rolls = await actor.rollToolCheck({ ...config, tool : key }, {}, messageConfig);
-    else if(kind === "check") rolls = await actor.rollAbilityCheck({ ...config, ability : key }, {}, messageConfig);
-    else if(kind === "save") rolls = await actor.rollSavingThrow({ ...config, ability : key }, {}, messageConfig);
-    else if(kind === "concentration") rolls = await actor.rollConcentration({ ...config, ...(key ? { ability : key } : {}) }, {}, messageConfig);
+    if(kind === "skill") rolls = await actor.rollSkill({ ...config, skill : key }, dialog, messageConfig);
+    else if(kind === "tool") rolls = await actor.rollToolCheck({ ...config, tool : key }, dialog, messageConfig);
+    else if(kind === "check") rolls = await actor.rollAbilityCheck({ ...config, ability : key }, dialog, messageConfig);
+    else if(kind === "save") rolls = await actor.rollSavingThrow({ ...config, ability : key }, dialog, messageConfig);
+    else if(kind === "concentration") rolls = await actor.rollConcentration({ ...config, ...(key ? { ability : key } : {}) }, dialog, messageConfig);
     const roll = rolls?.[0];
     if(!request.compact || !roll) return;
     await this.showDice([roll], message);
     await gm.run("requestStore", { message : message.id, row : rowKey, roll : roll.toJSON() });
+  }
+
+  /* Every row this user may still roll, together (their dice at once), no roll windows */
+  static async rollAll(message){
+    const rows = this.rollable(message.getFlag(module.id, "request") ?? { rows : [] });
+    await Promise.all(rows.map(row => this.rollRow(message, row.key, { fast : true })));
   }
 
   static async showDice(rolls, message){
@@ -468,6 +492,13 @@ export class rollRequests{
     }
     else if(feat === "loseConcentration"){
       if(actor.isOwner) await actor.endConcentration().catch(error => log.debug(error));
+    }
+    else if(feat === "exhaustion"){
+      if(!game.user.isGM && !gm.mine(actor)) return;
+      const level = Number(actor.system.attributes?.exhaustion) || 0;
+      const max = CONFIG.DND5E.conditionTypes.exhaustion?.levels ?? 6;
+      if(level < max) await actor.update({ "system.attributes.exhaustion" : level + 1 });
+      await store(roll, { exhausted : true });
     }
     else if((feat === "tacticalSpend") && game.user.isGM){
       const secondWind = fighter.secondWindOf(actor);
