@@ -67,6 +67,7 @@ import { feats } from './automation/feats.js';
 import { goliath } from './automation/goliath.js';
 import { jump } from './automation/jump.js';
 import { groupTravel } from './automation/group-travel.js';
+import { groupInventory } from './automation/group-inventory.js';
 import { generalFeats } from './automation/general-feats.js';
 import { registerIgnores } from './automation/ignores.js';
 import { registerHitDice } from './automation/hit-dice.js';
@@ -114,6 +115,7 @@ Hooks.once("init", ()=> {
   actions.register();
   jump.register();
   groupTravel.register();
+  groupInventory.register();
   actionTracker.register();
   movement.register();
   actionBar.register();

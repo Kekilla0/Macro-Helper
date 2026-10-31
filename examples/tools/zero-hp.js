@@ -5,6 +5,7 @@
  *   PC                  -> Unconscious + dying : death saves start fresh, a chat line says so (and which
  *                          Concentration ends : Macro Helper ends it without a save card)
  *   Healed above 0      -> all of the above cleared
+ *   Vehicles            -> left alone (a wagon has no hit points : 0 / 0 isn't dead)
  *
  * Setup : Hook Macro (world macro, Script). Run on Hooks : "Actor changed (HP...)" (updateActor).
  *         Run For : Active GM (once).
@@ -16,7 +17,7 @@ const [actor, changes, options] = args;
 if(!foundry.utils.hasProperty(changes, "system.attributes.hp.value")) return;
 
 const hp = actor.system.attributes?.hp;
-if(!hp) return;
+if(!hp || (actor.type === "vehicle")) return;
 
 const down = hp.value <= 0;
 const dropped = down && ((options?.dnd5e?.hp?.value ?? 1) > 0);   // HP before this change, recorded by dnd5e
@@ -38,6 +39,6 @@ if(actor.type === "character"){
   return;
 }
 
-/* NPCs (and anything else with HP) : Dead, and defeated in combat */
+/* NPCs : Dead, and defeated in combat */
 await actor.setStatus(CONFIG.specialStatusEffects.DEFEATED, down, { overlay : true });
 await actor.setDefeated(down);

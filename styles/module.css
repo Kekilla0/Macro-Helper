@@ -630,3 +630,51 @@ input.macro-helper-search { width : 100%; margin : 0 0 6px; }
 .macro-helper-road .row.weight input.body-weight { width : 44px; height : 18px; padding : 0 2px; font-size : var(--font-size-11); text-align : right; }
 .macro-helper-road .status > span.over { color : #e05a5a; }
 .macro-helper-members .macro-helper-grip[draggable="true"]:hover { opacity : 1; }
+
+/* Group Travel : the Inventory and Effects tabs' sections (each vehicle and pack member, what nobody carries) */
+.macro-helper-inventory .inventory-element .split-button { display : none; }
+.macro-helper-inventory .sidebar .card.not-yours { opacity : 0.5; }
+.macro-helper-pack { margin : 0 0 8px; border : var(--dnd5e-border-gold); border-radius : 4px; }
+.macro-helper-pack .pack-head { display : flex; align-items : center; gap : 8px; padding : 4px 8px; cursor : pointer; flex-wrap : wrap; background : rgba(127, 127, 127, 0.12); color : inherit; }
+.macro-helper-pack .pack-head .name, .macro-helper-pack .pack-head h3 { color : inherit; }
+.macro-helper-pack .pack-head h3 { margin : 0; font-size : var(--font-size-14); border : none; flex : none; }
+.macro-helper-pack .pack-head .fold { transition : transform 0.15s; width : 12px; }
+.macro-helper-pack.folded .pack-head .fold { transform : rotate(-90deg); }
+.macro-helper-pack.folded .pack-body { display : none; }
+.macro-helper-pack .pack-body { padding : 4px 8px; }
+.macro-helper-pack .pack-head .portrait { width : 28px; height : 28px; border : none; border-radius : 4px; object-fit : cover; }
+.macro-helper-pack .pack-head .name { font-weight : bold; }
+.macro-helper-pack .pack-head .load { display : flex; align-items : center; gap : 6px; flex : 1; min-width : 140px; font-size : var(--font-size-11); }
+.macro-helper-pack .pack-head .load .meter { flex : 1; min-width : 0; height : 8px; }
+.macro-helper-pack .pack-head .load span { white-space : nowrap; }
+.macro-helper-pack .pack-head .pull, .macro-helper-pack .pack-head .weight { font-size : var(--font-size-11); white-space : nowrap; }
+.macro-helper-pack .pack-head .currency.pills { display : flex; gap : 2px; margin : 0; }
+.macro-helper-pack .over { color : #e05a5a; font-weight : bold; }
+.macro-helper-pack ol.items { margin : 0; padding : 0; }
+.macro-helper-pack li.item { display : flex; align-items : center; gap : 6px; padding : 2px 0 2px calc(var(--depth, 0) * 16px); font-size : var(--font-size-12); cursor : grab; border-bottom : 1px solid rgba(0, 0, 0, 0.08); }
+.macro-helper-pack li.item img { width : 20px; height : 20px; border : none; }
+.macro-helper-pack li.item .name { flex : 1; min-width : 0; overflow : hidden; text-overflow : ellipsis; white-space : nowrap; }
+.macro-helper-pack li.item .weight, .macro-helper-pack li.item .duration { flex : none; font-size : var(--font-size-11); opacity : 0.8; }
+.macro-helper-pack li.item.container .name { font-weight : bold; }
+.macro-helper-pack li.item.disabled { opacity : 0.5; }
+.macro-helper-pack .empty { margin : 2px 0; opacity : 0.6; font-size : var(--font-size-12); }
+.macro-helper-effects .macro-helper-pack li.item { cursor : pointer; }
+.macro-helper-inventory .macro-helper-hidden { display : none; }
+.macro-helper-arrivals { display : flex; justify-content : flex-end; margin : 0 0 6px; font-size : var(--font-size-12); }
+.macro-helper-arrivals label { display : flex; align-items : center; gap : 6px; }
+.macro-helper-arrivals select { height : 24px; width : auto; font-size : var(--font-size-12); }
+.macro-helper-pack.loose { border-color : #e05a5a; }
+.macro-helper-pack.loose .pack-head .hint { font-size : var(--font-size-11); opacity : 0.8; }
+.macro-helper-pack .pack-head .gets { opacity : 0.7; }
+.macro-helper-pack .pack-head .coins { display : flex; align-items : center; gap : 4px; }
+.macro-helper-pack .pack-head .manage-coins { width : 22px; height : 22px; }
+.macro-helper-pack .columns { display : flex; gap : 6px; padding : 0 0 2px 26px; font-size : var(--font-size-10); text-transform : uppercase; opacity : 0.7; border-bottom : 1px solid rgba(0, 0, 0, 0.15); }
+.macro-helper-pack .columns .name { flex : 1; }
+.macro-helper-inventory .macro-helper-pack .count { flex : none; width : 72px; display : flex; align-items : center; justify-content : center; gap : 2px; }
+.macro-helper-inventory .macro-helper-pack .pack-body .weight { flex : none; width : 64px; text-align : right; }
+.macro-helper-pack li.item .count .value { min-width : 22px; text-align : center; font-size : var(--font-size-12); }
+.macro-helper-pack li.item .count .step { width : 16px; height : 16px; font-size : var(--font-size-10); opacity : 0.6; }
+.macro-helper-pack li.item .count .step:hover { opacity : 1; }
+.macro-helper-pack li.item[hidden] { display : none; }
+.macro-helper-pack-search { display : flex; align-items : center; gap : 6px; margin : 4px 0 0; }
+.macro-helper-pack-search input { flex : 1; height : 26px; }

@@ -127,6 +127,8 @@ export class actionTracker{
     if(!actor) return false;
     if(actor.statuses?.has?.("dead") || actor.statuses?.has?.("defeated")) return true;
     if(Number(actor.system?.attributes?.hp?.value) > 0) return false;
+    /* A vehicle with no hit points set (a wagon) isn't down */
+    if((actor.type === "vehicle") && !(Number(actor.system?.attributes?.hp?.max) > 0)) return false;
     if(actor.type !== "character") return true;
     const death = actor.system?.attributes?.death ?? {};
     return actor.statuses?.has?.("stable") || ((Number(death.failure) || 0) >= 3);
