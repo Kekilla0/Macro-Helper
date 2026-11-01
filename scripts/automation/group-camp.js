@@ -9,6 +9,7 @@ import { restLimit } from './rest-limit.js';
 import { groupTravel } from './group-travel.js';
 import { groupInventory } from './group-inventory.js';
 import { groupWeather } from './group-weather.js';
+import { groupFood } from './group-food.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -36,7 +37,7 @@ const log = logger.for(import.meta.url);
  *   gallons of water, 2024 DMG Foraging), shared out (each eater's need by default; the GM, the Leader's player or a
  *   finder's owner changes it; Eat goes on), then the meal (each member's daily food and water by size, 2024 PHB
  *   Malnutrition / Dehydration). What's left of the water fills the waterskins; the food left spoils, unless a task
- *   takes it (Preserve : Rations). Each member's meal is kept on it (flag fed) for the day's-end rules to come.
+ *   takes it (Preserve : Rations). Each member's meal is kept on it (flag fed), and counts for its day (group-food.js).
  *   Weather (group-weather.js) : each camp hour brings Extreme Cold / Heat saves for the exposed. Sheltered : at an inn,
  *   in the camp's natural shelter (Where), the Members tab's ticks, and once set up a tent's place or one in a shelter
  *   built (the Make Shelter task : a Wisdom (Survival) check at the terrain's Foraging DC, Advantage with Carpenter's
@@ -724,6 +725,7 @@ export class groupCamp{
       }
       food = round(food); water = round(water);
       await actor.setFlag(module.id, "fed", { at : game.time.worldTime, food, needFood : full, water, needWater : full, portion : row.portion });
+      if(groupFood.enabled() && groupFood.tracked(group, actor)) await groupFood.record(actor, { food, water });
       /* 2024 PHB : less than half the day's need is Malnutrition / Dehydration */
       const part = (got, from, key) => (from === "none") ? `<span class="none">${this.i18n(`${key}None`)}</span>`
         : `<span class="${(got < full / 2) ? "over" : ""}">${this.i18n(key, { got, need : full })}${["free", "inn"].includes(from) ? ` (${this.i18n(`source.${from}`)})` : ""}</span>`;

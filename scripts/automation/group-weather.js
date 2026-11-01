@@ -8,6 +8,7 @@ import { giveMode } from '../roll-item/reasons.js';
 import { rollModes } from './roll-modes.js';
 import { heldLight } from './held-light.js';
 import { groupTravel } from './group-travel.js';
+import { groupFood } from './group-food.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -246,6 +247,7 @@ export class groupWeather{
       const { time : clock } = groupTravel.formatted(time);
       const rows = new Map();
       for(const actor of members){
+        if(kind === "heat") await groupFood.hot(actor, time);
         const covered = (shelter?.(actor, time)) ?? this.roadShelter(group, actor);
         const bedroll = (kind === "cold") && (this.rules() !== "2014") && !!asleep?.(actor) && (actor.system.traits?.size in this.PLACES) && this.hasItem(actor, this.BEDROLL);
         const exposed = !covered && !bedroll && !((kind === "heat") && this.hasWater(actor, where)) && !this.autoPass(group, actor, kind);

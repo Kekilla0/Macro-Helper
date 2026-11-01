@@ -506,6 +506,8 @@ export class rollRequests{
       const max = CONFIG.DND5E.conditionTypes.exhaustion?.levels ?? 6;
       if(level < max) await actor.update({ "system.attributes.exhaustion" : level + 1 });
       await store(roll, { exhausted : true });
+      /* The cost's cause may keep it (Malnutrition : not removed until a full day's food) */
+      Hooks.callAll(`${module.id}.requestExhaustion`, message, actor, rowKey);
     }
     else if((feat === "tacticalSpend") && game.user.isGM){
       const secondWind = fighter.secondWindOf(actor);

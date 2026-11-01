@@ -20,6 +20,7 @@ import { endCondition, moveFirst } from '../roll-item/card-builder.js';
 import { onSaveMove } from '../roll-item/card-moves.js';
 import { saveModeAgainst } from './roll-modes.js';
 import { pickTargets, pickSpace } from '../helpers/targets.js';
+import { groupCamp } from './group-camp.js';
 import { tokenOf, getRange, addLight, removeLight, getTokensInArea, distanceBetween, canSee, isIncapacitated } from '../helpers/tokens.js';
 const log = logger.for(import.meta.url);
 
@@ -77,8 +78,8 @@ const log = logger.for(import.meta.url);
  *                   spell's DC, a row each : Sees through it / Fooled); once per creature.
  *   Water         : Create or Destroy Water asks : Fill containers (the card's rows are the creatures within 30 ft with
  *                   a waterskin, each with the GM's Fill button : up to 20 skins, 10 gallons at half a gallon each :
- *                   4 of dnd5e's Water, fresh (Pint) put inside each) or Rain (its 30 ft cube : the flames inside go out, held torches, lamps, lanterns and
- *                   candles, Produce Flame). Its gallons aren't rolled.
+ *                   each filled, its water kept on it as the camp keeps it) or Rain (its 30 ft cube : the flames
+ *                   inside go out, held torches, lamps, lanterns and candles, Produce Flame). Its gallons aren't rolled.
  *   Detection     : Detect Evil and Good, Detect Poison and Disease, Detect Magic : a coloured effect on the caster while
  *                   it lasts (it ends with the Concentration), to keep track of it.
  *   Cast only     : Sanctuary's save is the attacker's (spell-effects), Armor of Agathys's damage is its reaction (spells) :
@@ -155,7 +156,7 @@ export class spellActions{
   static AREAS = { "fog-cloud" : { color : "#c4ccd4", obscured : true } };
   static ELEMENTS = { id : "elementalism", colors : { air : "#cdeeff", earth : "#8a6a3a", fire : "#ff6a1a", water : "#2f7fd6" } };
   static #areaColor = null;
-  static WATER = { id : "create-or-destroy-water", skins : 20, range : 30, pints : 4, item : "Compendium.dnd5e.equipment24.Item.dmgspWaterfresh0", identifier : "water-fresh-pint" };
+  static WATER = { id : "create-or-destroy-water", skins : 20, range : 30 };
   static DETECTION = { "detect-evil-and-good" : "#ffd24a", "detect-poison-and-disease" : "#5cc66b", "detect-magic" : "#a974ff" };
   /* Spells whose other activity is for someone else (Sanctuary's save : the attacker's) : straight to casting */
   static CAST_ONLY = { "sanctuary" : {}, "armor-of-agathys" : { type : "heal" } };
@@ -1153,22 +1154,8 @@ export class spellActions{
     if(!game.user.isGM || !actor || message.getFlag(module.id, key)) return;
     const used = Object.values(message.getFlag(module.id, "waterFilled") ?? {}).reduce((n, v) => n + (Number(v) || 0), 0);
     const skins = actor.items.filter(i => idOf(i) === "waterskin").slice(0, Math.max(0, this.WATER.skins - used));
-    /* Each skin holds 4 pints : dnd5e's Water, fresh (Pint), inside it, topped up to 4 */
-    const source = await fromUuid(this.WATER.item).catch(() => null);
-    if(!source) return ui.notifications.warn(module.i18n("spellActions.water.noItem"));
-    for(const skin of skins){
-      const inside = actor.items.filter(i => (i.system?.container === skin.id) && (idOf(i) === this.WATER.identifier));
-      const have = inside.reduce((n, i) => n + (Number(i.system.quantity) || 0), 0);
-      const need = Math.max(0, this.WATER.pints - have);
-      if(!need) continue;
-      if(inside.length) await inside[0].update({ "system.quantity" : (Number(inside[0].system.quantity) || 0) + need });
-      else {
-        const data = source.toObject();
-        delete data._id;
-        foundry.utils.mergeObject(data, { system : { container : skin.id, quantity : need }, _stats : { compendiumSource : source.uuid } });
-        await actor.createEmbeddedDocuments("Item", [data]);
-      }
-    }
+    /* Each skin is filled : its water is kept on it (half a gallon a skin, as the camp's) */
+    for(const skin of skins) await skin.setFlag(module.id, "water", groupCamp.skinMax(skin));
     await message.setFlag(module.id, key, skins.length);
   }
 

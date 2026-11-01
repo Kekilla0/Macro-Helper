@@ -8,6 +8,7 @@ import { rollRequests } from '../requests/requests.js';
 import { restMinutesOf, standardRest } from './rest-length.js';
 import { buttonRow, addButton, makeButton } from '../helpers/utils.js';
 import { groupWeather } from './group-weather.js';
+import { groupFood } from './group-food.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -395,12 +396,14 @@ export class groupTravel{
           <i class="fa-solid fa-user-ninja" inert></i>
         </button>
         ${this.gallopButton(actor)}
+        ${groupFood.mealButton(actor)}
         <div class="vehicle">${this.vehicleSeats(actor)}</div>
       </div>`;
     /* Beside the portrait, under Travel Pace / Advancement */
     (header.querySelector(":scope > .right") ?? header).append(row);
     this.fillClock(row);
     row.querySelector(".gallop:not([disabled])")?.addEventListener("click", () => gm.run("groupGallop", { group : actor.uuid }));
+    groupFood.listenMeal(actor, row);
 
     if(!game.user.isGM) return;
     for(const chip of row.querySelectorAll(".modes [data-mode]")){
@@ -694,7 +697,9 @@ export class groupTravel{
         </div>
         <div class="status">${this.statusIcons(group, actor)}${groupWeather.memberControls(group, actor)}</div>
       </div>
-      ${this.weightRow(actor)}`;
+      ${this.weightRow(actor)}
+      ${groupFood.memberRow(group, actor)}`;
+    groupFood.listenMember(group, actor, card);
     card.querySelector(".hours-value")?.addEventListener("change", event => {
       const value = Math.max(0, Number(event.target.value) || 0);
       if(value) actor.setFlag(module.id, "travelHours", value); else actor.unsetFlag(module.id, "travelHours");
@@ -721,7 +726,7 @@ export class groupTravel{
     }).join("");
   }
 
-  /* Exhaustion, Slowed, who they carry (later : Dehydrated, Malnourished, encumbrance, Galloped) */
+  /* Exhaustion, Slowed, who they carry (Malnutrition / Dehydration : dnd5e's statuses, group-food.js) */
   static statusIcons(group, actor){
     const icons = [];
     const exhaustion = Number(actor.system.attributes?.exhaustion) || 0;

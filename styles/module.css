@@ -597,6 +597,7 @@ input.macro-helper-search { width : 100%; margin : 0 0 6px; }
 .macro-helper-journey .gallop { opacity : 0.4; }
 .macro-helper-journey .gallop.active { opacity : 1; color : var(--dnd5e-color-gold, #9f9275); }
 .macro-helper-journey .gallop[disabled] { opacity : 0.2; }
+.macro-helper-journey .meal[disabled] { opacity : 0.2; }
 .macro-helper-group-log p { margin : 2px 0; }
 .macro-helper-group-log .when { font-size : var(--font-size-11); opacity : 0.8; }
 .macro-helper-group-log .over, .macro-helper-travel-window .over { color : var(--dnd5e-color-crimson, #c33); font-weight : bold; }
@@ -687,6 +688,11 @@ input.macro-helper-search { width : 100%; margin : 0 0 6px; }
 .macro-helper-road .status .weather-sheltered, .macro-helper-road .status .weather-covered { opacity : 0.35; }
 .macro-helper-road .status .weather-sheltered.active, .macro-helper-road .status .weather-covered.active { opacity : 1; color : var(--dnd5e-color-gold, #9f9275); }
 .macro-helper-road .status .weather-adapted { height : 20px; width : auto; font-size : var(--font-size-11); }
+.macro-helper-road .row.food { font-size : var(--font-size-11); flex-wrap : wrap; }
+.macro-helper-road .row.food .none { opacity : 0.4; }
+.macro-helper-road .row.food .food-track { opacity : 0.35; }
+.macro-helper-road .row.food .food-track.active { opacity : 1; color : var(--dnd5e-color-gold, #9f9275); }
+.macro-helper-road .row.food .held { font-weight : normal; }
 .macro-helper-members .macro-helper-grip[draggable="true"]:hover { opacity : 1; }
 
 /* Group Travel : the Inventory and Effects tabs' sections (each vehicle and pack member, what nobody carries) */

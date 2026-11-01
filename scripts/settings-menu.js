@@ -44,10 +44,32 @@ export class SettingsMenu extends HandlebarsApplicationMixin(ApplicationV2){
       .map(([key]) => key);
   }
 
-  /* The Features switch a setting needs (its own part, or its page's), while that's off (saved value : the page shows what's saved) */
-  static partOff(group, key){
+  /* The switch a setting needs (its own part, or its page's), while that's off (saved value : the page shows what's
+     saved). A part may be another setting of the page ("foodWater"), itself greyed by its own part, or a value of
+     one ("foodWaterRules=homebrew") */
+  static partOff(group, key, seen = new Set()){
     const page = GROUPS[group];
-    return [page.settings[key]?.part, page.part].find(p => p && (settings.stored(p) === false)) ?? null;
+    for(const part of [page.settings[key]?.part, page.part]){
+      if(!part || seen.has(part)) continue;
+      seen.add(part);
+      const [name, wanted] = part.split("=");
+      const value = settings.stored(name);
+      if((wanted === undefined) ? (value === false) : (String(value) !== wanted)) return part;
+      if(page.settings[name]){
+        const above = this.partOff(group, name, seen);
+        if(above) return above;
+      }
+    }
+    return null;
+  }
+
+  /* Why a setting is greyed : "Off while X is off" / "Only while X is Y" */
+  static partReason(part){
+    const [name, wanted] = part.split("=");
+    const title = game.i18n.localize(`settings.${name}.title`);
+    if(wanted === undefined) return game.i18n.format(GROUPS.features.settings[name] ? "settings.menu.partOff" : "settings.menu.partOffHere", { part : title });
+    const choice = SettingsMenu.config(name)?.choices?.[wanted];
+    return game.i18n.format("settings.menu.partValue", { part : title, value : choice ? game.i18n.localize(choice) : wanted });
   }
 
   static config(key){
@@ -73,7 +95,7 @@ export class SettingsMenu extends HandlebarsApplicationMixin(ApplicationV2){
         choices : config.choices ?? null,
         world : config.scope === "world",
         disabled : ((config.scope === "world") && !game.user.isGM) || !!part,
-        off : part ? game.i18n.format("settings.menu.partOff", { part : game.i18n.localize(`settings.${part}.title`) }) : "",
+        off : part ? SettingsMenu.partReason(part) : "",
         homebrew : !!data.homebrew,
         section : data.section ? `settings.${this.constructor.GROUP}.section.${data.section}` : "",
       };

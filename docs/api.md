@@ -232,6 +232,10 @@ Roll Item does four things: **Target**, **Attack**, **Save** and **Damage**, all
 
 **Days ending:** `Hooks.on("macro-helper.dayEnded", ({ at, ended, index, count }) => ...)` runs on the active GM's client once for each midnight the clock passes, however it moved (Group Travel legs, Pass Time, rests, the Calendar HUD), oldest first: `at` is that midnight's world time, `ended` the calendar components of the day that ended (`year`, `day`, ...), `index` of `count` midnights in that one clock change. Putting the clock back past a midnight (Group Travel's Undo) runs `macro-helper.dayUndone` with the same shape, newest first, so a rule can take back what it did. A day never ends twice: going back then forward again ends it once more only after it was undone. Also offered under Hook Macros (*A day ended (midnight)*).
 
+**Exhaustion from a request card:** `Hooks.on("macro-helper.requestExhaustion", (message, actor, rowKey) => ...)` runs on the client that pressed a failed row's Exhaustion +1 button (forced march, extreme cold or heat, malnutrition), after the level is added. The card's flags say which rule asked (Food and water's save cards carry `flags["macro-helper"].foodSave` `{ kind, day }`).
+
+**Food items:** an item's flag `macro-helper.nourish` `{ food, water }` (pounds, gallons) is what one of it gives when used, for Food and water (Group Travel).
+
 **Cancelled uses:** `Hooks.on("macro-helper.useCancelled", (activity, results) => ...)` runs when Roll Item cancels a use before its card (Esc on an area's "creatures of your choice" pick, a closed attack pick): the slot or uses are refunded, its area and Concentration removed. A rule that counted the use takes it back here (the one-spell-slot-a-turn mark does).
 
 The card's `message.system` gives a macro what it needs:
