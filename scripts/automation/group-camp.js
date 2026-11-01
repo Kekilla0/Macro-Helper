@@ -11,6 +11,7 @@ import { groupInventory } from './group-inventory.js';
 import { groupWeather } from './group-weather.js';
 import { groupFood } from './group-food.js';
 import { groupMeal } from './group-meal.js';
+import { idOf } from '../helpers/utils.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -22,21 +23,33 @@ const log = logger.for(import.meta.url);
  *   Drink, and Lodging : a night's stay by lifestyle and a meal for those eating the inn's, a Beast's stabling and feed,
  *   paid by the member picked on each row; water and shelter included, no watch, no tasks).
  *   Plan : each member Rests or not, a Task for the setting-up hours (Forage, RAW; homebrew : Forage food only, Gather
- *   Water, Hunt, Preserve; more through campTask), stands Watch or not (not a Beast unless the GM ticks it); at an inn,
+ *   Water, Hunt, Build a Fire, Preserve; more through campTask; Preserve may instead be worked in the hour after setting
+ *   up, its worker resting or on watch before), stands Watch or not (not a Beast unless the GM ticks it); at an inn,
  *   eats the inn's meal or its own. A Forager on the road (the Members tab's job) forages once, at Make Camp, without
  *   a task (2024 DMG : foraging is done while travelling, once a day).
  *   The rota : the rest lasts as long as the longest rest among the members resting (2024 Elf Trance : 4 h), longer
  *   when the watchers can't cover every hour (a Long Rest allows 2 hours of light activity, standing watch among them;
  *   hours past one's own rest are free), or what the GM typed. A member resting with no task rests from the start, the
- *   others once the setting-up hours are done. Hours are handed out in the members' order. Night hours clicked on or off
- *   watch before Make Camp (flag camp.rota) have no cap : the rest is filled around them, a short rest warned of.
+ *   others once the setting-up hours are done. Watches cover the setting-up hours too, by those not at a task; an hour
+ *   worked after setting up counts as light activity like a watch. Hours are handed out in the members' order. Hours
+ *   clicked on or off watch before Make Camp (flag camp.rota, keys from the night's start : setting-up hours below 0)
+ *   have no cap : the rest is filled around them, a short rest warned of.
  *   Running : Next Hour / To the End move the clock; sleepers are Unconscious (2024 PHB : during sleep), taken off when
  *   they wake (watch, the end). Setting up done : the tasks' finds (a success : 1d6 + WIS mod lb of food and as many
  *   gallons of water, 2024 DMG Foraging) : the food a "Foraged food" item given to the member new items go to (it
  *   spoils at midnight); the water drunk at once up to each member's need, then filling the waterskins, the rest lost
  *   (water nearby or at an inn : all of it, every waterskin full). Then the Meal window (group-meal.js) opens for every
  *   member, free food nearby (grazing : Beasts) and the inn's meal among its sources. Food that would spoil (at
- *   midnight, or when the camp ends) is first offered to a task (Preserve : Rations; food made by magic can't be).
+ *   midnight, or when the camp ends) is first offered to a task (leftover).
+ *   Build a Fire (homebrew Camp Tasks; a Tinderbox, its own or a pack's, or a spell that lights one) : a Wisdom (Survival)
+ *   check at the terrain's Foraging DC (gathering firewood), light rain or snow +2 to the DC, heavy +4, unless in natural
+ *   shelter; heavy rain or strong wind put it out (and keep it out). Preserve (homebrew Camp Tasks) : a Cook's Utensils
+ *   check, DC 10 (proficiency as dnd5e adds it, Advantage carrying them), the DC moved by heavy rain or snow or a
+ *   sandstorm +4, light rain or snow or strong wind +2 (none in natural shelter), Extreme Heat +2, Extreme Cold -2, a
+ *   fire lit -2 (all together at most 4 either way); a success turns up to 6 lb of the group's spoiling food (not made
+ *   by magic) into 3 Rations (2 lb each, parts too); a failure none (homebrew Partial preserving : 20% fewer for each
+ *   point missed, a natural 1 none). The Rations cure for 7 hours (flag curing; they don't spoil, the GM may spoil them
+ *   from the Camp window), then join the cook's stack.
  *   Weather (group-weather.js) : each camp hour brings Extreme Cold / Heat saves for the exposed. Sheltered : at an inn,
  *   in the camp's natural shelter (Where), the Members tab's ticks, and once set up a tent's place or one in a shelter
  *   built (the Make Shelter task : a Wisdom (Survival) check at the terrain's Foraging DC, Advantage with Carpenter's
@@ -47,18 +60,20 @@ const log = logger.for(import.meta.url);
  *   The end : dnd5e's Long Rest for each member whose rest is done (one a day : rest-limit.js, checked when the camp is
  *   made); Break Camp : a Short Rest request card (each player's own rest window) for those who rested an hour or more.
  *
- *   campTask(id, { label, icon, homebrew, applies(actor), available({ group, plan }), start({ group, actors, camp }),
+ *   campTask(id, { label, icon, homebrew, late, applies(actor), available({ group, plan }), start({ group, actors, camp }),
  *     collect({ group, actors, data, camp }), leftover({ group, actors, food, camp }), finish({ group, actors, data,
  *     camp, rested }) })
  *       a task for the setting-up hours : start when the camp is made (its return is kept as data), collect when
  *       setting up is done (return { food, water, lines, finders } : added to what's found), leftover when the
  *       group's spoiling food (not made by magic) would spoil (return { food (lb used), lines }), finish after the rests.
+ *       late : the row may pick the hour after setting up instead (its start when setting up is done, its collect an
+ *       hour later : return { lines }).
  */
 const tasks = new Map();
 
-export function campTask(id, { label, icon = "fa-solid fa-person-digging", homebrew = false, applies = null, available = null, start = null, collect = null, leftover = null, finish = null } = {}){
+export function campTask(id, { label, icon = "fa-solid fa-person-digging", homebrew = false, late = false, applies = null, available = null, start = null, collect = null, leftover = null, finish = null } = {}){
   if(!id || (id === "none")) return;
-  tasks.set(id, { id, label : label ?? id, icon, homebrew, applies, available, start, collect, leftover, finish });
+  tasks.set(id, { id, label : label ?? id, icon, homebrew, late, applies, available, start, collect, leftover, finish });
 }
 
 export class groupCamp{
@@ -87,10 +102,13 @@ export class groupCamp{
     campTask("hunt", { label : "groupTravel.camp.task.hunt", icon : "fa-solid fa-crosshairs", homebrew : true, available : ({ plan }) => !plan.food, ...survey("hunt", () => "food") });
     campTask("shelter", { label : "groupTravel.camp.task.shelter", icon : "fa-solid fa-person-shelter", available : ({ plan }) => !plan.shelter,
       start : data => this.shelterStart(data), collect : data => this.shelterCollect(data) });
-    campTask("preserve", { label : "groupTravel.camp.task.preserve", icon : "fa-solid fa-jar", homebrew : true, leftover : data => this.preserve(data) });
+    campTask("fire", { label : "groupTravel.camp.task.fire", icon : "fa-solid fa-fire", homebrew : true, applies : (actor, group) => this.canLight(actor, group),
+      start : data => this.fireStart(data), collect : data => this.fireCollect(data) });
+    campTask("preserve", { label : "groupTravel.camp.task.preserve", icon : "fa-solid fa-jar", homebrew : true, late : true,
+      start : data => this.preserveStart(data), collect : data => this.preserveCollect(data) });
     Hooks.on("renderActorSheetV2", (app, html) => this.renderHeader(app, html));
     Hooks.on("updateActor", (actor, changes) => this.changed(actor, changes));
-    Hooks.on("updateWorldTime", () => this.redraw());
+    Hooks.on("updateWorldTime", () => { this.redraw(); this.cureDue(); });
     Hooks.on("updateSetting", setting => [`${module.id}.homebrewCampTasks`, `${module.id}.campForageDC`].includes(setting.key) && this.redraw());
     Hooks.on("preMoveToken", token => this.preMove(token));
     /* Interruptions, from the client they happen on */
@@ -151,7 +169,7 @@ export class groupCamp{
      inn's meal or its own food, who pays */
   static rowOf(camp, actor, group = null){
     const saved = camp.rows[actor.id] ?? {};
-    const row = { rest : true, task : "none", watch : !!actor.hasPlayerOwner && !this.isBeast(actor), food : "inn", payer : null, ...saved };
+    const row = { rest : true, task : "none", late : false, watch : !!actor.hasPlayerOwner && !this.isBeast(actor), food : "inn", payer : null, ...saved };
     /* A Beast's watch from before the GM's tick (rows saved before Beasts were kept off watch) */
     if(this.isBeast(actor) && !saved.watchGM) row.watch = false;
     if(!this.INN_SOURCES.includes(row.food)) row.food = "inn";
@@ -179,10 +197,10 @@ export class groupCamp{
     return (id === "none") || this.offered(camp, actor, group).some(t => t.id === id);
   }
 
-  /* Who does a task : its rows, and for Forage the Foragers on the road too */
-  static taskActors(group, plan, id){
-    const actors = plan.rows.filter(r => r.row.task === id).map(r => r.actor);
-    if((id === "forage") && !this.atInn(this.campOf(group).plan)) actors.push(...plan.rows.filter(r => this.roadForager(group, r.actor) && !actors.includes(r.actor)).map(r => r.actor));
+  /* Who does a task (late : in the hour after setting up) : its rows, and for Forage the Foragers on the road too */
+  static taskActors(group, plan, id, late = false){
+    const actors = plan.rows.filter(r => (r.row.task === id) && (r.late === late)).map(r => r.actor);
+    if(!late && (id === "forage") && !this.atInn(this.campOf(group).plan)) actors.push(...plan.rows.filter(r => this.roadForager(group, r.actor) && !actors.includes(r.actor)).map(r => r.actor));
     return actors;
   }
 
@@ -213,8 +231,10 @@ export class groupCamp{
 
   /**
    * Hour by hour : { setup, night, total, rows : [{ actor, row, hours (rest), short (a shortened rest : Trance), lead
-   * (hours rested while the others set up), restStart, cells, restEnd, sleep, watch, full }] }. Cells : "task:<id>",
-   * "awake", "watch", "sleep", "trance", "out" (not resting, not watching).
+   * (hours rested while the others set up), late (its task in the hour after setting up : lateHour), busy (its task in
+   * the setting-up hours), free(h) (may stand watch then), restStart, cells, restEnd, sleep, watch, full }], unwatched
+   * (hours from the night's start) }. Cells : "task:<id>", "awake", "watch", "sleep", "trance", "out" (not resting, not
+   * watching).
    */
   static schedule(group, camp = this.campOf(group)){
     const inn = this.atInn(camp.plan);
@@ -224,22 +244,35 @@ export class groupCamp{
       const row = this.rowOf(camp, actor, group);
       const { minutes, source } = restMinutesOf(actor, "long");
       const hours = Math.max(1, Math.ceil(minutes / 60));
+      const late = (row.task !== "none") && !!row.late && !!tasks.get(row.task)?.late;
+      const busy = (row.task !== "none") && !late;
       /* Nothing to do while the camp is set up : it rests from the start */
-      const lead = (row.rest && (row.task === "none")) ? Math.min(setup, hours) : 0;
-      return { actor, row, hours, short : !!source, source, lead, restStart : row.rest ? setup - lead : 0, allowance : Math.min(2, Math.max(0, hours - 6)) };
+      const lead = (row.rest && !busy) ? Math.min(setup, hours) : 0;
+      const r = { actor, row, hours, short : !!source, source, lead, late, busy, lateHour : late ? setup : null, restStart : row.rest ? setup - lead : 0, allowance : Math.min(2, Math.max(0, hours - 6)) };
+      r.free = h => !(busy && (h < setup)) && (h !== r.lateHour);
+      return r;
     });
     const resting = rows.filter(r => r.row.rest);
     const watchers = (camp.plan.watch && !inn) ? rows.filter(r => r.row.watch) : [];
-    const cap = (r, n) => r.row.rest ? Math.min(n, r.allowance + n + r.lead - r.hours) : n;
-    let night = resting.length ? Math.max(...resting.map(r => r.hours - r.lead)) : 0;
-    if(watchers.length) while((watchers.reduce((s, r) => s + Math.max(0, cap(r, night)), 0) < night) && (night < 48)) night++;
+    const span = n => Array.from({ length : setup + n }, (_, h) => h);
+    /* Hours one may watch : those free before its rest, and in it what its rest and 2 hours of light activity allow */
+    const cap = (r, n) => {
+      const free = span(n).filter(h => r.free(h));
+      if(!r.row.rest) return free.length;
+      const before = free.filter(h => h < r.restStart).length, inRest = free.length - before;
+      return before + Math.max(0, Math.min(inRest, inRest + r.allowance - r.hours));
+    };
+    const coverable = n => span(n).filter(h => watchers.some(r => r.free(h))).length;
+    let night = resting.length ? Math.max(...resting.map(r => r.hours - r.lead + ((r.late && !r.allowance) ? 1 : 0))) : 0;
+    if(watchers.length) while((watchers.reduce((s, r) => s + cap(r, night), 0) < coverable(night)) && (night < 48)) night++;
     night = Math.max(night, Math.round(Number(camp.plan.night) || 0));
-    /* Hours placed by hand (night hours : "watch" / "rest") : no cap on them, the hours left are filled around them */
-    const hand = new Map(watchers.map(r => [r, Object.entries(camp.rota?.[r.actor.id] ?? {}).filter(([h]) => Number(h) < night)]));
-    const handWatch = r => hand.get(r).filter(([, v]) => v === "watch").map(([h]) => Number(h));
-    const handRest = r => new Set(hand.get(r).filter(([, v]) => v === "rest").map(([h]) => Number(h)));
+    /* Hours placed by hand ("watch" / "rest") : no cap on them, the hours left are filled around them */
+    const hand = new Map(watchers.map(r => [r, Object.entries(camp.rota?.[r.actor.id] ?? {}).map(([h, v]) => [Number(h) + setup, v])
+      .filter(([h]) => (h >= 0) && (h < setup + night) && r.free(h))]));
+    const handWatch = r => hand.get(r).filter(([, v]) => v === "watch").map(([h]) => h);
+    const handRest = r => new Set(hand.get(r).filter(([, v]) => v === "rest").map(([h]) => h));
     const pinned = new Set(watchers.flatMap(handWatch));
-    const open = Array.from({ length : watchers.length ? night : 0 }, (_, h) => h).filter(h => !pinned.has(h));
+    const open = span(watchers.length ? night : -setup).filter(h => !pinned.has(h) && watchers.some(r => r.free(h)));
     /* Each watcher's share, round and round, then one block each in order */
     const share = new Map(watchers.map(r => [r, 0]));
     for(let left = open.length, moved = true; left && moved;){
@@ -249,33 +282,34 @@ export class groupCamp{
     const watchOf = new Map();
     for(const r of watchers){
       const skip = handRest(r);
-      const mine = open.filter(h => !skip.has(h)).slice(0, share.get(r));
+      const mine = open.filter(h => !skip.has(h) && r.free(h)).slice(0, share.get(r));
       for(const h of mine) open.splice(open.indexOf(h), 1);
       watchOf.set(r, new Set([...handWatch(r), ...mine]));
     }
-    /* Hours a watcher gave back by hand : to another with room left */
+    /* Hours left (given back by hand, or no one free in its block) : to another free with room left */
     for(const h of open){
-      const r = watchers.find(r => !handRest(r).has(h) && (watchOf.get(r).size < cap(r, night)));
+      const r = watchers.find(r => r.free(h) && !handRest(r).has(h) && (watchOf.get(r).size < cap(r, night)));
       r && watchOf.get(r).add(h);
     }
     const interrupts = camp.run?.interrupts ?? {};
     for(const r of rows){
       const mine = watchOf.get(r) ?? new Set();
-      const cells = Array.from({ length : setup }, (_, h) => (r.row.task !== "none") ? `task:${r.row.task}` : (h >= r.restStart) ? (r.short ? "trance" : "sleep") : "awake");
-      let rested = r.lead;
-      for(let h = 0; h < night; h++){
-        if(mine.has(h)) cells.push("watch");
-        else if(!r.row.rest) cells.push("out");
-        else if(r.short && (rested >= r.hours)) cells.push("awake");
+      const cells = [];
+      let rested = 0;
+      for(let h = 0; h < setup + night; h++){
+        if(!r.free(h)) cells.push(`task:${r.row.task}`);
+        else if(mine.has(h)) cells.push("watch");
+        else if(!r.row.rest) cells.push((h < setup) ? "awake" : "out");
+        else if((h < r.restStart) || (r.short && (rested >= r.hours))) cells.push("awake");
         else { cells.push(r.short ? "trance" : "sleep"); rested++; }
       }
       const restCells = c => (c === "sleep") || (c === "trance");
-      /* Its rest ends once it has had its hours : rest, and watch within its 2 hours of light activity */
+      /* Its rest ends once it has had its hours : rest, and watch (or its late task) within its 2 hours of light activity */
       const endOf = () => {
         let had = 0, light = 0;
         for(let h = r.restStart; h < cells.length; h++){
           if(restCells(cells[h])) had++;
-          else if((cells[h] === "watch") && (light < r.allowance)) { had++; light++; }
+          else if(((cells[h] === "watch") || (h === r.lateHour)) && (light < r.allowance)) { had++; light++; }
           if(had >= r.hours) return { end : h + 1, full : true };
         }
         return { end : cells.findLastIndex(restCells) + 1, full : false };
@@ -288,8 +322,8 @@ export class groupCamp{
     }
     const total = Math.max(setup + night, ...rows.map(r => r.restEnd), ...rows.map(r => r.cells.length));
     for(const r of rows) while(r.cells.length < total) r.cells.push(r.row.rest ? "awake" : "out");
-    /* Night hours with no one on watch, and whether any hour was placed by hand */
-    const unwatched = watchers.length ? Array.from({ length : night }, (_, h) => h).filter(h => !watchers.some(r => watchOf.get(r).has(h))) : [];
+    /* Hours with no one on watch (from the night's start), and whether any hour was placed by hand */
+    const unwatched = watchers.length ? span(night).filter(h => !watchers.some(r => watchOf.get(r).has(h))).map(h => h - setup) : [];
     return { setup, night, total, rows, unwatched, edited : [...hand.values()].some(list => list.length) };
   }
 
@@ -357,6 +391,7 @@ export class groupCamp{
             if(this.isBeast(actor)) clean.watchGM = clean.watch;
           }
           if("task" in c) clean.task = this.taskOffered(camp, c.task, actor, group) ? c.task : "none";
+          if("late" in c) clean.late = (c.late === true) || (c.late === "true");
           if(("food" in c) && this.INN_SOURCES.includes(c.food)) clean.food = c.food;
           if(("payer" in c) && groupTravel.memberActor(group, c.payer) && (this.canRun(group, user) || groupTravel.memberActor(group, c.payer).testUserPermission(user, "OWNER"))) clean.payer = c.payer;
           await group.update({ [`flags.${module.id}.camp.rows.${actor.id}`] : clean });
@@ -382,8 +417,16 @@ export class groupCamp{
           }
           const actor = groupTravel.memberActor(group, data.id);
           const hour = Math.round(Number(data.hour));
-          if(!actor || !(hour >= 0) || (hour >= 48) || !this.canRota(group, camp, actor, user)) return false;
+          if(!actor || !(hour >= -24) || (hour >= 48) || !this.canRota(group, camp, actor, user)) return false;
           await group.update({ [`flags.${module.id}.camp.rota.${actor.id}.${hour}`] : data.watch ? "watch" : "rest" });
+          return true;
+        }
+        case "spoil" : {
+          const item = await fromUuid(data.item ?? "");
+          if(!user.isGM || !groupMeal.curing(item) || (item.getFlag(module.id, "curing").group !== group.uuid)) return false;
+          const count = item.getFlag(module.id, "curing").count;
+          await item.delete();
+          await this.postLog(group, "curingSpoiled", { lines : [this.i18n("curingSpoiled", { name : this.esc(item.parent?.name), count })] });
           return true;
         }
         case "make" : return (!camp.run && this.canRun(group, user)) ? this.make(group, camp) : false;
@@ -494,7 +537,9 @@ export class groupCamp{
         shelter : actor => this.shelterOf(group, camp, plan, places, actor, hour - 1),
         asleep : actor => ["sleep", "trance"].includes(plan.rows.find(r => r.actor === actor)?.cells[hour - 1]), where : { water : !!camp.plan.water || this.atInn(camp.plan) } })
         .catch(err => log.error("Camp weather :", err));
+      await this.fireOut(group);
       if((hour >= plan.setup) && !camp.run.fed) await this.nightStarts(group);
+      await this.collectLate(group);
       if(hour >= this.schedule(group).total) return this.end(group, true);
       await this.statuses(group);
     }
@@ -606,7 +651,38 @@ export class groupCamp{
     if(lines.length) await this.postLog(group, "found", { lines });
     const free = Object.fromEntries(plan.rows.map(r => [r.actor.id, this.freeFood(camp, r.actor, r.row)]).filter(([, f]) => f));
     await groupMeal.callAsGM(group, actors.filter(a => groupFood.tracked(group, a)).map(a => a.id), free);
+    await this.startLate(group);
     return true;
+  }
+
+  /* Tasks worked in the hour after setting up (Preserve) : they start as the night does (flag camp.run.late { at, data }) */
+  static async startLate(group){
+    const camp = this.campOf(group);
+    const plan = this.schedule(group, camp);
+    const data = {};
+    for(const [id, task] of tasks){
+      const actors = this.taskActors(group, plan, id, true);
+      if(!actors.length) continue;
+      try { data[id] = task.start ? ((await task.start({ group, actors, camp })) ?? null) : null; } catch(err) { log.error(`Camp task ${id} :`, err); }
+    }
+    if(!foundry.utils.isEmpty(data)) await group.update({ [`flags.${module.id}.camp.run.late`] : { at : camp.run.hour, data } });
+  }
+
+  /* ... and end an hour later */
+  static async collectLate(group){
+    const camp = this.campOf(group);
+    const late = camp.run?.late;
+    if(!late || late.done || (camp.run.hour <= late.at)) return;
+    await group.update({ [`flags.${module.id}.camp.run.late.done`] : true });
+    const plan = this.schedule(group, camp);
+    const lines = [];
+    for(const [id, task] of tasks){
+      const actors = this.taskActors(group, plan, id, true);
+      if(!actors.length || !task.collect || !(id in late.data)) continue;
+      try { lines.push(...(((await task.collect({ group, actors, data : late.data[id], camp })) ?? {}).lines ?? [])); }
+      catch(err) { log.error(`Camp task ${id} :`, err); }
+    }
+    if(lines.length) await this.postLog(group, "lateDone", { lines });
   }
 
   /* The group's food that would spoil (not made by magic), offered to the tasks taking it (Preserve) */
@@ -634,31 +710,194 @@ export class groupCamp{
     if(lines.length) await this.postLog(group, "preserved", { lines });
   }
 
-  /* Preserve (homebrew Camp Tasks) : each whole pound of the food left becomes a Ration, kept by the first preserver */
-  static async preserve({ group, actors, food }){
-    const count = Math.floor(food + 1e-9);
-    const keeper = actors[0];
-    if(!count || !keeper) return { food : 0 };
-    await this.giveRations(group, keeper, count);
-    return { food : count, lines : [this.i18n("preserved", { name : this.esc(keeper.name), count })] };
+  /* ---------- Build a Fire, Preserve (homebrew Camp Tasks) ---------- */
+
+  static FIRE_SPELLS = ["prestidigitation", "produce-flame", "fire-bolt", "control-flames", "burning-hands"];
+  static PRESERVE_DC = 10;
+  /* A cook's most : 3 Rations, from 2 lb of fresh food each; they cure for 7 hours */
+  static PRESERVE_RATIONS = 3;
+  static PRESERVE_LB = 2;
+  static CURE_HOURS = 7;
+
+  static preservePartial(){
+    return !!settings.value("homebrewPreservePartial");
   }
 
-  /* Rations onto a creature : its own stack, else a copy of one the group has, else dnd5e's */
-  static async giveRations(group, actor, count){
-    const stack = actor.items.find(i => i.system.identifier === "rations");
-    if(stack) return stack.update({ "system.quantity" : (Number(stack.system.quantity) || 0) + count });
-    let source = [...this.members(group), ...groupInventory.packs(group)].flatMap(a => a.items.contents).find(i => i.system.identifier === "rations")?.toObject();
+  /* Something to light it with : a spell, or a Tinderbox (its own or a pack's) */
+  static canLight(actor, group){
+    if(actor.items.some(i => (i.type === "spell") && this.FIRE_SPELLS.includes(idOf(i)))) return true;
+    return [actor, ...(group ? groupInventory.packs(group) : [])].some(a => groupWeather.hasItem(a, ["tinderbox"]));
+  }
+
+  static fireLit(camp){
+    return !!camp.run?.data?.fire?.lit;
+  }
+
+  /* Heavy rain or strong wind : no fire, unless in natural shelter */
+  static doused(group, camp){
+    return !camp.plan.shelter && groupWeather.effectsOf(groupWeather.of(group)).douses;
+  }
+
+  /* What moves a check's DC : [{ value (on the roll), label }] (the fire's : rain or snow; Preserve's : wind, heat, cold,
+     a fire too) */
+  static weatherMods(group, camp, kind){
+    const w = groupWeather.of(group);
+    const mods = [];
+    const add = (value, label) => mods.push({ value, label });
+    if(!camp.plan.shelter){
+      if(["rain", "snow"].includes(w.precipitation)) add(-4, groupWeather.i18n(`precipitation.${w.precipitation}`));
+      else if(w.precipitation === "light") add(-2, groupWeather.i18n("precipitation.light"));
+      if(kind === "preserve"){
+        if(w.wind === "sandstorm") add(-4, groupWeather.i18n("wind.sandstorm"));
+        else if(w.wind === "strong") add(-2, groupWeather.i18n("wind.strong"));
+      }
+    }
+    if(kind === "preserve"){
+      if(w.temperature === "heat") add(-2, groupWeather.i18n("temperature.heat"));
+      if(w.temperature === "cold") add(2, groupWeather.i18n("temperature.cold"));
+      if(this.fireLit(camp)) add(2, this.i18n("fireLit"));
+    }
+    return mods;
+  }
+
+  /* Together, at most 4 either way */
+  static modTotal(mods){
+    return Math.max(-4, Math.min(4, mods.reduce((s, m) => s + m.value, 0)));
+  }
+
+  static modText(mods){
+    return mods.map(m => `${m.label} ${(m.value > 0) ? "+" : ""}${m.value}`).join(", ");
+  }
+
+  /* Build a Fire : a Wisdom (Survival) check at the terrain's Foraging DC (gathering firewood) */
+  static async fireStart({ group, actors }){
+    const camp = this.campOf(group);
+    const mods = this.weatherMods(group, camp, "fire");
+    const dc = (this.TERRAIN[camp.plan.terrain] ?? 15) - this.modTotal(mods);
+    const card = await rollRequests.request({ who : actors.map(a => ({ actor : a.uuid, name : a.name, img : a.img })), what : "skill:sur", dc, hideDC : false, speaker : group,
+      label : this.i18n("surveyCard", { task : this.i18n("task.fire"), skill : rollRequests.labelOf("skill", "sur"), terrain : this.i18n(`terrain.${camp.plan.terrain}`) })
+        + (mods.length ? ` (${this.esc(this.modText(mods))})` : "") });
+    return { message : card?.id ?? null, dc };
+  }
+
+  /* A row's result on a request card : { result, total, fumble } */
+  static resultOf(data, actor){
+    const request = game.messages.get(data?.message)?.getFlag(module.id, "request");
+    const row = request?.rows.find(r => r.actor === actor.uuid);
+    const result = row ? request.results?.[1]?.[row.key] : null;
+    if(!result) return null;
+    const roll = rollRequests.rollOf(result);
+    return { result, total : Number(result.total), fumble : roll?.isFumble ?? (roll?.dice?.[0]?.total === 1) };
+  }
+
+  static async fireCollect({ group, actors, data }){
+    const lines = [];
+    let lit = false;
+    for(const actor of actors){
+      const got = this.resultOf(data, actor);
+      const ok = !!got && (Number.isFinite(got.total) ? (got.total >= data.dc) : !!got.result.success);
+      lit ||= ok;
+      lines.push(this.i18n(!got ? "fireNone" : ok ? "fireDone" : "fireFail", { name : this.esc(actor.name) }));
+    }
+    if(lit && this.doused(group, this.campOf(group))){ lit = false; lines.push(this.i18n("fireOut")); }
+    await group.update({ [`flags.${module.id}.camp.run.data.fire.lit`] : lit });
+    return { lines };
+  }
+
+  /* Each hour : heavy rain or strong wind puts the fire out */
+  static async fireOut(group){
+    const camp = this.campOf(group);
+    if(!this.fireLit(camp) || !this.doused(group, camp)) return;
+    await group.update({ [`flags.${module.id}.camp.run.data.fire.lit`] : false });
+    await this.postLog(group, "fire", { lines : [this.i18n("fireOut")] });
+  }
+
+  /* Preserve : a Cook's Utensils check, DC 10 moved by the weather and a fire; Advantage carrying them */
+  static async preserveStart({ group, actors }){
+    const camp = this.campOf(group);
+    const mods = this.weatherMods(group, camp, "preserve");
+    const dc = this.PRESERVE_DC - this.modTotal(mods);
+    const who = actors.map(a => {
+      const tool = a.items.find(i => (i.type === "tool") && (i.system.type?.baseItem === "cook"));
+      return { actor : a.uuid, name : a.name, img : a.img, ...(tool ? { rollMode : { mode : "advantage", reason : this.i18n("cookTool", { tool : tool.name }) } } : {}) };
+    });
+    const card = await rollRequests.request({ who, what : "tool:cook", dc, hideDC : false, speaker : group,
+      label : this.i18n("preserveCard", { tool : rollRequests.labelOf("tool", "cook") }) + (mods.length ? ` (${this.esc(this.modText(mods))})` : "") });
+    return { message : card?.id ?? null, dc };
+  }
+
+  /* Each cook in turn : up to 6 lb of the group's spoiling food (not made by magic) into Rations that cure */
+  static async preserveCollect({ group, actors, data }){
+    const plan = this.schedule(group);
+    const holders = [...new Set([...plan.rows.map(r => r.actor), ...groupInventory.packs(group)])];
+    const items = () => holders.flatMap(a => a.items.filter(i => groupMeal.spoils(i) && !i.getFlag(module.id, "made") && (groupMeal.unitsLeft(i) > 0)));
+    const lines = [];
+    for(const actor of actors){
+      const name = this.esc(actor.name);
+      const got = this.resultOf(data, actor);
+      if(!got) { lines.push(this.i18n("preserveNone", { name })); continue; }
+      const fresh = Math.min(this.PRESERVE_LB * this.PRESERVE_RATIONS, groupMeal.round(items().reduce((s, i) => s + groupMeal.unitsLeft(i) * groupMeal.perUnit(i, actor), 0)));
+      if(fresh < 0.01) { lines.push(this.i18n("preserveNoFood", { name })); continue; }
+      const miss = data.dc - got.total;
+      const share = got.fumble ? 0 : (miss <= 0) ? 1 : this.preservePartial() ? Math.max(0, 1 - 0.2 * miss) : 0;
+      const rations = groupMeal.round(fresh / this.PRESERVE_LB * share);
+      if(rations < 0.01) { lines.push(this.i18n(got.fumble ? "preserveFumble" : "preserveFail", { name })); continue; }
+      let used = fresh;
+      for(const item of items()){
+        if(used <= 1e-9) break;
+        used -= await groupMeal.eatFrom(item, used, actor);
+      }
+      await this.cure(group, actor, rations);
+      lines.push(this.i18n((share < 1) ? "preservePart" : "preserveDone", { name, fresh, rations, hours : this.CURE_HOURS }));
+    }
+    return { lines };
+  }
+
+  /* Rations curing : one item (flag curing { until, group, count }) that can't be eaten and doesn't spoil */
+  static async cure(group, actor, count){
+    const data = groupMeal.wholeData(await this.rationsSource(group, actor), 1);
+    const until = game.time.worldTime + this.CURE_HOURS * groupTravel.secondsPerHour();
+    foundry.utils.mergeObject(data, { name : this.i18n("curingName", { name : data.name, count }),
+      system : { weight : { value : groupMeal.round((Number(data.system?.weight?.value) || 0) * count) }, price : { value : 0 } },
+      flags : { [module.id] : { curing : { until, group : group.uuid, count } } } });
+    return actor.createEmbeddedDocuments("Item", [data]);
+  }
+
+  static #curing = null;
+
+  /* The clock past their time : cured Rations join the cook's stack (the active GM) */
+  static cureDue(){
+    if(!this.enabled() || !game.users.activeGM?.isSelf) return;
+    this.#curing = (this.#curing ?? Promise.resolve()).then(async () => {
+      const now = game.time.worldTime;
+      const lines = new Map();
+      for(const actor of game.actors) for(const item of actor.items.filter(i => groupMeal.curing(i) && (Number(i.getFlag(module.id, "curing").until) <= now))){
+        const { group : uuid, count } = item.getFlag(module.id, "curing");
+        const group = fromUuidSync(uuid ?? "", { strict : false });
+        await item.delete();
+        await this.giveRations((group?.type === "group") ? group : null, actor, Number(count) || 0);
+        if(group) lines.set(group, [...(lines.get(group) ?? []), this.i18n("cured", { name : this.esc(actor.name), count })]);
+      }
+      for(const [group, list] of lines) await this.postLog(group, "cured", { lines : list });
+    }).catch(err => log.error("Camp curing :", err));
+  }
+
+  /* Rations to copy : one the group has, else dnd5e's */
+  static async rationsSource(group, actor){
+    const holders = group ? [...this.members(group), ...groupInventory.packs(group)] : [actor];
+    let source = holders.flatMap(a => a.items.contents).find(i => (i.system.identifier === "rations") && !groupMeal.curing(i))?.toObject();
     if(!source){
       const pack = game.packs.get("dnd5e.equipment24");
       const entry = pack?.index.find(e => e.name === "Rations");
       source = entry ? (await pack.getDocument(entry._id))?.toObject() : null;
     }
     source ??= { name : this.i18n("rations"), type : "consumable", system : { type : { value : "food" }, weight : { value : 2, units : "lb" } } };
-    delete source._id;
-    /* A copy starts whole */
-    delete source.flags?.[module.id]?.eaten;
-    foundry.utils.mergeObject(source, { "system.quantity" : count, "system.identifier" : "rations", "system.container" : null });
-    return actor.createEmbeddedDocuments("Item", [source]);
+    return foundry.utils.mergeObject(source, { "system.identifier" : "rations" });
+  }
+
+  /* Rations (parts too) onto a creature */
+  static async giveRations(group, actor, count){
+    return groupMeal.addFood(actor, await this.rationsSource(group, actor), count);
   }
 
   /* The camp ends : sleepers wake, the rests, the tasks' finish, the log */
@@ -966,7 +1205,9 @@ export class groupCamp{
       const box = (key, allowed = true) => `<input type="checkbox" data-key="${key}" ${r.row[key] ? "checked" : ""} ${off(edit && allowed)}>`;
       const tasksHere = this.offered(camp, r.actor, group);
       const road = (!inn && this.roadForager(group, r.actor)) ? `<i class="fa-solid fa-seedling road" data-tooltip="${e(this.i18n("roadHint"))}" inert></i>` : "";
-      const task = inn ? `<span class="hint">—</span>` : `${road}<select data-key="task" ${off(edit && tasksHere.length)}>${options([["none", this.i18n("task.none")], ...tasksHere.map(t => [t.id, game.i18n.localize(t.label)])], r.row.task)}</select>`;
+      /* A task that may be worked after setting up : which hour */
+      const late = tasks.get(r.row.task)?.late ? `<select data-key="late" ${off(edit)} data-tooltip="${e(this.i18n("lateHint"))}">${options([["false", this.i18n("lateNo")], ["true", this.i18n("lateYes")]], String(!!r.row.late))}</select>` : "";
+      const task = inn ? `<span class="hint">—</span>` : `${road}<select data-key="task" ${off(edit && tasksHere.length)}>${options([["none", this.i18n("task.none")], ...tasksHere.map(t => [t.id, game.i18n.localize(t.label)])], r.row.task)}</select>${late}`;
       const food = inn ? `<td><select data-key="food" ${off(edit)}>${options(this.INN_SOURCES.map(s => [s, this.i18n(`source.${s}`)]), r.row.food)}</select></td>` : "";
       const payer = inn ? `<td><select data-key="payer" ${off(edit)}>${options([...new Set([r.actor, ...payers])].map(a => [a.id, a.name]), r.row.payer)}</select></td>` : "";
       const summary = r.row.rest ? (r.short ? this.i18n("sumShort", { rest : r.sleep, watch : r.watch, source : r.source?.name ?? "" }) : this.i18n("sum", { sleep : r.sleep, watch : r.watch }))
@@ -992,7 +1233,7 @@ export class groupCamp{
         const task = c.startsWith("task:") ? tasks.get(c.slice(5)) : null;
         const icon = task ? task.icon : `fa-solid ${this.CELLS[c] ?? ""}`;
         const tip = task ? game.i18n.localize(task.label) : this.i18n(`cell.${c}`);
-        const night = pick && (h >= plan.setup) && (h < plan.setup + plan.night);
+        const night = pick && (h < plan.setup + plan.night) && r.free(h);
         return `<td class="cell ${task ? "task" : c} ${(h < plan.setup) ? "setup" : ""} ${(run && (h === run.hour)) ? "now" : ""} ${night ? "pick" : ""}"
           ${night ? `data-hour="${h - plan.setup}" data-watch="${c === "watch"}"` : ""} data-tooltip="${e(night ? `${tip}<br>${this.i18n((c === "watch") ? "rotaOff" : "rotaOn")}` : tip)}">${icon.trim() ? `<i class="${icon}" inert></i>` : ""}</td>`;
       }).join("")}</tr>`;
@@ -1004,11 +1245,19 @@ export class groupCamp{
     const short = (have, need) => (have < need) ? "over" : "";
     const supplies = `<p class="supplies">
         <span class="${short(s.food.rations + s.food.feed, s.food.need)}"><i class="fa-solid fa-drumstick-bite" inert></i> ${this.i18n("foodLine", { need : s.food.need, have : s.food.rations, feed : s.food.feed })}</span>
-        <span class="${short(s.water.skins, s.water.need)}"><i class="fa-solid fa-droplet" inert></i> ${this.i18n("waterLine", { need : s.water.need, have : Math.round(s.water.skins * 100) / 100 })}</span></p>`;
+        <span class="${short(s.water.skins, s.water.need)}"><i class="fa-solid fa-droplet" inert></i> ${this.i18n("waterLine", { need : s.water.need, have : Math.round(s.water.skins * 100) / 100 })}</span>
+        ${this.fireLit(camp) ? `<span class="fire"><i class="fa-solid fa-fire" inert></i> ${this.i18n("fireLit")}</span>` : ""}</p>`;
+    /* Rations curing (the GM may spoil them : animals, weather) */
+    const curing = [...new Set([...this.members(group), ...groupInventory.packs(group)])].flatMap(a => a.items.filter(i => groupMeal.curing(i) && (i.getFlag(module.id, "curing").group === group.uuid)));
+    const cured = curing.length ? `<section class="curing"><h3>${this.i18n("curingLabel")}</h3>${curing.map(i => {
+      const flag = i.getFlag(module.id, "curing");
+      return `<div class="line"><i class="fa-solid fa-jar" inert></i> ${this.i18n("curingLine", { name : e(i.parent.name), count : flag.count, at : e(groupTravel.formatted(flag.until).time) })}
+        ${game.user.isGM ? `<button type="button" data-spoil="${i.uuid}" data-tooltip="${e(this.i18n("spoilHint"))}"><i class="fa-solid fa-trash" inert></i> ${this.i18n("spoil")}</button>` : ""}</div>`;
+    }).join("")}</section>` : "";
     const buttons = !run ? [["make", "fa-tents"]] : run.paused ? [["resume", "fa-play"], ["break", "fa-person-walking-arrow-right"]]
       : [["step", "fa-forward-step"], ["finish", "fa-forward-fast"], ["stop", "fa-bell"], ["break", "fa-person-walking-arrow-right"]];
     const control = () => this.canRun(group);
-    return `${where}${members}${rota}${supplies}
+    return `${where}${members}${rota}${supplies}${cured}
       ${run?.paused ? `<p class="paused over"><i class="fa-solid fa-pause" inert></i> ${this.i18n("paused")}</p>` : ""}
       <footer class="form-footer">${buttons.map(([op, icon]) =>
         `<button type="button" data-op="${op}" ${off(control(op))}><i class="fa-solid ${icon}" inert></i> ${this.i18n(`button.${op}`)}</button>`).join("")}</footer>`;
@@ -1027,6 +1276,7 @@ export class groupCamp{
       cell.addEventListener("click", () => send({ op : "rota", id : cell.closest("tr").dataset.id, hour : Number(cell.dataset.hour), watch : cell.dataset.watch !== "true" }));
     }
     content.querySelector(".rota-reset")?.addEventListener("click", () => send({ op : "rota", reset : true }));
+    for(const button of content.querySelectorAll(".curing [data-spoil]")) button.addEventListener("click", () => { button.disabled = true; send({ op : "spoil", item : button.dataset.spoil }); });
     for(const button of content.querySelectorAll("footer [data-op]")){
       button.addEventListener("click", () => {
         if(button.dataset.op === "stop") return this.stopWindow(group);

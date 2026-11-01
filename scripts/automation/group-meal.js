@@ -15,7 +15,8 @@ const log = logger.for(import.meta.url);
  *   Each member : food and water bars of ten steps (tenths of the day's need) as eaten so far today and after; a source
  *   (Automatic : spoiling food first, then its own stores, then the pack animals' and vehicles'; one stack of its own,
  *   a pack's, another member's when the user owns that one or runs the group; free food nearby or the inn's meal at the
- *   camp) and an amount (lb / gal; Rations come off in parts : flag eaten, the part of one already gone). A Goodberry
+ *   camp) and an amount (lb / gal). Part of a unit eaten leaves a Partial item (flag part : { left, name, weight,
+ *   price }; its weight and price by what's left; one a holder, a second tops it up; eaten first). A Goodberry
  *   berry fills the day's food; its caster can cast Goodberry from the window.
  *   Found food (Forage, Hunt) is a "Foraged food" item, Create Food and Water a 45 lb "Created food" (made by magic : no
  *   Preserve), both given to the member new items go to (flag arrivals); both spoil at midnight (flag spoils; the clock
@@ -72,8 +73,22 @@ export class groupMeal{
     return !!item?.getFlag?.(module.id, "goodberry") || /goodberr/.test(idOf(item));
   }
 
-  /* Units left in a stack : its quantity less the part of one already eaten */
+  /* What's left of a Partial item (0 to 1), null for a whole stack */
+  static partOf(item){
+    const left = item?.getFlag?.(module.id, "part")?.left;
+    return (left == null) ? null : Number(left) || 0;
+  }
+
+  /* Rations still curing (group-camp.js Preserve) can't be eaten yet */
+  static curing(item){
+    return !!item?.getFlag?.(module.id, "curing");
+  }
+
+  /* Units left in a stack (a Partial item : the part left; flag eaten : the part of one gone, from before Partial items) */
   static unitsLeft(item){
+    if(this.curing(item)) return 0;
+    const part = this.partOf(item);
+    if(part !== null) return part;
     return Math.max(0, (Number(item.system.quantity) || 0) - (Number(item.getFlag(module.id, "eaten")) || 0));
   }
 
@@ -124,24 +139,92 @@ export class groupMeal{
   static autoItems(group, actor, kind, user = game.user){
     const packs = groupInventory.packs(group).filter(a => a !== actor);
     if(kind === "water") return [actor, ...packs].flatMap(a => groupCamp.skins(a)).filter(i => groupCamp.waterIn(i) > 0);
-    const plain = holder => this.foodItems(holder, actor).filter(i => !this.berry(i) && !this.spoils(i))
-      .sort((a, b) => Number(/^feed/.test(idOf(b))) - Number(/^feed/.test(idOf(a))));
-    const spoiling = this.holders(group, actor, user).flatMap(h => this.foodItems(h, actor)).filter(i => this.spoils(i));
+    /* A Beast's feed first, then Partial items before whole stacks */
+    const rank = i => 2 * Number(/^feed/.test(idOf(i))) + Number(this.partOf(i) !== null);
+    const plain = holder => this.foodItems(holder, actor).filter(i => !this.berry(i) && !this.spoils(i)).sort((a, b) => rank(b) - rank(a));
+    const spoiling = this.holders(group, actor, user).flatMap(h => this.foodItems(h, actor)).filter(i => this.spoils(i)).sort((a, b) => rank(b) - rank(a));
     return [...spoiling, ...plain(actor), ...packs.flatMap(plain)];
   }
 
-  /* Eats up to `lb` from a stack (parts of a unit kept on it); returns the lb eaten */
+  /* Eats up to `lb` from a stack; returns the lb eaten */
   static async eatFrom(item, lb, eater){
     const per = this.perUnit(item, eater);
     if(!(per > 0) || !(lb > 0)) return 0;
     const units = Math.min(this.unitsLeft(item), lb / per);
-    const eaten = (Number(item.getFlag(module.id, "eaten")) || 0) + units;
-    const whole = Math.floor(eaten + 1e-9);
-    const quantity = (Number(item.system.quantity) || 0) - whole;
-    const part = this.round(eaten - whole);
-    if((quantity <= 0) || ((quantity === 1) && (part >= 1 - 1e-9))) await item.delete();
-    else await item.update({ "system.quantity" : quantity, [`flags.${module.id}.eaten`] : part });
+    await this.takeUnits(item, units);
     return this.round(units * per);
+  }
+
+  /* Units off a stack : whole ones come off it, the rest of one opened becomes the holder's Partial item */
+  static async takeUnits(item, units){
+    const part = this.partOf(item);
+    if(part !== null){
+      const left = this.round(part - units);
+      return (left < 0.01) ? item.delete() : item.update(this.partData(item.getFlag(module.id, "part"), left));
+    }
+    const taken = (Number(item.getFlag(module.id, "eaten")) || 0) + units;
+    const opened = Math.ceil(taken - 1e-9);
+    const rest = this.round(opened - taken);
+    const quantity = (Number(item.system.quantity) || 0) - opened;
+    const holder = item.parent, source = item.toObject();
+    if(quantity <= 0) await item.delete();
+    else {
+      await item.update({ "system.quantity" : quantity });
+      if(item.getFlag(module.id, "eaten") != null) await item.unsetFlag(module.id, "eaten");
+    }
+    if(rest >= 0.01) await this.addPartial(holder, source, rest);
+  }
+
+  /* A Partial item's name, weight and price for what's left of it (base : the whole unit's) */
+  static partData(base, left){
+    return { name : this.i18n("partial", { name : base.name, percent : Math.round(left * 100) }), "system.weight.value" : this.round(base.weight * left),
+      "system.price.value" : this.round(base.price * left), [`flags.${module.id}.part`] : { ...base, left } };
+  }
+
+  /* The holder's own stack (or Partial item) of this kind : same identifier (else name), spoiling or not */
+  static stackLike(holder, source, partial){
+    const key = source.system?.identifier || source.flags?.[module.id]?.part?.name || source.name;
+    const spoils = !!source.flags?.[module.id]?.spoils;
+    return holder.items.find(i => !this.curing(i) && ((this.partOf(i) !== null) === partial) && (this.spoils(i) === spoils)
+      && ((i.system.identifier || i.getFlag(module.id, "part")?.name || i.name) === key));
+  }
+
+  /* A copy of an item (its data) as a whole stack of n */
+  static wholeData(source, n){
+    const data = foundry.utils.deepClone(source);
+    delete data._id;
+    const own = data.flags?.[module.id];
+    const base = own?.part;
+    for(const key of ["eaten", "part", "curing"]) delete own?.[key];
+    if(base) foundry.utils.mergeObject(data, { name : base.name, system : { weight : { value : base.weight }, price : { value : base.price } } });
+    return foundry.utils.mergeObject(data, { system : { quantity : n, container : null } });
+  }
+
+  /* Whole units onto a holder : its own stack, else a new one copied from the source */
+  static async addUnits(holder, source, n){
+    if(!(n > 0)) return;
+    const stack = this.stackLike(holder, source, false);
+    if(stack) return stack.update({ "system.quantity" : (Number(stack.system.quantity) || 0) + n });
+    return holder.createEmbeddedDocuments("Item", [this.wholeData(source, n)]);
+  }
+
+  /* Part of a unit onto a holder : its Partial item topped up (a whole one made : onto the stack), else a new one */
+  static async addPartial(holder, source, amount){
+    const open = this.stackLike(holder, source, true);
+    let left = this.round(amount + (open ? this.partOf(open) : 0));
+    if(left >= 0.99){ await this.addUnits(holder, source, 1); left = this.round(left - 1); }
+    if(open) return (left < 0.01) ? open.delete() : open.update(this.partData(open.getFlag(module.id, "part"), left));
+    if(left < 0.01) return;
+    const whole = this.wholeData(source, 1);
+    const base = { name : whole.name, weight : Number(whole.system?.weight?.value) || 0, price : Number(whole.system?.price?.value) || 0 };
+    return holder.createEmbeddedDocuments("Item", [foundry.utils.mergeObject(whole, foundry.utils.expandObject(this.partData(base, left)))]);
+  }
+
+  /* Units (parts too) onto a holder */
+  static async addFood(holder, source, count){
+    const whole = Math.floor(count + 1e-9);
+    await this.addUnits(holder, source, whole);
+    if(count - whole >= 0.01) await this.addPartial(holder, source, this.round(count - whole));
   }
 
   static async drinkFrom(item, gal){

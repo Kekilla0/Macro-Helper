@@ -121,6 +121,7 @@ export const GROUPS = {
         choices : { "2024" : "settings.weatherRules.2024", "2014" : "settings.weatherRules.2014" } },
       homebrewSeats : { scope : "world", default : false, type : Boolean, homebrew : true },
       homebrewCampTasks : { scope : "world", default : false, type : Boolean, homebrew : true },
+      homebrewPreservePartial : { scope : "world", default : false, type : Boolean, homebrew : true, part : "homebrewCampTasks" },
       foodWater : { scope : "world", default : false, type : Boolean, part : "groupTravel" },
       foodWaterRules : { scope : "world", default : "2024", type : String, part : "foodWater",
         choices : { "2024" : "settings.foodWaterRules.2024", homebrew : "settings.foodWaterRules.homebrew" } },
@@ -215,7 +216,7 @@ const VIRTUAL = {
 const AUTOMATION_OFF = {
   conditions : "off", masteryRules : false, handsEnabled : false, handsLight : "off", ammunition : "off", spellMaterials : "off", armorTraining : false,
   initiativeMethod : "player", summonInitiative : "roll", clearAreas : false, defaultActions : "off",
-  homebrewPush : false, homebrewInitiative : false, groupTravel : false, campForageDC : "2024", weatherRules : "2024", homebrewSeats : false, homebrewCampTasks : false, foodWater : false, foodWaterRules : "2024", homebrewFoodNothing : false, homebrewHungerGrows : false, homebrewThirstSave : false, homebrewHeatWater : false, homebrewAmmoSearch : false, homebrewLoadHand : false, homebrewFlanking : "off",
+  homebrewPush : false, homebrewInitiative : false, groupTravel : false, campForageDC : "2024", weatherRules : "2024", homebrewSeats : false, homebrewCampTasks : false, homebrewPreservePartial : false, foodWater : false, foodWaterRules : "2024", homebrewFoodNothing : false, homebrewHungerGrows : false, homebrewThirstSave : false, homebrewHeatWater : false, homebrewAmmoSearch : false, homebrewLoadHand : false, homebrewFlanking : "off",
 };
 
 /* The old Roll Item switches, hidden : read once by the carry-over */
