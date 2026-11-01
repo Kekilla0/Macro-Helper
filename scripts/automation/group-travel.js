@@ -267,7 +267,7 @@ export class groupTravel{
     const type = app.config?.type;
     if(!["short", "long"].includes(type)) return;
     const ticked = () => boxes.filter(box => box.checked).map(box => box.name.slice("targets.".length));
-    const fill = () => this.restDuration(element, this.groupRest(app.actor, type, ticked()));
+    const fill = () => this.restDuration(app, element, this.groupRest(app.actor, type, ticked()));
     for(const box of boxes) box.addEventListener("change", fill);
     fill();
   }
@@ -281,35 +281,58 @@ export class groupTravel{
     return { minutes, members };
   }
 
-  /* The group's rest window opens with its members' length (the GM can still type another) */
+  /* The group's rest window opens on the standard length (8 h), or longer when a member needs it */
   static restLength(actor, config){
     if((actor?.type !== "group") || !this.enabled() || !["short", "long"].includes(config?.type)) return;
     if(Number(config.duration) !== standardRest(config.type)) return;
     const saved = [...(actor.getFlag("dnd5e", "restSettings")?.targets ?? [])];
     const ids = Array.isArray(config.targets) ? config.targets : (saved.length ? saved : null);
-    config.duration = this.groupRest(actor, config.type, ids).minutes;
+    config.duration = Math.max(config.duration, this.groupRest(actor, config.type, ids).minutes);
   }
 
-  /* The window's Duration follows the members ticked; a line under it says who sets it */
-  static restDuration(element, { minutes, members }){
+  /* The window's Duration : one number with - / +, never under the longest rest among the members ticked (Trance : a
+     Long Rest in 4 h); its tooltip says who needs how long */
+  static restDuration(app, element, { minutes, members }){
     const value = element.querySelector("[name='duration.value']");
     const unit = element.querySelector("[name='duration.unit']");
-    if(!value || !unit) return;
-    const hours = !(minutes % 60);
-    value.value = hours ? minutes / 60 : minutes;
-    unit.value = hours ? "hour" : "minute";
-    const field = value.closest(".form-group");
-    let note = field?.querySelector(".macro-helper-rest-length");
-    if(!note && field){
-      note = document.createElement("p");
-      note.className = "hint macro-helper-rest-length";
-      field.append(note);
+    const field = value?.closest(".split-group");
+    if(!unit || !field) return;
+    const step = (minutes % 60 || standardRest(app.config.type) % 60) ? 1 : 60;
+    const label = game.i18n.localize(step === 60 ? "groupTravel.restHours" : "groupTravel.restMinutes");
+    const min = minutes / step;
+    let box = field.querySelector(".macro-helper-rest-hours");
+    if(!box){
+      field.classList.add("macro-helper-rest-field");
+      box = document.createElement("div");
+      box.className = "macro-helper-rest-hours";
+      box.innerHTML = `<button type="button" class="unbutton minus"><i class="fa-solid fa-minus" inert></i></button>
+        <input type="number" step="1"><span class="unit">${label}</span>
+        <button type="button" class="unbutton plus"><i class="fa-solid fa-plus" inert></i></button>`;
+      field.querySelector(":scope > .form-fields")?.prepend(box);
+      const input = box.querySelector("input");
+      box.querySelector(".minus").addEventListener("click", () => box.set(Number(input.value) - 1));
+      box.querySelector(".plus").addEventListener("click", () => box.set(Number(input.value) + 1));
+      input.addEventListener("change", () => box.set(Number(input.value)));
+      field.querySelector("[data-action='setDurationSunrise']")?.addEventListener("click", () => setTimeout(() =>
+        box.set(Number(value.value) * ((unit.value === "minute") ? 1 : 60) / step)));
     }
-    if(!note) return;
+    const input = box.querySelector("input");
+    box.set = n => {
+      const amount = Math.max(box.min, Math.round(Number.isFinite(n) ? n : box.min));
+      input.value = value.value = app.macroHelperRest = amount;
+      unit.value = (step === 60) ? "hour" : "minute";
+      input.min = box.min;
+      box.querySelector(".minus").disabled = amount <= box.min;
+    };
+    box.min = min;
+    box.set(app.macroHelperRest ?? Number(app.config.duration ?? standardRest(app.config.type)) / step);
+    const hint = field.querySelector(":scope > .hint");
+    if(!hint) return;
     const lengths = new Map();
-    for(const m of members) (lengths.get(m.minutes) ?? lengths.set(m.minutes, []).get(m.minutes)).push(m);
-    note.innerHTML = [...lengths.entries()].sort(([a], [b]) => b - a).map(([length, list]) =>
-      `${this.hm(length / 60)} : ${list.map(m => foundry.utils.escapeHTML(m.actor.name) + (m.source ? ` (${foundry.utils.escapeHTML(m.source.name)})` : "")).join(", ")}`).join(" · ");
+    for(const m of members) (lengths.get(m.minutes) ?? lengths.set(m.minutes, []).get(m.minutes)).push(m.actor.name);
+    hint.textContent = game.i18n.format("groupTravel.restAtLeast", { length : this.hm(minutes / 60) });
+    hint.dataset.tooltip = [...lengths.entries()].sort(([x], [y]) => y - x)
+      .map(([length, names]) => `${this.hm(length / 60)} : ${foundry.utils.escapeHTML(names.join(", "))}`).join("<br>");
   }
 
   static sheets(){
@@ -922,19 +945,25 @@ export class groupTravel{
     return (value > 2 * max) ? "stuck" : ((value > max) ? "drag" : null);
   }
 
+  /* What each part of its load counts as, one line each; with the limits when asked */
+  static loadTip(actor, limits = true){
+    const { value = 0, max = 0, travel } = actor.system.attributes?.encumbrance ?? {};
+    const line = (key, weight, name = "") => game.i18n.format(`groupTravel.tip.${key}`, { name : foundry.utils.escapeHTML(name), weight : this.weightLabel(Math.round(weight)) });
+    const lines = [line("gear", travel?.gear ?? value)];
+    for(const c of travel?.carried ?? []) lines.push(line((c.by === "ride") ? "ridden" : "carrying", c.weight, c.actor.name));
+    for(const p of travel?.pull ?? []) lines.push(line("pulling", p.counts, p.vehicle.name));
+    if(limits && (actor.type !== "vehicle")) lines.push(line("capacity", max), line("drag", 2 * max));
+    return lines.join("<br>");
+  }
+
   /* Its load of its capacity; the GM types its body weight */
   static weightRow(actor){
-    const { value = 0, max = 0, travel } = actor.system.attributes?.encumbrance ?? {};
+    const { value = 0, max = 0 } = actor.system.attributes?.encumbrance ?? {};
     const body = this.bodyWeight(actor);
-    const lines = [`${game.i18n.localize("groupTravel.gear")} ${this.weightLabel(travel?.gear ?? value)}`];
-    for(const c of travel?.carried ?? []) lines.push(`${game.i18n.localize((c.by === "ride") ? "groupTravel.riddenBy" : "groupTravel.carrying")} ${foundry.utils.escapeHTML(c.actor.name)} ${this.weightLabel(c.weight)}`);
-    for(const p of travel?.pull ?? []) lines.push(game.i18n.format("groupTravel.pullShare", { vehicle : foundry.utils.escapeHTML(p.vehicle.name),
-      share : this.weightLabel(p.share), counts : this.weightLabel(p.counts) }));
-    lines.push(game.i18n.format("groupTravel.capacity", { max : this.weightLabel(max), drag : this.weightLabel(2 * max) }));
     const state = this.loadState(actor);
     const bodyTip = game.i18n.localize(body.estimate ? "groupTravel.bodyEstimate" : "groupTravel.body");
     return `<div class="row weight">
-        <div class="hours" data-tooltip="${lines.join("<br>")}">
+        <div class="hours" data-tooltip="${this.loadTip(actor)}">
           <i class="fa-solid fa-weight-hanging" inert></i>
           <div class="meter progress meter-sm" style="--bar-percentage : ${max ? Math.min(100, value / max * 100) : 0}%"></div>
           <span class="${state ? "over" : ""}">${Math.round(value)} / ${this.weightLabel(max)}</span>
@@ -970,7 +999,7 @@ export class groupTravel{
     const pull = this.pullOf(vehicle);
     if(pull.max === null) return "";
     const over = this.weighs() && (pull.weight > pull.max);
-    const tip = ["vehicle", "cargo", "aboard"].map(k => `${game.i18n.localize(`groupTravel.pull.${k}`)} ${this.weightLabel(pull.parts[k])}`).join("<br>");
+    const tip = ["vehicle", "cargo", "aboard"].map(k => game.i18n.format(`groupTravel.pull.${k}`, { weight : this.weightLabel(pull.parts[k]) })).join("<br>");
     return `<div class="${over ? "over" : ""}" data-tooltip="${tip}"><i class="fa-solid fa-weight-hanging" inert></i>
       ${game.i18n.format("groupTravel.pull.line", { weight : Math.round(pull.weight), max : this.weightLabel(pull.max) })}</div>`;
   }

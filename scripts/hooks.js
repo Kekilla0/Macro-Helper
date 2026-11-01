@@ -68,6 +68,8 @@ import { goliath } from './automation/goliath.js';
 import { jump } from './automation/jump.js';
 import { groupTravel } from './automation/group-travel.js';
 import { groupInventory } from './automation/group-inventory.js';
+import { restLimit } from './automation/rest-limit.js';
+import { groupCamp } from './automation/group-camp.js';
 import { generalFeats } from './automation/general-feats.js';
 import { registerIgnores } from './automation/ignores.js';
 import { registerHitDice } from './automation/hit-dice.js';
@@ -116,6 +118,8 @@ Hooks.once("init", ()=> {
   jump.register();
   groupTravel.register();
   groupInventory.register();
+  restLimit.register();
+  groupCamp.register();
   actionTracker.register();
   movement.register();
   actionBar.register();

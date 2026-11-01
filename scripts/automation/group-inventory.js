@@ -11,13 +11,15 @@ const log = logger.for(import.meta.url);
  *   Automatic : the primary vehicle, a pack member, the Leader, the first creature). With no one to take it, it stays
  *   in a red "Not carried" section, and Rule Limits warns or stops the travel.
  *   Inventory : a section for each vehicle and each creature with no class levels (pack animals, mounts, hirelings) :
- *   its load, coins (Manage Currency), and items in Count / Weight columns, folded or not (each viewer's own). One
- *   search box under them filters every section. dnd5e's sidebar keeps the characters' cards; its own list is hidden.
+ *   its load, coins (typed in, or Manage Currency), and items in Count / Weight columns, folded or not (each viewer's own). One
+ *   search box under them filters every section. dnd5e's sidebar keeps every member's card (vehicles, animals too) in
+ *   view while the sections scroll; its own list is hidden.
  *   Anyone in the group (the GM, or a player owning one of its creatures) may drag items between the sections and their
  *   own character (its card, or its own sheet), not another player's character, change a section's counts, and move
  *   a section's coins to another section or their own character. Items move (never copied), with their contents, all
  *   through the GM's client; dropped on a container row, they go inside it.
- *   Effects : dnd5e's list (the group's), then one folded section per vehicle and pack member.
+ *   The players' characters get sections too (yours and those you may see; only yours change).
+ *   Effects : dnd5e's list (the group's), then one fold-able section per Inventory section.
  */
 export class groupInventory{
   static FOLDED = "macro-helper.groupFolded";
@@ -41,6 +43,7 @@ export class groupInventory{
     gm.handle("groupArrivals", (data, user) => this.arrivalsAsGM(data, user));
     gm.handle("groupQuantity", (data, user) => this.quantityAsGM(data, user));
     gm.handle("groupCoins", (data, user) => this.coinsAsGM(data, user));
+    gm.handle("groupCoinSet", (data, user) => this.coinSetAsGM(data, user));
   }
 
   static enabled(){
@@ -67,9 +70,20 @@ export class groupInventory{
   }
 
   static packs(group){
+    return this.holders(group).filter(a => groupTravel.isPack(a));
+  }
+
+  /* The players' characters */
+  static characters(group){
+    return this.holders(group).filter(a => !groupTravel.isPack(a) && a.system?.isCreature && a.hasPlayerOwner);
+  }
+
+  /* Every member with an Inventory section, in the group's order : vehicles, creatures without class levels, the
+     players' characters */
+  static holders(group){
     const order = groupTravel.flag(group, "order") ?? [];
     const rank = a => { const i = order.indexOf(a.id); return (i < 0) ? order.length : i; };
-    const members = group.system.members.map(m => m.actor).filter(a => groupTravel.isPack(a));
+    const members = group.system.members.map(m => m.actor).filter(a => groupTravel.isPack(a) || (a?.system?.isCreature && a.hasPlayerOwner));
     return members.map((a, i) => ({ a, i })).sort((x, y) => (rank(x.a) - rank(y.a)) || (x.i - y.i)).map(x => x.a);
   }
 
@@ -197,6 +211,19 @@ export class groupInventory{
     return true;
   }
 
+  /* A section's coin typed in : a number, or +n / -n (anyone who reaches the section, through the GM) */
+  static async coinSetAsGM({ group, actor, key, value }, user){
+    group = await fromUuid(group);
+    actor = await fromUuid(actor);
+    if((group?.type !== "group") || !(actor instanceof Actor) || !(key in CONFIG.DND5E.currencies) || !this.inGroup(group, user) || !this.reaches(group, actor, user)) return false;
+    const text = String(value ?? "").trim();
+    const n = Math.trunc(Number(text));
+    if(!text || !Number.isFinite(n)) return false;
+    const now = Number(actor.system.currency?.[key]) || 0;
+    await actor.update({ [`system.currency.${key}`] : Math.max(0, /^[+-]/.test(text) ? now + n : n) });
+    return true;
+  }
+
   /* The coins a section may go to : the other sections, the user's own characters in the group (the GM : every member) */
   static coinTargets(group, from, user = game.user){
     return group.system.members.map(m => m.actor)
@@ -255,7 +282,7 @@ export class groupInventory{
     const actor = (doc.parent instanceof Actor) ? doc.parent : doc.parent?.parent;
     if(!(actor instanceof Actor)) return;
     for(const app of groupTravel.sheets()){
-      if((app.document === actor) || this.packs(app.document).includes(actor)) app.render({ parts : ["inventory", "effects"] });
+      if((app.document === actor) || this.holders(app.document).includes(actor)) app.render({ parts : ["inventory", "effects"] });
     }
   }
 
@@ -291,12 +318,16 @@ export class groupInventory{
     tab.classList.add("macro-helper-inventory");
     const member = this.inGroup(group);
     const packs = this.packs(group);
-    /* The sidebar : characters only (pack members have their own sections); others' characters aren't for you */
-    for(const card of tab.querySelectorAll(".sidebar .encumbrance.card[data-uuid]")){
-      const actor = groupTravel.actorOf(card.dataset.uuid);
-      if(packs.includes(actor)) card.remove();
-      else if(!this.reaches(group, actor)) card.classList.add("not-yours");
+    /* The sidebar : every member's card (drop targets that stay in view), in the group's order; others' characters
+       aren't for you */
+    const sidebar = tab.querySelector(".sidebar");
+    const order = this.holders(group);
+    const rank = card => { const i = order.indexOf(groupTravel.actorOf(card.dataset.uuid)); return (i < 0) ? order.length : i; };
+    const cards = [...tab.querySelectorAll(".sidebar .encumbrance.card[data-uuid]")];
+    for(const card of cards){
+      if(!this.reaches(group, groupTravel.actorOf(card.dataset.uuid))) card.classList.add("not-yours");
     }
+    sidebar?.append(...cards.sort((a, b) => rank(a) - rank(b)));
     const body = tab.querySelector(":scope > .body");
     if(!body) return;
     /* dnd5e's list of the group's own items : hidden (the group carries nothing) */
@@ -305,11 +336,11 @@ export class groupInventory{
     hidden.append(...body.childNodes);
     body.append(hidden, this.arrivalsBar(group));
     body.querySelector(".arrivals select")?.addEventListener("change", event => gm.run("groupArrivals", { group : group.uuid, holder : event.target.value }));
-    const places = [...(groupTravel.uncarried(group) ? [group] : []), ...(member ? packs : [])];
+    const places = [...(groupTravel.uncarried(group) ? [group] : []), ...this.holders(group).filter(a => member && (packs.includes(a) || a.testUserPermission(game.user, "OBSERVER")))];
     for(const actor of places){
       const loose = actor === group;
-      const section = this.section({ key : `${group.uuid}.${loose ? "loose" : actor.id}`, className : loose ? "loose" : "",
-        head : loose ? this.looseHead(group) : this.packHead(group, actor), body : this.itemList(actor, member) });
+      const section = this.section({ key : `${group.uuid}.${loose ? "loose" : actor.id}`, className : loose ? "loose" : (packs.includes(actor) ? "" : "character"),
+        head : loose ? this.looseHead(group) : this.packHead(group, actor), body : this.coinRow(actor, !loose && this.reaches(group, actor)) + this.itemList(actor, member && this.reaches(group, actor)) });
       section.dataset.uuid = actor.uuid;
       this.listen(group, actor, section);
       body.append(section);
@@ -337,26 +368,26 @@ export class groupInventory{
   /* What nobody carries (no member to hand it to) */
   static looseHead(group){
     return `<i class="fa-solid fa-triangle-exclamation" inert></i><h3 class="over">${game.i18n.localize("groupTravel.inventory.loose")}</h3>
-      <span class="hint">${game.i18n.localize("groupTravel.inventory.looseHint")}</span>${this.coinPills(group, false)}`;
+      <span class="hint">${game.i18n.localize("groupTravel.inventory.looseHint")}</span>`;
   }
 
-  static coinPills(actor, manage){
-    const coins = Object.entries(actor.system.currency ?? {}).filter(([, n]) => n > 0)
-      .map(([k, n]) => `<li class="pill transparent"><span class="currency ${k}"></span><span class="label">${n}</span></li>`).join("");
+  /* Every coin, zeros too, typed in (a number, or +n / -n) where you may; Manage Currency for the sections */
+  static coinRow(actor, manage){
+    const coins = Object.keys(CONFIG.DND5E.currencies).map(k => { const n = Number(actor.system.currency?.[k]) || 0;
+      const value = manage ? `<input type="text" inputmode="numeric" class="coin" data-key="${k}" value="${n}" aria-label="${CONFIG.DND5E.currencies[k].label}">`
+        : `<span class="label">${n}</span>`;
+      return `<li class="${n ? "" : "none"}" data-tooltip="${CONFIG.DND5E.currencies[k].label}"><span class="currency ${k}"></span>${value}</li>`; }).join("");
     const button = manage ? `<button type="button" class="unbutton manage-coins" data-tooltip="${game.i18n.localize("DND5E.CurrencyManager.Title")}"
       aria-label="${game.i18n.localize("DND5E.CurrencyManager.Title")}"><i class="fa-solid fa-coins" inert></i></button>` : "";
-    return `<div class="coins">${coins ? `<ul class="currency pills unlist">${coins}</ul>` : ""}${button}</div>`;
+    return `<div class="coins"><ul class="currency unlist">${coins}</ul>${button}</div>`;
   }
 
   /* Portrait, name, load (a creature : its carrying capacity; a vehicle : cargo and what its team pulls), coins */
   static packHead(group, actor){
-    const { value = 0, max = 0, travel } = actor.system.attributes?.encumbrance ?? {};
+    const { value = 0, max = 0 } = actor.system.attributes?.encumbrance ?? {};
     const finite = Number.isFinite(max) && (max > 0);
     const over = groupTravel.weighs() && ((actor.type === "vehicle") ? (finite && (value > max)) : !!groupTravel.loadState(actor));
-    const tip = [`${game.i18n.localize("groupTravel.gear")} ${groupTravel.weightLabel(travel?.gear ?? value)}`,
-      ...(travel?.carried ?? []).map(c => `${game.i18n.localize((c.by === "ride") ? "groupTravel.riddenBy" : "groupTravel.carrying")} ${foundry.utils.escapeHTML(c.actor.name)} ${groupTravel.weightLabel(c.weight)}`),
-      ...(travel?.pull ?? []).map(p => game.i18n.format("groupTravel.pullShare", { vehicle : foundry.utils.escapeHTML(p.vehicle.name),
-        share : groupTravel.weightLabel(p.share), counts : groupTravel.weightLabel(p.counts) }))].join("<br>");
+    const tip = groupTravel.loadTip(actor);
     const name = actor.testUserPermission(game.user, "LIMITED")
       ? `<a class="name" data-uuid="${actor.uuid}">${foundry.utils.escapeHTML(actor.name)}</a>` : `<span class="name">${foundry.utils.escapeHTML(actor.name)}</span>`;
     const gets = (groupTravel.arrivalHolder(group).actor === actor)
@@ -367,8 +398,7 @@ export class groupInventory{
         <div class="meter progress meter-sm" style="--bar-percentage : ${finite ? Math.min(100, value / max * 100) : 0}%"></div>
         <span class="${over ? "over" : ""}">${Math.round(value)} / ${finite ? groupTravel.weightLabel(max) : "—"}</span>
       </div>
-      ${(actor.type === "vehicle") ? `<div class="pull">${groupTravel.pullLine(actor)}</div>` : ""}
-      ${this.coinPills(actor, true)}`;
+      ${(actor.type === "vehicle") ? `<div class="pull">${groupTravel.pullLine(actor)}</div>` : ""}`;
   }
 
   /* Its items (not natural weapons or armour; a vehicle : cargo, not its mounted parts), containers with their contents
@@ -422,6 +452,10 @@ export class groupInventory{
   static listen(group, actor, section){
     section.querySelector("a.name")?.addEventListener("click", () => actor.sheet.render(true));
     section.querySelector(".manage-coins")?.addEventListener("click", () => this.currencyWindow(group, actor));
+    for(const input of section.querySelectorAll("input.coin")){
+      input.addEventListener("focus", () => input.select());
+      input.addEventListener("change", () => gm.run("groupCoinSet", { group : group.uuid, actor : actor.uuid, key : input.dataset.key, value : input.value }));
+    }
     for(const row of section.querySelectorAll("li.item[data-uuid]")){
       const item = fromUuidSync(row.dataset.uuid);
       row.addEventListener("dragstart", event => {
@@ -466,13 +500,14 @@ export class groupInventory{
   static drawEffects(group, tab){
     tab.classList.add("macro-helper-effects");
     if(!this.inGroup(group)) return;
-    for(const actor of this.packs(group)){
+    const packs = this.packs(group);
+    for(const actor of this.holders(group).filter(a => packs.includes(a) || a.testUserPermission(game.user, "OBSERVER"))){
       const effects = [...actor.allApplicableEffects()];
       const rows = effects.map(e => `<li class="item ${e.disabled ? "disabled" : ""}" data-uuid="${e.uuid}">
         <img src="${e.img}" alt=""><span class="name">${foundry.utils.escapeHTML(e.name)}</span>
         <span class="duration">${e.disabled ? game.i18n.localize("groupTravel.inventory.off") : (e.duration?.label ?? "")}</span></li>`).join("");
       const head = `<img class="portrait" src="${actor.img}" alt=""><span class="name">${foundry.utils.escapeHTML(actor.name)}</span><span class="count">${effects.length}</span>`;
-      const section = this.section({ key : `${group.uuid}.${actor.id}.effects`, head,
+      const section = this.section({ key : `${group.uuid}.${actor.id}.effects`, head, className : packs.includes(actor) ? "" : "character",
         body : rows ? `<ol class="items unlist">${rows}</ol>` : `<p class="empty">${game.i18n.localize("groupTravel.inventory.noEffects")}</p>` });
       for(const row of section.querySelectorAll("li.item[data-uuid]")){
         const effect = fromUuidSync(row.dataset.uuid);

@@ -17,7 +17,7 @@ import { gm } from '../gm.js';
  *
  * Covered : weapon handling (weapons.js), Rage (no spells, not in heavy armor), Reckless Attack off your turn,
  * Savage Attacker and Cleave once a turn, Cleave melee only, Grapple / Shove / Push size, a spell from a Wild Shape
- * form, Interception and Protection's requirements.
+ * form, Interception and Protection's requirements, one Long Rest a day (rest-limit.js).
  */
 export class limits{
   static mode(){
