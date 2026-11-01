@@ -6,6 +6,7 @@ import { idOf, buttonRow, addButton, makeButton } from '../helpers/utils.js';
 import { rollRequests } from '../requests/requests.js';
 import { groupTravel } from './group-travel.js';
 import { groupCamp } from './group-camp.js';
+import { groupMeal } from './group-meal.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -37,6 +38,7 @@ export class groupFood{
     Hooks.on("dnd5e.postActivityConsumption", activity => this.used(activity));
     Hooks.on("dnd5e.preRestCompleted", (actor, result, config) => this.rested(actor, result, config));
     Hooks.on("renderChatMessageHTML", (message, html) => this.drawDay(message, html));
+    for(const hook of ["createItem", "updateItem", "deleteItem"]) Hooks.on(hook, item => this.stores(item));
     gm.handle("groupFood", (data, user) => this.asGM(data, user));
   }
 
@@ -201,11 +203,32 @@ export class groupFood{
       <i class="fa-solid fa-bowl-food" inert></i></button>` : "";
     if(!tracked) return `<div class="row food">${tick}<span class="none">${this.i18n("untracked")}</span></div>`;
     const today = this.intakeOf(actor);
+    const needs = this.needs(actor, today);
     const hunger = this.hungerOf(actor);
     const held = [hunger.food && this.i18n("heldFood", { n : hunger.food }), hunger.water && this.i18n("heldWater", { n : hunger.water }),
       (hunger.starve > 0) && this.i18n("starve", { n : hunger.starve })].filter(t => t);
-    return `<div class="row food" data-tooltip="${this.i18n("todayHint")}">${tick}<span class="today">${this.amounts(today, this.needs(actor, today))}</span>
+    const days = this.carried(actor, needs);
+    const bar = (kind, icon) => `<span class="today" data-tooltip="${this.esc(`${this.i18n("todayHint")}<br>${this.amounts(today, needs)}`)}">
+      <i class="fa-solid ${icon}" inert></i>${groupMeal.bar(today[kind], 0, needs[kind])}</span>`;
+    const carried = `<span class="carried ${(Math.min(days.food, days.water) < 1) ? "low" : ""}" data-tooltip="${this.i18n("carriedHint")}">
+      <i class="fa-solid fa-sack" inert></i> ${this.i18n("carried", { food : days.food, water : days.water })}</span>`;
+    return `<div class="row food">${tick}${bar("food", "fa-drumstick-bite")}${bar("water", "fa-droplet")}${carried}
       ${held.length ? `<span class="over held">${held.join(", ")}</span>` : ""}</div>`;
+  }
+
+  /* Days of food and water it carries itself (its own items; curing Rations not yet), a tenth of a day down */
+  static carried(actor, needs = this.needs(actor)){
+    const food = groupMeal.foodItems(actor, actor).reduce((s, i) => s + groupMeal.unitsLeft(i) * groupMeal.perUnit(i, actor), 0);
+    const water = groupCamp.skins(actor).reduce((s, i) => s + groupCamp.waterIn(i), 0);
+    const days = (have, need) => (need > 0) ? Math.floor(have / need * 10 + 1e-9) / 10 : 0;
+    return { food : days(food, needs.food), water : days(water, needs.water) };
+  }
+
+  /* Its food or waterskins changed : the Members tab's days carried */
+  static stores(item){
+    const actor = item?.parent;
+    if(!this.enabled() || !(actor instanceof Actor) || !actor.system?.isCreature) return;
+    if((item.system.identifier === "waterskin") || this.nourishOf(item, actor) || /^feed/.test(idOf(item))) groupTravel.redrawGroupsOf(actor);
   }
 
   static listenMember(group, actor, card){

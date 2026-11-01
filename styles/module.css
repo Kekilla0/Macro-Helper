@@ -702,6 +702,10 @@ input.macro-helper-search { width : 100%; margin : 0 0 6px; }
 .macro-helper-road .row.food .food-track { opacity : 0.35; }
 .macro-helper-road .row.food .food-track.active { opacity : 1; color : var(--dnd5e-color-gold, #9f9275); }
 .macro-helper-road .row.food .held { font-weight : normal; }
+.macro-helper-road .row.food .today, .macro-helper-road .row.food .carried { display : inline-flex; align-items : center; gap : 3px; white-space : nowrap; }
+.macro-helper-road .row.food .meal-bar i { width : 5px; height : 10px; }
+.macro-helper-road .row.food .carried.low { color : #e05a5a; }
+.macro-helper-road .status .long-rest.ready { opacity : 0.5; }
 .macro-helper-members .macro-helper-grip[draggable="true"]:hover { opacity : 1; }
 
 /* Group Travel : the Inventory and Effects tabs' sections (each vehicle and pack member, what nobody carries) */
@@ -772,10 +776,10 @@ input.macro-helper-search { width : 100%; margin : 0 0 6px; }
 .macro-helper-meal .line .had { width : 7.5em; white-space : nowrap; font-size : var(--font-size-12); opacity : 0.85; }
 .macro-helper-meal .line select { flex : 1 1 auto; min-width : 0; }
 .macro-helper-meal .line input[type="number"] { width : 4.5em; flex : 0 0 auto; text-align : center; }
-.macro-helper-meal .meal-bar { display : inline-flex; gap : 1px; flex : 0 0 auto; }
-.macro-helper-meal .meal-bar i { width : 7px; height : 14px; background : rgba(128, 128, 128, 0.25); border-radius : 1px; }
-.macro-helper-meal .meal-bar i.half { margin-right : 2px; }
-.macro-helper-meal .meal-bar i.had { background : #5a9e5a; }
+.macro-helper-meal .meal-bar, .macro-helper-road .meal-bar { display : inline-flex; gap : 1px; flex : 0 0 auto; }
+.macro-helper-meal .meal-bar i, .macro-helper-road .meal-bar i { width : 7px; height : 14px; background : rgba(128, 128, 128, 0.25); border-radius : 1px; }
+.macro-helper-meal .meal-bar i.half, .macro-helper-road .meal-bar i.half { margin-right : 2px; }
+.macro-helper-meal .meal-bar i.had, .macro-helper-road .meal-bar i.had { background : #5a9e5a; }
 .macro-helper-meal .meal-bar i.add { background : #9fd39f; }
-.macro-helper-meal .meal-bar.short i.had, .macro-helper-meal .meal-bar.short i.add { background : #e05a5a; }
+.macro-helper-meal .meal-bar.short i.had, .macro-helper-meal .meal-bar.short i.add, .macro-helper-road .meal-bar.short i.had { background : #e05a5a; }
 .macro-helper-meal > .window-content > .hint { font-size : var(--font-size-12); opacity : 0.85; margin : 0; }

@@ -9,6 +9,7 @@ import { restMinutesOf, standardRest } from './rest-length.js';
 import { buttonRow, addButton, makeButton } from '../helpers/utils.js';
 import { groupWeather } from './group-weather.js';
 import { groupFood } from './group-food.js';
+import { restLimit } from './rest-limit.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -59,7 +60,7 @@ export class groupTravel{
     Hooks.on("renderActorSheetV2", (app, html) => this.renderHeader(app, html));
     Hooks.on("renderActorSheetV2", (app, html, context, options) => this.renderMembers(app, html, options));
     /* The clock follows world time without redrawing the whole sheet */
-    Hooks.on("updateWorldTime", () => this.updateClocks());
+    Hooks.on("updateWorldTime", (at, delta) => { this.updateClocks(); this.dayTurned(at, delta); });
     /* dnd5e's group rest windows : a saved empty member list rests nobody (only the clock moves) : tick everyone */
     Hooks.on("renderShortRestDialog", (app, html) => this.restTargets(app, html));
     Hooks.on("renderLongRestDialog", (app, html) => this.restTargets(app, html));
@@ -735,7 +736,23 @@ export class groupTravel{
     if(load) icons.push(`<span class="over" data-tooltip="${game.i18n.localize(`groupTravel.load.${load}`)}"><i class="fa-solid ${(load === "stuck") ? "fa-ban" : "fa-weight-hanging"}" inert></i></span>`);
     const carried = this.carriedBy(group, actor, "carried");
     if(carried.length) icons.push(`<span data-tooltip="${game.i18n.localize("groupTravel.carrying")} : ${this.names(carried)}"><i class="fa-solid fa-person-carry-box" inert></i><b>${carried.length}</b></span>`);
-    return icons.join("") || `<span class="none">${game.i18n.localize("groupTravel.statusOk")}</span>`;
+    return (icons.join("") || `<span class="none">${game.i18n.localize("groupTravel.statusOk")}</span>`) + this.restIcon(actor);
+  }
+
+  /* One Long Rest a day (Rule Limits) : may it start one today, and when its last one started */
+  static restIcon(actor){
+    if(!restLimit.on()) return "";
+    const last = restLimit.last(actor);
+    const soon = restLimit.tooSoon(actor);
+    const when = (last == null) ? game.i18n.localize("groupTravel.rest.never") : (({ date, time }) => `${date} ${time}`)(this.formatted(last));
+    const tip = `${soon ?? game.i18n.localize("groupTravel.rest.can")}<br>${game.i18n.format("groupTravel.rest.last", { when })}`;
+    return `<span class="long-rest ${soon ? "over" : "ready"}" data-tooltip="${foundry.utils.escapeHTML(tip)}"><i class="fa-solid fa-campground" inert></i></span>`;
+  }
+
+  /* A new calendar day : the Long Rest icons may change */
+  static dayTurned(at, delta){
+    if(!this.enabled() || !restLimit.on() || (gm.midnightOf(at) === gm.midnightOf(at - (Number(delta) || 0)))) return;
+    for(const app of this.sheets()) app.render();
   }
 
   /* A vehicle's row : who crews it, rides in it, pulls it */
