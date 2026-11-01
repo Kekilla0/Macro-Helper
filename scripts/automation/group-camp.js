@@ -28,7 +28,8 @@ const log = logger.for(import.meta.url);
  *   The rota : the rest lasts as long as the longest rest among the members resting (2024 Elf Trance : 4 h), longer
  *   when the watchers can't cover every hour (a Long Rest allows 2 hours of light activity, standing watch among them;
  *   hours past one's own rest are free), or what the GM typed. A member resting with no task rests from the start, the
- *   others once the setting-up hours are done. Hours are handed out in the members' order.
+ *   others once the setting-up hours are done. Hours are handed out in the members' order. Night hours clicked on or off
+ *   watch before Make Camp (flag camp.rota) have no cap : the rest is filled around them, a short rest warned of.
  *   Running : Next Hour / To the End move the clock; sleepers are Unconscious (2024 PHB : during sleep), taken off when
  *   they wake (watch, the end). Setting up done : the tasks' finds (a success : 1d6 + WIS mod lb of food and as many
  *   gallons of water, 2024 DMG Foraging), shared out (each eater's need by default; the GM, the Leader's player or a
@@ -112,7 +113,7 @@ export class groupCamp{
     const camp = groupTravel.flag(group, "camp") ?? {};
     return { plan : { setup : 1, terrain : "forest", watch : true, night : null, water : false, food : false, grazing : false, lodging : "none",
       abundance : "limited", foodAbundance : "limited", waterAbundance : "limited", ...(camp.plan ?? {}) },
-      rows : camp.rows ?? {}, run : camp.run ?? null };
+      rows : camp.rows ?? {}, rota : camp.rota ?? {}, run : camp.run ?? null };
   }
 
   static running(group){
@@ -249,15 +250,30 @@ export class groupCamp{
     let night = resting.length ? Math.max(...resting.map(r => r.hours - r.lead)) : 0;
     if(watchers.length) while((watchers.reduce((s, r) => s + Math.max(0, cap(r, night)), 0) < night) && (night < 48)) night++;
     night = Math.max(night, Math.round(Number(camp.plan.night) || 0));
+    /* Hours placed by hand (night hours : "watch" / "rest") : no cap on them, the hours left are filled around them */
+    const hand = new Map(watchers.map(r => [r, Object.entries(camp.rota?.[r.actor.id] ?? {}).filter(([h]) => Number(h) < night)]));
+    const handWatch = r => hand.get(r).filter(([, v]) => v === "watch").map(([h]) => Number(h));
+    const handRest = r => new Set(hand.get(r).filter(([, v]) => v === "rest").map(([h]) => Number(h)));
+    const pinned = new Set(watchers.flatMap(handWatch));
+    const open = Array.from({ length : watchers.length ? night : 0 }, (_, h) => h).filter(h => !pinned.has(h));
     /* Each watcher's share, round and round, then one block each in order */
     const share = new Map(watchers.map(r => [r, 0]));
-    for(let left = watchers.length ? night : 0, moved = true; left && moved;){
+    for(let left = open.length, moved = true; left && moved;){
       moved = false;
-      for(const r of watchers) if(left && (share.get(r) < cap(r, night))){ share.set(r, share.get(r) + 1); left--; moved = true; }
+      for(const r of watchers) if(left && (share.get(r) + handWatch(r).length < cap(r, night))){ share.set(r, share.get(r) + 1); left--; moved = true; }
     }
     const watchOf = new Map();
-    let at = 0;
-    for(const r of watchers){ watchOf.set(r, new Set(Array.from({ length : share.get(r) }, (_, i) => at + i))); at += share.get(r); }
+    for(const r of watchers){
+      const skip = handRest(r);
+      const mine = open.filter(h => !skip.has(h)).slice(0, share.get(r));
+      for(const h of mine) open.splice(open.indexOf(h), 1);
+      watchOf.set(r, new Set([...handWatch(r), ...mine]));
+    }
+    /* Hours a watcher gave back by hand : to another with room left */
+    for(const h of open){
+      const r = watchers.find(r => !handRest(r).has(h) && (watchOf.get(r).size < cap(r, night)));
+      r && watchOf.get(r).add(h);
+    }
     const interrupts = camp.run?.interrupts ?? {};
     for(const r of rows){
       const mine = watchOf.get(r) ?? new Set();
@@ -288,7 +304,15 @@ export class groupCamp{
     }
     const total = Math.max(setup + night, ...rows.map(r => r.restEnd), ...rows.map(r => r.cells.length));
     for(const r of rows) while(r.cells.length < total) r.cells.push(r.row.rest ? "awake" : "out");
-    return { setup, night, total, rows };
+    /* Night hours with no one on watch, and whether any hour was placed by hand */
+    const unwatched = watchers.length ? Array.from({ length : night }, (_, h) => h).filter(h => !watchers.some(r => watchOf.get(r).has(h))) : [];
+    return { setup, night, total, rows, unwatched, edited : [...hand.values()].some(list => list.length) };
+  }
+
+  /* Who may move this member's watches by hand : the camp's runner, or its owner (a Beast : the GM) */
+  static canRota(group, camp, actor, user = game.user){
+    return !camp.run && !!camp.plan.watch && !this.atInn(camp.plan) && this.rowOf(camp, actor, group).watch
+      && (this.isBeast(actor) ? user.isGM : this.canEdit(group, actor, user));
   }
 
   /* What the members need and what they carry : { food : { need, rations, feed }, water : { need, skins } } */
@@ -367,6 +391,18 @@ export class groupCamp{
           await group.update({ [`flags.${module.id}.camp.plan`] : clean });
           return true;
         }
+        case "rota" : {
+          if(data.reset){
+            if(camp.run || !this.canRun(group, user)) return false;
+            await group.update({ [`flags.${module.id}.camp.rota`] : new foundry.data.operators.ForcedDeletion() });
+            return true;
+          }
+          const actor = groupTravel.memberActor(group, data.id);
+          const hour = Math.round(Number(data.hour));
+          if(!actor || !(hour >= 0) || (hour >= 48) || !this.canRota(group, camp, actor, user)) return false;
+          await group.update({ [`flags.${module.id}.camp.rota.${actor.id}.${hour}`] : data.watch ? "watch" : "rest" });
+          return true;
+        }
         case "make" : return (!camp.run && this.canRun(group, user)) ? this.make(group, camp) : false;
         case "step" : return (camp.run && !camp.run.paused && !camp.run.share && this.canRun(group, user)) ? this.step(group, 1) : false;
         case "finish" : return (camp.run && !camp.run.paused && !camp.run.share && this.canRun(group, user)) ? this.step(group, Infinity) : false;
@@ -410,7 +446,7 @@ export class groupCamp{
     const plan = this.schedule(group, camp);
     const resting = plan.rows.filter(r => r.row.rest).map(r => r.actor);
     const problems = [...resting.filter(a => !(Number(a.system.attributes?.hp?.value) > 0)).map(a => this.i18n("noHP", { name : a.name })),
-      ...(restLimit.on() ? resting.map(a => restLimit.tooSoon(a)).filter(t => t) : [])];
+      ...(restLimit.on() ? plan.rows.filter(r => r.row.rest).map(r => restLimit.tooSoon(r.actor, game.time.worldTime + r.restStart * groupTravel.secondsPerHour())).filter(t => t) : [])];
     if(problems.length && !limits.allow(problems.join(" "), { who : group.name, what : this.i18n("title") })) return false;
     const lines = [];
     if(this.atInn(camp.plan)){
@@ -1020,14 +1056,23 @@ export class groupCamp{
         <table><thead><tr><th></th><th>${this.i18n("foodHead")}</th><th>${this.i18n("waterHead")}</th><th></th></tr></thead><tbody>${cells}</tbody></table>
         <p class="hint">${this.i18n("shareHint")}</p></section>`;
     }
-    const heads = Array.from({ length : plan.total }, (_, h) => `<th class="${(h < plan.setup) ? "setup" : ""} ${(run && (h === run.hour)) ? "now" : ""}">${e(at(h))}</th>`).join("");
-    const rotaRows = plan.rows.map(r => `<tr><td class="who">${e(r.actor.name)}</td>${r.cells.map((c, h) => {
-      const task = c.startsWith("task:") ? tasks.get(c.slice(5)) : null;
-      const icon = task ? task.icon : `fa-solid ${this.CELLS[c] ?? ""}`;
-      const tip = task ? game.i18n.localize(task.label) : this.i18n(`cell.${c}`);
-      return `<td class="cell ${task ? "task" : c} ${(h < plan.setup) ? "setup" : ""} ${(run && (h === run.hour)) ? "now" : ""}" data-tooltip="${e(tip)}">${icon.trim() ? `<i class="${icon}" inert></i>` : ""}</td>`;
-    }).join("")}</tr>`).join("");
-    const rota = `<section class="rota"><h3>${this.i18n("rota")} <span class="hint">${this.i18n("length", { setup : plan.setup, night : plan.night, from : at(0), to : at(plan.total) })}</span></h3>
+    const unwatched = new Set(plan.unwatched.map(h => h + plan.setup));
+    const heads = Array.from({ length : plan.total }, (_, h) => `<th class="${(h < plan.setup) ? "setup" : ""} ${(run && (h === run.hour)) ? "now" : ""} ${unwatched.has(h) ? "over" : ""}"
+      ${unwatched.has(h) ? `data-tooltip="${e(this.i18n("unwatched"))}"` : ""}>${e(at(h))}</th>`).join("");
+    const rotaRows = plan.rows.map(r => {
+      const pick = this.canRota(group, camp, r.actor);
+      const short = r.row.rest && !r.full;
+      return `<tr data-id="${r.actor.id}"><td class="who ${short ? "over" : ""}" ${short ? `data-tooltip="${e(this.i18n("notFull"))}"` : ""}>${short ? `<i class="fa-solid fa-triangle-exclamation" inert></i> ` : ""}${e(r.actor.name)}</td>${r.cells.map((c, h) => {
+        const task = c.startsWith("task:") ? tasks.get(c.slice(5)) : null;
+        const icon = task ? task.icon : `fa-solid ${this.CELLS[c] ?? ""}`;
+        const tip = task ? game.i18n.localize(task.label) : this.i18n(`cell.${c}`);
+        const night = pick && (h >= plan.setup) && (h < plan.setup + plan.night);
+        return `<td class="cell ${task ? "task" : c} ${(h < plan.setup) ? "setup" : ""} ${(run && (h === run.hour)) ? "now" : ""} ${night ? "pick" : ""}"
+          ${night ? `data-hour="${h - plan.setup}" data-watch="${c === "watch"}"` : ""} data-tooltip="${e(night ? `${tip}<br>${this.i18n((c === "watch") ? "rotaOff" : "rotaOn")}` : tip)}">${icon.trim() ? `<i class="${icon}" inert></i>` : ""}</td>`;
+      }).join("")}</tr>`;
+    }).join("");
+    const reset = (plan.edited && !run) ? `<button type="button" class="rota-reset" data-tooltip="${e(this.i18n("rotaResetHint"))}" ${off(this.canRun(group))}><i class="fa-solid fa-rotate-left" inert></i> ${this.i18n("rotaReset")}</button>` : "";
+    const rota = `<section class="rota"><h3>${this.i18n("rota")} <span class="hint">${this.i18n("length", { setup : plan.setup, night : plan.night, from : at(0), to : at(plan.total) })}</span> ${reset}</h3>
         <div class="grid"><table><thead><tr><th></th>${heads}</tr></thead><tbody>${rotaRows}</tbody></table></div></section>`;
     const s = this.supplies(group, camp);
     const short = (have, need) => (have < need) ? "over" : "";
@@ -1056,6 +1101,10 @@ export class groupCamp{
     for(const input of content.querySelectorAll(".where [name]")){
       input.addEventListener("change", () => send({ op : "plan", changes : { [input.name] : (input.type === "checkbox") ? input.checked : input.value } }));
     }
+    for(const cell of content.querySelectorAll(".rota td.pick")){
+      cell.addEventListener("click", () => send({ op : "rota", id : cell.closest("tr").dataset.id, hour : Number(cell.dataset.hour), watch : cell.dataset.watch !== "true" }));
+    }
+    content.querySelector(".rota-reset")?.addEventListener("click", () => send({ op : "rota", reset : true }));
     for(const button of content.querySelectorAll("footer [data-op]")){
       button.addEventListener("click", () => {
         if(button.dataset.op === "stop") return this.stopWindow(group);

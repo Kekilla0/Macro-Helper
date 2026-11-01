@@ -2,15 +2,13 @@ import { module } from '../module.js';
 import { limits } from './limits.js';
 
 /**
- * One Long Rest a day (Rule Limits) : a creature's Long Rest may start 24 hours of world time after its last one
- * started, not sooner (the group's choice over RAW's "16 hours after it ends" : the same for an 8-hour rest). Each Long
- * Rest's start is kept on the creature (flag lastLongRest, world time in seconds) : its own sheet, the group's rest, a
- * rest request card. Time put back before it (an Undo) doesn't count against it. A group's rest is checked once, for
+ * One Long Rest a day (Rule Limits) : a creature's Long Rest may start on a later calendar day than its last one
+ * started (the group's choice over RAW's "16 hours after it ends" : one ending at 23:00 lets the next start at 01:00).
+ * Each Long Rest's start is kept on the creature (flag lastLongRest, world time in seconds) : its own sheet, the group's
+ * rest, a rest request card. Time put back before it (an Undo) doesn't count against it. A group's rest is checked once, for
  * the members ticked in its window (one notice; Block : nobody rests and the clock stays).
  */
 export class restLimit{
-  static DAY = 24 * 60 * 60;
-
   static register(){
     if(game.system.id !== "dnd5e") return;
     Hooks.on("dnd5e.preLongRest", (actor, config) => this.check(actor, config));
@@ -28,15 +26,22 @@ export class restLimit{
     return Number.isFinite(at) ? at : null;
   }
 
-  /* Seconds before it may start another Long Rest (0 : now) */
+  /* Seconds before it may start another Long Rest (0 : now) : the rest of the day its last one started on */
   static wait(actor, now = game.time.worldTime){
     const last = this.last(actor);
     if((last == null) || (now < last)) return 0;
-    return Math.max(0, this.DAY - (now - last));
+    const calendar = game.time.calendar;
+    const day = t => { const c = calendar.timeToComponents(t); return [c.year, c.day]; };
+    const [y1, d1] = day(last), [y2, d2] = day(now);
+    if((y1 !== y2) || (d1 !== d2)) return 0;
+    const { secondsPerMinute : s = 60, minutesPerHour : m = 60, hoursPerDay : h = 24 } = calendar.days ?? {};
+    const c = calendar.timeToComponents(now);
+    return (h * m * s) - (((c.hour * m) + c.minute) * s + c.second);
   }
 
-  static tooSoon(actor){
-    const wait = this.wait(actor);
+  /* Why it can't start a Long Rest at that world time (default now), or null */
+  static tooSoon(actor, at = game.time.worldTime){
+    const wait = this.wait(actor, at);
     if(!wait) return null;
     return module.format("restLimit.tooSoon", { name : actor.name, hours : Math.floor(wait / 3600), minutes : Math.ceil((wait % 3600) / 60) });
   }

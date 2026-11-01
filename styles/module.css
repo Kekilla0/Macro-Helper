@@ -638,6 +638,9 @@ input.macro-helper-search { width : 100%; margin : 0 0 6px; }
 .macro-helper-camp .over { color : #cc3030; }
 .macro-helper-camp .supplies { display : flex; flex-wrap : wrap; justify-content : center; gap : 6px 20px; margin : 0; }
 .macro-helper-camp td.task { white-space : nowrap; }
+.macro-helper-camp td.pick { cursor : pointer; }
+.macro-helper-camp td.pick:hover { background : rgba(201, 162, 39, 0.2); }
+.macro-helper-camp .rota h3 .rota-reset { width : auto; display : inline-flex; font-size : var(--font-size-12); padding : 0 8px; margin-left : 8px; line-height : 22px; }
 .macro-helper-camp td.task .road { color : #57b38d; margin-right : 4px; }
 .macro-helper-camp .found table { width : auto; margin : 0 auto; }
 .macro-helper-camp .found input[type="number"] { width : 4.5em; text-align : center; }
