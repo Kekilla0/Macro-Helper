@@ -449,7 +449,7 @@ export class groupTravel{
 
   /* ---------- Members tab ---------- */
 
-  static JOBS = ["none", "leader", "navigator", "lookout", "scout", "tracker"];
+  static JOBS = ["none", "leader", "navigator", "lookout", "scout", "tracker", "forager"];
   static SEATS = { crew : "crew", passenger : "passengers", draft : "draft" };
   static WIDTH = 1000;
   static #dragging = null;

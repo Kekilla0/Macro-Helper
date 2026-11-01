@@ -115,6 +115,8 @@ export const GROUPS = {
         choices : { off : "settings.homebrewFlanking.off", advantage : "settings.homebrewFlanking.advantage", bonus : "settings.homebrewFlanking.bonus" } },
       homebrewPush : { scope : "world", default : false, type : Boolean, homebrew : true },
       groupTravel : { scope : "world", default : false, type : Boolean, section : "travel" },
+      campForageDC : { scope : "world", default : "2024", type : String,
+        choices : { "2024" : "settings.campForageDC.2024", "2014" : "settings.campForageDC.2014", combined : "settings.campForageDC.combined" } },
       homebrewSeats : { scope : "world", default : false, type : Boolean, homebrew : true },
       homebrewCampTasks : { scope : "world", default : false, type : Boolean, homebrew : true },
     },
@@ -203,7 +205,7 @@ const VIRTUAL = {
 const AUTOMATION_OFF = {
   conditions : "off", masteryRules : false, handsEnabled : false, handsLight : "off", ammunition : "off", spellMaterials : "off", armorTraining : false,
   initiativeMethod : "player", summonInitiative : "roll", clearAreas : false, defaultActions : "off",
-  homebrewPush : false, homebrewInitiative : false, groupTravel : false, homebrewSeats : false, homebrewCampTasks : false, homebrewAmmoSearch : false, homebrewLoadHand : false, homebrewFlanking : "off",
+  homebrewPush : false, homebrewInitiative : false, groupTravel : false, campForageDC : "2024", homebrewSeats : false, homebrewCampTasks : false, homebrewAmmoSearch : false, homebrewLoadHand : false, homebrewFlanking : "off",
 };
 
 /* The old Roll Item switches, hidden : read once by the carry-over */
