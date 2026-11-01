@@ -20,15 +20,16 @@ const log = logger.for(import.meta.url);
  *               lights again (the active GM). A Wild Shape form holds nothing : it doesn't carry them (druid.js).
  */
 export class heldLight{
-  /* By item identifier : the token's light (bright / dim feet, a cone's angle) and how long it burns (hours) */
+  /* By item identifier : the token's light (bright / dim feet, a cone's angle), how long it burns (hours), an open
+     flame (heavy rain and strong wind put it out : group-weather.js) */
   static SOURCES = {
-    "torch" : { hours : 1, used : true, light : { bright : 20, dim : 40, color : "#ff9b3d", alpha : 0.35, animation : { type : "torch", speed : 3, intensity : 3 } } },
-    "candle" : { hours : 1, used : true, light : { bright : 5, dim : 10, color : "#ffb85c", alpha : 0.3, animation : { type : "torch", speed : 2, intensity : 2 } } },
+    "torch" : { hours : 1, used : true, open : true, light : { bright : 20, dim : 40, color : "#ff9b3d", alpha : 0.35, animation : { type : "torch", speed : 3, intensity : 3 } } },
+    "candle" : { hours : 1, used : true, open : true, light : { bright : 5, dim : 10, color : "#ffb85c", alpha : 0.3, animation : { type : "torch", speed : 2, intensity : 2 } } },
     "lantern-hooded" : { hours : 6, oil : true, light : { bright : 30, dim : 60, color : "#ffb85c", alpha : 0.3 } },
     "hooded-lantern" : { hours : 6, oil : true, light : { bright : 30, dim : 60, color : "#ffb85c", alpha : 0.3 } },
     "lantern-bullseye" : { hours : 6, oil : true, light : { bright : 60, dim : 120, angle : 60, color : "#ffb85c", alpha : 0.3 } },
     "bullseye-lantern" : { hours : 6, oil : true, light : { bright : 60, dim : 120, angle : 60, color : "#ffb85c", alpha : 0.3 } },
-    "lamp" : { hours : 6, oil : true, light : { bright : 15, dim : 45, color : "#ffb85c", alpha : 0.3 } },
+    "lamp" : { hours : 6, oil : true, open : true, light : { bright : 15, dim : 45, color : "#ffb85c", alpha : 0.3 } },
   };
   static OIL = ["oil", "flask-of-oil", "oil-flask"];
 
@@ -86,6 +87,8 @@ export class heldLight{
   static async lightUp(actor, item){
     const source = this.sourceOf(item);
     if(!source) return false;
+    /* Something keeps it from lighting (the weather) */
+    if(Hooks.call(`${module.id}.preLight`, actor, item, source) === false) return false;
     const timed = (this.mode() === "timed") && (Number(source.hours) > 0);
     let seconds = source.hours * 3600;
     if(timed){

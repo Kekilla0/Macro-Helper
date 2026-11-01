@@ -7,6 +7,7 @@ import { limits } from './limits.js';
 import { rollRequests } from '../requests/requests.js';
 import { restMinutesOf, standardRest } from './rest-length.js';
 import { buttonRow, addButton, makeButton } from '../helpers/utils.js';
+import { groupWeather } from './group-weather.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -14,10 +15,10 @@ const log = logger.for(import.meta.url);
  *   dnd5e keeps : the portrait, name, Place Members, the group Short / Long Rest buttons, Travel Pace (its pace arrows
  *                 and Land / Water / Air paces), Advancement.
  *   added       : a Journey card beside the portrait, under Travel Pace / Advancement (as wide as both) : the clock (dnd5e's Calendar, in the Calendar HUD's own date / time formats), the travel
- *                 mode chips (Land / Water / Air; the primary vehicle's type marked), Weather (GM dropdown), Stealth
+ *                 mode chips (Land / Water / Air; the primary vehicle's type marked), Weather (GM : temperature, wind,
+ *                 precipitation, a Roll on the DMG table; group-weather.js : hourly saves, effects), Stealth
  *                 (toggle), the primary vehicle's crew / passenger seats; Travel and Pass Time beside the rest buttons.
- *   Everyone sees it; only the GM uses it, but Travel and Gallop are also the Leader's player's. Weather doesn't do
- *   anything yet. Stealth on : each leg ends with a group Stealth check, rolled at once and whispered to the GM.
+ *   Everyone sees it; only the GM uses it, but Travel and Gallop are also the Leader's player's. Stealth on : each leg ends with a group Stealth check, rolled at once and whispered to the GM.
  *   Travel : the Group's token moved on the travel map (the ACTIVE scene, its grid in miles or km; on an inactive one
  *   in miles, Rule Limits warns or stops the move, no time passes) by the GM or the
  *   Leader's player passes the time at once (exact : 1.1 h = 66 min, at the PHB hourly rate), adds it to the counted
@@ -51,7 +52,6 @@ const log = logger.for(import.meta.url);
 export class groupTravel{
   static enabled = settings.on("groupTravel");
   static MODES = ["land", "water", "air"];
-  static WEATHER = ["clear", "cold", "heat", "rain", "wind"];
 
   static register(){
     if(game.system.id !== "dnd5e") return;
@@ -389,7 +389,7 @@ export class groupTravel{
           <span class="date"></span><span class="time"></span>
         </div>
         <div class="modes">${this.modeChips(actor)}</div>
-        <div class="weather">${this.weatherSelect(actor)}</div>
+        <div class="weather">${groupWeather.selects(actor)}</div>
         <button type="button" class="stealth unbutton ${this.flag(actor, "stealth") ? "active" : ""}"
           data-tooltip="${game.i18n.localize("groupTravel.stealth")}" ${game.user.isGM ? "" : "disabled"}>
           <i class="fa-solid fa-user-ninja" inert></i>
@@ -406,7 +406,7 @@ export class groupTravel{
     for(const chip of row.querySelectorAll(".modes [data-mode]")){
       chip.addEventListener("click", () => actor.setFlag(module.id, "travelMode", chip.dataset.mode));
     }
-    row.querySelector(".weather select")?.addEventListener("change", event => actor.setFlag(module.id, "weather", event.target.value));
+    groupWeather.listen(actor, row.querySelector(".weather"));
     row.querySelector(".stealth")?.addEventListener("click", () => actor.setFlag(module.id, "stealth", !this.flag(actor, "stealth")));
   }
 
@@ -424,13 +424,6 @@ export class groupTravel{
       const label = game.i18n.localize(`DND5E.TRAVEL.Type.${m.capitalize()}`);
       return `<button type="button" class="unbutton ${classes}" data-mode="${m}" ${game.user.isGM ? "" : "disabled"}>${label}</button>`;
     }).join("");
-  }
-
-  static weatherSelect(actor){
-    const now = this.flag(actor, "weather") ?? "clear";
-    const options = this.WEATHER.map(w => `<option value="${w}" ${(w === now) ? "selected" : ""}>${game.i18n.localize(`groupTravel.weather.${w}`)}</option>`).join("");
-    return `<i class="fa-solid fa-cloud-sun" inert data-tooltip="${game.i18n.localize("groupTravel.weatherLabel")}"></i>
-      <select ${game.user.isGM ? "" : "disabled"}>${options}</select>`;
   }
 
   /* The primary vehicle's crew and passenger seats taken, of its seats */
@@ -699,13 +692,14 @@ export class groupTravel{
           <span class="${(hours > limit) ? "over" : ""}">${game.user.isGM
             ? `<input type="number" class="hours-value" min="0" step="0.1" value="${shown}">` : shown} / ${limit} h</span>
         </div>
-        <div class="status">${this.statusIcons(group, actor)}</div>
+        <div class="status">${this.statusIcons(group, actor)}${groupWeather.memberControls(group, actor)}</div>
       </div>
       ${this.weightRow(actor)}`;
     card.querySelector(".hours-value")?.addEventListener("change", event => {
       const value = Math.max(0, Number(event.target.value) || 0);
       if(value) actor.setFlag(module.id, "travelHours", value); else actor.unsetFlag(module.id, "travelHours");
     });
+    groupWeather.listenMember(group, actor, card);
     card.querySelector(".body-weight")?.addEventListener("change", event => {
       const value = Math.max(0, Number(event.target.value) || 0);
       if(value) actor.setFlag(module.id, "bodyWeight", value); else actor.unsetFlag(module.id, "bodyWeight");
@@ -754,7 +748,9 @@ export class groupTravel{
     };
     const card = document.createElement("div");
     card.className = "macro-helper-road vehicle card";
-    card.innerHTML = `${line("crew", "fa-people-group")}${line("passengers", "fa-chair")}${line("draft", "fa-horse")}${this.pullLine(vehicle)}`;
+    card.innerHTML = `${line("crew", "fa-people-group")}${line("passengers", "fa-chair")}${line("draft", "fa-horse")}${this.pullLine(vehicle)}
+      <div class="status">${groupWeather.memberControls(group, vehicle)}</div>`;
+    groupWeather.listenMember(group, vehicle, card);
     return card;
   }
 
@@ -1300,8 +1296,10 @@ export class groupTravel{
     await game.time.advance(leg.seconds);
     const log = await this.postLog(group, { kind : "leg", start, seconds : leg.seconds, token, from, hours : before, mounts : mounts.map(m => m.uuid), armed : leg.gallop && armed,
       distance : leg.distance, pace : leg.pace, time : leg.hours, day : leg.used + leg.hours, limit : leg.limit, over : leg.over, gallop : leg.gallop });
-    const checks = [await this.stealthCheck(group, leg), ...await this.marchChecks(group, before, leg)].filter(c => c);
-    if(checks.length) await log.setFlag(module.id, "groupLog.checks", checks.map(m => m.id));
+    const heat = new Map();
+    const checks = [await this.stealthCheck(group, leg), ...await this.marchChecks(group, before, leg),
+      ...await groupWeather.hourly(group, { start, seconds : leg.seconds, context : "travel", heat })].filter(c => c);
+    if(checks.length || heat.size) await log.update({ [`flags.${module.id}.groupLog.checks`] : checks.map(m => m.id), [`flags.${module.id}.groupLog.heat`] : [...heat] });
     return true;
   }
 
@@ -1353,7 +1351,11 @@ export class groupTravel{
     if(!user.isGM || (group?.type !== "group") || !(seconds > 0)) return false;
     const start = game.time.worldTime;
     await game.time.advance(seconds);
-    await this.postLog(group, { kind : "pass", start, seconds, reason : `${reason ?? ""}`.slice(0, 200) });
+    const log = await this.postLog(group, { kind : "pass", start, seconds, reason : `${reason ?? ""}`.slice(0, 200) });
+    /* Extreme cold or heat : the hours' saves */
+    const heat = new Map();
+    const checks = await groupWeather.hourly(group, { start, seconds, context : "pass", heat });
+    if(checks.length || heat.size) await log.update({ [`flags.${module.id}.groupLog.checks`] : checks.map(m => m.id), [`flags.${module.id}.groupLog.heat`] : [...heat] });
     return true;
   }
 
@@ -1396,6 +1398,7 @@ export class groupTravel{
     if(!user.isGM || !data || data.undone) return false;
     await message.setFlag(module.id, "groupLog.undone", true);
     for(const id of data.checks ?? []) await game.messages.get(id)?.delete();
+    await groupWeather.restoreHeat(data.heat);
     for(const [uuid, hours] of data.hours ?? []){
       const actor = await fromUuid(uuid);
       if(!actor) continue;

@@ -35,6 +35,7 @@ export class rollModes{
     "protection",  // Fighting Styles : Protection
     "innate",      // Sorcerer : Innate Sorcery (Sorcerer spell attacks)
     "extended",    // Durations : an extended Concentration's saves (Extended Spell)
+    "weather",     // Group Travel : Strong Wind on ranged weapon attacks
   ];
 
   static #rules = [];

@@ -8,6 +8,7 @@ import { restMinutesOf } from './rest-length.js';
 import { restLimit } from './rest-limit.js';
 import { groupTravel } from './group-travel.js';
 import { groupInventory } from './group-inventory.js';
+import { groupWeather } from './group-weather.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -36,6 +37,10 @@ const log = logger.for(import.meta.url);
  *   finder's owner changes it; Eat goes on), then the meal (each member's daily food and water by size, 2024 PHB
  *   Malnutrition / Dehydration). What's left of the water fills the waterskins; the food left spoils, unless a task
  *   takes it (Preserve : Rations). Each member's meal is kept on it (flag fed) for the day's-end rules to come.
+ *   Weather (group-weather.js) : each camp hour brings Extreme Cold / Heat saves for the exposed. Sheltered : at an inn,
+ *   in the camp's natural shelter (Where), the Members tab's ticks, and once set up a tent's place or one in a shelter
+ *   built (the Make Shelter task : a Wisdom (Survival) check at the terrain's Foraging DC, Advantage with Carpenter's
+ *   or Woodcarver's Tools carried and proficient in both (2024 PHB Tools); a success : two Small or Medium places).
  *   Interruptions (2024 PHB Long Rest) : Interrupt (the GM picks who; they wake) or rolling Initiative pauses the camp
  *   (Resume goes on, sleepers back to sleep); each, damage, or a spell other than a cantrip adds an hour to that member's
  *   rest. Moving the Group's token is refused while camping.
@@ -82,6 +87,8 @@ export class groupCamp{
       applies : (actor, group) => !this.roadForager(group, actor), ...survey("forage", forage) });
     campTask("water", { label : "groupTravel.camp.task.water", icon : "fa-solid fa-bucket", homebrew : true, available : ({ plan }) => !plan.water, ...survey("water", () => "water") });
     campTask("hunt", { label : "groupTravel.camp.task.hunt", icon : "fa-solid fa-crosshairs", homebrew : true, available : ({ plan }) => !plan.food, ...survey("hunt", () => "food") });
+    campTask("shelter", { label : "groupTravel.camp.task.shelter", icon : "fa-solid fa-person-shelter", available : ({ plan }) => !plan.shelter,
+      start : data => this.shelterStart(data), collect : data => this.shelterCollect(data) });
     campTask("preserve", { label : "groupTravel.camp.task.preserve", icon : "fa-solid fa-jar", homebrew : true, leftover : data => this.preserve(data) });
     Hooks.on("renderActorSheetV2", (app, html) => this.renderHeader(app, html));
     Hooks.on("updateActor", (actor, changes) => this.changed(actor, changes));
@@ -111,7 +118,7 @@ export class groupCamp{
 
   static campOf(group){
     const camp = groupTravel.flag(group, "camp") ?? {};
-    return { plan : { setup : 1, terrain : "forest", watch : true, night : null, water : false, food : false, grazing : false, lodging : "none",
+    return { plan : { setup : 1, terrain : "forest", watch : true, night : null, water : false, food : false, grazing : false, shelter : false, lodging : "none",
       abundance : "limited", foodAbundance : "limited", waterAbundance : "limited", ...(camp.plan ?? {}) },
       rows : camp.rows ?? {}, rota : camp.rota ?? {}, run : camp.run ?? null };
   }
@@ -384,7 +391,7 @@ export class groupCamp{
           const c = data.changes ?? {}, clean = {};
           if("setup" in c) clean.setup = Math.min(24, Math.max(0, Math.round(Number(c.setup) || 0)));
           if(("terrain" in c) && (c.terrain in this.TERRAIN)) clean.terrain = c.terrain;
-          for(const key of ["watch", "water", "food", "grazing"]) if(key in c) clean[key] = !!c[key];
+          for(const key of ["watch", "water", "food", "grazing", "shelter"]) if(key in c) clean[key] = !!c[key];
           for(const key of ["abundance", "foodAbundance", "waterAbundance"]) if((key in c) && (c[key] in this.ABUNDANCE)) clean[key] = c[key];
           if(("lodging" in c) && ((c.lodging === "none") || (c.lodging in this.LODGING))) clean.lodging = c.lodging;
           if("night" in c) clean.night = (Number(c.night) > 0) ? Math.min(48, Math.round(Number(c.night))) : null;
@@ -514,14 +521,72 @@ export class groupCamp{
       if(!camp.run || camp.run.paused || camp.run.share) return true;
       const plan = this.schedule(group, camp);
       if(camp.run.hour >= plan.total) return this.end(group, true);
+      const start = game.time.worldTime;
       await game.time.advance(groupTravel.secondsPerHour());
       const hour = camp.run.hour + 1;
       await group.update({ [`flags.${module.id}.camp.run.hour`] : hour });
+      /* The weather's saves for the hour gone, sheltered as the camp was then */
+      const places = this.places(group, plan);
+      await groupWeather.hourly(group, { start, seconds : groupTravel.secondsPerHour(), context : "camp",
+        shelter : actor => this.shelterOf(group, camp, plan, places, actor, hour - 1),
+        asleep : actor => ["sleep", "trance"].includes(plan.rows.find(r => r.actor === actor)?.cells[hour - 1]), where : { water : !!camp.plan.water || this.atInn(camp.plan) } })
+        .catch(err => log.error("Camp weather :", err));
       if((hour >= plan.setup) && !camp.run.fed && !camp.run.share) await this.nightStarts(group);
       if(hour >= this.schedule(group).total) return this.end(group, true);
       await this.statuses(group);
     }
     return true;
+  }
+
+  /* Tent places and shelters built (once checked : only the successes), for those with no other shelter : Map(actor -> "tent" | "built") */
+  static places(group, plan){
+    const built = this.campOf(group).run?.data?.shelter?.built;
+    const builders = plan.rows.filter(r => (r.row.task === "shelter") && (!Array.isArray(built) || built.includes(r.actor.id))).map(r => r.actor);
+    return groupWeather.campPlaces(group, plan.rows.map(r => r.actor).filter(a => !groupWeather.roadShelter(group, a)), builders);
+  }
+
+  /* Tools that help build a shelter (2024 PHB : proficient with a tool and a skill that both apply : Advantage) */
+  static SHELTER_TOOLS = ["carpenter", "woodcarver"];
+
+  static shelterTool(actor){
+    if(!(Number(actor.system.skills?.sur?.value) >= 1)) return null;
+    return actor.items.find(i => (i.type === "tool") && this.SHELTER_TOOLS.includes(i.system.type?.baseItem)
+      && (Number(actor.system.tools?.[i.system.type.baseItem]?.value) >= 1)) ?? null;
+  }
+
+  /* Make Shelter : a Wisdom (Survival) check at the terrain's Foraging DC */
+  static async shelterStart({ group, actors }){
+    const { plan } = this.campOf(group);
+    const dc = this.TERRAIN[plan.terrain] ?? 15;
+    const who = actors.map(a => {
+      const tool = this.shelterTool(a);
+      return { actor : a.uuid, name : a.name, img : a.img, ...(tool ? { rollMode : { mode : "advantage", reason : this.i18n("shelterTool", { tool : tool.name }) } } : {}) };
+    });
+    const card = await rollRequests.request({ who, what : "skill:sur", dc, hideDC : false, speaker : group,
+      label : this.i18n("surveyCard", { task : this.i18n("task.shelter"), skill : rollRequests.labelOf("skill", "sur"), terrain : this.i18n(`terrain.${plan.terrain}`) }) });
+    return { message : card?.id ?? null, dc };
+  }
+
+  /* Setting up done : who built one (kept on the run : places counts only those) */
+  static async shelterCollect({ group, actors, data }){
+    const request = game.messages.get(data?.message)?.getFlag(module.id, "request");
+    const built = [], lines = [];
+    for(const actor of actors){
+      const row = request?.rows.find(r => r.actor === actor.uuid);
+      const result = row ? request.results?.[1]?.[row.key] : null;
+      const ok = !!result && (Number.isFinite(Number(result.total)) ? (Number(result.total) >= data.dc) : !!result.success);
+      if(ok) built.push(actor.id);
+      lines.push(this.i18n(!result ? "shelterNone" : ok ? "shelterBuilt" : "shelterFail", { name : this.esc(actor.name) }));
+    }
+    await group.update({ [`flags.${module.id}.camp.run.data.shelter.built`] : built });
+    return { lines };
+  }
+
+  /* A member's shelter in that camp hour : the inn, natural shelter, the Members tab's, then (set up) a tent or a shelter built */
+  static shelterOf(group, camp, plan, places, actor, hour){
+    if(this.atInn(camp.plan)) return "inn";
+    if(camp.plan.shelter) return "natural";
+    return groupWeather.roadShelter(group, actor) ?? (((hour >= plan.setup) && places.get(actor)) || null);
   }
 
   /* Each sleeper Unconscious for this hour, each one awake not (only the ones the camp made so); wake : these (or all) */
@@ -1004,14 +1069,18 @@ export class groupCamp{
         <h3>${this.i18n("where")}</h3>
         <div class="line"><label>${this.i18n("lodgingLabel")} <select name="lodging" ${off(planner)}>${lodging}</select></label>
           ${inn ? "" : `<label>${this.i18n("terrainLabel")} <select name="terrain" ${off(planner)}>${terrain}</select></label>${dcs}`}</div>
-        <div class="line">${inn ? `<span class="hint">${this.i18n("innHint")}</span>` : `${toggle("water", "fa-water", "nearWater")}${toggle("food", "fa-apple-whole", "nearFood")}${toggle("grazing", "fa-wheat-awn", "grazing")}`}</div>
+        <div class="line">${inn ? `<span class="hint">${this.i18n("innHint")}</span>` : `${toggle("water", "fa-water", "nearWater")}${toggle("food", "fa-apple-whole", "nearFood")}${toggle("grazing", "fa-wheat-awn", "grazing")}${toggle("shelter", "fa-person-shelter", "naturalShelter")}`}</div>
         <div class="line">${inn ? "" : `<label>${this.i18n("setup")} <input type="number" name="setup" min="0" max="24" step="1" value="${plan.setup}" ${off(planner)}></label>
           <label><input type="checkbox" name="watch" ${camp.plan.watch ? "checked" : ""} ${off(planner)}> ${this.i18n("keepWatch")}</label>`}
           <label data-tooltip="${e(this.i18n("nightHint"))}">${this.i18n("night")} <input type="number" name="night" min="1" max="48" step="1" value="${plan.night}" ${off(planner)}></label></div>
       </section>`;
     const payers = this.members(group).filter(a => a.hasPlayerOwner && !this.isBeast(a));
     const packs = groupInventory.packs(group);
+    const places = this.places(group, plan);
+    const extreme = groupWeather.of(group).temperature !== "normal";
     const memberRows = plan.rows.map(r => {
+      const where = this.shelterOf(group, camp, plan, places, r.actor, plan.setup);
+      const shelter = `<td class="shelter ${(!where && extreme) ? "over" : ""}" data-tooltip="${e(this.i18n(`shelter.${where ?? "none"}Hint`))}">${this.i18n(`shelter.${where ?? "none"}`)}</td>`;
       const edit = !run && this.canEdit(group, r.actor);
       const box = (key, allowed = true) => `<input type="checkbox" data-key="${key}" ${r.row[key] ? "checked" : ""} ${off(edit && allowed)}>`;
       const tasksHere = this.offered(camp, r.actor, group);
@@ -1029,13 +1098,13 @@ export class groupCamp{
         <td class="who"><img src="${e(r.actor.img)}" alt=""><span>${e(r.actor.name)}</span></td>
         <td>${box("rest")}</td><td class="task">${task}</td>
         ${inn ? "" : `<td>${box("watch", !this.isBeast(r.actor) || game.user.isGM)}</td>`}
-        <td>${source("food")}</td><td>${source("water")}</td><td>${portion}</td><td>${shares}</td>${payer}
+        <td>${source("food")}</td><td>${source("water")}</td><td>${portion}</td><td>${shares}</td>${payer}${shelter}
         <td class="sum ${r.full ? "" : "over"}" data-tooltip="${e(this.i18n(r.full ? "full" : "notFull"))}"><i class="fa-solid ${r.full ? "fa-check" : "fa-triangle-exclamation"}" inert></i> ${e(summary)}</td></tr>`;
     }).join("");
     const members = `<section class="members"><h3>${this.i18n("membersLabel")}</h3><table>
         <thead><tr><th></th><th>${this.i18n("rests")}</th><th>${this.i18n("taskLabel")}</th>${inn ? "" : `<th>${this.i18n("watchLabel")}</th>`}
           <th>${this.i18n("eat")}</th><th>${this.i18n("drink")}</th><th>${this.i18n("portionLabel")}</th><th>${this.i18n("sharesLabel")}</th>
-          ${inn ? `<th>${this.i18n("pays")}</th>` : ""}<th>${this.i18n("restLabel")}</th></tr></thead>
+          ${inn ? `<th>${this.i18n("pays")}</th>` : ""}<th>${this.i18n("shelterLabel")}</th><th>${this.i18n("restLabel")}</th></tr></thead>
         <tbody>${memberRows}</tbody></table></section>`;
     /* What's found, being shared out before the meal */
     let found = "";

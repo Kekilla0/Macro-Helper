@@ -70,6 +70,7 @@ import { groupTravel } from './automation/group-travel.js';
 import { groupInventory } from './automation/group-inventory.js';
 import { restLimit } from './automation/rest-limit.js';
 import { groupCamp } from './automation/group-camp.js';
+import { groupWeather } from './automation/group-weather.js';
 import { generalFeats } from './automation/general-feats.js';
 import { registerIgnores } from './automation/ignores.js';
 import { registerHitDice } from './automation/hit-dice.js';
@@ -120,6 +121,7 @@ Hooks.once("init", ()=> {
   groupInventory.register();
   restLimit.register();
   groupCamp.register();
+  groupWeather.register();
   actionTracker.register();
   movement.register();
   actionBar.register();
