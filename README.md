@@ -29,7 +29,7 @@ https://github.com/Kekilla0/Macro-Helper/releases/latest/download/module.json
 
 **Item Macros** go on an item from the **</>** button in its sheet's title bar. Choose when it runs: **Default only**, **Macro only**, or **Macro, then Default**. The macro gets `item`, `activity`, `actor`, `token`, `scope` and `usage`. A GM can also set it to **Run on Hooks**, for a passive feature. It then gets `hook` and `args` too, and only listens while the creature is on the scene.
 
-**Hook Macros** are world macros. Open **Run on Hooks** under the macro's Type line, pick a hook, and choose **Run For** (*Active GM (once)* for most). The macro gets `hook` and `args`.
+**Hook Macros** are world macros. Open **Run on Hooks** under the macro's Type line, pick a hook, and choose **Run For** (*Active GM (once)* for most). The macro gets `hook` and `args`. *A day ended (midnight)* runs once for each midnight the clock passes, however it moved, and never twice for the same day (see [docs/api.md](docs/api.md), Days ending).
 
 **Card macros** keep the item's normal use and only add what's different:
 

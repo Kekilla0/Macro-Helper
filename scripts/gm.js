@@ -24,6 +24,11 @@ const log = logger.for(import.meta.url);
  * turn, when whose turn it is is settled : a round (or the combat) whose order is still to be rolled (Initiative Each
  * Round, automatic initiative) waits for the roll. Rules acting at the start of a turn use it rather than
  * combatTurnChange (which, at a new round, names whoever was first before everyone rolled).
+ *
+ * Days ending : Hooks "macro-helper.dayEnded" ({ at, ended, index, count }), on the active GM's client, once for each
+ * midnight the clock passes (at : that midnight's world time; ended : the calendar components of the day that ended;
+ * index of count, oldest first). Time put back past a midnight fired for : "macro-helper.dayUndone" (same shape, newest
+ * first), so a rule can take back what it did. The last midnight fired is kept (setting dayMark) : a day never ends twice.
  */
 export class gm{
   static #handlers = new Map();
@@ -222,6 +227,7 @@ export class gm{
     Hooks.on("deleteCombat", combat => this.expireCombat(combat));
     Hooks.on("combatStart", combat => this.adoptOutOfCombat(combat));
     Hooks.on("updateWorldTime", worldTime => this.expireOutOfCombat(worldTime));
+    Hooks.on("updateWorldTime", (worldTime, deltaTime) => this.daysPassed(worldTime, deltaTime));
   }
 
   /* ---------- Timed effects ---------- */
@@ -282,6 +288,43 @@ export class gm{
       log.debug("Expiring", effect.name, "on", effect.parent?.name, "(out of combat)");
       await effect.delete();
     }
+  }
+
+  /* ---------- Days ending ---------- */
+
+  /* The last midnight dayEnded fired for (world time), kept here too so quick clock changes don't fire one twice */
+  static #dayMark = null;
+
+  /* World time of the midnight that started the day `at` is in */
+  static midnightOf(at = game.time.worldTime){
+    const calendar = game.time.calendar;
+    const { secondsPerMinute : s = 60, minutesPerHour : m = 60 } = calendar.days ?? {};
+    const c = calendar.timeToComponents(at);
+    return at - ((((c.hour * m) + c.minute) * s) + c.second);
+  }
+
+  static get secondsPerDay(){
+    const { secondsPerMinute : s = 60, minutesPerHour : m = 60, hoursPerDay : h = 24 } = game.time.calendar.days ?? {};
+    return h * m * s;
+  }
+
+  /* The clock passed midnight : dayEnded once for each midnight, oldest first; put back past one : dayUndone, newest first */
+  static daysPassed(worldTime, deltaTime){
+    if(!game.users.activeGM?.isSelf || !deltaTime) return;
+    const day = this.secondsPerDay;
+    const stored = settings.value("dayMark") ?? NaN;
+    let mark = this.#dayMark ?? (Number.isFinite(stored) ? stored : this.midnightOf(worldTime - deltaTime));
+    const now = this.midnightOf(worldTime);
+    const info = (at, index, count) => ({ at, ended : game.time.calendar.timeToComponents(at - 1), index, count });
+    if(now > mark){
+      const count = Math.round((now - mark) / day);
+      for(let i = 0; i < count; i++) Hooks.callAll(`${module.id}.dayEnded`, info(mark + ((i + 1) * day), i, count));
+    } else if(now < mark){
+      const count = Math.round((mark - now) / day);
+      for(let i = 0; i < count; i++) Hooks.callAll(`${module.id}.dayUndone`, info(mark - (i * day), i, count));
+    } else if(this.#dayMark !== null) return;
+    this.#dayMark = now;
+    if(now !== stored) settings.change("dayMark", now).catch(error => log.error(error));
   }
 
   /* Every actor that could carry a timed effect : the world's, plus unlinked tokens on the viewed scene */

@@ -285,6 +285,8 @@ export class settings{
     }
     /* Which settings migrations the world has had */
     settings.#register("settingsVersion", { scope : "world", config : false, default : 0, type : Number });
+    /* The last midnight the day-ended hook fired for (gm.daysPassed) */
+    settings.#register("dayMark", { scope : "world", config : false, default : null, type : Number, nullable : true });
   }
 
   /**

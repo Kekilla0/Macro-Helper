@@ -110,6 +110,7 @@
   "hookMacros.hooks.createChatMessage" : "Chat message posted",
   "hookMacros.hooks.pauseGame" : "Game paused / unpaused",
   "hookMacros.hooks.updateWorldTime" : "World time changed",
+  "hookMacros.hooks.macro-helper.dayEnded" : "A day ended (midnight)",
   "hookMacros.hooks.dnd5e.rollAttack" : "Attack rolled",
   "hookMacros.hooks.dnd5e.rollDamage" : "Damage rolled",
   "hookMacros.hooks.dnd5e.preApplyDamage" : "Damage about to apply (can change it)",

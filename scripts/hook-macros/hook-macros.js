@@ -21,7 +21,7 @@ export const CATALOG = {
   tokens : ["createToken", "moveToken", "updateToken", "deleteToken", "targetToken"],
   actors : ["updateActor", "createItem", "deleteItem", "createActiveEffect", "deleteActiveEffect"],
   chat : ["createChatMessage"],
-  game : ["pauseGame", "updateWorldTime"],
+  game : ["pauseGame", "updateWorldTime", "macro-helper.dayEnded"],
   macroHelper : ["macro-helper.zeroHP", "macro-helper.gainsCondition", "macro-helper.entersSpace", "macro-helper.entersCreatureSpace", "macro-helper.movesThrough", "macro-helper.anyTurnStart", "macro-helper.preOpportunityAttack", "macro-helper.targets", "macro-helper.preAttack", "macro-helper.attack", "macro-helper.preDamage",
     "macro-helper.damage", "macro-helper.cardButtons", "macro-helper.cardButton"],
   dnd5e : ["dnd5e.preRollAttackV2", "dnd5e.preRollSavingThrowV2", "dnd5e.rollAttack", "dnd5e.rollDamage", "dnd5e.preApplyDamage", "dnd5e.applyDamage", "dnd5e.rollInitiative",
