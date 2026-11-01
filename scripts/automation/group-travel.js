@@ -16,8 +16,8 @@ const log = logger.for(import.meta.url);
  *   added       : a Journey card beside the portrait, under Travel Pace / Advancement (as wide as both) : the clock (dnd5e's Calendar, in the Calendar HUD's own date / time formats), the travel
  *                 mode chips (Land / Water / Air; the primary vehicle's type marked), Weather (GM dropdown), Stealth
  *                 (toggle), the primary vehicle's crew / passenger seats; Travel and Pass Time beside the rest buttons.
- *   Everyone sees it; only the GM uses it, but Travel and Gallop are also the Leader's player's. Weather and stealth
- *   don't do anything yet.
+ *   Everyone sees it; only the GM uses it, but Travel and Gallop are also the Leader's player's. Weather doesn't do
+ *   anything yet. Stealth on : each leg ends with a group Stealth check, rolled at once and whispered to the GM.
  *   Travel : the Group's token moved on the travel map (the ACTIVE scene, its grid in miles or km; on an inactive one
  *   in miles, Rule Limits warns or stops the move, no time passes) by the GM or the
  *   Leader's player passes the time at once (exact : 1.1 h = 66 min, at the PHB hourly rate), adds it to the counted
@@ -1300,7 +1300,7 @@ export class groupTravel{
     await game.time.advance(leg.seconds);
     const log = await this.postLog(group, { kind : "leg", start, seconds : leg.seconds, token, from, hours : before, mounts : mounts.map(m => m.uuid), armed : leg.gallop && armed,
       distance : leg.distance, pace : leg.pace, time : leg.hours, day : leg.used + leg.hours, limit : leg.limit, over : leg.over, gallop : leg.gallop });
-    const checks = await this.marchChecks(group, before, leg);
+    const checks = [await this.stealthCheck(group, leg), ...await this.marchChecks(group, before, leg)].filter(c => c);
     if(checks.length) await log.setFlag(module.id, "groupLog.checks", checks.map(m => m.id));
     return true;
   }
@@ -1317,6 +1317,22 @@ export class groupTravel{
       }
     }
     return hours;
+  }
+
+  /* Stealth on : a group DEX (Stealth) check for the leg, by every creature member not carried by another, rolled at
+     once and whispered to the GM; no DC (it meets the watchers' passive Perception). 2024 PHB Travel Pace : Normal and
+     Fast give Disadvantage */
+  static async stealthCheck(group, leg){
+    if(!this.flag(group, "stealth")) return null;
+    const who = this.creatures(group).filter(a => this.travelOf(group, a).by !== "carried");
+    if(!who.length) return null;
+    const pace = game.i18n.localize(CONFIG.DND5E.travelPace[leg.pace]?.label ?? leg.pace);
+    const rollMode = (leg.pace !== "slow") ? { mode : "disadvantage", reason : game.i18n.format("groupTravel.stealthPace", { pace }) } : null;
+    const card = await rollRequests.request({ who : who.map(a => ({ actor : a.uuid, name : a.name, img : a.img, ...(rollMode ? { rollMode } : {}) })),
+      what : "skill:ste", mode : "group", whisper : "gm", hideDC : false, speaker : group,
+      label : game.i18n.format("groupTravel.stealthCheck", { skill : rollRequests.labelOf("skill", "ste"), pace }) });
+    await rollRequests.rollAll(card).catch(error => log.error("Stealth check", error));
+    return card;
   }
 
   /* Forced march : a Constitution save card for each hour past, DC 10 + that hour */

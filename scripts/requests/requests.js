@@ -193,14 +193,14 @@ export class rollRequests{
    * @param {string} options.what       "skill:ath", "save:dex", "check:str", "tool:thief"
    * @param {number|null} [options.dc]
    * @param {"each"|"group"} [options.mode]
-   * @param {boolean} [options.whisper]  only the GM and the creatures' owners
+   * @param {boolean|"gm"} [options.whisper]  only the GM and the creatures' owners ("gm" : only the GM)
    * @returns {Promise<ChatMessage>}
    */
   static async request({ who = [], what = "skill:prc", dc = null, mode = "each", whisper = false, hideDC = null, speaker = null, label = null, outcomes = null, onFail = null, flags = {} } = {}){
     const rows = who.map(p => ({ key : String(p.token ?? p.actor).replaceAll(".", "-"), actor : p.actor, token : p.token ?? null, name : p.name, img : p.img, ...(p.rollMode ? { rollMode : p.rollMode } : {}) }));
     const request = {
       dc : Number.isFinite(dc) ? dc : null, hideDC : (hideDC ?? !!settings.value("requestsDmScreen")), mode : (mode === "group") ? "group" : "each", rows, results : {},
-      rounds : { 1 : { ...this.checkFor(what, dc), ...(label ? { label } : {}) } }, round : 1, compact : this.compact(), whisper : !!whisper,
+      rounds : { 1 : { ...this.checkFor(what, dc), ...(label ? { label } : {}) } }, round : 1, compact : this.compact(), whisper : (whisper === "gm") ? "gm" : !!whisper,
       /* Words for a row's result (a Study : "Sees through it" / "Fooled") */
       ...(outcomes ? { outcomes } : {}),
       ...(onFail ? { onFail } : {}),
@@ -208,7 +208,7 @@ export class rollRequests{
     return ChatMessage.implementation.create({
       speaker : speaker ? ChatMessage.implementation.getSpeaker({ actor : speaker }) : { alias : module.i18n("requests.title") },
       content : `<div class="${module.id}-request"></div>`,
-      whisper : whisper ? this.whisperTo(rows) : [],
+      whisper : (whisper === "gm") ? gmIds() : whisper ? this.whisperTo(rows) : [],
       flags : { [module.id] : { ...flags, request } },
     });
   }
@@ -242,11 +242,18 @@ export class rollRequests{
     return results.filter(r => r.success).length >= Math.ceil(request.rows.length / 2);
   }
 
-  /* A group check's line on its card */
+  /* A group check's line on its card. No DC (Group Travel's Stealth, against unknown watchers) : once everyone has
+     rolled, the highest total at least half the group reached */
   static summaryOf(request){
-    if((request.mode !== "group") || (this.dcOf(request) === null)) return null;
-    const won = this.outcomeOf(request);
+    if(request.mode !== "group") return null;
     const now = Object.values(request.results?.[1] ?? {});
+    if(this.dcOf(request) === null){
+      if(now.length < request.rows.length) return { text : module.format("requests.groupWaiting", { done : now.length, of : request.rows.length }) };
+      const totals = now.map(r => Number(r.total)).filter(Number.isFinite).sort((a, b) => b - a);
+      const total = totals[Math.ceil(request.rows.length / 2) - 1];
+      return Number.isFinite(total) ? { text : module.format("requests.groupTotal", { total }), done : true } : null;
+    }
+    const won = this.outcomeOf(request);
     const done = now.filter(r => r.success).length;
     if(won === null) return { text : module.format("requests.groupWaiting", { done : now.length, of : request.rows.length }) };
     return { text : module.format(won ? "requests.groupSuccess" : "requests.groupFailure", { done, of : request.rows.length }), success : won, done : true };
