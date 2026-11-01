@@ -5,8 +5,9 @@ const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
 /**
  * One page of settings, opened from its button in Configure Settings → Macro Helper.
- * World settings are read-only for players, client settings are theirs to change. A setting whose Features switch
- * is off (its part, or its page's) shows greyed, with the reason.
+ * World settings are read-only for players, client settings are theirs to change. A setting whose part is off is
+ * hidden (shown again as soon as the part is turned on in the form); a page whose Features switch is off shows greyed,
+ * with the reason.
  * Usage : SettingsMenu.for("rules") gives the class registerMenu needs for that page.
  */
 export class SettingsMenu extends HandlebarsApplicationMixin(ApplicationV2){
@@ -44,23 +45,23 @@ export class SettingsMenu extends HandlebarsApplicationMixin(ApplicationV2){
       .map(([key]) => key);
   }
 
-  /* The switch a setting needs (its own part, or its page's), while that's off (saved value : the page shows what's
-     saved). A part may be another setting of the page ("foodWater"), itself greyed by its own part, or a value of
-     one ("foodWaterRules=homebrew") */
-  static partOff(group, key, seen = new Set()){
+  /* The switch a setting's own part needs, while that's off (value : the page's form, else what's saved). A part may be
+     another setting of the page ("foodWater"), itself off by its own part, or a value of one ("foodWaterRules=homebrew") */
+  static partOff(group, key, value = name => settings.stored(name), seen = new Set()){
     const page = GROUPS[group];
-    for(const part of [page.settings[key]?.part, page.part]){
-      if(!part || seen.has(part)) continue;
-      seen.add(part);
-      const [name, wanted] = part.split("=");
-      const value = settings.stored(name);
-      if((wanted === undefined) ? (value === false) : (String(value) !== wanted)) return part;
-      if(page.settings[name]){
-        const above = this.partOff(group, name, seen);
-        if(above) return above;
-      }
-    }
-    return null;
+    const part = page.settings[key]?.part;
+    if(!part || seen.has(part)) return null;
+    seen.add(part);
+    const [name, wanted] = part.split("=");
+    const now = value(name);
+    if((wanted === undefined) ? (now === false) : (String(now) !== wanted)) return part;
+    return page.settings[name] ? this.partOff(group, name, value, seen) : null;
+  }
+
+  /* The page's own Features switch, while that's off (the whole page greyed) */
+  static pageOff(group){
+    const part = GROUPS[group].part;
+    return (part && (settings.stored(part) === false)) ? part : null;
   }
 
   /* Why a setting is greyed : "Off while X is off" / "Only while X is Y" */
@@ -79,10 +80,12 @@ export class SettingsMenu extends HandlebarsApplicationMixin(ApplicationV2){
   async _prepareContext(options){
     const context = await super._prepareContext(options);
     const page = GROUPS[this.constructor.GROUP];
+    const part = SettingsMenu.pageOff(this.constructor.GROUP);
+    let section = "";
     const all = this.keys.map(key => {
       const config = SettingsMenu.config(key);
       const data = page.settings[key];
-      const part = SettingsMenu.partOff(this.constructor.GROUP, key);
+      section = data.section ?? section;
       const isBoolean = (config.type === Boolean) || (config.type instanceof foundry.data.fields.BooleanField);
       return {
         key,
@@ -92,12 +95,15 @@ export class SettingsMenu extends HandlebarsApplicationMixin(ApplicationV2){
         hint : (config.hint && game.i18n.has(config.hint)) ? config.hint : "",
         value : settings.stored(key),
         isBoolean,
-        choices : config.choices ?? null,
+        /* Number keys ("2024", "2014") come first in an object, smallest first : newest edition first */
+        choices : config.choices ? Object.entries(config.choices).map(([value, label]) => ({ value, label }))
+          .sort((x, y) => (/^\d+$/.test(y.value) && /^\d+$/.test(x.value)) ? (y.value - x.value) : 0) : null,
         world : config.scope === "world",
         disabled : ((config.scope === "world") && !game.user.isGM) || !!part,
         off : part ? SettingsMenu.partReason(part) : "",
         homebrew : !!data.homebrew,
-        section : data.section ? `settings.${this.constructor.GROUP}.section.${data.section}` : "",
+        heading : data.section ? `settings.${this.constructor.GROUP}.section.${data.section}` : "",
+        section,
       };
     });
     context.settings = all;
@@ -105,6 +111,24 @@ export class SettingsMenu extends HandlebarsApplicationMixin(ApplicationV2){
     context.empty = !all.length;
     context.buttons = [{ type : "submit", icon : "fa-solid fa-floppy-disk", label : "SETTINGS.Save" }];
     return context;
+  }
+
+  async _onRender(context, options){
+    await super._onRender(context, options);
+    this.#showParts();
+    this.element.addEventListener("change", () => this.#showParts());
+  }
+
+  /* Each setting shown while its part is on, as the form has it now; a section's heading while any of its own is */
+  #showParts(){
+    const fields = this.element.elements;
+    const value = name => {
+      const field = fields.namedItem(name);
+      return field ? ((field.type === "checkbox") ? field.checked : field.value) : settings.stored(name);
+    };
+    const rows = [...this.element.querySelectorAll(".form-group[data-key]")];
+    for(const row of rows) row.hidden = !!SettingsMenu.partOff(this.constructor.GROUP, row.dataset.key, value);
+    for(const heading of this.element.querySelectorAll("h3[data-section]")) heading.hidden = !rows.some(r => !r.hidden && (r.dataset.section === heading.dataset.section));
   }
 
   /** @this {SettingsMenu} */
@@ -115,8 +139,8 @@ export class SettingsMenu extends HandlebarsApplicationMixin(ApplicationV2){
     for(const key of this.keys){
       const config = SettingsMenu.config(key);
       if((config.scope === "world") && !game.user.isGM) continue;
-      /* Greyed (its part off) : left as saved */
-      if(SettingsMenu.partOff(this.constructor.GROUP, key)) continue;
+      /* Greyed (the page's part off) or hidden (its own) : left as saved */
+      if(SettingsMenu.pageOff(this.constructor.GROUP) || SettingsMenu.partOff(this.constructor.GROUP, key, name => (name in data) ? data[name] : settings.stored(name))) continue;
       if(!(key in data) || (data[key] === settings.stored(key))) continue;
 
       await settings.change(key, data[key]);

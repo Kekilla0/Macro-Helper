@@ -168,7 +168,8 @@ export class groupWeather{
   /* Places at camp for each member : its own tents, then the others' (members, packs), then built shelters :
      Map(actor -> "tent" | "built"); Large or bigger fit in neither */
   static campPlaces(group, plan, builders = []){
-    const holders = [...new Set([...groupTravel.creatures(group), ...groupTravel.vehicles(group)])];
+    /* A tent anywhere in the group : a member, a mount, a vehicle, the group itself */
+    const holders = [...new Set([group, ...groupTravel.creatures(group), ...groupTravel.vehicles(group)])];
     const tentsOf = a => a.items.filter(i => this.TENT.includes(idOf(i))).reduce((n, i) => n + (Number(i.system.quantity) || 0), 0);
     const pool = [{ kind : "tent", left : 2 * holders.reduce((n, a) => n + tentsOf(a), 0) }, { kind : "built", left : 2 * builders.length }];
     const places = new Map();

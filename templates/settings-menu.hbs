@@ -1,8 +1,8 @@
 {{!-- One page of settings, context from settings-menu.js : settings [{ key, id, name, hint, value, isBoolean, choices, world, disabled,
-     off (why it's greyed), homebrew, section (a heading above it) }] --}}
+     off (why it's greyed), homebrew, heading (above it), section (the one it's in : hidden settings hide an empty one's heading) }] --}}
 {{#*inline "setting"}}
-    {{#if section}}<h3 class="border">{{ localize section }}</h3>{{/if}}
-    <div class="form-group{{#if off}} macro-helper-setting-off{{/if}}">
+    {{#if heading}}<h3 class="border" data-section="{{ section }}">{{ localize heading }}</h3>{{/if}}
+    <div class="form-group{{#if off}} macro-helper-setting-off{{/if}}" data-key="{{ key }}" data-section="{{ section }}">
         <label for="{{ id }}">{{ localize name }}{{#if homebrew}} <span class="macro-helper-homebrew-tag">{{ localize "settings.menu.homebrew" }}</span>{{/if}}</label>
         <div class="form-fields">
             {{#if isBoolean}}

@@ -480,8 +480,9 @@ export class groupMeal{
       _replaceHTML(result, content){ content.innerHTML = result; self.listen(this, content); }
     };
     let app = this.#windows.get(group.uuid);
-    if(app?.rendered) app.options.ids = [...new Set([...app.options.ids, ...ids])];
-    else { app = new this.#App({ group, ids, id : `macro-helper-meal-${group.id}` }); this.#windows.set(group.uuid, app); }
+    /* Another call while it's open (camp members eat at different hours) : its creatures join (options are frozen) */
+    if(app?.rendered) app.ids = [...new Set([...app.ids, ...ids])];
+    else { app = new this.#App({ group, id : `macro-helper-meal-${group.id}` }); app.ids = ids; this.#windows.set(group.uuid, app); }
     app.render({ force : true });
   }
 
@@ -506,7 +507,7 @@ export class groupMeal{
 
   static html(app){
     const group = app.options.group;
-    const actors = app.options.ids.map(id => groupTravel.memberActor(group, id)).filter(a => a && groupFood.tracked(group, a) && (game.user.isGM || a.isOwner));
+    const actors = app.ids.map(id => groupTravel.memberActor(group, id)).filter(a => a && groupFood.tracked(group, a) && (game.user.isGM || a.isOwner));
     const e = t => this.esc(t);
     const rows = actors.map(actor => {
       const today = groupFood.intakeOf(actor);
