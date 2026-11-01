@@ -6,17 +6,15 @@ import { idOf, buttonRow, addButton, makeButton } from '../helpers/utils.js';
 import { rollRequests } from '../requests/requests.js';
 import { groupTravel } from './group-travel.js';
 import { groupCamp } from './group-camp.js';
-import { groupInventory } from './group-inventory.js';
 const log = logger.for(import.meta.url);
 
 /**
  * Group Travel : Food and water (setting foodWater, Rules → Travel; rules foodWaterRules : 2024 PHB or Homebrew, whose
  * switches change the 2024 rules). Each creature member of a group is tracked unless the GM unticks it (Members tab).
- *   What each eats and drinks is kept by the day (flag intake { day's midnight : { food, water, hot } }) whenever it
- *   happens : the camp's meal, the Journey card's Meal (everyone tops up to a day's need, Full or Half, from their own
- *   stores then the pack animals' and vehicles'), a member card's Eat / Drink, or using a food item anywhere (a Ration :
- *   1 lb; a pint of water : 1/8 gallon; a Goodberry berry : a day's food; any other food : 1 lb; an item's flag
- *   macro-helper.nourish { food, water } says otherwise).
+ *   What each eats and drinks is kept by the day (flag intake { day's midnight : { food, water, hot } }) : the Meal
+ *   window (group-meal.js : after a rest, at the camp), water drunk where it's readily there, or a Goodberry berry used
+ *   from the sheet (a day's food). What a food item gives : a Ration 1 lb, a Goodberry berry a day's food, any other
+ *   food 1 lb, unless its flag macro-helper.nourish { food, water } says otherwise.
  *   The day's end (macro-helper.dayEnded, on the GM's client), 2024 PHB Dehydration / Malnutrition : less than half the
  *   day's water : 1 Exhaustion level. Some food but less than half : a DC 10 Constitution save card (whispered; a
  *   failure's Exhaustion +1 button). No food at all : nothing until the end of the 5th day in a row, then 1 level that
@@ -29,7 +27,6 @@ const log = logger.for(import.meta.url);
  *   Hot days (a day with Extreme Heat doubles the water needed).
  */
 export class groupFood{
-  static PINT = 0.125;
   static KEEP_DAYS = 8;
 
   static register(){
@@ -145,7 +142,7 @@ export class groupFood{
     return next - level;
   }
 
-  /* ---------- Eating anywhere : a food item used ---------- */
+  /* ---------- Food items ---------- */
 
   /* What one of this item gives : { food, water } (null : not food) */
   static nourishOf(item, actor = item?.actor){
@@ -154,52 +151,18 @@ export class groupFood{
     const id = idOf(item);
     if(item?.getFlag?.(module.id, "goodberry") || /goodberr/.test(id)) return { food : groupCamp.need(actor), water : 0 };
     if(id === "rations") return { food : 1, water : 0 };
-    if(/^water/.test(id)) return { food : 0, water : this.PINT };
     if((item?.type === "consumable") && (item.system.type?.value === "food")) return { food : 1, water : 0 };
     return null;
   }
 
+  /* A Goodberry berry used from the sheet : a day's food (other food is eaten through the Meal window) */
   static used(activity){
     const item = activity?.item, actor = activity?.actor;
-    if(!this.enabled() || !item || !actor?.isOwner) return;
-    const got = this.nourishOf(item, actor);
-    if(!got || !this.trackedActors().has(actor)) return;
-    this.record(actor, got).catch(error => log.error("Food and water, item used", error));
-  }
-
-  /* ---------- Eating and drinking from stores ---------- */
-
-  /* Takes up to `want` from the holders' stores (a Beast : a day of feed first); returns what it got */
-  static async take(actor, kind, want, holders){
-    if(want <= 1e-9) return 0;
-    if(kind === "food"){
-      if(groupCamp.isBeast(actor) && (await groupCamp.useUp(holders.flatMap(a => groupCamp.feed(a)), 1, 1))) return want;
-      return groupCamp.useUp(holders.flatMap(a => groupCamp.rations(a)), want, 1);
-    }
-    let got = 0;
-    for(const item of holders.flatMap(a => groupCamp.skins(a))){
-      if(got >= want - 1e-9) break;
-      const has = groupCamp.waterIn(item);
-      const sip = Math.min(has, want - got);
-      if(sip <= 0) continue;
-      await item.setFlag(module.id, "water", this.round(has - sip));
-      got += sip;
-    }
-    return this.round(got);
-  }
-
-  /* Up to the day's need (at a portion) of food and / or water : free, else its own stores, then the group's packs */
-  static async topUp(group, actor, { kinds = ["food", "water"], portion = 1, free = {} } = {}){
+    if(!this.enabled() || !item || !actor?.isOwner || !(item.getFlag(module.id, "goodberry") || /goodberr/.test(idOf(item))) || (item.type === "spell")) return;
+    if(!this.trackedActors().has(actor)) return;
     const today = this.intakeOf(actor);
-    const needs = this.needs(actor, today);
-    const holders = [...new Set([actor, ...groupInventory.packs(group)])];
-    const got = {};
-    for(const kind of kinds){
-      const want = Math.max(0, needs[kind] * portion - today[kind]);
-      got[kind] = free[kind] ? want : await this.take(actor, kind, want, holders);
-    }
-    await this.record(actor, got);
-    return { got, today : this.intakeOf(actor), needs };
+    const food = Math.max(0, this.needs(actor, today).food - today.food);
+    if(food > 0) this.record(actor, { food }).catch(error => log.error("Food and water, Goodberry", error));
   }
 
   /* ---------- On the GM's client ---------- */
@@ -214,16 +177,6 @@ export class groupFood{
         await this.record(actor, data, Number(data.at) || game.time.worldTime);
         return true;
       }
-      if(op === "eat"){
-        if((group?.type !== "group") || !actor || !(user.isGM || actor.testUserPermission(user, "OWNER"))) return false;
-        const { got, today, needs } = await this.topUp(group, actor, { kinds : [data.kind] });
-        return { got : got[data.kind], has : today[data.kind], need : needs[data.kind] };
-      }
-      if(op === "meal"){
-        if((group?.type !== "group") || !groupCamp.canRun(group, user)) return false;
-        await this.meal(group, data);
-        return true;
-      }
       if(op === "track"){
         if(!user.isGM || (group?.type !== "group") || !actor) return false;
         await group.update({ [`flags.${module.id}.members.${actor.id}.eats`] : !this.tracked(group, actor) });
@@ -233,58 +186,13 @@ export class groupFood{
     return false;
   }
 
-  /* ---------- The Journey card's Meal ---------- */
-
-  static mealButton(group){
-    if(!this.enabled()) return "";
-    const can = groupCamp.canRun(group);
-    return `<button type="button" class="meal unbutton" data-tooltip="${this.i18n("mealHint")}" ${can ? "" : "disabled"}>
-      <i class="fa-solid fa-bowl-food" inert></i></button>`;
-  }
-
-  static listenMeal(group, row){
-    row.querySelector(".meal:not([disabled])")?.addEventListener("click", () => this.mealWindow(group));
-  }
-
-  static async mealWindow(group){
-    const content = `<div class="macro-helper-meal-window">
-      <div class="form-group"><label>${this.i18n("portion")}</label>
-        <select name="portion"><option value="1">${game.i18n.localize("groupTravel.camp.portion.full")}</option>
-          <option value="0.5">${game.i18n.localize("groupTravel.camp.portion.half")}</option></select></div>
-      <div class="form-group"><label>${this.i18n("foodNearby")}</label><input type="checkbox" name="food"></div>
-      <div class="form-group"><label>${this.i18n("waterNearby")}</label><input type="checkbox" name="water"></div>
-      <p class="hint">${this.i18n("mealWindowHint")}</p></div>`;
-    const data = await foundry.applications.api.DialogV2.prompt({
-      window : { title : this.i18n("meal"), icon : "fa-solid fa-bowl-food" }, content,
-      ok : { label : this.i18n("meal"), callback : (event, button) => ({ portion : Number(button.form.elements.portion.value) || 1,
-        food : button.form.elements.food.checked, water : button.form.elements.water.checked }) },
-      rejectClose : false
-    });
-    if(data) await gm.run("groupFood", { op : "meal", group : group.uuid, ...data });
-  }
-
-  /* Every tracked member tops up to its day's need (at the portion); a log card lists it */
-  static async meal(group, { portion = 1, food = false, water = false } = {}){
-    const lines = [];
-    for(const actor of groupCamp.members(group)){
-      if(!this.tracked(group, actor)) continue;
-      const { today, needs } = await this.topUp(group, actor, { portion, free : { food, water } });
-      lines.push(`${this.esc(actor.name)} : ${this.amounts(today, needs)}`);
-    }
-    if(!lines.length) return;
-    const title = this.i18n((portion < 1) ? "mealHalf" : "meal");
-    await ChatMessage.implementation.create({ speaker : ChatMessage.implementation.getSpeaker({ actor : group }),
-      content : `<div class="macro-helper-group-log"><p><strong><i class="fa-solid fa-bowl-food" inert></i> ${title}</strong></p>
-        ${lines.map(l => `<p>${l}</p>`).join("")}</div>` });
-  }
-
   /* "food 1 / 1 lb, water 0.5 / 1 gal", red under half */
   static amounts(intake, needs){
     const part = (kind, key) => `<span class="${(intake[kind] < needs[kind] / 2) ? "over" : ""}">${game.i18n.format(`groupTravel.camp.${key}`, { got : this.round(intake[kind]), need : this.round(needs[kind]) })}</span>`;
     return `${part("food", "ate")}, ${part("water", "drank")}`;
   }
 
-  /* ---------- The Members tab : today's food and water, Eat / Drink, the GM's tick ---------- */
+  /* ---------- The Members tab : today's food and water, the GM's tick ---------- */
 
   static memberRow(group, actor){
     if(!this.enabled() || !actor?.system?.isCreature) return "";
@@ -294,23 +202,14 @@ export class groupFood{
     if(!tracked) return `<div class="row food">${tick}<span class="none">${this.i18n("untracked")}</span></div>`;
     const today = this.intakeOf(actor);
     const hunger = this.hungerOf(actor);
-    const can = game.user.isGM || actor.isOwner;
-    const button = (kind, icon) => can ? `<button type="button" class="food-${kind} unbutton" data-tooltip="${this.i18n(`${kind}Hint`)}"><i class="fa-solid ${icon}" inert></i></button>` : "";
     const held = [hunger.food && this.i18n("heldFood", { n : hunger.food }), hunger.water && this.i18n("heldWater", { n : hunger.water }),
       (hunger.starve > 0) && this.i18n("starve", { n : hunger.starve })].filter(t => t);
     return `<div class="row food" data-tooltip="${this.i18n("todayHint")}">${tick}<span class="today">${this.amounts(today, this.needs(actor, today))}</span>
-      ${button("eat", "fa-drumstick-bite")}${button("drink", "fa-bottle-water")}
       ${held.length ? `<span class="over held">${held.join(", ")}</span>` : ""}</div>`;
   }
 
   static listenMember(group, actor, card){
     card.querySelector(".food-track")?.addEventListener("click", () => gm.run("groupFood", { op : "track", group : group.uuid, actor : actor.uuid }));
-    for(const kind of ["eat", "drink"]){
-      card.querySelector(`.food-${kind}`)?.addEventListener("click", async () => {
-        const result = await gm.run("groupFood", { op : "eat", group : group.uuid, actor : actor.uuid, kind : (kind === "eat") ? "food" : "water" });
-        if(result && (result.has < result.need)) ui.notifications.warn(this.i18n(`${kind}Short`, { name : actor.name, has : this.round(result.has), need : this.round(result.need) }));
-      });
-    }
   }
 
   /* ---------- Weather : a hot day (homebrew Hot days) ---------- */

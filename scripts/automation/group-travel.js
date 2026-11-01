@@ -396,14 +396,12 @@ export class groupTravel{
           <i class="fa-solid fa-user-ninja" inert></i>
         </button>
         ${this.gallopButton(actor)}
-        ${groupFood.mealButton(actor)}
         <div class="vehicle">${this.vehicleSeats(actor)}</div>
       </div>`;
     /* Beside the portrait, under Travel Pace / Advancement */
     (header.querySelector(":scope > .right") ?? header).append(row);
     this.fillClock(row);
     row.querySelector(".gallop:not([disabled])")?.addEventListener("click", () => gm.run("groupGallop", { group : actor.uuid }));
-    groupFood.listenMeal(actor, row);
 
     if(!game.user.isGM) return;
     for(const chip of row.querySelectorAll(".modes [data-mode]")){

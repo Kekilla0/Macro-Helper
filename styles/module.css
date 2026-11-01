@@ -645,9 +645,6 @@ input.macro-helper-search { width : 100%; margin : 0 0 6px; }
 .macro-helper-camp td.pick:hover { background : rgba(201, 162, 39, 0.2); }
 .macro-helper-camp .rota h3 .rota-reset { width : auto; display : inline-flex; font-size : var(--font-size-12); padding : 0 8px; margin-left : 8px; line-height : 22px; }
 .macro-helper-camp td.task .road { color : #57b38d; margin-right : 4px; }
-.macro-helper-camp .found table { width : auto; margin : 0 auto; }
-.macro-helper-camp .found input[type="number"] { width : 4.5em; text-align : center; }
-.macro-helper-camp .found .hint { font-size : var(--font-size-12); opacity : 0.85; text-align : center; margin : 4px 0 0; }
 .macro-helper-camp .paused { margin : 0; font-weight : bold; }
 .macro-helper-camp footer { display : flex; gap : 6px; }
 .macro-helper-camp footer button { flex : 1; }
@@ -751,3 +748,22 @@ input.macro-helper-search { width : 100%; margin : 0 0 6px; }
 .macro-helper-rest-hours input { width : 4em; flex : none; text-align : center; }
 .macro-helper-rest-hours .unbutton { width : 24px; height : 24px; }
 .macro-helper-rest-hours .unbutton:disabled { opacity : 0.35; }
+
+/* Group Travel : the Meal window */
+.macro-helper-meal .window-content { display : flex; flex-direction : column; gap : 8px; font-size : var(--font-size-14); }
+.macro-helper-meal section.member { border : 1px solid rgba(128, 128, 128, 0.35); border-radius : 4px; padding : 4px 8px; }
+.macro-helper-meal section.member header { display : flex; align-items : center; gap : 8px; font-weight : bold; margin-bottom : 4px; }
+.macro-helper-meal section.member header img { width : 28px; height : 28px; border : none; object-fit : contain; }
+.macro-helper-meal section.member header .goodberry { margin-left : auto; width : auto; flex : 0 0 auto; font-size : var(--font-size-12); line-height : 22px; }
+.macro-helper-meal .line { display : flex; align-items : center; gap : 6px; margin : 3px 0; }
+.macro-helper-meal .line > i { width : 14px; text-align : center; opacity : 0.8; }
+.macro-helper-meal .line .had { width : 7.5em; white-space : nowrap; font-size : var(--font-size-12); opacity : 0.85; }
+.macro-helper-meal .line select { flex : 1 1 auto; min-width : 0; }
+.macro-helper-meal .line input[type="number"] { width : 4.5em; flex : 0 0 auto; text-align : center; }
+.macro-helper-meal .meal-bar { display : inline-flex; gap : 1px; flex : 0 0 auto; }
+.macro-helper-meal .meal-bar i { width : 7px; height : 14px; background : rgba(128, 128, 128, 0.25); border-radius : 1px; }
+.macro-helper-meal .meal-bar i.half { margin-right : 2px; }
+.macro-helper-meal .meal-bar i.had { background : #5a9e5a; }
+.macro-helper-meal .meal-bar i.add { background : #9fd39f; }
+.macro-helper-meal .meal-bar.short i.had, .macro-helper-meal .meal-bar.short i.add { background : #e05a5a; }
+.macro-helper-meal > .window-content > .hint { font-size : var(--font-size-12); opacity : 0.85; margin : 0; }
