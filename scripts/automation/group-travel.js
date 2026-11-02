@@ -6,10 +6,11 @@ import { gm } from '../gm.js';
 import { limits } from './limits.js';
 import { rollRequests } from '../requests/requests.js';
 import { restMinutesOf, standardRest } from './rest-length.js';
-import { buttonRow, addButton, makeButton } from '../helpers/utils.js';
+import { buttonRow, addButton, makeButton, idOf } from '../helpers/utils.js';
 import { groupWeather } from './group-weather.js';
 import { groupFood } from './group-food.js';
 import { restLimit } from './rest-limit.js';
+import { heldLight } from './held-light.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -60,7 +61,7 @@ export class groupTravel{
     Hooks.on("renderActorSheetV2", (app, html) => this.renderHeader(app, html));
     Hooks.on("renderActorSheetV2", (app, html, context, options) => this.renderMembers(app, html, options));
     /* The clock follows world time without redrawing the whole sheet */
-    Hooks.on("updateWorldTime", (at, delta) => { this.updateClocks(); this.dayTurned(at, delta); });
+    Hooks.on("updateWorldTime", (at, delta) => { this.updateClocks(); this.dayTurned(at, delta) || this.lightsBurn(); });
     /* dnd5e's group rest windows : a saved empty member list rests nobody (only the clock moves) : tick everyone */
     Hooks.on("renderShortRestDialog", (app, html) => this.restTargets(app, html));
     Hooks.on("renderLongRestDialog", (app, html) => this.restTargets(app, html));
@@ -398,6 +399,7 @@ export class groupTravel{
         </button>
         ${this.gallopButton(actor)}
         <div class="vehicle">${this.vehicleSeats(actor)}</div>
+        ${groupFood.suppliesLine(actor)}
       </div>`;
     /* Beside the portrait, under Travel Pace / Advancement */
     (header.querySelector(":scope > .right") ?? header).append(row);
@@ -736,7 +738,32 @@ export class groupTravel{
     if(load) icons.push(`<span class="over" data-tooltip="${game.i18n.localize(`groupTravel.load.${load}`)}"><i class="fa-solid ${(load === "stuck") ? "fa-ban" : "fa-weight-hanging"}" inert></i></span>`);
     const carried = this.carriedBy(group, actor, "carried");
     if(carried.length) icons.push(`<span data-tooltip="${game.i18n.localize("groupTravel.carrying")} : ${this.names(carried)}"><i class="fa-solid fa-person-carry-box" inert></i><b>${carried.length}</b></span>`);
-    return (icons.join("") || `<span class="none">${game.i18n.localize("groupTravel.statusOk")}</span>`) + this.restIcon(actor);
+    return (icons.join("") || `<span class="none">${game.i18n.localize("groupTravel.statusOk")}</span>`) + this.lightIcon(actor) + this.restIcon(actor);
+  }
+
+  /* Held Light : the lights it carries (torches, lanterns, flasks of oil), those lit with the time they have left */
+  static lightIcon(actor){
+    if(heldLight.mode() === "off") return "";
+    const sources = actor.items.filter(i => heldLight.sourceOf(i) && ((Number(i.system.quantity) || 0) > 0));
+    if(!sources.length) return "";
+    const lit = sources.filter(i => heldLight.isLit(actor, i.id)).map(i => {
+      const effect = heldLight.effectOf(actor, i.id);
+      return effect ? game.i18n.format("groupTravel.light.left", { item : i.name, time : this.hm(heldLight.secondsLeft(effect) / this.secondsPerHour()) })
+        : foundry.utils.escapeHTML(i.name);
+    });
+    const count = item => `${foundry.utils.escapeHTML(item.name)}${item.getFlag(module.id, "burnedOut") ? ` (${game.i18n.localize("groupTravel.light.dry")})` : ""} × ${Number(item.system.quantity) || 0}`;
+    const oil = actor.items.filter(i => heldLight.OIL.includes(idOf(i)));
+    const tip = [lit.length ? game.i18n.format("groupTravel.light.lit", { items : lit.join(", ") }) : game.i18n.localize("groupTravel.light.none"),
+      game.i18n.format("groupTravel.light.carried", { items : [...sources, ...oil].map(count).join(", ") })].join("<br>");
+    return `<span class="light ${lit.length ? "lit" : ""}" data-tooltip="${foundry.utils.escapeHTML(tip)}"><i class="fa-solid fa-fire-flame-curved" inert></i></span>`;
+  }
+
+  /* The clock moved : the time left on lit lights */
+  static lightsBurn(){
+    if(!this.enabled() || (heldLight.mode() !== "timed")) return;
+    for(const app of this.sheets()){
+      if(this.creatures(app.document).some(a => a.effects.some(e => e.getFlag(module.id, "heldLight")))) app.render();
+    }
   }
 
   /* One Long Rest a day (Rule Limits) : may it start one today, and when its last one started */
@@ -751,8 +778,9 @@ export class groupTravel{
 
   /* A new calendar day : the Long Rest icons may change */
   static dayTurned(at, delta){
-    if(!this.enabled() || !restLimit.on() || (gm.midnightOf(at) === gm.midnightOf(at - (Number(delta) || 0)))) return;
+    if(!this.enabled() || !restLimit.on() || (gm.midnightOf(at) === gm.midnightOf(at - (Number(delta) || 0)))) return false;
     for(const app of this.sheets()) app.render();
+    return true;
   }
 
   /* A vehicle's row : who crews it, rides in it, pulls it */
@@ -1047,6 +1075,8 @@ export class groupTravel{
   static gearChanged(item, changes){
     const actor = item.parent;
     if(!this.enabled() || !(actor instanceof Actor)) return;
+    /* A light source or oil : the member's light icon */
+    if(heldLight.sourceOf(item) || heldLight.OIL.includes(idOf(item))) this.redrawGroupsOf(actor);
     if(changes){
       const flat = Object.keys(foundry.utils.flattenObject(changes));
       if(!flat.some(k => ["system.quantity", "system.weight", "system.container"].some(key => k.startsWith(key)))) return;

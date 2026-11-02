@@ -142,11 +142,42 @@ export class groupWeather{
     const off = game.user.isGM ? "" : "disabled";
     const vehicle = actor.type === "vehicle";
     const key = vehicle ? "covered" : "sheltered";
-    const toggle = `<button type="button" class="weather-${key} unbutton ${member[key] ? "active" : ""}" data-tooltip="${this.i18n(`${key}Hint`)}" ${off}>
+    /* A passenger of a covered vehicle : sheltered by it (the tick stays the GM's own) */
+    const by = !vehicle && !member.sheltered && (this.roadShelter(group, actor) === "vehicle") ? groupTravel.memberActor(group, groupTravel.travelOf(group, actor).target) : null;
+    const tip = by ? `${this.i18n(`${key}Hint`)}<br>${this.i18n("coveredBy", { vehicle : foundry.utils.escapeHTML(by.name) })}` : this.i18n(`${key}Hint`);
+    const toggle = `<button type="button" class="weather-${key} unbutton ${member[key] ? "active" : ""} ${by ? "by-vehicle" : ""}" data-tooltip="${foundry.utils.escapeHTML(tip)}" ${off}>
       <i class="fa-solid ${vehicle ? "fa-caravan" : "fa-person-shelter"}" inert></i></button>`;
-    if(vehicle || (this.rules() !== "2014")) return toggle;
+    if(vehicle) return toggle;
+    const shown = `${toggle}${this.exposureIcon(group, actor)}${this.effectIcon(group, actor)}`;
+    if(this.rules() !== "2014") return shown;
     const options = ["none", "cold", "heat"].map(v => `<option value="${v}" ${(v === (member.adapted ?? "none")) ? "selected" : ""}>${this.i18n(`adapted.${v}`)}</option>`).join("");
-    return `${toggle}<select class="weather-adapted" data-tooltip="${this.i18n("adaptedHint")}" ${off}>${options}</select>`;
+    return `${shown}<select class="weather-adapted" data-tooltip="${this.i18n("adaptedHint")}" ${off}>${options}</select>`;
+  }
+
+  /* Extreme Cold or Heat on the road : why it passes, or the save it makes each hour (camp shelter, Bedrolls : at camp) */
+  static exposureIcon(group, actor){
+    const kind = { cold : "cold", heat : "heat" }[this.of(group).temperature];
+    if(!kind) return "";
+    const shelter = this.roadShelter(group, actor);
+    const safe = shelter ? this.i18n(`safe.${shelter}`) : this.autoPass(group, actor, kind) ? this.i18n("safe.pass")
+      : ((kind === "heat") && this.hasWater(actor, {})) ? this.i18n("safe.water") : null;
+    let tip = safe;
+    if(!safe){
+      const dc = (kind === "heat") ? 5 + (Number(actor.getFlag(module.id, "heatHours")) || 0) : 10;
+      const mode = (kind === "heat") ? ((this.heavyArmor(actor) || ((this.rules() === "2014") && this.hasItem(actor, this.COLD_GEAR, { worn : true }))) && this.i18n("exposedDis"))
+        : ((this.rules() !== "2014") && this.hasItem(actor, this.BLANKET) && this.i18n("exposedAdv"));
+      tip = [this.i18n("exposed", { dc }), mode].filter(t => t).join("<br>");
+    }
+    return `<span class="exposure ${safe ? "" : "over"}" data-tooltip="${foundry.utils.escapeHTML(`${this.i18n(`temperature.${kind}`)}<br>${tip}`)}">
+      <i class="fa-solid ${(kind === "cold") ? "fa-temperature-low" : "fa-temperature-high"}" inert></i></span>`;
+  }
+
+  /* Its Weather effect from this group (heavy rain or snow, strong wind) : what it gives */
+  static effectIcon(group, actor){
+    const effect = actor.effects.find(e => e.getFlag(module.id, "weather")?.group === group.uuid);
+    if(!effect) return "";
+    const what = [effect.changes.length && this.i18n("perceptionDis"), effect.getFlag(module.id, "weather")?.ranged && this.i18n("rangedDis")].filter(t => t);
+    return `<span class="weather-effect" data-tooltip="${foundry.utils.escapeHTML([effect.name, ...what].join("<br>"))}"><img src="${effect.img}"></span>`;
   }
 
   static listenMember(group, actor, card){

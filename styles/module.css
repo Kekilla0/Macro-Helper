@@ -706,6 +706,11 @@ input.macro-helper-search { width : 100%; margin : 0 0 6px; }
 .macro-helper-road .row.food .meal-bar i { width : 5px; height : 10px; }
 .macro-helper-road .row.food .carried.low { color : #e05a5a; }
 .macro-helper-road .status .long-rest.ready { opacity : 0.5; }
+.macro-helper-road .status .light { opacity : 0.35; }
+.macro-helper-road .status .light.lit { opacity : 1; color : #ff9b3d; }
+.macro-helper-road .status .weather-sheltered.by-vehicle { opacity : 0.8; color : var(--dnd5e-color-gold, #9f9275); }
+.macro-helper-journey .supplies { display : flex; align-items : center; gap : 4px; white-space : nowrap; font-size : var(--font-size-12); }
+.macro-helper-journey .supplies.low { color : #e05a5a; font-weight : bold; }
 .macro-helper-members .macro-helper-grip[draggable="true"]:hover { opacity : 1; }
 
 /* Group Travel : the Inventory and Effects tabs' sections (each vehicle and pack member, what nobody carries) */

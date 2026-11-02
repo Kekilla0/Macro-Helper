@@ -224,10 +224,52 @@ export class groupFood{
     return { food : days(food, needs.food), water : days(water, needs.water) };
   }
 
-  /* Its food or waterskins changed : the Members tab's days carried */
+  /**
+   * The whole group's stores (every member's, the packs' and vehicles') in days for its tracked members : Beasts eat
+   * the feed first, everyone the rest of the food; water by the day's need (doubled on a hot day : homebrew).
+   * @param {Actor} group
+   * @returns {{ food : number, water : number, need : { food : number, water : number } }|null}   null : nobody tracked
+   */
+  static supplies(group){
+    const eaters = groupTravel.creatures(group).filter(a => this.tracked(group, a));
+    if(!eaters.length) return null;
+    const needs = new Map(eaters.map(a => [a, this.needs(a, this.intakeOf(a))]));
+    const sum = (list, kind) => list.reduce((s, a) => s + needs.get(a)[kind], 0);
+    const beasts = eaters.filter(a => groupCamp.isBeast(a));
+    const people = sum(eaters, "food") - sum(beasts, "food"), animals = sum(beasts, "food");
+    const average = list => list.length ? sum(list, "food") / list.length : 0;
+    let food = 0, feed = 0, water = 0;
+    for(const holder of new Set([group, ...groupTravel.creatures(group), ...groupTravel.vehicles(group)])){
+      for(const item of holder.items){
+        if((item.type !== "consumable") || groupMeal.curing(item)) continue;
+        const units = groupMeal.unitsLeft(item);
+        if(/^feed/.test(idOf(item))) feed += units * average(beasts);
+        else if(groupMeal.berry(item)) food += units * average(eaters);
+        else food += units * (this.nourishOf(item, holder)?.food ?? 0);
+      }
+      water += groupCamp.skins(holder).reduce((s, i) => s + groupCamp.waterIn(i), 0);
+    }
+    /* The animals on feed while it lasts, then on the food with everyone */
+    const days = (!animals || (people && (food / people <= feed / animals))) ? (people ? food / people : (food + feed) / animals) : (food + feed) / (people + animals);
+    const tenth = n => Math.floor(n * 10 + 1e-9) / 10;
+    const thirst = sum(eaters, "water");
+    return { food : tenth(days), water : thirst ? tenth(water / thirst) : 0, need : { food : this.round(people + animals), water : this.round(thirst) } };
+  }
+
+  /* The Journey card : the group's stores in days, red under a day */
+  static suppliesLine(group){
+    if(!this.enabled()) return "";
+    const supplies = this.supplies(group);
+    if(!supplies) return "";
+    const tip = this.i18n("suppliesHint", { food : supplies.need.food, water : supplies.need.water });
+    return `<div class="supplies ${(Math.min(supplies.food, supplies.water) < 1) ? "low" : ""}" data-tooltip="${this.esc(tip)}">
+      <i class="fa-solid fa-sack" inert></i> ${this.i18n("supplies", { food : supplies.food, water : supplies.water })}</div>`;
+  }
+
+  /* Its food or waterskins changed : the Members tab's days carried, the Journey card's supplies */
   static stores(item){
     const actor = item?.parent;
-    if(!this.enabled() || !(actor instanceof Actor) || !actor.system?.isCreature) return;
+    if(!this.enabled() || !(actor instanceof Actor) || !(actor.system?.isCreature || (actor.type === "vehicle"))) return;
     if((item.system.identifier === "waterskin") || this.nourishOf(item, actor) || /^feed/.test(idOf(item))) groupTravel.redrawGroupsOf(actor);
   }
 
