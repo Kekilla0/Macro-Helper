@@ -105,7 +105,7 @@ export class groupTravel{
     /* A vehicle's crew, passengers and draft animals join the group with it (and leave with it) */
     Hooks.on("updateActor", (actor, changes) => this.joinsChanged(actor, changes));
     /* Switched on or off : the members' loads (carried members, pulling shares) come and go */
-    Hooks.on("updateSetting", setting => [`${module.id}.groupTravel`, `${module.id}.homebrewSeats`, `${module.id}.homebrewPaceSpeed`].includes(setting.key) && this.settingChanged());
+    Hooks.on("updateSetting", setting => [`${module.id}.groupTravel`, `${module.id}.homebrewSeats`, `${module.id}.homebrewPaceSpeed`, `${module.id}.homebrewWeatherSeasons`].includes(setting.key) && this.settingChanged());
     Hooks.on("updateActor", (actor, changes) => this.loadsChanged(actor, changes));
     for(const hook of ["createItem", "updateItem", "deleteItem"]){
       Hooks.on(hook, (item, changes) => this.gearChanged(item, (hook === "updateItem") ? changes : null));
@@ -1703,6 +1703,9 @@ export class groupTravel{
   }
 
   static updateClocks(){
-    for(const app of this.sheets()) this.fillClock(app.element);
+    for(const app of this.sheets()){
+      this.fillClock(app.element);
+      groupWeather.fillDegrees(app.document, app.element);
+    }
   }
 }

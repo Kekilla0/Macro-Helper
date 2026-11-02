@@ -122,6 +122,7 @@ export const GROUPS = {
       homebrewSeats : { scope : "world", default : true, type : Boolean, homebrew : true, part : "groupTravel" },
       homebrewPaceSpeed : { scope : "world", default : false, type : Boolean, homebrew : true, part : "groupTravel" },
       homebrewWeatherChanges : { scope : "world", default : false, type : Boolean, homebrew : true, part : "groupTravel" },
+      homebrewWeatherSeasons : { scope : "world", default : false, type : Boolean, homebrew : true, part : "groupTravel" },
       homebrewCampTasks : { scope : "world", default : false, type : Boolean, homebrew : true, part : "groupTravel" },
       homebrewPreservePartial : { scope : "world", default : false, type : Boolean, homebrew : true, part : "homebrewCampTasks" },
       foodWater : { scope : "world", default : false, type : Boolean, part : "groupTravel" },
@@ -218,7 +219,7 @@ const VIRTUAL = {
 const AUTOMATION_OFF = {
   conditions : "off", masteryRules : false, handsEnabled : false, handsLight : "off", ammunition : "off", spellMaterials : "off", armorTraining : false,
   initiativeMethod : "player", summonInitiative : "roll", clearAreas : false, defaultActions : "off",
-  homebrewPush : false, homebrewInitiative : false, groupTravel : false, campForageDC : "2024", weatherRules : "2024", homebrewSeats : false, homebrewPaceSpeed : false, homebrewWeatherChanges : false, homebrewCampTasks : false, homebrewPreservePartial : false, foodWater : false, foodWaterRules : "2024", homebrewFoodNothing : false, homebrewHungerGrows : false, homebrewThirstSave : false, homebrewHeatWater : false, homebrewAmmoSearch : false, homebrewLoadHand : false, homebrewFlanking : "off",
+  homebrewPush : false, homebrewInitiative : false, groupTravel : false, campForageDC : "2024", weatherRules : "2024", homebrewSeats : false, homebrewPaceSpeed : false, homebrewWeatherChanges : false, homebrewWeatherSeasons : false, homebrewCampTasks : false, homebrewPreservePartial : false, foodWater : false, foodWaterRules : "2024", homebrewFoodNothing : false, homebrewHungerGrows : false, homebrewThirstSave : false, homebrewHeatWater : false, homebrewAmmoSearch : false, homebrewLoadHand : false, homebrewFlanking : "off",
 };
 
 /* The old Roll Item switches, hidden : read once by the carry-over */
@@ -296,6 +297,10 @@ export class settings{
     }
     /* Which settings migrations the world has had */
     settings.#register("settingsVersion", { scope : "world", config : false, default : 0, type : Number });
+    /* Weather by Season : the GM's d20 counts for each season (groupWeather.seasonTable) */
+    settings.#register("weatherSeasons", { scope : "world", config : false, default : {}, type : Object });
+    /* ... and each climate's °F (groupWeather.rangeOf / nightOf) */
+    settings.#register("weatherClimates", { scope : "world", config : false, default : {}, type : Object });
     /* The last midnight the day-ended hook fired for (gm.daysPassed) */
     settings.#register("dayMark", { scope : "world", config : false, default : null, type : Number, nullable : true });
   }

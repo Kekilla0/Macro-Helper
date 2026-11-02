@@ -594,9 +594,17 @@ input.macro-helper-search { width : 100%; margin : 0 0 6px; }
 .macro-helper-journey .chip { padding : 1px 8px; border-radius : 10px; border : 1px solid var(--dnd5e-color-gold, #9f9275); font-size : var(--font-size-11); opacity : 0.6; }
 .macro-helper-journey .chip.active { opacity : 1; background : var(--dnd5e-color-gold, #9f9275); color : var(--dnd5e-color-black, #000); }
 .macro-helper-journey .chip.vehicle { box-shadow : 0 0 0 1px var(--dnd5e-color-crimson, #a00) inset; }
-.macro-helper-journey .weather { display : flex; align-items : center; gap : 4px; }
+.macro-helper-journey .weather { display : flex; flex-wrap : wrap; align-items : center; gap : 4px; max-width : 100%; }
 .macro-helper-journey .weather select { height : 22px; width : auto; font-size : var(--font-size-11); }
+.macro-helper-journey .weather .pick { display : inline-flex; align-items : center; gap : 4px; }
 .macro-helper-journey .weather .roll { margin-left : 2px; }
+.macro-helper-weather-seasons th, .macro-helper-weather-seasons td { padding : 2px 4px; text-align : center; }
+.macro-helper-weather-seasons td:first-child { text-align : left; }
+.macro-helper-weather-seasons th.season { text-align : left; padding-top : 6px; }
+.macro-helper-weather-seasons th.season.now { color : var(--dnd5e-color-gold, #9f9275); }
+.macro-helper-weather-seasons input { width : 48px; height : 22px; text-align : center; }
+.macro-helper-weather-seasons td.now { color : var(--dnd5e-color-gold, #9f9275); }
+.macro-helper-journey .weather .degrees { font-size : var(--font-size-11); white-space : nowrap; }
 .macro-helper-camp .members td.shelter.over { color : #e05a5a; }
 .macro-helper-journey .stealth { opacity : 0.4; }
 .macro-helper-journey .stealth.active { opacity : 1; color : var(--dnd5e-color-gold, #9f9275); }
