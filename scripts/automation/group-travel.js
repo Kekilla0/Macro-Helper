@@ -59,6 +59,7 @@ export class groupTravel{
   static register(){
     if(game.system.id !== "dnd5e") return;
     Hooks.on("renderActorSheetV2", (app, html) => this.renderHeader(app, html));
+    Hooks.on("renderActorSheetV2", (app, html) => this.renderTeam(app, html));
     Hooks.on("renderActorSheetV2", (app, html, context, options) => this.renderMembers(app, html, options));
     /* The clock follows world time without redrawing the whole sheet */
     Hooks.on("updateWorldTime", (at, delta) => { this.updateClocks(); this.dayTurned(at, delta) || this.lightsBurn(); });
@@ -104,7 +105,7 @@ export class groupTravel{
     /* A vehicle's crew, passengers and draft animals join the group with it (and leave with it) */
     Hooks.on("updateActor", (actor, changes) => this.joinsChanged(actor, changes));
     /* Switched on or off : the members' loads (carried members, pulling shares) come and go */
-    Hooks.on("updateSetting", setting => [`${module.id}.groupTravel`, `${module.id}.homebrewSeats`].includes(setting.key) && this.settingChanged());
+    Hooks.on("updateSetting", setting => [`${module.id}.groupTravel`, `${module.id}.homebrewSeats`, `${module.id}.homebrewPaceSpeed`].includes(setting.key) && this.settingChanged());
     Hooks.on("updateActor", (actor, changes) => this.loadsChanged(actor, changes));
     for(const hook of ["createItem", "updateItem", "deleteItem"]){
       Hooks.on(hook, (item, changes) => this.gearChanged(item, (hook === "updateItem") ? changes : null));
@@ -177,8 +178,19 @@ export class groupTravel{
     return dnd5e.dataModels.actor.TravelField.applyPaceMultiplier(mph * hours, pace, unitType);
   }
 
-  /* RAW : the table for every travel type all the walkers have (a land vehicle : land only, if something pulls it, no
-     faster than its own speed); null = dnd5e's own. cap : the vehicle's speed when it's slower than the table's hour */
+  /* A land vehicle needs something pulling it, unless its sheet's Needs a Team is unticked (flag selfPropelled) */
+  static needsTeam(vehicle){
+    return !vehicle?.getFlag(module.id, "selfPropelled");
+  }
+
+  /* No pace : the vehicle needs a team and nothing pulls it */
+  static teamless(group, vehicle){
+    return !!vehicle && this.needsTeam(vehicle) && !this.pullersOf(group.parent, vehicle).length;
+  }
+
+  /* RAW : the table for every travel type all the walkers have (a land vehicle : land only, if something pulls it or it
+     needs no team, no faster than its own speed); null = dnd5e's own. cap : the vehicle's speed when it's slower than the
+     table's hour */
   static rawPace(group, chosen){
     const vehicle = group.primaryVehicle;
     if(vehicle && (vehicle.system.details?.type !== "land")) return null;
@@ -187,14 +199,46 @@ export class groupTravel{
     const order = Object.keys(CONFIG.DND5E.travelPace);
     const pace = (slowed && (order.indexOf(chosen) > order.indexOf("slow"))) ? "slow" : chosen;
     const types = Object.keys(CONFIG.DND5E.travelTypes);
-    const noTeam = !!vehicle && !this.pullersOf(group.parent, vehicle).length;
-    const has = type => vehicle ? ((type === "land") && !noTeam) : (walkers.length && walkers.every(a => this.travelTypes(a).has(type)));
     const speed = vehicle ? this.vehicleSpeed(group, vehicle) : null;
+    if(settings.value("homebrewPaceSpeed")) return this.speedPace(group, { vehicle, walkers, speed, pace, slowed, types });
+    const noTeam = this.teamless(group, vehicle);
+    const has = type => vehicle ? ((type === "land") && !noTeam) : (walkers.length && walkers.every(a => this.travelTypes(a).has(type)));
     const hour = this.tablePace(group, pace, 1);
     const cap = ((speed !== null) && (speed < hour)) ? speed : null;
     const day = (cap !== null) ? Math.min(this.tablePace(group, pace), this.round(cap * group.attributes.travel.time)) : this.tablePace(group, pace);
     const paces = Object.fromEntries(types.map(type => [type, has(type) ? day : null]));
     return { pace : { slowed, available : true, label : CONFIG.DND5E.travelPace[pace]?.label, value : pace }, paces, cap, rate : (cap ?? hour), noTeam };
+  }
+
+  /* A creature's travel speed (mph / kph in the group's units) of a travel type : its fastest movement of that type */
+  static travelSpeed(actor, type, units){
+    let feet = 0;
+    for(const [key, config] of Object.entries(CONFIG.DND5E.movementTypes)){
+      if((key !== "jump") && ((config.travel ?? "land") === type)) feet = Math.max(feet, this.speed(actor, key));
+    }
+    const from = actor.system.attributes?.movement?.units ?? dnd5e.utils.defaultUnits("length");
+    return feet ? dnd5e.dataModels.actor.TravelField.convertMovementToTravel(feet, from, units) : 0;
+  }
+
+  /* Homebrew Pace from Speed (DMG Special Movement) : for each travel type every walker has, the slowest one's speed / 10
+     mph, Fast x 4/3, Slow x 2/3, a day of the group's hours rounded down. A land vehicle moves at its own speed, no faster
+     than its team (or anyone walking beside it); without a speed, at theirs; needing no team and with no one walking, at
+     its speed or else the table's. rates : the hourly rate by type */
+  static speedPace(group, { vehicle, walkers, speed, pace, slowed, types }){
+    const units = group.attributes.travel.units ?? dnd5e.utils.defaultUnits("travel");
+    const multiplier = CONFIG.DND5E.travelPace[pace]?.multiplier ?? 1;
+    const hours = Number(group.attributes.travel.time) || 8;
+    const slowest = type => walkers.length ? Math.min(...walkers.map(a => this.travelSpeed(a, type, units))) : 0;
+    const noTeam = this.teamless(group, vehicle);
+    const mph = type => {
+      if(!vehicle) return slowest(type);
+      if((type !== "land") || noTeam) return 0;
+      return walkers.length ? Math.min(slowest(type), speed ?? Infinity) : (speed ?? this.tablePace(group, "normal", 1));
+    };
+    const rates = Object.fromEntries(types.map(type => [type, (mph(type) > 0) ? mph(type) * multiplier : null]));
+    const paces = Object.fromEntries(types.map(type => [type, (rates[type] === null) ? null : Math.floor(mph(type) * hours * multiplier)]));
+    const rate = rates[this.mode(group.parent)] ?? Object.values(rates).find(r => r !== null) ?? 0;
+    return { pace : { slowed, available : true, label : CONFIG.DND5E.travelPace[pace]?.label, value : pace }, paces, cap : null, rate, rates, noTeam };
   }
 
   /* Why the group has no pace : nothing pulls the primary vehicle, or no pace for the travel mode */
@@ -240,7 +284,7 @@ export class groupTravel{
       value.append(unit);
       if(!hours) continue;
       value.dataset.tooltip = game.i18n.format("groupTravel.paceHint", {
-        hour : `${table ? table.rate : Math.round(day / hours * 10) / 10} ${game.i18n.localize(units.abbreviationHour)}`, hours, day : `${day} ${game.i18n.localize(units.abbreviationDay)}` });
+        hour : `${(table && !table.rates) ? table.rate : Math.round(day / hours * 10) / 10} ${game.i18n.localize(units.abbreviationHour)}`, hours, day : `${day} ${game.i18n.localize(units.abbreviationDay)}` });
       if(table?.cap != null) value.dataset.tooltip += `<br>${game.i18n.format("groupTravel.paceCap", { vehicle : foundry.utils.escapeHTML(group.primaryVehicle.name),
         speed : `${this.round(table.cap)} ${game.i18n.localize(units.abbreviationHour)}`, table : `${this.tablePace(group, table.pace.value, 1)} ${game.i18n.localize(units.abbreviationHour)}` })}`;
     }
@@ -355,6 +399,27 @@ export class groupTravel{
       this.markPace(app, header);
       this.paceUnits(app, header);
     } catch(err) { log.error("Group header :", err); }
+  }
+
+  /* A land vehicle's sidebar : Needs a Team (ticked by default; its owners change it) */
+  static renderTeam(app, html){
+    const actor = app.document;
+    if((actor?.type !== "vehicle") || (actor.system.details?.type !== "land") || !this.enabled()) return;
+    const sidebar = (html ?? app.element)?.querySelector?.(".sheet-sidebar");
+    if(!sidebar || sidebar.querySelector(".macro-helper-team")) return;
+    const row = document.createElement("div");
+    row.className = "pills-group empty macro-helper-team";
+    row.innerHTML = `<h3 class="icon" data-tooltip="${game.i18n.localize("groupTravel.needsTeamHint")}">
+      <i class="fa-solid fa-horse fa-fw" inert></i><span class="roboto-upper">${game.i18n.localize("groupTravel.needsTeam")}</span>
+      <input type="checkbox" ${this.needsTeam(actor) ? "checked" : ""} ${actor.isOwner ? "" : "disabled"}></h3>`;
+    row.querySelector("input").addEventListener("change", event => {
+      event.stopPropagation();
+      if(event.target.checked) actor.unsetFlag(module.id, "selfPropelled");
+      else actor.setFlag(module.id, "selfPropelled", true);
+    });
+    const pills = [...sidebar.querySelectorAll(".pills-group")];
+    const after = pills[1] ?? pills.at(-1);
+    after ? after.after(row) : sidebar.append(row);
   }
 
   static button({ action, icon, label, gmOnly = true }){
@@ -1155,7 +1220,7 @@ export class groupTravel{
     const system = group.system;
     const mode = this.mode(group);
     const raw = !this.overridden(system) && this.rawPace(system, pace);
-    if(raw) return { rate : (raw.paces[mode] == null) ? 0 : raw.rate, pace : raw.pace.value };
+    if(raw) return { rate : (raw.paces[mode] == null) ? 0 : (raw.rates?.[mode] ?? raw.rate), pace : raw.pace.value };
     const travel = system.getTravelPace();
     const hours = Number(system.primaryVehicle?.system?.attributes?.travel?.time ?? system.attributes.travel.time) || 8;
     return { rate : (Number(travel.paces?.[mode]) || 0) / hours, pace : travel.pace.value };

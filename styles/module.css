@@ -581,6 +581,8 @@ input.macro-helper-search { width : 100%; margin : 0 0 6px; }
 .sheet-header:has(.macro-helper-journey) { height : auto; }
 .sheet-header > .right:has(> .macro-helper-journey) > .top { margin-top : -30px; }
 .sheet-header .movement .info .value .macro-helper-unit { margin-left : 2px; font-size : var(--font-size-10, 10px); font-weight : normal; opacity : 0.7; }
+/* A land vehicle's Needs a Team tick, at the right like the other values */
+.sheet-sidebar .macro-helper-team input { flex : none; margin : 0 0 0 auto; }
 .sheet-header .travel-pace h3.macro-helper-override { color : var(--dnd5e-color-crimson, #b03030); }
 .sheet-header .macro-helper-journey.card { width : auto; height : auto; }
 .sheet-header > .right > .macro-helper-journey.card { align-self : center; width : calc(2 * 206px + 8px); margin : 0 0 12px; }
