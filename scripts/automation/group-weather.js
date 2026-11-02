@@ -1,7 +1,7 @@
 import { module } from '../module.js';
 import { settings } from '../settings.js';
 import { logger } from '../log.js';
-import { idOf } from '../helpers/utils.js';
+import { idOf, buttonRow, addButton, makeButton } from '../helpers/utils.js';
 import { rollRequests } from '../requests/requests.js';
 import { attackOf } from '../roll-item/damage.js';
 import { giveMode } from '../roll-item/reasons.js';
@@ -9,6 +9,7 @@ import { rollModes } from './roll-modes.js';
 import { heldLight } from './held-light.js';
 import { groupTravel } from './group-travel.js';
 import { groupFood } from './group-food.js';
+import { gm } from '../gm.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -31,6 +32,10 @@ const log = logger.for(import.meta.url);
  *     Perception (heavy precipitation, a sandstorm; 2014 : strong wind too), on ranged weapon attacks (strong wind).
  *     Heavy rain and strong wind put out open flames held (torches, candles, lamps; lanterns stay lit) and keep them
  *     from being lit.
+ *   Weather changes (homebrew homebrewWeatherChanges) : each day 1d12 and 2d12 hours from midnight (flag weatherDay
+ *     { at : that midnight, hours }); the clock passing one re-rolls the weather (the Roll, over the GM's own too). A jump
+ *     passing several rolls once, at the last. Every Roll card keeps the weather before (flag weatherRoll) : the GM's
+ *     Undo, or the clock put back before a change's hour, puts it back.
  */
 export class groupWeather{
   static TEMPERATURE = ["normal", "cold", "heat"];
@@ -50,6 +55,8 @@ export class groupWeather{
     Hooks.on("updateActor", (actor, changes) => this.changed(actor, changes));
     Hooks.on(`${module.id}.preLight`, (actor, item, source) => this.mayLight(actor, item, source));
     rollModes.add("weather", config => this.attackMode(config));
+    Hooks.on("updateWorldTime", (at, delta) => this.clockMoved(at, delta).catch(error => log.error("Weather changes", error)));
+    Hooks.on("renderChatMessageHTML", (message, html) => this.drawRoll(message, html));
   }
 
   static rules(){
@@ -104,12 +111,13 @@ export class groupWeather{
 
   /* 2024 DMG Weather : 1d20 each for temperature, wind and precipitation (14 or lower : none; 15-17 light / colder;
      18-20 strong, heavy / hotter); the wind and precipitation are set, the temperature is the GM's to judge */
-  static async roll(group){
+  static async roll(group, { change = null } = {}){
     const roll = await new Roll("3d20").evaluate();
     const [t, w, p] = roll.dice[0].results.map(r => r.result);
     const band = n => (n <= 14) ? 0 : (n <= 17) ? 1 : 2;
     const degrees = band(t) ? (await new Roll("1d4 * 10").evaluate()).total : 0;
     const weather = this.of(group);
+    const before = groupTravel.flag(group, "weather") ?? null;
     const wind = ["none", "light", "strong"][band(w)];
     const snow = weather.temperature === "cold";
     const precipitation = ["none", "light", snow ? "snow" : "rain"][band(p)];
@@ -120,8 +128,76 @@ export class groupWeather{
       speaker : ChatMessage.implementation.getSpeaker({ actor : group }), whisper : game.users.filter(u => u.isGM).map(u => u.id),
       content : `<div class="macro-helper-group-log"><h4><i class="fa-solid fa-cloud-sun" inert></i> ${this.i18n("rolled.title")}</h4><ul>
         ${line("temperatureLabel", t, temp)}${line("windLabel", w, this.i18n(`wind.${wind}`))}${line("precipitationLabel", p, this.i18n(`precipitation.${precipitation}`))}</ul>
-        <p class="hint">${this.i18n("rolled.hint")}</p></div>`
+        ${change ? `<p class="when"><i class="fa-solid fa-clock" inert></i> ${this.i18n("changed", { time : groupTravel.formatted(change).time })}</p>` : ""}
+        <p class="hint">${this.i18n("rolled.hint")}</p></div>`,
+      flags : { [module.id] : { weatherRoll : { group : group.uuid, before, after : this.of(group), ...(change ? { at : change } : {}) } } }
     });
+  }
+
+  /* ---------- Weather changes (homebrew) ---------- */
+
+  static changesOn(){
+    return groupTravel.enabled() && !!settings.value("homebrewWeatherChanges");
+  }
+
+  /* The day's change hours (from its midnight), rolled once a day */
+  static async changeHours(group, midnight){
+    const saved = groupTravel.flag(group, "weatherDay");
+    if(saved?.at === midnight) return saved.hours;
+    const hours = [(await new Roll("1d12").evaluate()).total, (await new Roll("2d12").evaluate()).total];
+    await group.setFlag(module.id, "weatherDay", { at : midnight, hours });
+    return hours;
+  }
+
+  /* The clock moved (the active GM) : forward past a change hour, the weather is rolled (once, at the last one passed);
+     back before a change's hour, its weather goes back */
+  static async clockMoved(at, delta){
+    delta = Number(delta) || 0;
+    if(!delta || !this.changesOn() || !game.users.activeGM?.isSelf) return;
+    const groups = game.actors.filter(a => (a.type === "group") && groupTravel.creatures(a).length);
+    if(delta < 0){
+      const undone = game.messages.filter(m => { const d = m.getFlag(module.id, "weatherRoll"); return d?.at && !d.undone && (d.at > at); });
+      for(const message of undone.reverse()) await this.undoRoll(message);
+      return;
+    }
+    const start = at - delta, hour = groupTravel.secondsPerHour(), day = gm.secondsPerDay;
+    for(const group of groups){
+      let last = null;
+      for(let midnight = gm.midnightOf(start); midnight <= at; midnight += day){
+        for(const h of await this.changeHours(group, midnight)){
+          const mark = midnight + (h * hour);
+          if((mark > start) && (mark <= at) && ((last === null) || (mark > last))) last = mark;
+        }
+      }
+      if(last !== null) await this.roll(group, { change : last });
+    }
+  }
+
+  static drawRoll(message, html){
+    const data = message.getFlag(module.id, "weatherRoll");
+    const card = data && html.querySelector(".macro-helper-group-log");
+    if(!card) return;
+    if(data.undone) return card.classList.add("undone");
+    if(!game.user.isGM || !("before" in data)) return;
+    const row = buttonRow(html, { key : "macro-helper-weather-undo" });
+    addButton(row, makeButton({ icon : "fa-rotate-left", text : game.i18n.localize("groupTravel.undo"), once : true,
+      onClick : () => this.undoRoll(message) }));
+  }
+
+  /* The weather as it was before the roll (unless the GM changed it since) */
+  static async undoRoll(message){
+    const data = message?.getFlag(module.id, "weatherRoll");
+    if(!game.user.isGM || !data || data.undone) return false;
+    const group = await fromUuid(data.group);
+    if(group && !foundry.utils.equals(this.of(group), data.after)){
+      ui.notifications.warn(this.i18n("undoChanged"));
+      return false;
+    }
+    await message.setFlag(module.id, "weatherRoll.undone", true);
+    if(!group) return false;
+    if(data.before) await group.setFlag(module.id, "weather", data.before);
+    else await group.unsetFlag(module.id, "weather");
+    return true;
   }
 
   /* ---------- Shelter ---------- */
@@ -324,7 +400,8 @@ export class groupWeather{
   static changed(actor, changes){
     if((actor.type !== "group") || !groupTravel.enabled() || !game.users.activeGM?.isSelf) return;
     const flat = Object.keys(foundry.utils.flattenObject(changes ?? {}));
-    if(!flat.some(k => k.startsWith(`flags.${module.id}.weather`) || k.startsWith("system.members"))) return;
+    const weather = k => [`flags.${module.id}.weather`, `flags.${module.id}.-=weather`].some(w => (k === w) || k.startsWith(`${w}.`));
+    if(!flat.some(k => weather(k) || k.startsWith("system.members"))) return;
     this.sync(actor).catch(error => log.error("Weather", error));
   }
 
