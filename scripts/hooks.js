@@ -70,6 +70,7 @@ import { groupTravel } from './automation/group-travel.js';
 import { groupInventory } from './automation/group-inventory.js';
 import { restLimit } from './automation/rest-limit.js';
 import { groupCamp } from './automation/group-camp.js';
+import { restedLevels } from './automation/rested-levels.js';
 import { groupWeather } from './automation/group-weather.js';
 import { groupFood } from './automation/group-food.js';
 import { groupMeal } from './automation/group-meal.js';
@@ -123,6 +124,7 @@ Hooks.once("init", ()=> {
   groupInventory.register();
   restLimit.register();
   groupCamp.register();
+  restedLevels.register();
   groupWeather.register();
   groupFood.register();
   groupMeal.register();

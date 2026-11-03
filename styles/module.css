@@ -665,6 +665,9 @@ input.macro-helper-search { width : 100%; margin : 0 0 6px; }
 .macro-helper-camp td.picks button.pick[data-unplaced] { border-style : dashed; border-color : #cc3030; }
 .macro-helper-camp td.cell .meal { font-size : var(--font-size-10); margin-left : 2px; color : #e08a3a; }
 .macro-helper-camp .supplies .fire { color : #e08a3a; }
+.macro-helper-camp td.rested { text-align : center; font-weight : bold; }
+.macro-helper-camp td.rested.good { color : #5aa95a; }
+.macro-helper-camp td.rested.over { color : #e05a5a; }
 .macro-helper-camp .curing .line { display : flex; align-items : center; justify-content : center; gap : 10px; margin-bottom : 4px; }
 .macro-helper-camp .curing button { width : auto; flex : none; line-height : 22px; padding : 0 8px; font-size : var(--font-size-12); }
 .macro-helper-camp .paused { margin : 0; font-weight : bold; }

@@ -19,7 +19,7 @@ import { lendItem, lends } from './automation/lend-item.js';
 import { ignoresDisadvantage, ignoresCover, ignoresProperty, ignoresResistance, ignoresTerrain } from './automation/ignores.js';
 import { speedAs, standUpCost, dragsFreely, jumpRule } from './automation/movement.js';
 import { jump } from './automation/jump.js';
-import { hitDieBonus } from './automation/hit-dice.js';
+import { hitDieBonus, extraHitDice } from './automation/hit-dice.js';
 import { restLength } from './automation/rest-length.js';
 import { campTask } from './automation/group-camp.js';
 import { acDexCap, untrainedArmor, untrainedShield } from './automation/armor.js';
@@ -156,7 +156,7 @@ export class api{
          masteries (Weapon Master); the damage dealer's mode on the Concentration save it causes (Mage Slayer); a push
          or pull on a failed save (Telekinetic Shove, Thunderwave); spells without some components (Improved
          Illusions); a prepared Ritual at its normal time with no slot (Quick Ritual) */
-      hitDieBonus, restLength, campTask, acDexCap, untrainedArmor, untrainedShield, extraMasteries, concentrationModeFrom, onSaveMove, dropsComponents,
+      hitDieBonus, extraHitDice, restLength, campTask, acDexCap, untrainedArmor, untrainedShield, extraMasteries, concentrationModeFrom, onSaveMove, dropsComponents,
       quickRitual : (match, options) => spells.quickRitual(match, options),
       askToUse : (activity, ctx, options) => gm.askToUse(activity, ctx, options),
 

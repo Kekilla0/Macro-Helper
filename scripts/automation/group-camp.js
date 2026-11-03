@@ -12,6 +12,7 @@ import { groupWeather } from './group-weather.js';
 import { groupFood } from './group-food.js';
 import { groupMeal } from './group-meal.js';
 import { idOf } from '../helpers/utils.js';
+import { restedLevels } from './rested-levels.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -117,7 +118,7 @@ export class groupCamp{
     Hooks.on("updateActor", (actor, changes) => this.changed(actor, changes));
     Hooks.on("updateWorldTime", () => { this.redraw(); this.cureDue(); });
     Hooks.on("updateActor", (actor, changes) => this.opened(actor, changes));
-    Hooks.on("updateSetting", setting => [`${module.id}.homebrewCampTasks`, `${module.id}.campForageDC`].includes(setting.key) && this.redraw());
+    Hooks.on("updateSetting", setting => [`${module.id}.homebrewCampTasks`, `${module.id}.campForageDC`, `${module.id}.homebrewRestedLevels`].includes(setting.key) && this.redraw());
     Hooks.on("preMoveToken", token => this.preMove(token));
     /* Interruptions, from the client they happen on */
     Hooks.on("dnd5e.rollInitiative", actor => this.interrupt(actor, "initiative"));
@@ -715,10 +716,18 @@ export class groupCamp{
       await group.update({ [`flags.${module.id}.camp.run.hour`] : hour });
       /* The weather's saves for the hour gone, sheltered as the camp was then */
       const places = this.places(group, plan);
-      await groupWeather.hourly(group, { start, seconds : groupTravel.secondsPerHour(), context : "camp",
+      const cards = await groupWeather.hourly(group, { start, seconds : groupTravel.secondsPerHour(), context : "camp",
         shelter : actor => this.shelterOf(group, camp, plan, places, actor),
         asleep : actor => ["sleep", "trance"].includes(plan.rows.find(r => r.actor === actor)?.cells[hour - 1]), where : { water : !!camp.plan.water || this.atInn(camp.plan) } })
-        .catch(err => log.error("Camp weather :", err));
+        .catch(err => { log.error("Camp weather :", err); return []; });
+      /* For Rested Levels : who had no shelter in that hour (flag camp.run.bare), who had to save against the weather
+         (exposed), an hour of Extreme Cold (cold) */
+      const ids = list => list.filter(id => id);
+      const saved = ids((cards ?? []).flatMap(c => c?.getFlag(module.id, "request")?.rows ?? []).map(row => plan.rows.find(r => r.actor.uuid === row.actor)?.actor.id));
+      const bare = plan.rows.filter(r => !this.shelterOf(group, camp, plan, places, r.actor)).map(r => r.actor.id);
+      const more = (key, list) => [...new Set([...(camp.run[key] ?? []), ...list])];
+      await group.update({ [`flags.${module.id}.camp.run.bare`] : more("bare", bare), [`flags.${module.id}.camp.run.exposed`] : more("exposed", saved),
+        ...((groupWeather.of(group).temperature === "cold") ? { [`flags.${module.id}.camp.run.cold`] : true } : {}) });
       await this.fireOut(group);
       await this.hourEnds(group, hour - 1);
       await this.meals(group, hour - 1);
@@ -930,7 +939,7 @@ export class groupCamp{
       lines.push(this.i18n(!got ? "fireNone" : (got.outcome === "ok") ? "fireDone" : "fireFail", { name : this.esc(actor.name) }));
     }
     if(lit && this.doused(group, this.campOf(group))){ lit = false; lines.push(this.i18n("fireOut")); }
-    if(lit) await group.update({ [`flags.${module.id}.camp.run.fire`] : true });
+    if(lit) await group.update({ [`flags.${module.id}.camp.run.fire`] : true, [`flags.${module.id}.camp.run.lit`] : true });
     return { lines, outcomes };
   }
 
@@ -1050,6 +1059,8 @@ export class groupCamp{
       rested[kind].push(r.actor);
     }
     await group.unsetFlag(module.id, "camp.run");
+    /* Before the rests (Rested Levels : a poor night takes from them) */
+    Hooks.callAll(`${module.id}.campResting`, group, { done, rested, plan, camp });
     for(const actor of rested.long){
       const restStart = camp.run.start + (plan.rows.find(r => r.actor === actor)?.restStart ?? 0) * groupTravel.secondsPerHour();
       try { await actor.longRest({ dialog : false, advanceTime : false, advanceBastionTurn : false, [module.id] : { restChecked : true, restStart } }); }
@@ -1067,7 +1078,7 @@ export class groupCamp{
     await this.postLog(group, done ? "done" : "broken", { lines : [
       this.i18n("restedLong", { names : names(rested.long) }), ...(rested.short.length ? [this.i18n("restedShort", { names : names(rested.short) })] : []),
       ...(rested.none.length ? [this.i18n("restedNone", { names : names(rested.none) })] : [])] });
-    Hooks.callAll(`${module.id}.campEnded`, group, { done, rested, plan });
+    Hooks.callAll(`${module.id}.campEnded`, group, { done, rested, plan, camp });
     return true;
   }
 
@@ -1368,11 +1379,11 @@ export class groupCamp{
         <td class="who"><img src="${e(r.actor.img)}" alt=""><span>${e(r.actor.name)}</span></td>
         <td class="picks">${road}${picks.join("")}</td>
         ${food}${payer}${shelter}
-        <td class="sum ${r.full ? "" : "over"}" data-tooltip="${e(this.i18n(r.full ? "full" : "notFull"))}"><i class="fa-solid ${r.full ? "fa-check" : "fa-triangle-exclamation"}" inert></i> ${e(summary)}</td></tr>`;
+        <td class="sum ${r.full ? "" : "over"}" data-tooltip="${e(this.i18n(r.full ? "full" : "notFull"))}"><i class="fa-solid ${r.full ? "fa-check" : "fa-triangle-exclamation"}" inert></i> ${e(summary)}</td>${restedLevels.cell(group, camp, plan, r)}</tr>`;
     }).join("");
     const members = `<section class="members"><h3>${this.i18n("membersLabel")}</h3><table>
         <thead><tr><th>${this.i18n("playerLabel")}</th><th>${this.i18n("tasksLabel")}</th>
-          ${inn ? `<th>${this.i18n("eat")}</th><th>${this.i18n("pays")}</th>` : ""}<th>${this.i18n("shelterLabel")}</th><th>${this.i18n("restLabel")}</th></tr></thead>
+          ${inn ? `<th>${this.i18n("eat")}</th><th>${this.i18n("pays")}</th>` : ""}<th>${this.i18n("shelterLabel")}</th><th>${this.i18n("restLabel")}</th>${restedLevels.on() ? `<th>${restedLevels.i18n("label")}</th>` : ""}</tr></thead>
         <tbody>${memberRows}</tbody></table></section>`;
     const unwatched = new Set(plan.unwatched);
     const heads = Array.from({ length : plan.total }, (_, h) => `<th class="${(run && (h === run.hour)) ? "now" : ""} ${unwatched.has(h) ? "over" : ""}"
