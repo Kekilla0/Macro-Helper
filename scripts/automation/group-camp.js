@@ -1205,11 +1205,25 @@ export class groupCamp{
     return (key === "hunt") ? "2d6 + @abilities.wis.mod" : "1d6 + @abilities.wis.mod";
   }
 
+  static RANGE_UNITS = ["ft", "mi", "m", "km"];
+
+  /* Hunt (homebrew) : a weapon with a range (ranged, thrown, a natural one that reaches), a cantrip that deals damage at a
+   * range (Fire Bolt, Sacred Flame; not Self or Touch) or a Hunting Trap (its own or a pack's) */
+  static huntGear(actor, group){
+    const far = range => this.RANGE_UNITS.includes(range?.units) && (Number(range.value) > 5);
+    const cantrip = i => (i.type === "spell") && (Number(i.system.level) === 0)
+      && [...(i.system.activities ?? [])].some(a => a.damage?.parts?.length && far(a.range));
+    return actor.items.find(i => (i.type === "weapon") && i.system.hasRange) ?? actor.items.find(cantrip)
+      ?? [actor, ...groupInventory.packs(group)].flatMap(a => a.items.contents).find(i => (idOf(i) === "hunting-trap") && (Number(i.system.quantity ?? 1) > 0)) ?? null;
+  }
+
   static async surveyStart(key, kind, { group, actors }){
     const { plan } = this.campOf(group);
     const dcs = this.surveyDCs(key, kind, plan);
     const both = (dcs.food !== null) && (dcs.water !== null) && (dcs.food !== dcs.water);
-    const card = await rollRequests.request({ who : actors.map(a => ({ actor : a.uuid, name : a.name, img : a.img })), what : "skill:sur",
+    const bare = a => (key === "hunt") && !this.huntGear(a, group);
+    const card = await rollRequests.request({ who : actors.map(a => ({ actor : a.uuid, name : a.name, img : a.img,
+      ...(bare(a) ? { rollMode : { mode : "disadvantage", reason : this.i18n("huntBare") } } : {}) })), what : "skill:sur",
       dc : Math.min(...[dcs.food, dcs.water].filter(dc => dc !== null)), hideDC : false, speaker : group,
       label : this.i18n("surveyCard", { task : this.i18n(`task.${key}`), skill : rollRequests.labelOf("skill", "sur"), terrain : this.whereLabel(plan) })
         + (both ? ` (${this.i18n("dcSplit", dcs)})` : "") });
