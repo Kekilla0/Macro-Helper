@@ -107,7 +107,7 @@ export class groupTravel{
     /* A vehicle's crew, passengers and draft animals join the group with it (and leave with it) */
     Hooks.on("updateActor", (actor, changes) => this.joinsChanged(actor, changes));
     /* Switched on or off : the members' loads (carried members, pulling shares) come and go */
-    Hooks.on("updateSetting", setting => [`${module.id}.groupTravel`, `${module.id}.homebrewSeats`, `${module.id}.homebrewPaceSpeed`, `${module.id}.homebrewWeatherSeasons`, `${module.id}.homebrewMedic`, `${module.id}.homebrewSpeciesWeight`].includes(setting.key) && this.settingChanged());
+    Hooks.on("updateSetting", setting => [`${module.id}.groupTravel`, `${module.id}.homebrewSeats`, `${module.id}.homebrewPaceSpeed`, `${module.id}.homebrewWeatherSeasons`, `${module.id}.homebrewMedic`, `${module.id}.homebrewSpeciesWeight`, `${module.id}.homebrewTwoRiders`].includes(setting.key) && this.settingChanged());
     Hooks.on("updateActor", (actor, changes) => this.loadsChanged(actor, changes));
     for(const hook of ["createItem", "updateItem", "deleteItem"]){
       Hooks.on(hook, (item, changes) => this.gearChanged(item, (hook === "updateItem") ? changes : null));
@@ -586,7 +586,7 @@ export class groupTravel{
   }
 
   /* The ways that member can travel now : walking (a walk speed), riding a member at least one size larger that walks,
-     no one else rides (2024 : one rider) and can carry it, carried by a member on its own feet or riding that can at
+     has a free seat (2024 : one rider; Two Riders : two) and can carry it, carried by a member on its own feet or riding that can at
      least drag it (twice its capacity), a crew seat (not a Beast : crewing takes hands) / passenger seat on each
      vehicle, pulling it. Weights only count when
      dnd5e's Encumbrance setting is on. The current way stays listed even if it no longer fits. */
@@ -598,7 +598,7 @@ export class groupTravel{
     for(const mount of others){
       if((this.travelOf(group, mount).by !== "walk") || (size(mount) <= size(actor)) || !this.travelTypes(mount).size) continue;
       if(!this.canCarry(mount, actor, 1)) continue;
-      const taken = this.carriedBy(group, mount, "ride").some(a => a !== actor);
+      const taken = this.carriedBy(group, mount, "ride").filter(a => a !== actor).length >= this.ridersPerMount();
       choices.push({ value : `ride:${mount.id}`, by : "ride", name : mount.name, disabled : taken });
     }
     for(const carrier of others){
@@ -1047,6 +1047,11 @@ export class groupTravel{
     const members = group.system.members.map(m => m.actor).filter(a => a && (a.type !== "group")).sort((a, b) => rank(a) - rank(b));
     return group.system.primaryVehicle ?? members.find(a => this.isPack(a))
       ?? members.find(a => a.system.isCreature && (this.memberOf(group, a).job === "leader")) ?? members.find(a => a.system.isCreature) ?? null;
+  }
+
+  /* 2024 PHB Mounts : one rider; the Two Riders homebrew : two */
+  static ridersPerMount(){
+    return settings.value("homebrewTwoRiders") ? 2 : 1;
   }
 
   /* Can this carrier take that member (on top of what else it carries) within `times` its capacity ? */

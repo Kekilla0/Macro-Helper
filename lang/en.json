@@ -1517,6 +1517,8 @@
   "settings.homebrewMedic.hint" : "A Medic job on the Members tab. Each hour the group travels, a Stable member at 0 HP needs the Medic's Wisdom (Medicine) check, DC 10 (or a Healer's Kit use), or it loses Stable. With no Medic, it makes a DC 10 Constitution save instead, only in heavy rain or snow or Extreme Cold or Heat, unless sheltered.",
   "settings.homebrewSpeciesWeight.title" : "Weight by Species",
   "settings.homebrewSpeciesWeight.hint" : "A member with no weight typed by the GM or on its sheet gets its species' weight from the 2014 PHB Height and Weight table (Volo's for Aasimar, Goliath and Orc), rolled once and kept, instead of the estimate by size.",
+  "settings.homebrewTwoRiders.title" : "Two Riders",
+  "settings.homebrewTwoRiders.hint" : "A mount can carry two riders instead of one, each at least one size smaller than it. The only cost is weight: both riders and all they carry count on the mount's load.",
   "settings.campForageDC.title" : "Foraging DCs",
   "settings.campForageDC.2024" : "2024",
   "settings.campForageDC.2014" : "2014",
