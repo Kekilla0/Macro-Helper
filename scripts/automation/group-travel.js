@@ -12,6 +12,7 @@ import { groupFood } from './group-food.js';
 import { groupMedic } from './group-medic.js';
 import { restLimit } from './rest-limit.js';
 import { heldLight } from './held-light.js';
+import { groupBodyWeight } from './group-body-weight.js';
 const log = logger.for(import.meta.url);
 
 /**
@@ -106,7 +107,7 @@ export class groupTravel{
     /* A vehicle's crew, passengers and draft animals join the group with it (and leave with it) */
     Hooks.on("updateActor", (actor, changes) => this.joinsChanged(actor, changes));
     /* Switched on or off : the members' loads (carried members, pulling shares) come and go */
-    Hooks.on("updateSetting", setting => [`${module.id}.groupTravel`, `${module.id}.homebrewSeats`, `${module.id}.homebrewPaceSpeed`, `${module.id}.homebrewWeatherSeasons`, `${module.id}.homebrewMedic`].includes(setting.key) && this.settingChanged());
+    Hooks.on("updateSetting", setting => [`${module.id}.groupTravel`, `${module.id}.homebrewSeats`, `${module.id}.homebrewPaceSpeed`, `${module.id}.homebrewWeatherSeasons`, `${module.id}.homebrewMedic`, `${module.id}.homebrewSpeciesWeight`].includes(setting.key) && this.settingChanged());
     Hooks.on("updateActor", (actor, changes) => this.loadsChanged(actor, changes));
     for(const hook of ["createItem", "updateItem", "deleteItem"]){
       Hooks.on(hook, (item, changes) => this.gearChanged(item, (hook === "updateItem") ? changes : null));
@@ -956,13 +957,16 @@ export class groupTravel{
     return `${Math.round(value * 10) / 10} ${game.i18n.localize(CONFIG.DND5E.weightUnits?.[this.weightUnit()]?.abbreviation ?? this.weightUnit())}`;
   }
 
-  /* { value, estimate } : the GM's typed weight, the character's Weight ("150 lb", "70 kg"), else by size */
+  /* { value, estimate, rolled } : the GM's typed weight, the character's Weight ("150 lb", "70 kg"), the species roll
+     (Weight by Species, its formula as rolled), else by size */
   static bodyWeight(actor){
     const typed = Number(actor.getFlag(module.id, "bodyWeight"));
     if(typed > 0) return { value : typed, estimate : false };
     const text = `${actor.system.details?.weight ?? ""}`;
     const number = parseFloat(text.replace(",", "."));
     if(number > 0) return { value : this.convert(number, /kg/i.test(text) ? "kg" : (/lb|pound/i.test(text) ? "lb" : this.weightUnit())), estimate : false };
+    const rolled = groupBodyWeight.weightOf(actor);
+    if(rolled) return { value : this.convert(rolled.value, "lb"), estimate : false, rolled : rolled.formula };
     return { value : this.convert(this.SIZE_WEIGHTS[actor.system.traits?.size] ?? 150, "lb"), estimate : true };
   }
 
@@ -1076,7 +1080,9 @@ export class groupTravel{
     const { value = 0, max = 0 } = actor.system.attributes?.encumbrance ?? {};
     const body = this.bodyWeight(actor);
     const state = this.loadState(actor);
-    const bodyTip = game.i18n.localize(body.estimate ? "groupTravel.bodyEstimate" : "groupTravel.body");
+    const bodyTip = body.rolled ? game.i18n.format("groupTravel.bodyRolled", { formula : body.rolled })
+      : game.i18n.localize(body.estimate ? "groupTravel.bodyEstimate" : "groupTravel.body");
+    const kept = body.estimate || body.rolled;
     return `<div class="row weight">
         <div class="hours" data-tooltip="${this.loadTip(actor)}">
           <i class="fa-solid fa-weight-hanging" inert></i>
@@ -1084,7 +1090,7 @@ export class groupTravel{
           <span class="${state ? "over" : ""}">${Math.round(value)} / ${this.weightLabel(max)}</span>
         </div>
         <span class="body" data-tooltip="${bodyTip}"><i class="fa-solid fa-person" inert></i>${game.user.isGM
-          ? `<input type="number" class="body-weight" min="0" step="1" value="${body.estimate ? "" : Math.round(body.value)}" placeholder="≈${Math.round(body.value)}">`
+          ? `<input type="number" class="body-weight" min="0" step="1" value="${kept ? "" : Math.round(body.value)}" placeholder="${body.estimate ? "≈" : ""}${Math.round(body.value)}">`
           : `${body.estimate ? "≈" : ""}${Math.round(body.value)}`}</span>
       </div>`;
   }
@@ -1164,7 +1170,7 @@ export class groupTravel{
     const flat = Object.keys(foundry.utils.flattenObject(changes ?? {}));
     const keys = (actor.type === "group") ? [`flags.${module.id}.members`, `flags.${module.id}.order`, "system.members", "system.primaryVehicle"]
       : (actor.type === "vehicle") ? ["system.crew", "system.passengers", "system.draft", "system.traits.weight", "system.currency"]
-      : [`flags.${module.id}.bodyWeight`, `flags.${module.id}.-=bodyWeight`, "system.details.weight", "system.traits.size", "system.abilities.str", "system.currency"];
+      : [`flags.${module.id}.bodyWeight`, `flags.${module.id}.-=bodyWeight`, `flags.${module.id}.speciesWeight`, "system.details.weight", "system.traits.size", "system.abilities.str", "system.currency"];
     if(flat.some(k => keys.some(key => k.startsWith(key)))) this.refreshLoads(actor.type === "vehicle" ? null : actor);
   }
 
