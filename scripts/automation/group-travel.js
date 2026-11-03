@@ -9,6 +9,7 @@ import { restMinutesOf, standardRest } from './rest-length.js';
 import { buttonRow, addButton, makeButton, idOf } from '../helpers/utils.js';
 import { groupWeather } from './group-weather.js';
 import { groupFood } from './group-food.js';
+import { groupMedic } from './group-medic.js';
 import { restLimit } from './rest-limit.js';
 import { heldLight } from './held-light.js';
 const log = logger.for(import.meta.url);
@@ -105,7 +106,7 @@ export class groupTravel{
     /* A vehicle's crew, passengers and draft animals join the group with it (and leave with it) */
     Hooks.on("updateActor", (actor, changes) => this.joinsChanged(actor, changes));
     /* Switched on or off : the members' loads (carried members, pulling shares) come and go */
-    Hooks.on("updateSetting", setting => [`${module.id}.groupTravel`, `${module.id}.homebrewSeats`, `${module.id}.homebrewPaceSpeed`, `${module.id}.homebrewWeatherSeasons`].includes(setting.key) && this.settingChanged());
+    Hooks.on("updateSetting", setting => [`${module.id}.groupTravel`, `${module.id}.homebrewSeats`, `${module.id}.homebrewPaceSpeed`, `${module.id}.homebrewWeatherSeasons`, `${module.id}.homebrewMedic`].includes(setting.key) && this.settingChanged());
     Hooks.on("updateActor", (actor, changes) => this.loadsChanged(actor, changes));
     for(const hook of ["createItem", "updateItem", "deleteItem"]){
       Hooks.on(hook, (item, changes) => this.gearChanged(item, (hook === "updateItem") ? changes : null));
@@ -560,6 +561,11 @@ export class groupTravel{
     return this.creatures(group).filter(a => (a !== actor) && (this.travelOf(group, a).by === by) && (this.travelOf(group, a).target === actor.id));
   }
 
+  /* The jobs to pick from (homebrew Medic : one more) */
+  static jobs(){
+    return groupMedic.on() ? [...this.JOBS, "medic"] : this.JOBS;
+  }
+
   /* A mount being ridden or a draft animal has no job; hirelings and sidekicks do */
   static hasJob(group, actor){
     return (this.travelOf(group, actor).by !== "draft") && !this.carriedBy(group, actor, "ride").length;
@@ -640,7 +646,7 @@ export class groupTravel{
     if((group?.type !== "group") || !actor || (this.memberActor(group, actor.id) !== actor)) return false;
     if(!user.isGM && !actor.testUserPermission(user, "OWNER")) return false;
     if(job !== undefined){
-      if(!this.JOBS.includes(job) || !this.hasJob(group, actor)) return false;
+      if(!this.jobs().includes(job) || !this.hasJob(group, actor)) return false;
       await this.setMember(group, actor, { job });
     }
     if(travel !== undefined){
@@ -748,7 +754,7 @@ export class groupTravel{
     card.innerHTML = `
       <div class="row">
         ${this.hasJob(group, actor) ? `<select class="job" data-tooltip="${game.i18n.localize("groupTravel.jobLabel")}" ${canEdit ? "" : "disabled"}>
-          ${this.options(this.JOBS, member.job, "groupTravel.job")}</select>` : ""}
+          ${this.options(this.jobs(), member.job, "groupTravel.job")}</select>` : ""}
         ${riders.length
           ? `<span class="ridden" data-tooltip="${game.i18n.localize("groupTravel.riddenBy")}"><i class="fa-solid fa-horse-head" inert></i> ${this.names(riders)}</span>`
           : `<select class="travel-by" data-tooltip="${game.i18n.localize("groupTravel.travelByLabel")}" ${canEdit ? "" : "disabled"}>
@@ -1413,7 +1419,7 @@ export class groupTravel{
       distance : leg.distance, pace : leg.pace, time : leg.hours, day : leg.used + leg.hours, limit : leg.limit, over : leg.over, gallop : leg.gallop });
     const heat = new Map();
     const checks = [await this.stealthCheck(group, leg), ...await this.marchChecks(group, before, leg),
-      ...await groupWeather.hourly(group, { start, seconds : leg.seconds, context : "travel", heat })].filter(c => c);
+      ...await groupWeather.hourly(group, { start, seconds : leg.seconds, context : "travel", heat }), ...await groupMedic.hourly(group, { start, seconds : leg.seconds })].filter(c => c);
     if(checks.length || heat.size) await log.update({ [`flags.${module.id}.groupLog.checks`] : checks.map(m => m.id), [`flags.${module.id}.groupLog.heat`] : [...heat] });
     return true;
   }

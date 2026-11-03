@@ -123,6 +123,7 @@ export const GROUPS = {
       homebrewPaceSpeed : { scope : "world", default : false, type : Boolean, homebrew : true, part : "groupTravel" },
       homebrewWeatherChanges : { scope : "world", default : false, type : Boolean, homebrew : true, part : "groupTravel" },
       homebrewWeatherSeasons : { scope : "world", default : false, type : Boolean, homebrew : true, part : "groupTravel" },
+      homebrewMedic : { scope : "world", default : false, type : Boolean, homebrew : true, part : "groupTravel" },
       homebrewCampTasks : { scope : "world", default : false, type : Boolean, homebrew : true, part : "groupTravel" },
       homebrewPreservePartial : { scope : "world", default : false, type : Boolean, homebrew : true, part : "homebrewCampTasks" },
       homebrewRestedLevels : { scope : "world", default : false, type : Boolean, homebrew : true, part : "homebrewCampTasks" },
@@ -220,7 +221,7 @@ const VIRTUAL = {
 const AUTOMATION_OFF = {
   conditions : "off", masteryRules : false, handsEnabled : false, handsLight : "off", ammunition : "off", spellMaterials : "off", armorTraining : false,
   initiativeMethod : "player", summonInitiative : "roll", clearAreas : false, defaultActions : "off",
-  homebrewPush : false, homebrewInitiative : false, groupTravel : false, campForageDC : "2024", weatherRules : "2024", homebrewSeats : false, homebrewPaceSpeed : false, homebrewWeatherChanges : false, homebrewWeatherSeasons : false, homebrewCampTasks : false, homebrewPreservePartial : false, homebrewRestedLevels : false, foodWater : false, foodWaterRules : "2024", homebrewFoodNothing : false, homebrewHungerGrows : false, homebrewThirstSave : false, homebrewHeatWater : false, homebrewAmmoSearch : false, homebrewLoadHand : false, homebrewFlanking : "off",
+  homebrewPush : false, homebrewInitiative : false, groupTravel : false, campForageDC : "2024", weatherRules : "2024", homebrewSeats : false, homebrewPaceSpeed : false, homebrewWeatherChanges : false, homebrewWeatherSeasons : false, homebrewMedic : false, homebrewCampTasks : false, homebrewPreservePartial : false, homebrewRestedLevels : false, foodWater : false, foodWaterRules : "2024", homebrewFoodNothing : false, homebrewHungerGrows : false, homebrewThirstSave : false, homebrewHeatWater : false, homebrewAmmoSearch : false, homebrewLoadHand : false, homebrewFlanking : "off",
 };
 
 /* The old Roll Item switches, hidden : read once by the carry-over */

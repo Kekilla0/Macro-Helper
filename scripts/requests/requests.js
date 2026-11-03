@@ -7,7 +7,7 @@ import { limits } from '../automation/limits.js';
 import { addDie, extraD20 } from '../roll-item/rerolls.js';
 import { bard } from '../automation/classes/bard.js';
 import { fighter } from '../automation/classes/fighter.js';
-import { spendUses } from '../helpers/items.js';
+import { spendUses, getUses, hasUses } from '../helpers/items.js';
 import { findItem, itemOf } from '../helpers/actors.js';
 import { isIncapacitated } from '../helpers/tokens.js';
 import { patch } from '../patch.js';
@@ -38,7 +38,10 @@ const log = logger.for(import.meta.url);
  *                buttons by each row's reroll.
  *   Roll all   : a user who may roll two or more rows rolls them all at once (no roll windows).
  *   onFail     : "exhaustion" (Group Travel's forced march) : a failed row gets an Exhaustion +1 button (its owner's
- *                own creature, or the GM), after any reroll on the card.
+ *                own creature, or the GM), after any reroll on the card. "unstable" (Medic) : a Loses Stable button for
+ *                the row's target (its own creature, else the row's), the same way.
+ *   instead    : { items } (item identifiers; Medic : a Healer's Kit) : a row's owner may spend a use of one of its
+ *                items instead of rolling, a success.
  */
 export class rollRequests{
   static DIFFICULTIES = [[5, "veryEasy"], [10, "easy"], [15, "medium"], [20, "hard"], [25, "veryHard"], [30, "nearlyImpossible"]];
@@ -196,14 +199,16 @@ export class rollRequests{
    * @param {boolean|"gm"} [options.whisper]  only the GM and the creatures' owners ("gm" : only the GM)
    * @returns {Promise<ChatMessage>}
    */
-  static async request({ who = [], what = "skill:prc", dc = null, mode = "each", whisper = false, hideDC = null, speaker = null, label = null, outcomes = null, onFail = null, flags = {} } = {}){
-    const rows = who.map(p => ({ key : String(p.token ?? p.actor).replaceAll(".", "-"), actor : p.actor, token : p.token ?? null, name : p.name, img : p.img, ...(p.rollMode ? { rollMode : p.rollMode } : {}) }));
+  static async request({ who = [], what = "skill:prc", dc = null, mode = "each", whisper = false, hideDC = null, speaker = null, label = null, outcomes = null, onFail = null, instead = null, flags = {} } = {}){
+    const rows = who.map(p => ({ key : String(p.token ?? p.actor).replaceAll(".", "-"), actor : p.actor, token : p.token ?? null, name : p.name, img : p.img,
+      ...(p.rollMode ? { rollMode : p.rollMode } : {}), ...(p.target ? { target : p.target, targetName : p.targetName ?? "" } : {}) }));
     const request = {
       dc : Number.isFinite(dc) ? dc : null, hideDC : (hideDC ?? !!settings.value("requestsDmScreen")), mode : (mode === "group") ? "group" : "each", rows, results : {},
       rounds : { 1 : { ...this.checkFor(what, dc), ...(label ? { label } : {}) } }, round : 1, compact : this.compact(), whisper : (whisper === "gm") ? "gm" : !!whisper,
       /* Words for a row's result (a Study : "Sees through it" / "Fooled") */
       ...(outcomes ? { outcomes } : {}),
       ...(onFail ? { onFail } : {}),
+      ...(instead?.items?.length ? { instead : { items : [...instead.items] } } : {}),
     };
     return ChatMessage.implementation.create({
       speaker : speaker ? ChatMessage.implementation.getSpeaker({ actor : speaker }) : { alias : module.i18n("requests.title") },
@@ -264,6 +269,18 @@ export class rollRequests{
     if(!entry?.roll || (typeof entry.roll !== "object")) return null;
     try { return Roll.fromData(entry.roll); }
     catch { return null; }
+  }
+
+  /* The creature a row's cost falls on (a Medic's patient), when not the roller */
+  static targetOf(row){
+    return row?.target ? fromUuidSync(row.target, { strict : false }) : null;
+  }
+
+  /* An item of the actor's that may be spent instead of the roll, with a use left */
+  static insteadItem(request, actor){
+    const ids = request.instead?.items;
+    if(!ids?.length || !actor) return null;
+    return actor.items.find(i => ids.includes(i.identifier ?? i.system?.identifier) && hasUses(i) && (Number(i.system.quantity ?? 1) > 0)) ?? null;
   }
 
   static actorOf(row){
@@ -331,7 +348,9 @@ export class rollRequests{
       const debug = (entry && request.compact && roll && game.user.isGM && settings.value("debug"))
         ? [[20, "fa-bug", "rollItem.debug.nat20"], [1, "fa-bug-slash", "rollItem.debug.nat1"]].map(([v, icon, k]) =>
           `<button type="button" class="icon" data-request-force="${v}" data-row="${esc(row.key)}" data-tooltip="${esc(module.i18n(k))}"><i class="fa-solid ${icon}" inert></i></button>`).join("") : "";
-      const rollButton = canRoll ? `<button type="button" class="save" data-request-roll="${esc(row.key)}"><i class="fa-solid fa-dice-d20" inert></i> ${esc(module.i18n("requests.roll"))}</button>`
+      const spare = canRoll ? this.insteadItem(request, actor) : null;
+      const insteadButton = spare ? `<button type="button" class="icon" data-request-instead="${esc(row.key)}" data-tooltip="${esc(module.format("requests.instead", { item : spare.name }))}"><i class="fa-solid fa-kit-medical" inert></i></button>` : "";
+      const rollButton = canRoll ? `<button type="button" class="save" data-request-roll="${esc(row.key)}"><i class="fa-solid fa-dice-d20" inert></i> ${esc(module.i18n("requests.roll"))}</button>${insteadButton}`
         : !entry ? `<span class="pending"><i class="fa-solid fa-hourglass-half" inert></i></span>` : "";
       if(request.compact && entry && roll) feet.push(...this.footButtons(request, row, entry, actor, roll));
       return `<li class="macro-helper-row"><img class="token" src="${esc(row.img)}" alt="" data-token="${esc(row.token ?? "")}"><span class="name">${esc(row.name)}</span><span class="macro-helper-row-actions">${rollButton}${resultHtml}${reroll}${debug}</span></li>`;
@@ -372,6 +391,10 @@ export class rollRequests{
     if((request.onFail === "exhaustion") && (entry.success === false) && !entry.exhausted && actor && (game.user.isGM || gm.mine(actor))){
       out.push(button("exhaustion", "fa-face-tired", module.format("requests.featFor", { feat : module.i18n("requests.exhaustion"), name : row.name })));
     }
+    const patient = this.targetOf(row) ?? actor;
+    if((request.onFail === "unstable") && (entry.success === false) && !entry.unstable && patient?.statuses?.has("stable") && (game.user.isGM || gm.mine(patient))){
+      out.push(button("unstable", "fa-heart-pulse", module.format("requests.featFor", { feat : module.i18n("requests.unstable"), name : row.targetName || patient.name })));
+    }
     if(game.user.isGM && entry.tactical && !entry.tacticalSpent && (entry.success !== false)){
       out.push(button("tacticalSpend", "fa-heart-crack", module.format("requests.featFor", { feat : module.i18n("classes.fighter.tacticalSpend"), name : row.name })));
     }
@@ -389,6 +412,7 @@ export class rollRequests{
     on("[data-request-roll]", (b, event) => this.rollRow(message, b.dataset.requestRoll, { event }));
     on("[data-request-roll-all]", () => this.rollAll(message));
     on("[data-request-reroll]", b => this.reroll(message, b.dataset.requestReroll));
+    on("[data-request-instead]", b => this.useInstead(message, b.dataset.requestInstead));
     on("[data-request-feat]", b => this.useFeat(message, b.dataset.row, b.dataset.requestFeat));
     on("[data-request-force]", b => this.force(message, b.dataset.row, Number(b.dataset.requestForce)));
   }
@@ -423,6 +447,18 @@ export class rollRequests{
     if(!request.compact || !roll) return;
     await this.showDice([roll], message);
     await gm.run("requestStore", { message : message.id, row : rowKey, roll : roll.toJSON() });
+  }
+
+  /* Instead of rolling : a use of the request's item (a Healer's Kit), a success */
+  static async useInstead(message, rowKey){
+    const request = message.getFlag(module.id, "request");
+    const row = request?.rows.find(r => r.key === rowKey);
+    const actor = row && this.actorOf(row);
+    if(!actor?.isOwner || request.results?.[1]?.[rowKey]) return;
+    const item = this.insteadItem(request, actor);
+    if(!item) return;
+    if(getUses(item) && !(await spendUses(item, 1))) return;
+    await gm.run("requestStore", { message : message.id, row : rowKey, roll : null, mark : { instead : item.name } });
   }
 
   /* Every row this user may still roll, together (their dice at once), no roll windows */
@@ -509,6 +545,12 @@ export class rollRequests{
       /* The cost's cause may keep it (Malnutrition : not removed until a full day's food) */
       Hooks.callAll(`${module.id}.requestExhaustion`, message, actor, rowKey);
     }
+    else if(feat === "unstable"){
+      const patient = this.targetOf(row) ?? actor;
+      if(!game.user.isGM && !gm.mine(patient)) return;
+      if(patient.statuses?.has("stable")) await patient.toggleStatusEffect("stable", { active : false });
+      await store(roll, { unstable : true });
+    }
     else if((feat === "tacticalSpend") && game.user.isGM){
       const secondWind = fighter.secondWindOf(actor);
       if(secondWind) await spendUses(secondWind, 1, { warn : true });
@@ -525,8 +567,14 @@ export class rollRequests{
     /* Its owner, or a Diviner's owner giving it Portent */
     const diviner = (mark.portent && by) ? fromUuidSync(by, { strict : false })?.actor : null;
     if(!row || !(user?.isGM || actor?.testUserPermission(user, "OWNER") || diviner?.testUserPermission(user, "OWNER"))) return false;
-    const total = Number(data?.total ?? Roll.fromData(data).total);
     const before = reset ? {} : (request.results?.[1]?.[rowKey] ?? {});
+    /* An item spent instead of the roll (instead) : a success, its name for the total */
+    if(!data && mark.instead){
+      if(before.total !== undefined) return false;
+      await card.setFlag(module.id, `request.results.1.${rowKey}`, { instead : `${mark.instead}`, total : `${mark.instead}`, success : true });
+      return true;
+    }
+    const total = Number(data?.total ?? Roll.fromData(data).total);
     const dc = this.dcOf(request);
     const entry = { ...before, ...mark, total, roll : data, success : (dc === null) ? null : (total >= dc) };
     await card.setFlag(module.id, `request.results.1.${rowKey}`, entry);
