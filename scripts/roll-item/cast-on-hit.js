@@ -125,7 +125,8 @@ function cardButtons(message, buttons, { ray } = {}){
     /* A Bonus Action : only on its own turn (not an Opportunity Attack or a readied attack), one left */
     const economy = rule.economy === undefined ? "bonus" : rule.economy;
     if(economy && (offTurn(actor) || !actionTracker.left(actor, economy))) continue;
-    buttons.push({ id : `castOnHit|${rule.id}`, label : rule.label?.(choices) ?? module.i18n("castOnHit.cast"), icon : rule.icon?.(choices) ?? "fa-wand-sparkles" });
+    /* open : a smite follows the hit, so it stays usable once the card's damage is dealt */
+    buttons.push({ id : `castOnHit|${rule.id}`, label : rule.label?.(choices) ?? module.i18n("castOnHit.cast"), icon : rule.icon?.(choices) ?? "fa-wand-sparkles", open : true });
   }
 }
 

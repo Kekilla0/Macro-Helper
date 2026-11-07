@@ -198,7 +198,7 @@ Roll Item does four things: **Target**, **Attack**, **Save** and **Damage**, all
 | `macro-helper.attack` | `activity, roll` | React to an attack roll. |
 | `macro-helper.preDamage` | `activity, config, attack` | Change damage before it's rolled. Return `false` to skip it. |
 | `macro-helper.damage` | `activity, rolls, attack` | React to a damage roll. |
-| `macro-helper.cardButtons` | `message, buttons, { ray }` | Add a button to an attack on the card: push `{ id, label, icon, tooltip, conditions }`. Runs every time the card is drawn. |
+| `macro-helper.cardButtons` | `message, buttons, { ray }` | Add a button to an attack on the card: push `{ id, label, icon, tooltip, conditions, open }`. `open`: the button stays usable once the card is dealt (it adds to the hit, like a smite). Runs every time the card is drawn. |
 | `macro-helper.saveCardButtons` | `message, buttons` | The same for a save card (no rays): push `{ id, label, icon }`. `message.system.dealsDamage` says whether its rolls hurt (not healing). Protective Field, Psychic Spells and Empowered Spell use this. Clicks come to `macro-helper.cardButton` with `ray: null`. |
 | `macro-helper.cardButton` | `message, id, { ray, event, button }` | Your button was clicked. `button` is the button itself. |
 | `macro-helper.cardNotes` | `message, notes, { ray }` | Add a note to the card: push `{ text, icon, tooltip }`. |

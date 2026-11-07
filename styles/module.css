@@ -452,7 +452,7 @@
 .chat-message.macro-helper-auto-applied effect-application .apply-button,
 .chat-message.macro-helper-auto-applied effect-application menu.effects button { opacity : 0.45; pointer-events : none; filter : grayscale(1); }
 /* An attack card dealt in full : its buttons locked (message.js resolved), but what still follows a hit */
-.chat-message.macro-helper-resolved .message-content button:not(:is(.card-header, .macro-helper-rows:not(.macro-helper-cover), .macro-helper-rider, .macro-helper-moves, .macro-helper-mastery) *) { opacity : 0.45; pointer-events : none; filter : grayscale(1); }
+.chat-message.macro-helper-resolved .message-content button:not(:is(.card-header, .macro-helper-rows:not(.macro-helper-cover), .macro-helper-rider, .macro-helper-moves, .macro-helper-mastery) *):not([data-macro-helper-open]) { opacity : 0.45; pointer-events : none; filter : grayscale(1); }
 .chat-message .macro-helper-initiative-feet { display : flex; flex-direction : column; gap : 4px; margin-top : 6px; }
 /* Prepared Spells window : a column per spell level, each scrolling past 10 spells */
 .macro-helper-prepared-columns { display : flex; gap : 10px; overflow-x : auto; align-items : flex-start; }

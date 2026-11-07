@@ -193,7 +193,7 @@ function cardButtons(message, buttons, ray){
     for(const type of types){
       const typeLabel = type ? (CONFIG.DND5E.damageTypes?.[type]?.label ?? type) : "";
       buttons.push({ id : `onHit|${rule.id}|${type}`, icon : rule.icon ?? "fa-burst",
-        label : (types.length > 1) ? `${label} (${typeLabel})` : label, conditions });
+        label : (types.length > 1) ? `${label} (${typeLabel})` : label, conditions, open : true });
     }
   }
 }

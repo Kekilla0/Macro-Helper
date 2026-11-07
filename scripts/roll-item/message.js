@@ -2393,8 +2393,9 @@ export function registerMessages(){
 
   /* An attack card dealt in full (resolved) : its buttons locked, so nobody rerolls or applies again by mistake. What
      still follows a hit stays open : its save rows, rule rows and pushes (each once), the mastery's button (Cleave),
-     the header. The GM unlocks it from the card's menu */
-  const OPEN = `.card-header, .${module.id}-rows:not(.${module.id}-cover), .${module.id}-rider, .${module.id}-moves, .${module.id}-mastery`;
+     what adds to the hit (a smite, an on-hit bonus : a button pushed with `open`, gone once used), the header. The
+     GM unlocks it from the card's menu */
+  const OPEN = `.card-header, .${module.id}-rows:not(.${module.id}-cover), .${module.id}-rider, .${module.id}-moves, .${module.id}-mastery, [data-${module.id}-open]`;
   Hooks.on("dnd5e.renderChatMessage", (message, html) => {
     if((message.type !== TYPES.attack) || !message.system?.resolved) return;
     html.classList.add(`${module.id}-resolved`);
