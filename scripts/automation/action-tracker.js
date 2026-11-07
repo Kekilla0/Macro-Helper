@@ -7,7 +7,7 @@ import { limits } from './limits.js';
 import { combatLog } from './combat-log.js';
 import { grapplesOn, reactionMoveOf } from '../roll-item/card-builder.js';
 import { idOf, esc } from '../helpers/utils.js';
-import { getTokensWithin, movedThisTurn, isIncapacitated } from '../helpers/tokens.js';
+import { getTokensWithin, movedThisTurn, isIncapacitated, usesDeathSaves } from '../helpers/tokens.js';
 import { masteries } from './masteries.js';
 import { controllerOf } from './summons.js';
 import { bonusAttackAfter, bonusAttackRule } from './bonus-attacks.js';
@@ -122,14 +122,14 @@ export class actionTracker{
 
   static #rolled = new Set();
 
-  /* A creature that can't act on its turn : dead, defeated, an NPC at 0 HP, or a character at 0 HP that's stable */
+  /* A creature that can't act on its turn : dead, defeated, an NPC at 0 HP, or a character (Important NPC) at 0 HP that's stable */
   static cantAct(actor){
     if(!actor) return false;
     if(actor.statuses?.has?.("dead") || actor.statuses?.has?.("defeated")) return true;
     if(Number(actor.system?.attributes?.hp?.value) > 0) return false;
     /* A vehicle with no hit points set (a wagon) isn't down */
     if((actor.type === "vehicle") && !(Number(actor.system?.attributes?.hp?.max) > 0)) return false;
-    if(actor.type !== "character") return true;
+    if(!usesDeathSaves(actor)) return true;
     const death = actor.system?.attributes?.death ?? {};
     return actor.statuses?.has?.("stable") || ((Number(death.failure) || 0) >= 3);
   }

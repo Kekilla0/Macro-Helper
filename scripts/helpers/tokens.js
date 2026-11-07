@@ -736,8 +736,20 @@ function tokenDocOf(thing){
 }
 
 /**
- * Out of the fight : Dead, or an NPC at 0 HP (with a max HP set). A character at 0 HP is dying, not dead : still a
- * target (attacks on it within 5 ft are crits). A creature with no max HP set (a blank test character) counts as up.
+ * Does this creature make death saves at 0 HP (the player rules) instead of dying : a character, or an NPC marked
+ * Important on its sheet (dnd5e's switch : a villain, an ally worth saving).
+ * @param {Actor|Token|TokenDocument} thing
+ * @returns {boolean}
+ */
+export function usesDeathSaves(thing){
+  const actor = actorOf(thing);
+  return (actor?.type === "character") || ((actor?.type === "npc") && !!actor.system?.traits?.important);
+}
+
+/**
+ * Out of the fight : Dead, or a creature that dies at 0 HP (not usesDeathSaves) at 0 HP (with a max HP set). A
+ * character or Important NPC at 0 HP is dying, not dead : still a target (attacks on it within 5 ft are crits). A
+ * creature with no max HP set (a blank test character) counts as up.
  * @param {Token} token
  * @returns {boolean}
  */
@@ -746,18 +758,18 @@ export function isDown(token){
   if(!actor) return false;
   if(actor.statuses?.has("dead")) return true;
   const hp = actor.system?.attributes?.hp;
-  return (actor.type !== "character") && (Number(hp?.max) > 0) && ((Number(hp?.value) || 0) <= 0);
+  return !usesDeathSaves(actor) && (Number(hp?.max) > 0) && ((Number(hp?.value) || 0) <= 0);
 }
 
 /**
- * Can't act : down (isDown), or a character at 0 HP (dying) with a max HP set.
+ * Can't act : down (isDown), or dying (usesDeathSaves, at 0 HP) with a max HP set.
  * @param {Token} token
  * @returns {boolean}
  */
 export function isOutOfAction(token){
   if(isDown(token)) return true;
   const actor = token?.actor, hp = actor?.system?.attributes?.hp;
-  return (actor?.type === "character") && (Number(hp?.max) > 0) && ((Number(hp?.value) || 0) <= 0);
+  return usesDeathSaves(actor) && (Number(hp?.max) > 0) && ((Number(hp?.value) || 0) <= 0);
 }
 
 /* The conditions that leave a creature Incapacitated (theirs include it) */

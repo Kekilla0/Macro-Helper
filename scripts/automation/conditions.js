@@ -4,8 +4,10 @@ import { settings } from '../settings.js';
 import { logger } from '../log.js';
 import { patch } from '../patch.js';
 import { spellEffects } from './spell-effects.js';
-import { tokenOf, distanceBetween, canSee, isIncapacitated } from '../helpers/tokens.js';
-import { clearLastDamage, isKilledOutright, setStatus } from '../helpers/actors.js';
+import { tokenOf, distanceBetween, canSee, isIncapacitated, usesDeathSaves } from '../helpers/tokens.js';
+import { clearLastDamage, isKilledOutright, setStatus, setDefeated } from '../helpers/actors.js';
+import { addRow } from '../roll-item/card-rows.js';
+import { gm } from '../gm.js';
 import { giveMode, noteReason, conditionName, logReasons } from '../roll-item/reasons.js';
 import { idOf, originItem } from '../helpers/utils.js';
 const log = logger.for(import.meta.url);
@@ -22,8 +24,9 @@ const log = logger.for(import.meta.url);
  *   against a Prone one, advantage within 5 ft and disadvantage beyond; against an Invisible one, disadvantage.
  *   An attacker who is Blinded, Prone or Restrained has disadvantage; one who is Invisible, advantage.
  *   A hit on a Paralyzed or Unconscious creature from within 5 ft is a critical hit (autoCrit, used for the damage).
- *   A character at 0 HP who takes damage fails a death save (two on a crit, once per card); a hit of at least its HP
- *   max, or massive damage while still up, is three failures. Three failures : Dead.
+ *   A character, or an NPC marked Important (usesDeathSaves), at 0 HP who takes damage fails a death save (two on a
+ *   crit, once per card); a hit of at least its HP max, or massive damage while still up, is three failures. Three
+ *   failures : Dead.
  *
  * Applied damage : each creature remembers the last damage it took and the card that dealt it (getLastDamage), until a
  * reaction uses it (clearLastDamage) or it rests, and what a card last applied to it (shown on the card's row).
@@ -85,6 +88,66 @@ export class conditions{
     Hooks.on("updateActor", (actor, changes) => this.onSourceZeroHP(actor, changes));
     Hooks.on("updateToken", (tokenDoc, changes) => this.onApart(tokenDoc, changes));
     Hooks.on("createActiveEffect", effect => this.onRecast(effect));
+    /* Knocking Out : the GM's row button on a melee hit that dropped its creature to 0 */
+    addRow({ id : "knock-out", enabled : () => settings.value("downedRules"), icon : "fa-face-dizzy", conditions : ["unconscious"],
+      when : row => this.canKnockOut(row), label : () => module.i18n("conditions.knockOut.button"),
+      tooltip : () => module.format("conditions.knockOut.tooltip", { hours : this.KNOCK_OUT_HOURS }), run : row => this.knockOut(row.target) });
+    Hooks.on("updateActor", (actor, changes) => this.onKnockedOutHP(actor, changes));
+    Hooks.on("updateWorldTime", () => this.wakeKnockedOut());
+  }
+
+  /* ---------- Knocking Out ---------- */
+
+  /* A Short Rest : the knocked out creature comes to after it (or once it regains Hit Points) */
+  static KNOCK_OUT_HOURS = 1;
+
+  /* A melee hit from this card that left its creature at 0 HP (the damage applied) */
+  static canKnockOut(row){
+    const actor = row.target?.actor, hp = actor?.system?.attributes?.hp;
+    if(!row.melee || !hp || !(Number(hp.max) > 0) || ((Number(hp.value) || 0) > 0)) return false;
+    return Object.values(actor.getFlag(module.id, `applied.${row.message.id}`) ?? {}).some(n => Number(n) > 0);
+  }
+
+  /**
+   * 2024 Knocking Out a Creature : 1 HP instead of 0, Unconscious, and a Short Rest. Not dead, no death saves, out of
+   * the combat's defeated; it comes to when it regains Hit Points or the rest is over (KNOCK_OUT_HOURS of game time).
+   * @param {Token} token
+   */
+  static async knockOut(token){
+    const actor = token?.actor;
+    if(!actor) return;
+    /* Dead off before the HP comes back : a 0 HP macro (or dnd5e's Auto-Apply Downed) finds nothing left to remove */
+    for(const status of ["dead", "stable", "unconscious"]) await setStatus(actor, status, false).catch(() => {});
+    await setDefeated(token, false).catch(() => {});
+    await actor.update({ "system.attributes.hp.value" : 1, "system.attributes.death.success" : 0, "system.attributes.death.failure" : 0 });
+    const unconscious = CONFIG.statusEffects.find(s => s.id === "unconscious");
+    await actor.createEmbeddedDocuments("ActiveEffect", [{ name : module.i18n("conditions.knockOut.effect"), img : unconscious?.img ?? null,
+      statuses : ["unconscious"], duration : { seconds : this.KNOCK_OUT_HOURS * 3600, startTime : game.time.worldTime },
+      flags : { [module.id] : { knockedOut : true } } }]);
+    await ChatMessage.implementation.create({ speaker : ChatMessage.implementation.getSpeaker({ actor, token : token.document }),
+      content : `<p>${module.format("conditions.knockOut.chat", { name : token.name, hours : this.KNOCK_OUT_HOURS })}</p>` });
+    log.debug("Knocked out", token.name);
+  }
+
+  static #knockedOut(actor){
+    return actor?.effects?.filter?.(e => e.getFlag(module.id, "knockedOut")) ?? [];
+  }
+
+  /* Regained Hit Points (or dropped to 0 again) : it comes to (the active GM) */
+  static async onKnockedOutHP(actor, changes){
+    const hp = foundry.utils.getProperty(changes ?? {}, "system.attributes.hp.value");
+    if((hp === undefined) || (hp === 1) || !game.users.activeGM?.isSelf) return;
+    const ended = this.#knockedOut(actor);
+    if(ended.length) await actor.deleteEmbeddedDocuments("ActiveEffect", ended.map(e => e.id)).catch(() => {});
+  }
+
+  /* The Short Rest is over : it comes to */
+  static async wakeKnockedOut(){
+    if(!game.users.activeGM?.isSelf) return;
+    for(const actor of gm.actors()){
+      const ended = this.#knockedOut(actor).filter(e => e.duration?.expired);
+      if(ended.length) await actor.deleteEmbeddedDocuments("ActiveEffect", ended.map(e => e.id)).catch(() => {});
+    }
   }
 
   /* ---------- Ends when ---------- */
@@ -566,13 +629,13 @@ export class conditions{
     return !!origin?.rolls?.some?.(r => r?.options?.isCritical);
   }
 
-  /* Death saves : damage to a character at 0 HP is a failure (two on a crit); its HP max in one hit, or massive damage
+  /* Death saves : damage to a character (Important NPC) at 0 HP is a failure (two on a crit); its HP max in one hit, or massive damage
      while still up, is three. Changes dnd5e's pending update, nothing awaited. */
   static onPreApplyDamage(actor, amount, updates, options = {}){
     /* Temporary HP given (Armor of Agathys) : dnd5e reports it as 0 damage, onApplyDamage records it from here */
     const temp = Number(updates?.["system.attributes.hp.temp"]) - (Number(actor?.system?.attributes?.hp?.temp) || 0);
     if(!amount && (temp > 0) && options) options[`${module.id}TempGiven`] = temp;
-    if(!settings.value("downedRules") || (actor?.type !== "character") || !(amount > 0) || !updates) return;
+    if(!settings.value("downedRules") || !usesDeathSaves(actor) || !(amount > 0) || !updates) return;
     const hp = actor.system.attributes?.hp ?? {};
     const death = actor.system.attributes?.death ?? {};
     const max = Number(hp.max) || 0;
@@ -624,7 +687,7 @@ export class conditions{
 
   /* Three death save failures : Dead (dnd5e only does it in combat, with its downed setting on "all creatures") */
   static async markDead(actor){
-    if(!settings.value("downedRules") || (actor?.type !== "character") || !actor.isOwner) return;
+    if(!settings.value("downedRules") || !usesDeathSaves(actor) || !actor.isOwner) return;
     if((Number(actor.system.attributes?.death?.failure) || 0) < 3 || actor.statuses?.has("dead")) return;
     await actor.toggleStatusEffect("dead", { active : true, overlay : true });
     log.debug("Dead", actor.name);

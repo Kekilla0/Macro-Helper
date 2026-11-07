@@ -1,6 +1,6 @@
 import { module } from '../module.js';
 import { esc } from '../helpers/utils.js';
-import { distanceBetween, isIncapacitated } from '../helpers/tokens.js';
+import { distanceBetween, isIncapacitated, usesDeathSaves } from '../helpers/tokens.js';
 import { actionTracker } from './action-tracker.js';
 import { actionReady } from './action-ready.js';
 import { zones } from './zones.js';
@@ -75,7 +75,7 @@ export class actionBar{
     const moved = (token ? actionTracker.movedOf(token) : 0) + (Number(rec.standing) || 0);
     /* The big button above the bar : a death save while dying, Stand Up while Prone (its turn) */
     const death = actor.system?.attributes?.death;
-    const dying = st.mine && (actor.type === "character") && (Number(actor.system?.attributes?.hp?.value) <= 0) && !!death
+    const dying = st.mine && usesDeathSaves(actor) && (Number(actor.system?.attributes?.hp?.value) <= 0) && !!death
       && ((Number(death.failure) || 0) < 3) && ((Number(death.success) || 0) < 3) && !actor.statuses?.has?.("dead") && !actor.statuses?.has?.("stable") && (game.user.isGM || actor.isOwner);
     /* Prone : Stand Up, unless in a Tortle's shell (it must Emerge first) */
     const prone = !dying && st.mine && actor.statuses?.has?.("prone") && !actor.statuses?.has?.("unconscious") && (game.user.isGM || actor.isOwner)

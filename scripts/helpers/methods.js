@@ -1,7 +1,7 @@
 import { logger } from '../log.js';
 import { settings } from '../settings.js';
 import { rollItem } from '../roll-item/roll-item.js';
-import { distanceBetween, getRange, getTokensWithin, highlightRange, pushAway, pushDestination, addLight, removeLight, hasLight, canSee, poolBar, removePoolBar, poolsOf } from './tokens.js';
+import { distanceBetween, getRange, getTokensWithin, highlightRange, pushAway, pushDestination, addLight, removeLight, hasLight, canSee, poolBar, removePoolBar, poolsOf, usesDeathSaves } from './tokens.js';
 import { isEnemy, isAlly, getThreats, isThreatened, getEnemiesWithinRange, pickTargets, getFlanker, isFlanking } from './targets.js';
 import { getSize, setStatus, setDefeated, splitToken, damage, heal, tempHP, dropsToZero, isKilledOutright, preventDropToZero, findItem,
   rollSave, giveEffect, addTimedEffect, recoverSpellSlots, slotsLeft, spellSlots, addSpellSlot, usedThisTurn, markUsedThisTurn, getLastDamage, clearLastDamage, stabilize } from './actors.js';
@@ -29,6 +29,7 @@ const creature = {
   setStatus : call(setStatus),                                      // (status, active, { overlay })
   setDefeated : call(setDefeated),                                  // (defeated)
   stabilize : call(stabilize),                                      // () -> Promise<boolean>, at 0 HP : Stable
+  usesDeathSaves : call(usesDeathSaves),                            // () -> boolean, a character or an Important NPC
   damage : call(damage),                                            // (value | formula | parts, type, { properties, multiplier, ignore })
   heal : call(heal),                                                // (value | formula)
   tempHP : call(tempHP),                                            // (value | formula, source)
