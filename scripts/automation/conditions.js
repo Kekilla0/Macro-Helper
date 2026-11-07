@@ -304,9 +304,12 @@ export class conditions{
     const shown = token.actor?.appliedEffects?.filter(e => (e.showIcon === SHOW.ALWAYS) || ((e.showIcon === SHOW.CONDITIONAL) && e.isTemporary)) ?? [];
     if(!shown.length || !token.effects) return;
     const have = new Set(shown.map(e => e.img));
+    /* dnd5e's own status effect already shows its condition, whatever picture its level has (Exhaustion (1)) */
+    const own = new Set(CONFIG.statusEffects.filter(s => s._id && shown.some(e => e.id === s._id)).map(s => s.id));
     const extra = [];
     for(const effect of shown){
       for(const id of this.conditionsOf(effect)){
+        if(own.has(id)) continue;
         const img = CONFIG.statusEffects.find(s => s.id === id)?.img ?? CONFIG.DND5E.conditionTypes[id]?.img;
         if(img && !have.has(img)){ have.add(img); extra.push(img); }
       }

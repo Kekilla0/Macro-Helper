@@ -381,7 +381,7 @@ export async function giveEffect(thing, data, { save = null, dc = null, from = n
   const source = origin?.name ?? "";
   return saveThenGive(thing, { save, dc, from, confirmed : confirmed || isOwnOn(origin, actor), against : data?.statuses ?? [],
     /* Its own creature the user may change : here (no GM needed); else the GM's client */
-    run : () => actor.isOwner ? giveEffectAsGM(payload, game.user) : gm.run("giveEffect", payload),
+    run : () => actor.isOwner ? putEffect(actor, effect) : gm.run("giveEffect", payload),
     ask : () => gm.ask("giveEffectAsk", payload, { actor : from?.actor ?? null,
       text : module.format("giveEffect.ask", { item : source, name, effect : effect.name }),
       label : module.format("giveEffect.button", { name, effect : effect.name }), conditions : [...(effect.statuses ?? [])] }) });
@@ -418,6 +418,12 @@ function isOwnOn(from, actor){
 export async function giveEffectAsGM({ actor : uuid, data } = {}, user){
   const actor = fromUuidSync(uuid ?? "", { strict : false });
   if(!actor || !data || !(user?.isGM || gm.mine(actor, user))) return false;
+  return putEffect(actor, data);
+}
+
+/* The effect put on, by a client that may change the creature (saveThenGive already allowed it : a player who owns a
+   creature that isn't their character, on its own action, gets here too) */
+async function putEffect(actor, data){
   if(foundry.utils.hasProperty(data, `flags.${module.id}.expires`)) return !!await timedEffect(actor, data);
   await actor.createEmbeddedDocuments("ActiveEffect", [data]);
   return true;

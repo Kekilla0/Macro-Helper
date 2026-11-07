@@ -658,10 +658,20 @@ export function registerMessages(){
 
   /* An attack card's new rolls that wait on its result (a hit's damage, Graze's) : not played now, marked unplayed, so
      the card plays them once its result calls for them (rollItem.playOutcomes) */
-  const holdOutcomes = (message, rolls) => {
+  const holdOutcomes = (message, rolls, { added = false } = {}) => {
     if(!game.dice3d || (message.type !== TYPES.attack)) return { held : [], flags : {} };
     const card = { rider : message.system.rider, rays : message.system.rays };
-    const held = rolls.filter(r => rollItem.outcomeKey(r, card));
+    /* Added to a card whose result has already come and whose dice have played (Savage Attacker's roll on a hit) : shown
+       now, else marking the result unplayed would play the attack's own damage again with it */
+    const waits = roll => {
+      const key = rollItem.outcomeKey(roll, card);
+      if(!key) return false;
+      if(!added) return true;
+      const [ray, outcome] = key.split(".");
+      if(message.getFlag(module.id, `dice.${key}`) === false) return true;
+      return !message.system.resultsOf?.((ray === "single") ? null : Number(ray))?.[outcome];
+    };
+    const held = rolls.filter(waits);
     const flags = Object.fromEntries(held.map(r => [`flags.${module.id}.dice.${rollItem.outcomeKey(r, card)}`, false]));
     return { held, flags };
   };
@@ -1078,6 +1088,32 @@ export function registerMessages(){
       return this.targetsOf(ray).filter(t => hitsAC(attack, t.ac, t.token)).map(t => TargetsField.resolve(t).token).filter(Boolean);
     }
 
+    /**
+     * Has the card been dealt in full : every creature it hit took its hit's damage (and one it grazed, its Graze), at
+     * least one did. Its buttons are locked then (a reroll or another Apply would change a creature twice), but for the
+     * GM's Unlock. A card with nothing to deal (every attack missed) stays open (Lucky, Precision Attack).
+     * @returns {boolean}
+     */
+    get resolved(){
+      if(this.parent.getFlag(module.id, "unlocked") || (rollItem.revealOf(this.parent) < 2)) return false;
+      let owed = 0;
+      for(const ray of (this.isMulti ? [...this.rays.keys()] : [null])){
+        const attack = this.attackOf(ray);
+        if(!attack) continue;
+        const choice = this.choiceOf(ray);
+        const hitBoxes = this.hitParts(ray, (choice && (choice !== "base")) ? choice : null).map(p => p.box);
+        const missBoxes = [...new Set(this.addedRollsOf(ray).filter(r => tagOf(r).onMiss).map(r => boxKey(tagOf(r).part, null, ray)))];
+        for(const target of this.targetsOf(ray)){
+          const boxes = hitsAC(attack, target.ac, target.token) ? hitBoxes : missBoxes;
+          if(!boxes.length) continue;
+          owed++;
+          const done = TargetsField.resolve(target).actor?.getFlag?.(module.id, `applied.${this.parent.id}`) ?? {};
+          if(!boxes.every(box => Number.isFinite(done[box]))) return false;
+        }
+      }
+      return owed > 0;
+    }
+
     /* The targets of one attack, and those it hit (card descriptors) */
     targetHits(ray){
       const attack = this.attackOf(ray);
@@ -1269,7 +1305,7 @@ export function registerMessages(){
         roll.options[module.id] = { ...(Number.isInteger(ray) ? { ray } : {}), part : "extra", key, label : label ?? key, alternative,
           ...(onHit ? { onHit : true } : {}), ...(formula ? { formula } : {}) };
       }
-      const { held, flags } = holdOutcomes(this.parent, rolls);
+      const { held, flags } = holdOutcomes(this.parent, rolls, { added : true });
       await rollItem.showDice(rolls.filter(r => !held.includes(r)), this.parent);
       const update = { rolls : [...this.parent.rolls, ...rolls].map(r => JSON.stringify(r)), ...flags };
       /* Already shown : Dice So Nice mustn't animate the added rolls a second time */
@@ -2353,6 +2389,33 @@ export function registerMessages(){
     if(settings.value("collapseCards") || game.settings.get("dnd5e", "autoCollapseItemCards")){
       html.querySelectorAll(`.${module.id}-face .card-header, .${module.id}-face .card-description`).forEach(el => el.classList.add("collapsed"));
     }
+  });
+
+  /* An attack card dealt in full (resolved) : its buttons locked, so nobody rerolls or applies again by mistake. What
+     still follows a hit stays open : its save rows, rule rows and pushes (each once), the mastery's button (Cleave),
+     the header. The GM unlocks it from the card's menu */
+  const OPEN = `.card-header, .${module.id}-rows:not(.${module.id}-cover), .${module.id}-rider, .${module.id}-moves, .${module.id}-mastery`;
+  Hooks.on("dnd5e.renderChatMessage", (message, html) => {
+    if((message.type !== TYPES.attack) || !message.system?.resolved) return;
+    html.classList.add(`${module.id}-resolved`);
+    html.addEventListener("click", event => {
+      const button = event.target.closest?.("button, [data-action]");
+      if(!button || button.closest(OPEN) || !html.querySelector(".message-content")?.contains(button)) return;
+      if(!message.system?.resolved) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      ui.notifications.info("rollItem.resolved.locked", { localize : true });
+    }, true);
+  });
+  Hooks.on("getChatMessageContextOptions", (app, options) => {
+    const card = li => game.messages.get(li.dataset.messageId);
+    const attack = li => game.user.isGM && (card(li)?.type === TYPES.attack);
+    options.push({ label : "rollItem.resolved.unlock", icon : "fa-solid fa-lock-open",
+      visible : li => attack(li) && !!card(li).system?.resolved,
+      onClick : (event, li) => card(li).setFlag(module.id, "unlocked", true) });
+    options.push({ label : "rollItem.resolved.lock", icon : "fa-solid fa-lock",
+      visible : li => attack(li) && !!card(li).getFlag(module.id, "unlocked"),
+      onClick : (event, li) => card(li).unsetFlag(module.id, "unlocked") });
   });
 
   /* Damage / healing applied from a card (conditions.onApplyDamage notes it on the creature) : show it on its row */

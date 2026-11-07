@@ -304,12 +304,13 @@ export class actions{
 
   /* ---------- Dodge ---------- */
 
+  /* The creature's own action on itself : at once, no GM button (also for a player whose user has no character set) */
   static async dodge(actor){
     if(actor.statuses?.has("dodging")) return;
     const status = CONFIG.statusEffects.find(e => e.id === "dodging");
     await giveEffect(actor, {
       name : game.i18n.localize(status?.name ?? "Dodging"), img : status?.img, statuses : ["dodging"],
-    }, { until : "turnStart" });
+    }, { until : "turnStart", confirmed : true });
     log.debug("Dodging", actor.name);
   }
 
@@ -319,7 +320,7 @@ export class actions{
      doesn't provoke Opportunity Attacks). The action tracker reads them. */
   static async mark(actor, key, label, img){
     if(actor.effects.some(e => e.getFlag(module.id, key))) return;
-    await giveEffect(actor, { name : module.i18n(label), img, flags : { [module.id] : { [key] : true } } }, { until : "turnEnd", thisTurn : true });
+    await giveEffect(actor, { name : module.i18n(label), img, flags : { [module.id] : { [key] : true } } }, { until : "turnEnd", thisTurn : true, confirmed : true });
     log.debug(key, actor.name);
   }
 
